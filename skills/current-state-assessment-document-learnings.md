@@ -249,6 +249,21 @@ Invoking the framework via an explicit modern interpreter works. Use `python3.14
 Validation:
 Rerun the bounded framework batch under `python3.14`; confirm it returns a structured JSON status (e.g. `APPLIED` + `BLOCKED`), creates a verified timestamped backup, and passes the DOCX archive/XML/comment/table-row checks.
 
+## 2026-09-16 - Handle pipe-format multi-cell table rows in the framework
+Context: Section 6 E-101 blocked the framework: "Could not extract labelled table replacement values".
+
+Problem observed:
+E-101 specifies a two-row table replacement using the pipe format `**DNS Location |** value1 | value2`, where the first segment names the table row and the remaining segments are the cell values for that row. The framework only understood the `Label - Observed:` / `Label - Assessment:` labelled triple format, so it could not extract any values and blocked.
+
+Cause:
+`_extract_labeled_values` only matches the `<label> <field>:` line shape, while some approved change records describe table rows positionally with ` | ` separators. The actual table (3 columns: Aspect, Observed State, Evidence) means a row label plus exactly two values.
+
+Improved approach:
+Before trying the labelled-triple path, `_apply_table_row_change` now calls `_extract_pipe_row_replacements(text)` to collect `(label, values)` rows. `_apply_pipe_row_replacements` resolves each label uniquely against the first cell of every `w:tr`, and only proceeds if the row has exactly `len(values) + 1` cells — the label names cell 1 and the values fill cells 2..N. Any non-unique label or cell-count mismatch still returns `BLOCKED`.
+
+Validation:
+Two new tests (16 passing total): `test_extract_pipe_row_replacements` for the parser, and `test_replace_pipe_format_table_rows_like_e101` which builds a 5-row 3-column table and asserts both `DNS Location` and `Local DNS Services` rows are fully rewritten with one comment. The live rerun on the real DOCX applied E-101 (4 cells across 2 rows, comment ID 101) with archive/XML/comment/table-row-safety checks all passing.
+
 ## 2026-09-16 - Handle anchor plus following bullets in the framework
 
 Context:
