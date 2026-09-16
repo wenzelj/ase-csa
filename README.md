@@ -13,7 +13,7 @@ Start an implementation run with:
 
 ```text
 Load this agent definition:
-/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/01 Current State AS Built/.agents/current-state-assessment-document.md
+/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/.agents/current-state-assessment-document.md
 
 Act as the Current-State-Assessment-Document Agent.
 
@@ -28,7 +28,7 @@ Start a review run with:
 
 ```text
 Load this agent definition:
-/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/01 Current State AS Built/.agents/csa-change-review.md
+/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/.agents/csa-change-review.md
 
 Act as the C-S-A-Change-Review Agent.
 
@@ -54,7 +54,10 @@ This workspace also contains repo-scoped native Codex skill wrappers:
 ```text
 .agents/skills/iamps-csa-document-agent/SKILL.md
 .agents/skills/iamps-csa-change-review-agent/SKILL.md
+.agents/skills/it-ot-current-state-assessment/SKILL.md
 ```
+
+`it-ot-current-state-assessment` is different from the other two: it is a general reference methodology skill (scoping, discovery, Purdue/IEC 62443/NIST CSF/TOGAF/TIME framework mapping, gap analysis, deliverable structure) for IT and OT current state assessments, not a wrapper around a project-local execution agent definition. Use it for framing scope or checking coverage alongside the document and review agents.
 
 They allow shorter prompts such as:
 

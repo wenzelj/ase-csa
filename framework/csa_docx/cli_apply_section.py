@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import asdict
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -55,29 +56,26 @@ def main() -> int:
         return 0
 
     summary.backup = create_backup(docx, section)
-    package = extract_docx(docx)
+    editor = None
+    package = None
     try:
-        editor = DocumentEditor(package.path("word/document.xml"), section_heading=_section_heading(section_label))
+        if args.engine == "docxengine":
+            from csa_docx.engines.docxengine_adapter import DocxEngineEditor
+
+            editor = DocxEngineEditor(docx, section_heading=_section_heading(section_label))
+        else:
+            package = extract_docx(docx)
+            editor = DocumentEditor(package.path("word/document.xml"), section_heading=_section_heading(section_label))
+
         summary.status = "IN_PROGRESS"
         write_state(state, records, summary)
-
-        for record in batch:
-            result = editor.apply_change(record, args.comment_author, args.comment_initials)
-            summary.results.append(result)
-            if result.status == "APPLIED":
-                summary.applied.append(record.edit_id)
-            elif result.status == "ALREADY_APPLIED":
-                summary.already_applied.append(record.edit_id)
-            elif result.status == "BLOCKED":
-                summary.blocked.append(record.edit_id)
-                break
-            else:
-                summary.unresolved.append(record.edit_id)
-
+        _apply_batch(editor, batch, summary, args.comment_author, args.comment_initials)
         editor.save()
-        package.save(docx)
+        if package is not None:
+            package.save(docx)
     finally:
-        package.cleanup()
+        if package is not None:
+            package.cleanup()
 
     done_ids = set(summary.applied + summary.already_applied)
     remaining = [record.edit_id for record in scoped_records if record.edit_id not in (completed_ids | done_ids)]
@@ -108,6 +106,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--end-edit-id")
     parser.add_argument("--comment-author", default="Wenzel Joubert")
     parser.add_argument("--comment-initials", default="WJ")
+    parser.add_argument(
+        "--engine",
+        choices=("legacy", "docxengine"),
+        default=os.environ.get("CSA_DOCX_ENGINE", "docxengine"),
+        help="DOCX edit engine. Defaults to docxengine; legacy is retained only for explicit fallback.",
+    )
     return parser.parse_args()
 
 
@@ -134,6 +138,21 @@ def _section_heading(section_label: str | None) -> str | None:
     if " - " in section_label:
         return section_label.split(" - ", 1)[1].strip()
     return section_label.strip()
+
+
+def _apply_batch(editor, batch, summary: ApplySummary, author: str, initials: str) -> None:
+    for record in batch:
+        result = editor.apply_change(record, author, initials)
+        summary.results.append(result)
+        if result.status == "APPLIED":
+            summary.applied.append(record.edit_id)
+        elif result.status == "ALREADY_APPLIED":
+            summary.already_applied.append(record.edit_id)
+        elif result.status == "BLOCKED":
+            summary.blocked.append(record.edit_id)
+            break
+        else:
+            summary.unresolved.append(record.edit_id)
 
 
 def print_summary(summary: ApplySummary) -> None:

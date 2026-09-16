@@ -101,6 +101,8 @@ class DocumentEditor:
             return self._apply_section_body_replacement(record, author, initials)
         if _has_anchor_plus_bullets_replacement(record):
             return self._apply_anchor_plus_bullets_replacement(record, author, initials)
+        if _has_counted_bullet_block(record):
+            return self._apply_counted_bullet_block(record, author, initials)
 
         complex_markers = [
             "both paragraphs",
@@ -396,6 +398,141 @@ class DocumentEditor:
             comment_id,
         )
 
+    def _counted_bullet_anchor(self) -> str | None:
+        return find_anchor(self.where)
+
+    def _apply_counted_bullet_block(self, record: ChangeRecord, author: str, initials: str) -> EditResult:
+        count = _extract_following_bullet_count(record.action)
+        anchor = find_anchor(record.where)
+        if not anchor:
+            return EditResult(record.edit_id, "BLOCKED", "Could not extract anchor from Where (counted bullet block)")
+        sub_bullets = "sub-bullet" in record.action.lower()
+        anchor_matches = self._matching_paragraphs(anchor, record.where) if not sub_bullets else self._all_paragraph_matches(anchor)
+        if len(anchor_matches) != 1:
+            return EditResult(record.edit_id, "BLOCKED", f"Counted bullet block anchor not unique or not found: {anchor}", anchor)
+        anchor_para = anchor_matches[0]
+        anchor_index = self.paragraphs().index(anchor_para)
+        if sub_bullets:
+            block, block_count = self._sub_list_block_under_heading(anchor_index, count)
+            if block_count != count:
+                return EditResult(
+                    record.edit_id,
+                    "BLOCKED",
+                    f"Expected {count} sub-bullet(s) under {anchor!r}; found {block_count}",
+                    anchor,
+                )
+        else:
+            parent_info = self._list_info(anchor_para)
+            if parent_info is None or parent_info[0] < 0:
+                return EditResult(record.edit_id, "BLOCKED", "Anchor is not a numbered/bulleted list item", anchor)
+            anchor_level, anchor_numid = parent_info
+            block, block_count = self._following_sibling_list(anchor_index, anchor_level, anchor_numid, count)
+            if block_count != count:
+                return EditResult(record.edit_id, "BLOCKED", f"Expected {count} list paragraph(s) beginning at {anchor!r}; found {block_count}", anchor)
+
+        paragraphs = self.paragraphs()
+        if "delete" in record.action.lower():
+            for para in block:
+                parent = self._parent_map()[para]
+                parent.remove(para)
+            if "heading" in record.action.lower() and "sub" in record.action.lower():
+                comment_target = anchor_para
+            elif "heading" in record.action.lower():
+                comment_target = self._nearest_paragraph_sibling(self._parent_map()[anchor_para], anchor_para)
+            else:
+                comment_target = self._nearest_paragraph_sibling(self._parent_map()[block[0]], block[0])
+            comment_id = self.add_comment(comment_target, record, author, initials) if comment_target is not None else None
+            return EditResult(
+                record.edit_id,
+                "APPLIED",
+                f"Deleted {len(block)} paragraph(s) under/beginning: {anchor[:80]}",
+                anchor,
+                comment_id,
+            )
+
+        if not record.text:
+            return EditResult(record.edit_id, "BLOCKED", "Replace counted bullet block has no Text", anchor)
+        replacement_paragraphs = markdown_to_paragraph_texts(record.text)
+        if not replacement_paragraphs:
+            return EditResult(record.edit_id, "BLOCKED", "Replacement text parsed to no paragraphs", anchor)
+        if len(replacement_paragraphs) != len(block):
+            return EditResult(record.edit_id, "BLOCKED",
+                             f"Replacement supplies {len(replacement_paragraphs)} paragraph(s); existing block has {len(block)}; refusing to silently add/remove bullets", anchor)
+        comment_id = self._replace_paragraph_range(block, replacement_paragraphs, record, author, initials)
+        return EditResult(
+            record.edit_id,
+            "APPLIED",
+            f"Replaced {len(block)} bullet paragraph(s) beginning: {anchor[:80]}",
+            anchor,
+            comment_id,
+        )
+
+    def _list_info(self, paragraph: ET.Element) -> tuple[int, str | None] | None:
+        ppr = paragraph.find(qn(W_NS, "pPr"))
+        if ppr is None:
+            return None
+        numpr = ppr.find(qn(W_NS, "numPr"))
+        if numpr is None:
+            return None
+        ilvl = numpr.find(qn(W_NS, "ilvl"))
+        numid = numpr.find(qn(W_NS, "numId"))
+        ilvl_val = int(ilvl.get(qn(W_NS, "val"), "0")) if ilvl is not None else 0
+        numid_val = numid.get(qn(W_NS, "val")) if numid is not None else None
+        return ilvl_val, numid_val
+
+    def _all_paragraph_matches(self, anchor: str) -> list[ET.Element]:
+        wanted = normalise_text(anchor)
+        matches: list[ET.Element] = []
+        for paragraph in self.paragraphs():
+            text = normalise_text(paragraph_text(paragraph))
+            if not text:
+                continue
+            if text == wanted or text.startswith(wanted):
+                matches.append(paragraph)
+        return matches
+
+    def _following_sibling_list(self, anchor_index: int, level: int, numid: str | None, want: int) -> tuple[list[ET.Element], int]:
+        paragraphs = self.paragraphs()
+        block: list[ET.Element] = []
+        for index in range(anchor_index, len(paragraphs)):
+            info = self._list_info(paragraphs[index])
+            if info is None or info[0] != level or (numid is not None and info[1] != numid):
+                break
+            block.append(paragraphs[index])
+            if len(block) == want:
+                return block, len(block)
+        return block, len(block)
+
+    def _sub_list_block_under_heading(self, heading_index: int, want: int) -> tuple[list[ET.Element], int]:
+        paragraphs = self.paragraphs()
+        block: list[ET.Element] = []
+        for index in range(heading_index + 1, len(paragraphs)):
+            if _paragraph_heading_level(paragraphs[index]) is not None:
+                break
+            info = self._list_info(paragraphs[index])
+            if info is None:
+                continue
+            block.append(paragraphs[index])
+            if len(block) == want:
+                break
+        return block, len(block)
+
+    def _nearest_paragraph_under_heading(self, heading_index: int, level: int) -> ET.Element | None:
+        paragraphs = self.paragraphs()
+        for index in range(heading_index + 1, len(paragraphs)):
+            if _paragraph_heading_level(paragraphs[index]) is not None:
+                break
+            info = self._list_info(paragraphs[index])
+            if info is not None and info[0] >= level:
+                return paragraphs[index]
+        for index in range(heading_index - 1, -1, -1):
+            if _paragraph_heading_level(paragraphs[index]) is not None:
+                return None
+            info = self._list_info(paragraphs[index])
+            if info is not None and info[0] >= level:
+                return paragraphs[index]
+        return None
+
     def add_comment(self, paragraph: ET.Element, record: ChangeRecord, author: str, initials: str) -> str:
         comments_path = self.document_xml_path.parent / "comments.xml"
         comments_tree, comments_root = load_or_create_comments(comments_path)
@@ -599,7 +736,8 @@ def _extract_row_labels(where: str, text: str) -> list[str]:
     if labels:
         primary = [label.strip() for label in labels if label.strip()]
     else:
-        anchor = find_anchor(where)
+        plain_label = re.search(r"row beginning(?:\s+exactly)?\s*:?\s+(.+)$", where, flags=re.IGNORECASE)
+        anchor = plain_label.group(1).strip() if plain_label else find_anchor(where)
         if anchor and anchor.lower().startswith("row beginning "):
             anchor = anchor[len("row beginning ") :].strip()
         primary = [anchor] if anchor else []
@@ -625,6 +763,7 @@ def _extract_row_labels(where: str, text: str) -> list[str]:
 
 def _extract_pipe_row_replacements(text: str) -> list[tuple[str, list[str]]]:
     rows: list[tuple[str, list[str]]] = []
+    parsed_lines: list[tuple[str, list[str]]] = []
     for raw_line in text.splitlines():
         line = raw_line.strip()
         if not line:
@@ -639,8 +778,24 @@ def _extract_pipe_row_replacements(text: str) -> list[tuple[str, list[str]]]:
         segments = [segment for segment in segments if segment]
         if len(segments) < 2:
             continue
-        rows.append((segments[0], segments[1:]))
+        parsed_lines.append((segments[0], segments[1:]))
+
+    for index, (label, values) in enumerate(parsed_lines):
+        all_cells = [label, *values]
+        if all(_is_markdown_table_separator_cell(cell) for cell in all_cells):
+            continue
+        next_line = parsed_lines[index + 1] if index + 1 < len(parsed_lines) else None
+        if next_line is not None and all(
+            _is_markdown_table_separator_cell(cell)
+            for cell in [next_line[0], *next_line[1]]
+        ):
+            continue
+        rows.append((label, values))
     return rows
+
+
+def _is_markdown_table_separator_cell(value: str) -> bool:
+    return bool(re.fullmatch(r":?-{3,}:?", value.strip()))
 
 
 def _extract_labeled_values(text: str) -> dict[str, dict[str, str]]:
@@ -698,8 +853,7 @@ def _cell_index_for_field(headers: list[str], field_name: str) -> int | None:
 
 
 def _has_range_replacement(record: ChangeRecord) -> bool:
-    raw = record.raw.lower()
-    return "replace the content beginning" in raw and " through " in raw and " with:" in raw
+    return bool(_extract_range_spec(record.raw))
 
 
 def _has_section_body_replacement(record: ChangeRecord) -> bool:
@@ -709,6 +863,19 @@ def _has_section_body_replacement(record: ChangeRecord) -> bool:
 def _has_anchor_plus_bullets_replacement(record: ChangeRecord) -> bool:
     action = record.action.lower()
     return "replace" in action and "bullet" in action and _extract_following_bullet_count(record.action) is not None
+
+
+def _has_counted_bullet_block(record: ChangeRecord) -> bool:
+    action = record.action.lower()
+    if "bullet" not in action:
+        return False
+    if _extract_following_bullet_count(record.action) is None:
+        return False
+    if "replace the content beginning" in record.raw.lower() and " through " in record.raw.lower():
+        return False
+    if re.search(r"\breplace all content in section\b", action, re.IGNORECASE):
+        return False
+    return "replace" in action or "delete" in action
 
 
 def _extract_following_bullet_count(action: str) -> int | None:
@@ -746,15 +913,40 @@ def _range_end_for_following_content(paragraphs: list[ET.Element], anchor_index:
 
 
 def _extract_range_spec(raw: str) -> tuple[str, str, str] | None:
-    match = re.search(
+    structured = re.search(
+        r"\*\*where:\*\*.*?`(?P<start>[^`]+)`.*?\*\*do:\*\*\s*(?P<action>.*?)(?=\*\*text:\*\*)\*\*text:\*\*\s*(?P<replacement>.*?)(?:\n\*\*why:\*\*|\n---|\n## |\Z)",
+        raw,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if structured:
+        action = structured.group("action")
+        if "replace" in action.lower() and "through" in action.lower():
+            end_anchor = _extract_range_end_anchor(action)
+            if end_anchor:
+                return structured.group("start").strip(), end_anchor, structured.group("replacement").strip()
+
+    legacy = re.search(
         r"replace the content beginning\s+`([^`]+)`\s+through(?: the)?(?: final)?(?: bullet)?\s+`([^`]+)`\s+with:\s*\n(?P<replacement>.*?)(?:\n---|\n## |\Z)",
         raw,
         re.IGNORECASE | re.DOTALL,
     )
-    if not match:
+    if legacy:
+        return legacy.group(1).strip(), legacy.group(2).strip(), legacy.group("replacement").strip()
+    return None
+
+
+def _extract_range_end_anchor(action: str) -> str | None:
+    after_through = re.split(r"\bthrough\b", action, flags=re.IGNORECASE, maxsplit=1)
+    if len(after_through) != 2:
         return None
-    replacement = match.group("replacement").strip()
-    return match.group(1).strip(), match.group(2).strip(), replacement
+    tail = after_through[1]
+    ticks = re.findall(r"`([^`]+)`", tail)
+    if ticks:
+        return ticks[-1].strip()
+    quotes = re.findall(r'"([^"]+)"', tail)
+    if quotes:
+        return quotes[-1].strip()
+    return None
 
 
 def _unique_paragraph_index(paragraphs: list[ET.Element], anchor: str) -> int | None:

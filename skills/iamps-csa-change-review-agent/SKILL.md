@@ -10,7 +10,7 @@ Use this skill when the user wants Codex to act as the IAMPS C-S-A-Change-Review
 The project-local review agent definition is authoritative:
 
 ```text
-/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/01 Current State AS Built/.agents/csa-change-review.md
+/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/.agents/csa-change-review.md
 ```
 
 Before acting, read that full agent definition and follow it. Do not copy its instructions from memory.
@@ -43,6 +43,6 @@ For Codex CLI, EVO, Ollama, or slow local profiles, prefer `ITERATION_REVIEW_LIM
 
 ## Local Resources
 
-- Agent definitions and project docs: `/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/01 Current State AS Built/.agents/`
-- Run-state files: `/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/01 Current State AS Built/.agents/run-state/`
-- Review learning log: `/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/01 Current State AS Built/.agents/skills/csa-change-review-learnings.md`
+- Agent definitions and project docs: `/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/.agents/`
+- Run-state files: `/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/.agents/run-state/`
+- Review learning log: `/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/.agents/skills/csa-change-review-learnings.md`

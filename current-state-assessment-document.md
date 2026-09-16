@@ -380,6 +380,8 @@ The agent is a thin controller. The Python framework is the default worker for r
 
 Before doing manual DOCX implementation work, run the reusable local framework for the selected batch unless the requested edit is clearly outside the framework's documented capabilities.
 
+Always run the framework with the Python interpreter at `/opt/homebrew/bin/python3.14` — do not use the shell default `python3` (which may be an older version that cannot import the framework's `@dataclass(slots=True)` modules).
+
 Framework path:
 
 ```text
@@ -389,7 +391,22 @@ Framework path:
 Primary apply command:
 
 ```text
-python3 .agents/framework/csa_docx/cli_apply_section.py \
+/opt/homebrew/bin/python3.14 .agents/framework/csa_docx/cli_apply_section.py \
+  --engine docxengine \
+  --section <SECTION> \
+  --change-file "<approved section .md>" \
+  --docx "<active working .docx>" \
+  --workspace "<workspace root>" \
+  --limit <ITERATION_EDIT_LIMIT> \
+  --comment-author "Wenzel Joubert" \
+  --comment-initials "WJ"
+```
+
+Framework command defaults to DocxEngine. Keep the explicit engine flag in examples so CLI/EVO runs are unambiguous:
+
+```text
+/opt/homebrew/bin/python3.14 .agents/framework/csa_docx/cli_apply_section.py \
+  --engine docxengine \
   --section <SECTION> \
   --change-file "<approved section .md>" \
   --docx "<active working .docx>" \
@@ -408,8 +425,11 @@ Use the framework first when the next batch uses one of these operations:
 - replace `Observed` and `Assessment` cells in a uniquely matched table row;
 - replace multi-row table values when the approved text labels each row, for example `Network Services - Observed`;
 - replace a uniquely bounded paragraph range described as `replace the content beginning ... through ... with`.
+- replace a uniquely bounded paragraph range described as `Replace this sentence and all bullets through: <end anchor>`.
 - replace all content in a subsection when the instruction says `Replace all content in Section X.Y.Z`, the `Where` anchor is unique, and the containing Word heading range is unambiguous.
 - replace an anchor paragraph and a declared number of following bullet/content paragraphs when the instruction says `Replace this sentence and its N bullets`.
+
+Use `--engine docxengine` for supported operations where native anchored editing is safer than hand-authored OOXML, especially paragraph replacements, bullet blocks, explicit ranges, subsection-body replacements, heading-bounded ranges, subsection deletions, paragraph-plus-following-line replacements, supported table-cell/table-row replacements, and Word comment wiring. Do not route normal CSA edits through the old legacy classifier. Use the legacy engine only when explicitly testing or recovering an older legacy path.
 
 If the framework returns `PARTIAL_COMPLETE` or `SECTION_COMPLETE`, trust its structured JSON only after verifying the reported files exist and the `## Changes Report` was updated.
 
@@ -429,13 +449,7 @@ When `EXECUTION_MODE=framework-first` is supplied:
 - if the framework blocks, report the blocker and stop unless the user explicitly asked for manual fallback;
 - do not perform broad LLM reasoning after a successful framework batch.
 
-The framework is conservative and does not yet handle every complex edit. Manual fallback remains allowed for:
-
-- multi-paragraph range replacements that are not uniquely bounded by the framework-supported `replace the content beginning ... through ... with` pattern;
-- replacements spanning tables or multiple cells;
-- edits that require preserving complex inline formatting;
-- field, header, footer, image, relationship, or style changes;
-- any operation where framework validation fails.
+The framework is conservative and does not yet handle every edit. A blocker should now mean a real ambiguity or unsupported document feature, not an unrecognised wording variant. Manual fallback remains allowed for edits that require preserving complex inline formatting, fields, headers, footers, images, relationships, styles, or any operation where framework validation fails.
 
 ## Change Order
 

@@ -1,6 +1,7 @@
 from pathlib import Path
 import sys
 import xml.etree.ElementTree as ET
+import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -19,9 +20,17 @@ from csa_docx.ooxml import (
     _extract_range_spec,
     _extract_row_labels,
     _extract_following_bullet_count,
+    _has_range_replacement,
     _anchor_variants,
     find_anchor,
 )
+from csa_docx.engines.docxengine_adapter import (
+    DocxEngineEditor,
+    _extract_delete_until_heading,
+    _extract_heading_to_sentence_range,
+    _has_paragraph_plus_following_line_replacement,
+)
+from csa_docx.validator import validate_docx
 
 
 def test_extract_pipe_row_replacements():
@@ -48,6 +57,18 @@ def test_extract_pipe_row_replacements():
         ),
     ]
     assert _extract_pipe_row_replacements("no pipes here") == []
+
+
+def test_extract_pipe_row_replacements_skips_markdown_table_header_and_separator():
+    text = """| Port | Service | Evidence Interpretation |
+|---|---|---|
+| 135 | RPC | Microsoft RPC endpoint-mapping/service evidence |
+| 445 | SMB | SMB service or connection evidence |"""
+
+    assert _extract_pipe_row_replacements(text) == [
+        ("135", ["RPC", "Microsoft RPC endpoint-mapping/service evidence"]),
+        ("445", ["SMB", "SMB service or connection evidence"]),
+    ]
 
 
 def test_parse_basic_change_record():
@@ -161,6 +182,123 @@ def test_extract_range_replacement_spec():
         "Security tooling (CrowdStrike, Splunk)",
         "> - Host discovery confirms domain joined hosts.\n> - Endpoint services are present.",
     )
+
+
+def test_extract_sentence_and_bullets_through_range_spec():
+    record = parse_change_records(
+        """### E-115 - Correct the Domain Membership conclusion
+**Where:** Section 7.2.1, sentence beginning exactly:
+
+`This confirms that authentication for IAMPS systems is performed via Active Directory domain services`
+
+**Do:** Replace this sentence and all bullets through:
+
+`Group police enforcement`
+
+**Text:**
+
+> This confirms that the discovered IAMPS hosts are members of the `internal.qr.com.au` Active Directory domain.
+>
+> Domain membership supports the use of:
+>
+> - domain user authentication where domain credentials are used
+> - computer-account authentication with Active Directory
+
+**Why:**
+Domain membership does not prove the credential type used by every application process.
+"""
+    )[0]
+
+    assert _has_range_replacement(record)
+    assert _extract_range_spec(record.raw) == (
+        "This confirms that authentication for IAMPS systems is performed via Active Directory domain services",
+        "Group police enforcement",
+        "> This confirms that the discovered IAMPS hosts are members of the `internal.qr.com.au` Active Directory domain.\n>\n> Domain membership supports the use of:\n>\n> - domain user authentication where domain credentials are used\n> - computer-account authentication with Active Directory",
+    )
+
+
+def test_extract_introductory_text_through_bullets_ending_range_spec():
+    record = parse_change_records(
+        """### E-129 - Reframe the Section 8 introduction
+**Where:** Section 8, sentence beginning exactly:
+
+`The purpose of this assessment is to determine how network connectivity, dependency paths, and communication behaviour are implemented`
+
+**Do:** Replace the introductory text through the bullets ending with:
+
+`Survivability under IT/OT separation conditions`
+
+**Text:**
+
+> This section reviews IAMPS network architecture using design documentation and host-level discovery evidence.
+>
+> - design-defined zones and conduits
+> - host-level service and connection evidence
+
+**Why:**
+The original introduction overstates the available evidence.
+"""
+    )[0]
+
+    assert _has_range_replacement(record)
+    assert _extract_range_spec(record.raw) == (
+        "The purpose of this assessment is to determine how network connectivity, dependency paths, and communication behaviour are implemented",
+        "Survivability under IT/OT separation conditions",
+        "> This section reviews IAMPS network architecture using design documentation and host-level discovery evidence.\n>\n> - design-defined zones and conduits\n> - host-level service and connection evidence",
+    )
+
+
+def test_docxengine_adapter_extracts_section7_remaining_operation_shapes():
+    records = parse_change_records(
+        """### E-124 - Replace the absolute authentication-failure list
+**Where:** Section 7.3.2, heading:
+
+`Impact Under IT/OT Separation`
+
+**Do:** Replace all content from this heading through the sentence ending:
+
+`where no alternative identity source or local authentication fallback was identified.`
+
+**Text:**
+Replacement.
+
+**Why:** Because.
+
+### E-127 - Remove the recommendations and target-state planning
+**Where:** Section 7.3.5, heading exactly:
+
+`7.3.5 Recommendations`
+
+**Do:** Delete Sections 7.3.5 through 7.3.9 in full, including:
+
+- `7.3.6 Overview`
+
+Delete all content up to `7.4 Drawing`.
+
+**Text:** None.
+
+**Why:** Out of scope.
+
+### E-128 - Preserve future-state Active Directory only as design context
+**Where:** Section 7.1, text beginning exactly:
+
+`The design also identifies identity services as part of OT 3.5 BASE_INFRA`
+
+**Do:** Replace this paragraph and the following line.
+
+**Text:**
+Replacement.
+
+**Why:** Because.
+"""
+    )
+
+    assert _extract_heading_to_sentence_range(records[0]) == (
+        "Impact Under IT/OT Separation",
+        "where no alternative identity source or local authentication fallback was identified.",
+    )
+    assert _extract_delete_until_heading(records[1]) == "7.4 Drawing"
+    assert _has_paragraph_plus_following_line_replacement(records[2])
 
 
 def test_scope_records_respects_start_and_end_ids():
@@ -342,13 +480,85 @@ def test_replace_pipe_format_table_rows_like_e101(tmp_path):
     assert "DNS Location" in rows and "Local DNS Services" in rows
 
 
+def test_docxengine_replaces_pipe_format_table_rows_like_e101(tmp_path):
+    docx = _make_test_docx(tmp_path)
+    editor = DocxEngineEditor(docx)
+    record = parse_change_records(
+        """### E-101 - Correct the Summary of Observed State table
+**Where:** Section 6.2.3 table, row beginning exactly:
+`DNS Location Enterprise IT hosted`
+**Do:** Replace the `DNS Location` and `Local DNS Services` rows.
+**Text:**
+> **DNS Location |** Configured resolvers are external to the IAMPS application hosts; enterprise infrastructure hosting is identified in IAMPS design documentation | Host resolver configuration + design documentation
+>
+> **Local DNS Services |** No DNS Server service identified on the discovered IAMPS hosts | Host service/process evidence
+**Why:** The original table treats inferred hosting location and absence across the environment as directly observed facts.
+"""
+    )[0]
+
+    result = editor.apply_change(record, "Wenzel Joubert", "WJ")
+    editor.save()
+
+    assert result.status == "APPLIED"
+    assert result.comment_id is not None
+    rows = _read_docx_table_rows(docx)
+    assert rows["DNS Location"] == [
+        "DNS Location",
+        "Configured resolvers are external to the IAMPS application hosts; enterprise infrastructure hosting is identified in IAMPS design documentation",
+        "Host resolver configuration + design documentation",
+    ]
+    assert rows["Local DNS Services"] == [
+        "Local DNS Services",
+        "No DNS Server service identified on the discovered IAMPS hosts",
+        "Host service/process evidence",
+    ]
+    validation = validate_docx(docx)
+    assert validation["comment_id_consistency"] == "Pass"
+    assert validation["table_row_comment_safety"] == "Pass"
+
+
+def test_docxengine_replaces_labelled_observed_and_assessment_table_cells(tmp_path):
+    docx = _make_test_docx(tmp_path)
+    editor = DocxEngineEditor(docx)
+    record = parse_change_records(
+        """### E-102 - Correct the service table
+**Where:** Section 6.3 table, row beginning `Database Integration (SQL)`
+**Do:** Replace the Observed and Assessment values.
+**Text:**
+> **Observed:** SQL Server use is evidenced by configuration and connection artefacts.
+> **Assessment:** Supporting contextual evidence only.
+**Why:** The prior row overstated the available evidence.
+"""
+    )[0]
+
+    result = editor.apply_change(record, "Wenzel Joubert", "WJ")
+    editor.save()
+
+    assert result.status == "APPLIED"
+    assert result.comment_id is not None
+    rows = _read_docx_table_rows(docx)
+    assert rows["Database Integration (SQL)"] == [
+        "Database Integration (SQL)",
+        "Current observed text",
+        "SQL Server use is evidenced by configuration and connection artefacts.",
+        "Supporting contextual evidence only.",
+    ]
+    validation = validate_docx(docx)
+    assert validation["comment_id_consistency"] == "Pass"
+    assert validation["table_row_comment_safety"] == "Pass"
+
+
 def _make_test_docx_parts(tmp_path):
     word_dir = tmp_path / "word"
     rels_dir = word_dir / "_rels"
     rels_dir.mkdir(parents=True)
     (tmp_path / "[Content_Types].xml").write_text(
         """<?xml version='1.0' encoding='utf-8'?>
-<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"></Types>""",
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+</Types>""",
         encoding="utf-8",
     )
     (rels_dir / "document.xml.rels").write_text(
@@ -363,6 +573,43 @@ def _make_test_docx_parts(tmp_path):
         encoding="utf-8",
     )
     return document_xml
+
+
+def _make_test_docx(tmp_path) -> Path:
+    document_xml = _make_test_docx_parts(tmp_path / "pkg")
+    editor = DocumentEditor(document_xml)
+    body = editor.root.find(qn(W_NS, "body"))
+    assert body is not None
+    table = ET.SubElement(body, qn(W_NS, "tbl"))
+    table.append(_make_table_row("Aspect", "Observed State", "Evidence"))
+    table.append(_make_table_row("DNS Resolvers", "10.40.228.97, 10.45.228.97", "Script outputs"))
+    table.append(_make_table_row("DNS Location", "Enterprise IT hosted", "IP range + domain"))
+    table.append(_make_table_row("Local DNS Services", "Not present", "No service/process identified"))
+    second_table = ET.SubElement(body, qn(W_NS, "tbl"))
+    second_table.append(_make_table_row("Capability", "Current State", "Observed State", "Assessment"))
+    second_table.append(_make_table_row("Database Integration (SQL)", "Current observed text", "Old observed", "Old assessment"))
+    editor.save()
+
+    docx = tmp_path / "fixture.docx"
+    with zipfile.ZipFile(docx, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for file_path in sorted((tmp_path / "pkg").rglob("*")):
+            if file_path.is_file():
+                archive.write(file_path, file_path.relative_to(tmp_path / "pkg").as_posix())
+    return docx
+
+
+def _read_docx_table_rows(docx: Path) -> dict[str, list[str]]:
+    with zipfile.ZipFile(docx) as archive:
+        root = ET.fromstring(archive.read("word/document.xml"))
+    rows: dict[str, list[str]] = {}
+    for row in root.iter(qn(W_NS, "tr")):
+        values = [
+            normalise_text(" ".join(paragraph_text(p) for p in cell.iter(qn(W_NS, "p"))))
+            for cell in row.findall(qn(W_NS, "tc"))
+        ]
+        if values:
+            rows[values[0]] = values
+    return rows
 
 
 def _make_table_row(*cells: str) -> ET.Element:

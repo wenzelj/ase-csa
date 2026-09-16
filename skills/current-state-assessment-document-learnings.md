@@ -280,3 +280,171 @@ When the approved action says `Replace this sentence and its N bullets`, locate 
 
 Validation:
 Framework tests passed with `14 passed`. A temp-copy smoke test applied Section 6 `E-100`, produced `SECTION_COMPLETE`, added comment `100`, passed DOCX archive/XML/comment checks, removed the old sentence and first old bullet, inserted the approved replacement paragraphs as separate paragraphs, and preserved the following summary table content.
+
+## 2026-09-16 - Bullet-count wording with filler words blocked E-103
+
+Context:
+Section 6 batch E-103/E-104, framework-first run. The approved action is `Replace all three finding bullets.` in 6.3.1.
+
+Problem observed:
+The framework returned `BLOCKED - Complex range or table operation requires controlled manual OOXML handling`. `_extract_following_bullet_count()` only matches a count immediately before "bullets" (e.g. `its three bullets`), so `three finding bullets` failed to parse and the record fell into the blanket `bullets` conservative block.
+
+Cause:
+The count regex `(\d+|one|two|three...)\s+(?:sub-)?bullets?` does not allow filler words between the count and the word "bullets".
+
+Improved approach:
+Allow zero to two filler content words between the count and "bullets" (e.g. `three finding bullets`, `two sub-bullets`) so the counted-bullet-block path can route the edit. In `_apply_counted_bullet_block`, the existing guard that the replacement line count must equal the existing bullet count (3 for 3) is what makes E-103 safe; keep that guard, and verify every block paragraph shares the anchor's numId and list level, and that any following deeper-level sub-list (the pending E-104 sub-bullets) is left untouched.
+
+Validation:
+Manual repair applied E-103 (3 bullets replaced in 6.3.1, comment ID 103, ListParagraph/numId 142 preserved, E-104 sub-bullets intact) with all archive/XML/comment checks passing. After the regex fix, rerun the framework test suite and add a unit test asserting `_extract_following_bullet_count("Replace all three finding bullets.") == 3`.
+
+## 2026-09-16 - "through ... ending with" range word tripped the framework conservative block (E-112)
+
+Context:
+Section 7 batch E-112/E-113, framework-first run. The approved action was `Replace the introductory text through the bullets ending with: <end anchor>`.
+
+Problem observed:
+The framework returned `BLOCKED - Complex range or table operation requires controlled manual OOXML handling`. `_has_range_replacement` requires the exact trigger `replace the content beginning` + ` through ` + ` with:`, so the "through the bullets ending with" wording fell into the blanket `through`/`bullets` conservative block instead of the (safe) `_apply_range_replacement` path.
+
+Cause:
+The range-spec regex `_extract_range_spec` only recognises one specific sentence shape, while the change file used a semantically equivalent but differently phrased range instruction.
+
+Improved approach:
+Before manual repair, prove the range is safe and bounded: confirm both start and end anchors match exactly one paragraph each (`_unique_paragraph_index`), end index > start index, and no heading or table paragraph lies inside the span. Then reuse the framework's own primitives (`_replace_paragraph_range`, `markdown_to_paragraph_texts`, `add_comment`, framework backup + `validate_docx`) in a small script instead of hand-rolling OOXML. This keeps the comment format, range mechanics, and validation identical to a framework run.
+
+Validation:
+Manual repair applied E-112 (8 source paragraphs - 1 intro + 7 bullets - replaced by 3 approved body paragraphs at 7.0 Introduction, no heading/table in span; comment ID 113, author Wenzel Joubert/WJ), with all 7 archive/XML/comment checks passing and the old anchor text confirmed gone from the document. The following Heading-2 "Design and functionality expected" (target of E-113) was untouched.
+
+## 2026-09-16 - Non-unique anchor with repeated heading title tripped the framework (E-113)
+
+Context:
+Section 7 batch E-113, framework-first run. Approved action `Replace this sentence and its three bullets.` at `Where: Section 7.1, sentence beginning exactly: This indicates:`.
+
+Problem observed:
+The framework returned `BLOCKED - Anchor match count was 2; expected 1` for the anchor `This indicates:`. The anchor phrase appears multiple times across the document because the document reuses the same H2 heading title "Design and functionality expected" under many different H1 sections (Architectural Review, DNS, Identity & Authentication, Network, Time Synchronization, Security Controls, Operations Monitoring, Patch & Lifecycle, Backup & Recovery, Infrastructure Dependencies), and several of those subsections open their findings with the literal lead line `This indicates:`.
+
+Cause:
+`_unique_paragraph_index` requires exactly one matching paragraph for the anchor. `This indicates:` is a generic, non-unique sentence that legitimately recurs, so uniqueness by anchor text alone is impossible. The framework correctly refused rather than guess.
+
+Improved approach:
+When a framework-reported anchor is non-unique and lives in a repeated-heading environment, disambiguate deterministically by section identity, not by rewording blind or by picking a match by hand:
+- List every heading in the document and its parent H1, so each `Where: Section X.Y` maps to an exact heading paragraph index (here: H1 "Identity & Authentication" → H2 "Design and functionality expected").
+- Disambiguate the candidate anchor by the nearest preceding H1 + H2 heading pair (the change file's stated section) AND by the structural fact in the `Do` (this one had exactly 3 level-0 bullets following, while the other `This indicates:` instances had 1 or 2).
+- Prefer an in-place text swap (`_set_paragraph_text(..., preserve_list=True)` for the bullets, `preserve_list=False` for the lead) over `_replace_paragraph_range`, so each paragraph keeps its own pPr/numId bullet structure and count — this both preserves list rendering and avoids a heading/table inside-span check becoming necessary.
+- Anchor the Word comment on the first new paragraph as usual; reuse framework backup + `validate_docx` + `parse_change_records` so the result is identical in format to a framework run.
+
+Validation:
+Manual repair applied E-113 (the `This indicates:` + 3 bullets in the Identity & Authentication / "Design and functionality expected" subsection replaced by `The design documentation indicates that:` + 3 approved bullets; list structure preserved; comment ID 114, author Wenzel Joubert/WJ), with all 7 archive/XML/comment checks passing, the old 3-bullet set confirmed gone from the document, and the neighbouring heading and following "Observed Configuration and Functionality" subsection untouched.
+
+## 2026-09-16 - "through <end sentence." range without `content beginning` wording blocked, then manually repaired (E-123)
+
+Context:
+Section 7 batch, framework-first run. E-123 approved action: `Replace the first two paragraphs through "fallback authentication."` in Section 7.3.2 Drawbridge Impact (Evidence-Based).
+
+Problem observed:
+The framework returned `BLOCKED - Complex range or table operation requires controlled manual OOXML handling`. `_has_range_replacement` only recognises the exact trigger phrase `replace the content beginning` + `through` + `with:`, so `Replace the first two paragraphs through "<end>"` fell into the blanket conservative `through` block.
+
+Cause:
+A second, equivalent range-instruction shape (`the first N paragraphs through "<end sentence>"`) is not classified by the range regex `_extract_range_spec`.
+
+Improved approach:
+Same safe-repair procedure as E-112: prove the span is bounded (both anchors match exactly one paragraph, end index > start index, no heading or table paragraph inside the span), then reuse the framework's own primitives (`_matching_paragraphs`, `_replace_paragraph_range`, `markdown_to_paragraph_texts`, framework backup + `validate_docx`, `write_state` + `update_changes_report`) in a small script (`.agents/framework/csa_docx/manual_e123.py`) instead of hand-rolling OOXML. Verify afterwards that an identical phrase may legitimately appear elsewhere in the document (e.g. the 7.3 intro retains "all IAMPS servers are domain joined" under another edit's scope) — confirm the removed text is gone from the target span rather than from the whole document.
+
+Validation:
+Manual E-123 run replaced exactly 2 paragraphs (range 1411..1412, no heading/table in span), inserted the two approved replacement paragraphs verbatim, added comment ID 124 by Wenzel Joubert/WJ with matched commentRangeStart/End/Reference markers, and passed all 7 DOCX validators (archive integrity, XML parse, comment ID consistency, table-row comment safety). Run-state updated to PARTIAL_COMPLETE with next edit E-124.
+
+## 2026-09-16 - Use DocxEngine for anchored paragraph/list DOCX operations
+
+Context:
+The custom OOXML framework became brittle around bullet replacements, split Word runs, and comment wiring. The framework now vendors the open-source `docxengine==1.0.0` package under `.agents/framework/vendor` and exposes it through `--engine docxengine`.
+
+Problem observed:
+Direct OOXML edits force the framework to reimplement document anchoring, list handling, comment ranges, package relationships, and validation. This made repeated section work slower than it should be and increased the chance of small XML mistakes.
+
+Improved approach:
+Keep the CSA Markdown parser, batching, backups, run-state, and change-report writer as the controller. Delegate supported paragraph/list mutations to DocxEngine through `.agents/framework/csa_docx/engines/docxengine_adapter.py`. Use `--engine docxengine` for simple paragraph insert/replace/delete and `Replace this sentence and its N bullets`. Continue using the legacy engine for table-row edits, explicit through-ranges, and full subsection replacement until those paths are migrated and smoke-tested.
+
+Validation:
+Framework tests passed with `16 passed`. A temp-copy smoke test applied Section 6 `E-100` using `--engine docxengine`, made a backup, returned `SECTION_COMPLETE`, added comment `C100` by `Wenzel Joubert`, passed all archive/XML/comment validators, removed the old anchor paragraph, and inserted the approved intro, two list paragraphs, and closing paragraph. A namespace guard was added because DocxEngine can add `w14:paraId` to an existing `comments.xml`; the guard ensures `xmlns:w14` is declared before adding a comment.
+
+## 2026-09-17 - Expand DocxEngine coverage for Section 7 range and subsection operations
+
+Context:
+Section 7 remaining edits E-124 through E-128 exposed operation shapes that the legacy framework classified as complex range/table operations even though they are deterministic paragraph-range tasks.
+
+Problem observed:
+E-124 blocked on `Replace all content from this heading through the sentence ending`. E-125 and E-126 required full subsection-body replacement. E-127 required deleting a heading range up to the next `Drawing` heading. E-128 required replacing a paragraph and its following line. These are reusable CSA edit shapes and should not require manual OOXML each time.
+
+Improved approach:
+Use `--engine docxengine` for non-table paragraph/range operations. The DocxEngine adapter now supports explicit through-ranges, heading-to-ending-sentence ranges, subsection body replacement, paragraph plus following line replacement, and delete-sections-up-to-heading operations. Keep the legacy engine for table-row edits.
+
+Validation:
+Framework tests passed with `17 passed` before the change and `18 passed` after adding Section 7 operation-shape tests. A temp-copy smoke test from the pre-E124 Section 7 backup applied E-124, E-125, E-126, E-127, and E-128 using `--engine docxengine`, returned `SECTION_COMPLETE`, added comments C125-C129 by `Wenzel Joubert`, and passed archive/XML/comment/table-row safety validation. The live DOCX was not mutated during the smoke test.
+
+## 2026-09-17 - Use DocxEngine table cell writes for supported CSA table edits
+
+Context:
+The framework already handled CSA table-row edits through the legacy XML engine, but `--engine docxengine` still blocked any record mentioning a table or `row beginning`.
+
+Problem observed:
+DocxEngine has table support (`set_cells`, insert/delete row or column, merge, style), but it addresses cells by table anchor and row/column coordinates. CSA change records describe tables by row labels and fields such as `Observed`, `Assessment`, or pipe-format row replacements, so a CSA mapping layer is still required.
+
+Cause:
+The earlier DocxEngine adapter delegated paragraph/range/list operations but had no row-label resolver, no column resolver, and no safe table-cell comment helper. Comments for table changes must be anchored inside a cell paragraph, never directly under `w:tr`.
+
+Improved approach:
+Resolve CSA table rows by reconstructing first-cell text, map supported fields to table columns, then call DocxEngine `table("set_cells", anchor="Tn", cells=[...])`. Add the Word comment with package-level OOXML inside the first changed cell paragraph and then run the normal comment-ID and table-row-comment-safety validators. Keep returning `BLOCKED` for ambiguous row labels, cell-count mismatches, unsupported fields, or unsupported operation shapes.
+
+Validation:
+Framework tests passed with `20 passed`. New tests cover DocxEngine pipe-format multi-row replacement and labelled `Observed`/`Assessment` table-cell replacement against an actual `.docx` package, including comment ID consistency and table-row comment safety checks.
+
+## 2026-09-17 - Treat equivalent CSA range wording as framework-supported
+
+Context:
+Section 8 E-129 blocked with the old generic message `Complex range or table operation requires controlled manual OOXML handling`.
+
+Problem observed:
+The approved record was deterministic: it supplied a `Where` start anchor, a `Do` instruction saying `Replace the introductory text through the bullets ending with`, an explicit end anchor, and replacement text. The framework blocked only because the parser recognised narrower range phrases such as `replace the content beginning ... through ... with` and `Replace this sentence and all bullets through`.
+
+Cause:
+The classifier was too phrase-specific. The document operation was standard bounded range replacement, but the parser treated equivalent wording as unsupported.
+
+Improved approach:
+Range classification should prefer structural intent over one exact phrase. If a record contains a unique `Where` anchor, a `through ... ending with` end anchor, and a `Text` replacement block, route it to the range replacement engine and let normal uniqueness checks decide whether it is safe.
+
+Validation:
+Added a regression test for the E-129 wording. Framework tests passed with `21 passed`.
+
+## 2026-09-17 - Stop letting legacy classifier drive normal framework runs
+
+Context:
+After adding DocxEngine support, normal framework runs could still default to the older legacy engine unless `--engine docxengine` was passed explicitly.
+
+Problem observed:
+The legacy engine contains older defensive phrase blockers such as `following`, `through`, `bullets`, and `assessment wording`. Those blockers were useful before DocxEngine coverage improved, but they now create artificial `BLOCKED` results for standard CSA edits that DocxEngine can handle.
+
+Cause:
+The framework mixed two responsibilities: transaction safety and edit interpretation. Transaction safety is still valuable, but the old edit interpreter should no longer be the default path.
+
+Improved approach:
+Default the CLI to DocxEngine. Treat legacy as an explicit recovery/testing path only. Keep parser logic structural where possible: classify edits by extracted anchors, ranges, replacement text, row labels and table coordinates rather than exact wording variants.
+
+Validation:
+Framework tests passed with `21 passed` after switching the CLI default to `docxengine` and replacing the range phrase list with a generic `Where` + `Do through` + `Text` parser.
+
+## 2026-09-17 - E-140 non-standard disambiguation: start anchor duplicated across subsections
+
+Context:
+Section 8, E-140 bounded range replacement. Start anchor "While the design defines a segmented architecture with controlled conduits" appears in BOTH 8.3.1 Findings (para ~1525) and 8.3 Assessment (para ~1562); end anchor "Availability of externally hosted services" is unique (para ~1530). The docxengine adapter's range path correctly refuses the ambiguous start -> "Range boundaries not unique or out of order" -> BLOCKED.
+
+Problem observed:
+Framework blocks the edit because the start sentence is non-unique AND the naive disambiguation (candidate whose section region contains the end anchor) matched BOTH subsections, because the first match's section region also spanned the second candidate.
+
+Cause:
+The first start candidate's enclosing section end (1531) was past the end anchor (1530), so a loose "end <= section_end" test accepted both. The distinguishing fact is that the end anchor must sit AFTER the candidate's own heading AND before that section's end.
+
+Improved approach:
+User instruction: "if this is due to non standard disambiguation then just fix the document." Use a manual OOXML range script (pattern: manual_e140.py) that disambiguates by choosing (and verifying uniqueness of) the start candidate whose enclosing heading body satisfies h_index < s < end_index <= section_end. This isolated 8.3.1 Findings. Then: create_backup -> find range -> assert no heading inside -> DocumentEditor._replace_paragraph_range(old_range, markdown_to_paragraph_texts(record.text), record, author, initials, add_new_comment=True) -> validate -> update run-state + report. Dry-run every time; abort on any non-unique/containment/ordering violation. The 8.3 Assessment copy of the sentence is left untouched and preserved.
+
+Validation:
+After the run the new two-paragraph text appears once (para 749/750), all four old bullets/lines are gone, the start sentence now appears exactly once (the 8.3 Assessment duplicate at 8.3 remains), comment id=140 is present in word/comments.xml, and all 7 validators Pass.
