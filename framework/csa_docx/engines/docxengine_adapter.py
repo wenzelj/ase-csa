@@ -18,6 +18,7 @@ from csa_docx.ooxml import (
     _extract_range_spec,
     _extract_row_labels,
     _has_anchor_plus_bullets_replacement,
+    _has_full_table_replacement,
     _has_range_replacement,
     _has_section_body_replacement,
     _values_for_row,
@@ -26,6 +27,7 @@ from csa_docx.ooxml import (
     normalise_text,
     paragraph_text,
     qn,
+    spelling_normalised_text,
 )
 
 VENDOR_DIR = Path(__file__).resolve().parents[2] / "vendor"
@@ -33,14 +35,83 @@ if VENDOR_DIR.exists() and str(VENDOR_DIR) not in sys.path:
     sys.path.insert(0, str(VENDOR_DIR))
 
 try:
-    from docxengine import Document
+    from docxengine import Document, build_anchor_index
     from docxengine.errors import ToolError
 except Exception as exc:  # pragma: no cover - exercised only when dependency is absent.
     Document = None  # type: ignore[assignment]
+    build_anchor_index = None  # type: ignore[assignment]
     ToolError = Exception  # type: ignore[assignment]
     IMPORT_ERROR = exc
 else:
     IMPORT_ERROR = None
+
+try:
+    import mistune
+except Exception:  # pragma: no cover - vendored dependency missing.
+    mistune = None  # type: ignore[assignment]
+
+try:
+    from rapidfuzz import fuzz as _rapidfuzz_fuzz
+except Exception:  # pragma: no cover - vendored dependency missing or platform mismatch.
+    _rapidfuzz_fuzz = None
+
+# Minimum similarity (0-100) for a fuzzy row-label fallback match, and the
+# minimum margin the best match must lead the second-best by. Both are
+# deliberately conservative: a close call is left BLOCKED rather than guessed.
+_FUZZY_ROW_LABEL_THRESHOLD = 85
+_FUZZY_ROW_LABEL_MARGIN = 10
+
+
+def _label_similarity(a: str, b: str) -> float:
+    """Similarity score 0-100 between two normalised row labels.
+
+    Prefers the vendored rapidfuzz (fast, well-tested string similarity);
+    falls back to the standard-library difflib if rapidfuzz did not import
+    (e.g. its vendored wheel doesn't match the running platform/interpreter).
+    """
+    if _rapidfuzz_fuzz is not None:
+        return _rapidfuzz_fuzz.ratio(a, b)
+    import difflib
+
+    return difflib.SequenceMatcher(None, a, b).ratio() * 100
+
+
+def _inline_text(node: dict) -> str:
+    node_type = node.get("type")
+    if node_type == "linebreak":
+        return "\n"
+    if node_type in ("text", "codespan"):
+        return node.get("raw", "")
+    return "".join(_inline_text(child) for child in node.get("children", []) or [])
+
+
+def _cell_text(cell: dict) -> str:
+    return normalise_text("".join(_inline_text(child) for child in cell.get("children", []) or []))
+
+
+def _parse_markdown_table(text: str) -> list[list[str]] | None:
+    """Parse one Markdown pipe table (header row + data rows) from ``text``.
+
+    Uses the vendored mistune parser (with its table plugin) instead of a
+    hand-rolled regex, so escaped pipes, inline formatting inside cells, and
+    alignment markers are all handled the same way a Markdown renderer would.
+    Returns ``None`` when no table block is found or mistune is unavailable.
+    """
+    if mistune is None:
+        return None
+    markdown = mistune.create_markdown(renderer=None, plugins=["table"])
+    for token in markdown(text):
+        if token.get("type") != "table":
+            continue
+        rows: list[list[str]] = []
+        for part in token.get("children", []) or []:
+            if part.get("type") == "table_head":
+                rows.append([_cell_text(cell) for cell in part.get("children", []) or []])
+            elif part.get("type") == "table_body":
+                for row in part.get("children", []) or []:
+                    rows.append([_cell_text(cell) for cell in row.get("children", []) or []])
+        return rows or None
+    return None
 
 
 class DocxEngineEditor:
@@ -60,6 +131,8 @@ class DocxEngineEditor:
 
     def apply_change(self, record: ChangeRecord, author: str, initials: str) -> EditResult:
         where_lower = record.where.lower()
+        if _has_full_table_replacement(record):
+            return self._apply_full_table_replacement(record, author, initials)
         if "row beginning" in where_lower or "table" in where_lower:
             return self._apply_table_row_change(record, author, initials)
         if _has_section_body_replacement(record) or "replace the entire subsection" in record.action.lower():
@@ -181,8 +254,8 @@ class DocxEngineEditor:
             replacement_text = record.text
 
         paragraphs = self.doc.paragraphs()
-        start_index = self._unique_paragraph_index(start_anchor, paragraphs, allow_prefix=True)
-        end_index = self._unique_paragraph_index(end_anchor, paragraphs, allow_prefix=True, allow_suffix=True)
+        start_index = self._scoped_unique_index(start_anchor, paragraphs, allow_prefix=True)
+        end_index = self._scoped_unique_index(end_anchor, paragraphs, allow_prefix=True, allow_suffix=True)
         if start_index is None or end_index is None or end_index < start_index:
             return EditResult(record.edit_id, "BLOCKED", "Range boundaries not unique or out of order", start_anchor)
         return self._replace_range_by_index(
@@ -368,18 +441,193 @@ class DocxEngineEditor:
             comment_id,
         )
 
+    def _apply_full_table_replacement(self, record: ChangeRecord, author: str, initials: str) -> EditResult:
+        """Wholesale 'replace the table content' edit: overwrite every cell of an
+        existing table positionally from a parsed replacement table, rather than
+        matching rows by a label that the edit may itself be renaming.
+        """
+        if not record.text:
+            return EditResult(record.edit_id, "BLOCKED", "Table replacement has no Text")
+
+        new_rows = _parse_markdown_table(record.text)
+        if not new_rows:
+            return EditResult(record.edit_id, "BLOCKED", "Could not parse a replacement table from Text")
+
+        table_anchor, comment_anchor, reason = self._locate_table_for_replacement(record)
+        if table_anchor is None:
+            return EditResult(record.edit_id, "BLOCKED", reason or "Could not locate the target table")
+
+        existing_rows = dict(self._table_rows()).get(table_anchor)
+        if existing_rows is None:
+            return EditResult(record.edit_id, "BLOCKED", f"Could not read existing table: {table_anchor}", table_anchor)
+
+        new_dims = (len(new_rows), len(new_rows[0]) if new_rows else 0)
+        old_dims = (len(existing_rows), len(existing_rows[0]) if existing_rows else 0)
+        if new_dims != old_dims or any(len(row) != new_dims[1] for row in new_rows):
+            return EditResult(
+                record.edit_id,
+                "BLOCKED",
+                f"Replacement table is {new_dims[0]}x{new_dims[1]}; existing table {table_anchor} is "
+                f"{old_dims[0]}x{old_dims[1]} - refusing to reshape a table without explicit row/column "
+                "insert instructions",
+                table_anchor,
+            )
+
+        cells = [
+            {"r": r, "c": c, "text": value}
+            for r, row in enumerate(new_rows)
+            for c, value in enumerate(row)
+        ]
+        try:
+            self.doc.table("set_cells", anchor=table_anchor, cells=cells, author=author)
+            comment_id = self._add_comment(comment_anchor, record, author, initials) if comment_anchor else None
+        except ToolError as exc:
+            return EditResult(record.edit_id, "BLOCKED", f"DocxEngine table error: {exc}", table_anchor)
+
+        return EditResult(
+            record.edit_id,
+            "APPLIED",
+            f"Replaced table content ({new_dims[0]}x{new_dims[1]}) with DocxEngine: {table_anchor}",
+            table_anchor,
+            comment_id,
+        )
+
+    def _locate_table_for_replacement(
+        self, record: ChangeRecord
+    ) -> tuple[str | None, str | None, str | None]:
+        """Return ``(table_anchor, comment_anchor, reason_if_not_found)``.
+
+        Tries the approved caption text first (scoped by section heading, same
+        as paragraph anchors); when that caption isn't literal document text
+        (0 matches - the approved change record may be using a generic template
+        caption rather than quoting this section), falls back to the table
+        being the single, unambiguous table within the section-heading-scoped
+        paragraph range. Never guesses among multiple candidates either way.
+        """
+        caption = find_anchor(record.where)
+        paragraphs = self.doc.paragraphs()
+
+        if caption:
+            caption_matches = self._matching_paragraphs(caption, record.where, paragraphs)
+            if len(caption_matches) == 1:
+                table_anchor = self._first_table_after(caption_matches[0].anchor)
+                if table_anchor:
+                    return table_anchor, caption_matches[0].anchor, None
+            elif len(caption_matches) > 1:
+                return None, None, f"Table caption anchor match count was {len(caption_matches)}; expected 1"
+
+        bounds = self._section_paragraph_bounds(paragraphs)
+        if bounds is None:
+            return None, None, f"Could not locate table caption '{caption}' and no section heading scope was available"
+        start_index, end_index = bounds
+        tables = self._tables_in_section(start_index, end_index, paragraphs)
+        if len(tables) == 1:
+            comment_anchor = self._paragraph_before_table(tables[0]) or paragraphs[start_index].anchor
+            return tables[0], comment_anchor, None
+        if not tables:
+            return None, None, f"Could not locate table caption '{caption}' and no table was found within the scoped section"
+        return None, None, f"Could not locate table caption '{caption}' and {len(tables)} tables exist within the scoped section"
+
+    def _section_paragraph_bounds(self, paragraphs=None) -> tuple[int, int] | None:
+        """(start_index, end_index) bounding the body paragraphs under
+        self.section_heading, mirroring the heading lookup in _scope_matches."""
+        if not self.section_heading:
+            return None
+        paragraphs = paragraphs if paragraphs is not None else self.doc.paragraphs()
+        heading_indexes = [
+            index
+            for index, paragraph in enumerate(paragraphs)
+            if _is_heading(paragraph)
+            and spelling_normalised_text(self.section_heading) in spelling_normalised_text(paragraph.text)
+        ]
+        if not heading_indexes:
+            return None
+        first_heading = heading_indexes[-1]
+        heading_level = _heading_level(paragraphs[first_heading])
+        next_heading = len(paragraphs)
+        for index in range(first_heading + 1, len(paragraphs)):
+            level = _heading_level(paragraphs[index])
+            if level is not None and heading_level is not None and level <= heading_level:
+                next_heading = index
+                break
+        return first_heading, next_heading
+
+    def _first_table_after(self, paragraph_anchor: str) -> str | None:
+        if build_anchor_index is None:
+            return None
+        entries = build_anchor_index(self.doc._doc.package)
+        found = False
+        for entry in entries:
+            if found and entry.kind == "table":
+                return entry.anchor
+            if entry.anchor == paragraph_anchor:
+                found = True
+        return None
+
+    def _paragraph_before_table(self, table_anchor: str) -> str | None:
+        if build_anchor_index is None:
+            return None
+        entries = build_anchor_index(self.doc._doc.package)
+        previous_paragraph: str | None = None
+        for entry in entries:
+            if entry.anchor == table_anchor:
+                return previous_paragraph
+            if entry.kind == "paragraph":
+                previous_paragraph = entry.anchor
+        return None
+
+    def _tables_in_section(self, start_index: int, end_index: int, paragraphs) -> list[str]:
+        if build_anchor_index is None:
+            return []
+        entries = build_anchor_index(self.doc._doc.package)
+        start_anchor = paragraphs[start_index].anchor
+        end_anchor = paragraphs[end_index].anchor if end_index < len(paragraphs) else None
+        tables: list[str] = []
+        in_range = False
+        for entry in entries:
+            if entry.anchor == start_anchor:
+                in_range = True
+                continue
+            if end_anchor is not None and entry.anchor == end_anchor:
+                break
+            if in_range and entry.kind == "table":
+                tables.append(entry.anchor)
+        return tables
+
     def _find_unique_table_row(self, row_label: str) -> "TableRowRef | None":
-        matches: list[TableRowRef] = []
         wanted = normalise_text(row_label)
+        matches: list[TableRowRef] = []
+        all_rows: list[TableRowRef] = []
         for table_anchor, rows in self._table_rows():
             headers = rows[0] if rows else []
             for row_index, cell_texts in enumerate(rows):
                 if not cell_texts:
                     continue
+                ref = TableRowRef(table_anchor, row_index, headers, cell_texts)
+                all_rows.append(ref)
                 first_cell = normalise_text(cell_texts[0])
                 if first_cell == wanted or first_cell.startswith(wanted):
-                    matches.append(TableRowRef(table_anchor, row_index, headers, cell_texts))
-        return matches[0] if len(matches) == 1 else None
+                    matches.append(ref)
+        if len(matches) == 1:
+            return matches[0]
+        if matches:
+            return None  # already ambiguous on exact/prefix match - don't fuzzy-rescue a close call
+
+        # No exact/prefix match anywhere: try a fuzzy fallback for minor wording
+        # differences, but only accept a clear, unambiguous best match.
+        scored = [
+            (_label_similarity(wanted.lower(), normalise_text(ref.cell_texts[0]).lower()), ref)
+            for ref in all_rows
+        ]
+        scored = [item for item in scored if item[0] >= _FUZZY_ROW_LABEL_THRESHOLD]
+        if not scored:
+            return None
+        scored.sort(key=lambda item: item[0], reverse=True)
+        if len(scored) == 1:
+            return scored[0][1]
+        if scored[0][0] - scored[1][0] >= _FUZZY_ROW_LABEL_MARGIN:
+            return scored[0][1]
+        return None
 
     def _table_rows(self) -> list[tuple[str, list[list[str]]]]:
         package = self.doc._doc.package
@@ -503,39 +751,100 @@ class DocxEngineEditor:
             package.set_part(content_types_part, ET.tostring(ct_root, encoding="utf-8", xml_declaration=True))
         self.doc._doc.mark_dirty()
 
+    def _section_scope(self, paragraphs=None) -> tuple[int, int, int] | None:
+        """Return ``(root_heading_index, body_start, body_end)`` for the run's
+        section, or ``None`` when no scope is defined.
+
+        The scope root is the **top-level** heading whose text matches
+        ``self.section_heading`` - the smallest heading level among all matching
+        headings (the last one on any tie). Anchoring on the last match (the old
+        ``heading_indexes[-1]`` behaviour) could land on an H2/H3 sub-heading such
+        as "Observed Security Controls", which silently narrows the section body
+        to that sub-heading's span and leaves the real top-level section body
+        unsreachable. Scoping to the top-level heading is the correct interpretation
+        of a "Section N" edit and also resolves anchors that are globally
+        duplicated (e.g. a leftover orphan copy of a section) to the one inside the
+        intended section.
+        """
+        if not self.section_heading:
+            return None
+        paragraphs = paragraphs if paragraphs is not None else self.doc.paragraphs()
+        wanted = spelling_normalised_text(self.section_heading)
+        candidates: list[tuple[int, int | None]] = []
+        for index, paragraph in enumerate(paragraphs):
+            if not _is_heading(paragraph):
+                continue
+            if wanted in spelling_normalised_text(paragraph.text):
+                candidates.append((index, _heading_level(paragraph)))
+        if not candidates:
+            return None
+        finite = [(index, level) for index, level in candidates if level is not None]
+        if not finite:
+            return None
+        top_level = min(level for _, level in finite)
+        root_index = max(index for index, level in finite if level == top_level)
+        heading_level = _heading_level(paragraphs[root_index])
+        body_end = len(paragraphs) - 1
+        for index in range(root_index + 1, len(paragraphs)):
+            level = _heading_level(paragraphs[index])
+            if level is not None and heading_level is not None and level <= heading_level:
+                body_end = index - 1
+                break
+        return root_index, root_index + 1, body_end
+
+    def _scoped_unique_index(self, anchor_text: str, paragraphs, *, allow_prefix: bool = False, allow_suffix: bool = False) -> int | None:
+        """Resolve an anchor to a unique paragraph index.
+
+        Uses a globally-unique match when one exists (existing behaviour). When
+        the anchor is globally duplicated, falls back to resolving it within the
+        run's section body, so a "Section N" edit is disambiguated to the intended
+        section rather than blocked. Still returns ``None`` when there is no
+        unique resolution - never guessing.
+        """
+        index = self._unique_paragraph_index(anchor_text, paragraphs, allow_prefix=allow_prefix, allow_suffix=allow_suffix)
+        if index is not None:
+            return index
+        scope = self._section_scope(paragraphs)
+        if scope is None:
+            return None
+        root_index, body_start, body_end = scope
+        variants = _anchor_variants(anchor_text)
+        matches = [
+            index
+            for index in range(body_start, body_end + 1)
+            if any(
+                normalise_text(paragraphs[index].text).startswith(variant)
+                if allow_prefix
+                else normalise_text(paragraphs[index].text).endswith(variant)
+                if allow_suffix
+                else normalise_text(paragraphs[index].text) == variant
+                for variant in variants
+            )
+        ]
+        return matches[0] if len(matches) == 1 else None
+
     def _matching_paragraphs(self, anchor_text: str, where: str, paragraphs=None):
         paragraphs = paragraphs if paragraphs is not None else self.doc.paragraphs()
         variants = _anchor_variants(anchor_text)
+        scope = self._section_scope(paragraphs)
+        scope_anchors: set[str] | None = None
+        if scope is not None:
+            _, body_start, body_end = scope
+            scope_anchors = {paragraphs[index].anchor for index in range(body_start, body_end + 1)}
+
+        def apply_scope(matches):
+            if scope_anchors is None or len(matches) <= 1:
+                return matches
+            return [match for match in matches if match.anchor in scope_anchors]
+
         exact_matches = [p for p in paragraphs if normalise_text(p.text) in variants]
         if exact_matches:
-            return self._scope_matches(exact_matches)
+            return apply_scope(exact_matches)
         if "beginning exactly" in where.lower() or "text beginning" in where.lower() or "words beginning" in where.lower():
             prefix_matches = [p for p in paragraphs if any(normalise_text(p.text).startswith(variant) for variant in variants)]
-            return self._scope_matches(prefix_matches)
+            return apply_scope(prefix_matches)
         contains_matches = [p for p in paragraphs if any(variant in normalise_text(p.text) for variant in variants)]
-        return self._scope_matches(contains_matches)
-
-    def _scope_matches(self, matches):
-        if not self.section_heading or len(matches) <= 1:
-            return matches
-        paragraphs = self.doc.paragraphs()
-        heading_indexes = [
-            index
-            for index, paragraph in enumerate(paragraphs)
-            if _is_heading(paragraph) and self.section_heading in normalise_text(paragraph.text)
-        ]
-        if not heading_indexes:
-            return matches
-        first_heading = heading_indexes[-1]
-        heading_level = _heading_level(paragraphs[first_heading])
-        next_heading = len(paragraphs)
-        for index in range(first_heading + 1, len(paragraphs)):
-            level = _heading_level(paragraphs[index])
-            if level is not None and heading_level is not None and level <= heading_level:
-                next_heading = index
-                break
-        scoped_anchors = {paragraphs[index].anchor for index in range(first_heading + 1, next_heading)}
-        return [match for match in matches if match.anchor in scoped_anchors]
+        return apply_scope(contains_matches)
 
     def _following_content_end(self, paragraphs, anchor_index: int, count: int) -> int | None:
         found = 0

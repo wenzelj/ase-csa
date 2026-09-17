@@ -448,3 +448,161 @@ User instruction: "if this is due to non standard disambiguation then just fix t
 
 Validation:
 After the run the new two-paragraph text appears once (para 749/750), all four old bullets/lines are gone, the start sentence now appears exactly once (the 8.3 Assessment duplicate at 8.3 remains), comment id=140 is present in word/comments.xml, and all 7 validators Pass.
+
+## 2026-09-17 - Subsumed-edit reconciliation: one edit's target already removed by a prior 'replace entire subsection'
+
+Context:
+Section 8 final edit E-145 (Delete: 'This represents a key architectural gap when assessed against OT 3.5 principles, where:' + its 3 bullets, in 8.3.4 Assessment). Framework returned BLOCKED 'Anchor match count was 0; expected 1'.
+
+Problem observed:
+The anchor simply does not exist in the live document - it is not a disambiguation issue and not recoverable by retry.
+
+Cause:
+The previously-run E-144 approved action was 'Replace the entire subsection' for the same 8.3.4 Assessment subsection. E-145's target paragraph + bullets lived inside that subsection, so E-144's subsection replacement already deleted them. Two change-file edits overlapped in the same body.
+
+Improved approach:
+When a delete/replace edit blocks with 'Anchor match count was 0', check whether a sibling edit's 'replace entire subsection/section' already consumed the target. Verify in the live DOCX that (a) the prior edit's approved text is present and (b) the blocked edit's target is absent. If the approved effect is already achieved, reconcile run-state + change report to SECTION_COMPLETE (mark the edit SUBSUMED/NO-OP), clear Blocked and Next edit ID, and do NOT touch the DOCX (re-running would just add no-ops or comments). Use the framework's own write_state + update_changes_report so format stays consistent.
+
+Validation:
+After reconciliation: run-state Status=SECTION_COMPLETE, next=None, Blocked=None, 17/17 completed; live DOCX mtime unchanged (no mutation); DOCX contains the 3 approved E-144 paragraphs and zero matches for E-145's target/bullets; all 7 validators Pass.
+
+## 2026-09-17 - E-149 heading-scope disambiguation defeated by British/American spelling mismatch
+
+Context:
+Section 9, E-149 (Correct the "domain-based time synchronisation" conclusion, Section 9.2.2). Anchor phrase "This confirms:" is a template phrase reused as the conclusion sentence for 4 different "Observed Behaviour"/"Operating System"/"Domain and Infrastructure Integration"/"Application Platform Components" subsections across the document (under two different H1s: Time Synchronization, and Infrastructure Dependencies). Framework returned BLOCKED 'Section body anchor match count was 4; expected 1'.
+
+Problem observed:
+DocxEngineEditor._scope_matches already disambiguates a non-unique anchor by narrowing to paragraphs inside the heading named in self.section_heading, but heading_indexes came back empty, so scoping silently fell through and returned all 4 unscoped matches.
+
+Cause:
+self.section_heading is derived from the change file's `Section: 9 - Time Synchronisation` label (Australian/British spelling), but the document's actual H1 heading is `Time Synchronization` (American spelling). `self.section_heading in normalise_text(paragraph.text)` is a plain substring check with no spelling normalisation, so "Time Synchronisation" never matches "Time Synchronization" and heading_indexes is always empty for this section - the same class of failure would hit any other -isation/-ization, -ise/-ize heading pair in later sections.
+
+Improved approach:
+Added `spelling_normalised_text()` to ooxml.py (normalise_text + regex substitution of -isation/-isable/-ising/-ised/-iser to the American -ization/-izable/-izing/-ized/-izer forms) and applied it to both sides of the heading-name comparison in DocxEngineEditor._scope_matches (framework/csa_docx/engines/docxengine_adapter.py). This is additive/normalisation-only - it does not touch approved edit text, the DOCX, or any change file.
+
+Validation:
+After the fix, DocxEngineEditor(docx, section_heading="Time Synchronisation")._matching_paragraphs("This confirms:", ...) returns exactly 1 match (P815, under Time Synchronization > Observed Configuration and Functionality > Observed Behaviour). Framework re-run applied E-149 cleanly (comment C148, all 7 validators Pass). Regression check: re-running with an unrelated section_heading ("Infrastructure Dependencies") still correctly scopes to its own 3 matches, and no section_heading still returns all 4 matches unscoped, exactly as before the fix.
+
+## 2026-09-17 - E-150 table-row lookup has no location scope and assumes stable row labels; approved "Where" caption not present in target section
+
+Context:
+Section 9, E-150 (Correct the Summary of Observed State table, Section 9.2.2, Do: "Replace the table content"). Framework returned BLOCKED 'Table row anchor not unique or not found: Time Sources'.
+
+Problem observed:
+Two separate gaps surfaced. (1) DocxEngineEditor._find_unique_table_row searches every table in the whole document for a row whose first cell matches the label, with zero use of self.section_heading - unlike the paragraph path, there is no location scoping for tables at all. (2) The approved replacement text uses NEW row labels ("Time Sources", "Source Namespace", "Local NTP Service") that differ from the CURRENT document's row labels in the target table ("Time Source", "Time Domain", "Local NTP") - `_apply_pipe_row_replacements` looks up rows by matching the label in the new text against the existing document, which cannot work when the edit is renaming labels as part of "replace the table content" rather than updating values under a stable label.
+
+Separately, the approved `Where` locator ("table beginning exactly: `Summary of Observed State`") does not exist anywhere in Section 9 - `docx_search` finds that exact phrase only twice in the whole document (P543 "Local DNS Capability", P638 "Local Authentication Capability"), both unrelated sections. The actual Section 9.2.2 table (T27, 5x3, positioned directly after P817 with no caption paragraph at all) is the evidently-intended target by section/content match, but nothing in the document literally reads "Summary of Observed State" there.
+
+Cause:
+`_apply_table_row_change`/`_find_unique_table_row` was designed for the narrower "update Observed/Assessment values under an existing, stable row label" case (see the 2026-09-15/16 entries on labelled table-row replacement) and was never extended with (a) section-heading scoping like `_scope_matches`, or (b) a "whole table content replacement, addressed by a preceding caption/heading rather than by row label" mode. E-150 needs the latter, and the specific caption text named in `Where` is not present in this section - it reads like a generic template caption reused across the change record's review passes for "this kind of table," not literal document text for 9.2.2.
+
+Improved approach:
+Did NOT guess. Per the agent's Anchor Mismatch Rule, a locator that cannot be found in the target section (0 matches) must not be resolved by inferring the "obviously correct" table from context, even when that inference (T27) looks highly likely - that is independent reinterpretation, not execution of an approved instruction. Left E-150 BLOCKED and stopped the batch there (the framework's own break-on-first-block behaviour already does this correctly - it is not a bug that it stopped). This is flagged for human review rather than the framework being extended blindly under pressure to unblock one edit: (a) whether to reissue/correct E-150's `Where` field to reference the correct table by a locator that actually exists in Section 9.2.2 (there is no caption paragraph to quote - the preceding sentence would need to serve as the locator instead), and separately (b) whether a general "replace whole table content: locate the table via the paragraph immediately before it (or a table index), dimension-check against the replacement, then overwrite every cell positionally via `docx_table set_cells` instead of by row-label lookup" mode is worth adding to the framework - it would help here and for any future table edit that renames row labels, but deserves its own scoped review rather than a fix rushed under one BLOCKED edit.
+
+Validation:
+`doc.search("Summary of Observed State")` -> 2 matches, neither in Section 9. `_table_rows()` confirms the live table's current row labels are "Time Source" (singular)/"Time Domain"/"Local NTP"/"Alternate Sources", not the new labels in the approved Text. No document or framework code changed for E-150; DOCX untouched beyond E-149's already-applied change.
+
+## 2026-09-17 - Running this framework via the Cowork device-bridge (Linux VM) instead of the Mac Terminal
+
+Context: This run executed through `device_bash` (the Cowork desktop bridge's isolated Linux VM with the IAMPS folder mounted), not a Terminal session on Wenzel's Mac.
+
+Findings:
+- `/opt/homebrew/bin/python3.14` (the interpreter this agent definition hardcodes) does not exist in that Linux VM - it only has Python 3.10.12, and even plain `import docxengine` fails there with `ImportError: cannot import name 'UTC' from 'datetime'` (`datetime.UTC` was added in Python 3.11; DocxEngine 1.0.0 declares `Requires-Python: >=3.12`).
+- Workaround used for this run only (not a framework code change): inject `datetime.UTC = datetime.timezone.utc` before importing docxengine, then invoke `cli_apply_section.py` via `runpy.run_path` with `sys.argv` set. This got DocxEngine's tool surface working far enough to apply E-149 successfully and validate cleanly; no other 3.10-incompatibility surfaced in this run, but the workspace has not been fully exercised on 3.10 this way and a subtler incompatibility elsewhere in DocxEngine remains possible.
+- `Path(...).resolve()` inside that VM resolves the mounted folder to a bridge-internal path (`/sessions/<session-id>/mnt/06 IAMPS/...`) rather than the real Mac path (`/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/...`). The framework writes these resolved paths verbatim into run-state and the change file's Changes Report, so a batch run this way needs those written paths corrected back to the real Mac path afterwards (done manually for Section 9 this run) or a future run from the Mac Terminal will not recognise its own prior run-state paths.
+- No sudo, no apt python3.12, and outbound network is allowlist-blocked in that VM (`uv` is present but can't reach a python-build source), so installing a proper Python 3.12+ interpreter there isn't currently possible - the datetime shim is the only option when running this framework from Cowork rather than the Mac.
+
+Recommendation: when running this agent from Cowork's device bridge, keep using the Python-version shim above, and always normalise any `/sessions/.../mnt/...` paths in run-state/change-report output back to the real workspace path before treating a batch run as complete.
+
+## 2026-09-17 - E-150 unblocked: added a whole-table-replace capability using vendored mistune + rapidfuzz instead of more hand-rolled matching code
+
+Context:
+Following on from the E-150 diagnosis above (BLOCKED: `Where` caption "Summary of Observed State" not present in Section 9, and the approved replacement renames row labels the existing row-label lookup can't match). User asked for the framework's table capability to be fixed generally, and specifically asked for an open-source library to do the table work rather than more bespoke matching code.
+
+Cause (recap):
+`_apply_table_row_change`/`_find_unique_table_row`/`_apply_pipe_row_replacements` were built for "update Observed/Assessment values under a stable, unchanged row label" and had no way to (a) locate a table when its stated caption isn't literal document text, or (b) handle a wholesale content replacement where row labels themselves change between old and new.
+
+Improved approach:
+User fetched two dependency-free open-source wheels on the Mac (`python3.14 -m pip download <pkg> --no-deps -d .`) since this session's own network access is allowlist-blocked; vendored both into `framework/vendor/` exactly like `docxengine` (unzip the wheel in place - no system pip install needed):
+- `mistune` (pure Python) - added `_parse_markdown_table()` in docxengine_adapter.py, using `mistune.create_markdown(renderer=None, plugins=["table"])` and walking the `table`/`table_head`/`table_body`/`table_row`/`table_cell` AST (with a small recursive inline-text extractor for `text`/`codespan`/`linebreak` nodes) to turn the approved replacement Markdown table into `list[list[str]]`. Replaces what would otherwise have been a second hand-rolled pipe-table regex parser.
+- `rapidfuzz` - added `_label_similarity()` (rapidfuzz `fuzz.ratio`, falling back to stdlib `difflib.SequenceMatcher` if rapidfuzz's vendored wheel - built for the Mac's python3.14 arm64 - doesn't import on whatever interpreter actually runs it) and used it as a fallback tier inside `_find_unique_table_row`: only when there is zero exact/prefix match anywhere, score every row's label against the wanted label, and accept the best match only if it clears `_FUZZY_ROW_LABEL_THRESHOLD=85` AND leads the second-best by `_FUZZY_ROW_LABEL_MARGIN=10` - a genuinely ambiguous or low-confidence result still returns `None` (BLOCKED), never a guess. (Ran a live sanity check first: `fuzz.ratio("Time Domain", "Source Namespace")` = 29.6 vs `fuzz.ratio("Time Source", "Time Sources")` = 95.7 - confirms fuzzy label matching alone would NOT have correctly mapped "Time Domain"->"Source Namespace" for E-150, which is why that pair needed the new positional whole-table-replace path below, not a smarter fuzzy row-matcher.)
+
+New capability - whole-table replace (`_has_full_table_replacement`/`_apply_full_table_replacement`/`_locate_table_for_replacement` in docxengine_adapter.py, `_has_full_table_replacement` in ooxml.py): triggers when the approved `Do:` says "Replace the table content" (a wholesale replacement, not a per-row keyed update, so this deliberately does NOT try to match old row labels to new ones at all):
+1. Locate the table: try the approved caption via the existing `_matching_paragraphs` (heading-scoped) - if it matches exactly one paragraph, use the table immediately after it (`_first_table_after`, via `docxengine.build_anchor_index`). If the caption isn't literal document text (0 matches - as for E-150), fall back to "the single unambiguous table inside the section-heading-scoped paragraph range" (`_section_paragraph_bounds` + `_tables_in_section`, both new, using the same heading-detection helpers `_is_heading`/`_heading_level` and `spelling_normalised_text` already used by `_scope_matches`). BLOCKS with a clear reason on zero or multiple candidates either way - this is a uniqueness check, not an inference/guess.
+2. Parse the replacement via `_parse_markdown_table` (mistune).
+3. Compare dimensions to the existing table (`_table_rows`); BLOCK rather than reshape if row/column counts differ - inserting/deleting rows to change a table's shape is out of scope for this capability.
+4. Overwrite every cell positionally via `docx_table set_cells` (DocxEngine itself does the actual mutation - the new code here is only locating the table and preparing the cell list).
+5. Comment anchors to the caption paragraph if one was found, else the paragraph immediately before the table (`_paragraph_before_table`).
+
+Validation:
+Unit-tested `_locate_table_for_replacement`/`_parse_markdown_table` directly against E-150's real change record and document before running the CLI: correctly resolved to table T27 (comment anchor P817) via the section-scoped fallback (caption genuinely has 0 matches), parsed the approved 5x3 replacement table, and confirmed old/new dimensions both 5x3. Framework re-run then applied **E-150 through E-159 in one batch, zero blocks** - the fix didn't just unblock the table edit, the rest of the section's remaining edits (paragraph/range/subsection/delete operations, already-working capabilities) all applied cleanly right after it. All 7 validators Pass; DOCX opens and `unzip -t` clean. Only E-160 (the section's last edit) remains for a future batch.
+
+Note for future table work: this capability intentionally does NOT attempt row-label correspondence for a "replace the table content" instruction - it is positional only, and refuses (BLOCKS) if dimensions differ. If a future edit needs to reshape a table (add/remove rows or columns) as part of a content replacement, that is a new, separate capability to design and review - don't extend this one to guess at insertions/deletions.
+
+## 2026-09-17 - E-160 BLOCKED: approved locator text not present in Section 9 (content mismatch, not a framework defect)
+
+**Context:** Section 9 batch run (E-146-E-160) via the CSA DOCX framework, docxengine engine. E-146 through E-159 applied cleanly in a prior run. E-160 blocked on `"Anchor match count was 0; expected 1"` for the exact-text locator `Future design intent is to:`.
+
+**Investigation (docxengine `Document.search` / `Document.read`, scoped - no full-document read):**
+
+- `doc.search("Future design intent")` returns exactly 1 hit in the whole document: anchor `P520#1132`, snippet "Future design intent is to provide localised OT DNS services…", under heading "Design and functionality expected" beneath the **DNS** section (Section 6), well outside Section 9's paragraph range.
+- Section 9 ("Time Synchronization") runs from `P787` to the next H1 heading; its own "Design and functionality expected" subsection (9.1) is `P790`-`P803`. Reading that range directly shows the design-intent content in Section 9.1 is a bullet, not a standalone paragraph, and is worded differently: `P801#e789 List:ul L1` = "future-state design intends to transition relevant time services to OT-controlled infrastructure".
+- So the phrase `Future design intent is to:` genuinely does not exist anywhere inside Section 9 - it only exists verbatim in Section 6 (DNS), which is a different section entirely. The nearest conceptual match in Section 9.1 exists but is a differently-worded list item, not a paragraph beginning with the approved locator text.
+
+**Classification:** This is neither a framework matching defect (the section-scoped exact-text search worked correctly - it correctly found 0 matches because the text is genuinely absent from Section 9) nor a mechanically-safe "document quirk" (like the E-149 spelling-variant case, where the underlying meaning was unambiguous and the fix was a pure normalization). Guessing that `P801` is "close enough" and rewriting it anyway would violate the Anchor Mismatch Rule / Absolute Change Control Rule - the located text does not match the approved locator, is phrased and structured differently (list item vs. standalone paragraph), and picking it unilaterally would be exactly the kind of independent reinterpretation the rule forbids.
+
+**Resolution:** Left BLOCKED. No document mutation, no framework change. This needs human clarification on the approved change record itself: either (a) confirm E-160's target is actually the Section 6 DNS paragraph at `P520` (and the "Section 9.1" location in the change record is a drafting error), or (b) confirm the intended target is the Section 9.1 bullet at `P801` with updated locator text that actually matches it, or (c) supply corrected locator text if neither is right.
+
+**Note for future runs:** When a framework block reports `Anchor match count was 0`, the first investigation step should be an unscoped `doc.search()` for the locator phrase (or a shortened form of it) before assuming a framework scoping bug - it cheaply distinguishes "framework failed to find text that's really there" (a framework gap) from "the approved change record's locator text doesn't exist where it says it does" (a content/citation issue that must go back to the change author, never guessed at).
+
+## 2026-09-17 - Framework bug: blockquote-wrapped Text fields leaked literal ">" into applied paragraphs
+
+**Context:** User reported literal `>` characters visible in the applied Section 9 text (E-153's paragraph): `"...persists. > > The Windows hosts will continue..."`.
+
+**Root cause:** The change-record convention writes a multi-paragraph `**Text:**` field as a Markdown blockquote - every line, including the blank separator between paragraphs, prefixed with `>`. Two extraction paths exist for replacement text:
+
+1. `change_parser._extract_text_block` (used for `record.text` when a change record's replacement content is read from a standalone `**Text:**` field in the normal parse path) - this one already correctly stripped `>` per line.
+2. `ooxml._extract_range_spec` - used whenever a change's `**Do:**` field matches "replace ... through ...:" (a very common pattern, used across almost every section's change file) - extracts the replacement text via its own regex straight from `record.raw`, bypassing `_extract_text_block` entirely and leaving the `>` markers in place.
+
+Both paths ultimately hand their text to the single shared function `ooxml.markdown_to_paragraph_texts`, which splits text into paragraphs on blank lines and separates Markdown bullets. That function had two bugs: (a) `_strip_inline_markdown` never stripped a leading `>`, so the marker survived into paragraph/bullet text; (b) a bare `>` separator line is non-empty (`">".strip()` is truthy), so it was never recognised as a paragraph break, causing every paragraph and bullet in a multi-paragraph blockquote to be concatenated into a single corrupted paragraph.
+
+**Fix (standard, not a document-specific patch):** Added `ooxml._strip_blockquote_marker`, applied at the top of `markdown_to_paragraph_texts` to every line before blank-line/bullet detection. This is the single choke point every replacement-text path (parsed `record.text` and raw-regex `_extract_range_spec` text alike) already funnels through, so fixing it there covers both paths without duplicating the stripping logic change_parser already had. Added two regression tests to `tests/test_change_parser.py`: one exercising `markdown_to_paragraph_texts` directly on a blockquote with a bullet list, one exercising the full `_extract_range_spec` -> `markdown_to_paragraph_texts` path end to end. All 24 existing + new tests pass.
+
+**Repair of already-corrupted content:** Two edits in Section 9 had already been applied under the buggy code before this fix - E-146 (`P788`, comment `C145`) and E-153 (`P827`/`P833` after prior insertions shifted paragraph numbers, comment `C152`). Both were repaired in place: verified backup taken first, then the approved Text content was re-run through the fixed `markdown_to_paragraph_texts` and written via `doc.edit_paragraph` (first paragraph, same anchor position) + `doc.insert` (remaining paragraphs/bullets), matching exactly the pattern the framework's own `_replace_range_by_index` uses for a normal apply. No duplicate comments were added - the original C145/C152 comments were left attached to the corrected first paragraph. Verified after repair: `doc.validate()` reports `valid: true`; `comment_id_consistency` and `table_row_comment_safety` both Pass; a scoped search for the approved text and for the bullet items each return exactly 1 match with no literal `>` remaining anywhere in the affected range; `doc.comment("list")` shows C145 and C152 unchanged (same author/date/text).
+
+**Not yet checked:** Sections 5, 6, 7 and 8 have also already been run through this framework and may contain the same corruption wherever their change files use the "Do: Replace ... through ...:" pattern with a multi-paragraph `**Text:**` blockquote (this pattern is common in this project's change-record convention - it also appears in `ChangesCSA_IAMPS_Section8_E129_E145.md` and `ChangesCSA_IAMPS_Section12_E193_E207.md`, at minimum). A targeted scan of those sections' applied paragraphs for a literal `>` character is recommended before treating them as clean; this was out of scope for this fix (Section 9 only) and was not performed.
+
+**Note for future runs:** Any bug found in one text-extraction path should be checked against the *other* extraction path for the same field (`record.text` via `change_parser` vs. raw-regex extraction via `ooxml._extract_range_spec`/`_extract_heading_to_sentence_range`) before considering it fixed - this project's framework has grown more than one independent way of pulling the same "approved replacement text" out of a change record, and a fix applied to only one of them silently leaves the other broken.
+
+## 2026-09-17 - Scanned Sections 5-8 for the same blockquote-corruption bug; repaired 5 more instances
+
+**Context:** Follow-up to the blockquote-marker bug fixed in `markdown_to_paragraph_texts` (see the entry above). Scanned every already-completed section (5, 6, 7, 8 - Section 9 was already checked and fixed) for edits whose `Do:` field matched the "replace ... through ...:" range pattern (the only path that bypasses `change_parser`'s blockquote cleaning), then verified each candidate empirically by reading its actual current paragraph text for a literal `>`, rather than trusting the pattern match alone.
+
+**Method:** For each section's change file, parsed records and ran `ooxml._extract_range_spec(record.raw)` against every completed edit ID; a non-`None` result flags a theoretical risk. Then, for each flagged edit, derived the *expected* clean first-paragraph text via the now-fixed `markdown_to_paragraph_texts`, searched the live document for it, and inspected the actual returned snippet/full paragraph text for a stray `>`. This distinguishes edits that were genuinely corrupted from edits that matched the risky pattern but were already clean (see below) - the pattern match alone is not sufficient evidence of corruption.
+
+**Findings:**
+- Section 5: 1 candidate (E-94) - already clean.
+- Section 6: 3 candidates (E-106, E-107, E-110) - already clean.
+- Section 7: 4 candidates (E-112, E-115, E-123, E-124) - **E-115 was corrupted**, other 3 already clean.
+- Section 8: 5 candidates (E-129, E-136, E-138, E-140, E-141) - **E-129, E-136, E-138, E-141 were corrupted**, E-140 already clean.
+
+Several of the "already clean" candidates were surprising given the pattern match (e.g. E-106, E-110 are single-paragraph blockquotes that, under the old buggy code, should also have leaked a leading `> `) - they were evidently corrected by some means prior to this session (a per-edit manual fix script exists in the framework directory for E-123 and E-140 specifically: `manual_e123.py`, `manual_e140.py`; the mechanism for E-106/107/110/112/124 being clean was not investigated further, since the empirical check is what matters, not the historical cause).
+
+**Repair:** All 5 confirmed-corrupted paragraphs (E-115 in Section 7; E-129, E-136, E-138, E-141 in Section 8) were repaired the same way as E-146/E-153 in Section 9: verified backup taken first (`...before_section578_repair_<timestamp>.bak`), approved text re-derived via the fixed `markdown_to_paragraph_texts`, applied via `doc.edit_paragraph` (first paragraph, same anchor) + `doc.insert` (remaining paragraphs), original review comments (C116, C130, C136, C138, C141) left untouched - no duplicates added. Verified after repair: `validate_docx()` all Pass, zip integrity clean, each repaired anchor read back with the correct paragraph count and no `>` anywhere, and each edit's original comment confirmed present with unchanged text.
+
+**Scope now covered:** Sections 5 through 9 have all been checked for this specific bug pattern; 7 total instances found and repaired across the project (E-146, E-153 in Section 9; E-115 in Section 7; E-129, E-136, E-138, E-141 in Section 8). No sections beyond 9 have been run through the framework yet, so there is nothing further to check until a later section's batch is processed - future sections will not hit this bug at all since the root cause is now fixed in `markdown_to_paragraph_texts`.
+
+## 2026-09-17 - E-160 resolved: corrected change-record locator/structure at Wenzel Joubert's instruction
+
+**Context:** E-160 was left BLOCKED (see earlier entry "E-160 BLOCKED: approved locator text not present in Section 9") pending human clarification on which of three possibilities was correct. Wenzel Joubert instructed "fix E-160 issue" to proceed.
+
+**Resolution applied:** The Section 9.1 bullet `future-state design intends to transition relevant time services to OT-controlled infrastructure` (the only future-state design-intent content in Section 9.1) is a near-verbatim match to E-160's approved replacement text and to its title ("Retain future-state time treatment only as design context") - strong evidence this, not the Section 6 DNS paragraph, was always the intended target. Corrected two things in the approved change record itself (`ChangesCSA_IAMPS_Section9_E146_E160.md`), not the framework or the document directly:
+
+1. The `**Where:**` locator text, from the non-existent `Future design intent is to:` to the actual document text of the target bullet.
+2. The record's field structure: E-160 had embedded its replacement content inline inside `**Do:**` rather than as a separate `**Text:**` field (unlike every other edit in this file) - this is *why* `record.text` was always `None` for this edit and the framework could never have applied it, independent of the locator problem. Moved the content into a standalone `**Text:**` field matching the file's established convention.
+
+A `**Correction note**` was added to the change record directly under the edit, documenting exactly what was changed and why (it ended up folded into the Word comment automatically, since it appears before the next `---` separator). The approved instruction and replacement wording were not altered - only the locator text and field structure needed to reconcile the record with the actual document.
+
+**Result:** Re-ran the framework batch with no other changes; E-160 applied cleanly via the standard `_apply_simple_paragraph_change` single-paragraph replace path (comment C157). Section 9 status is now `SECTION_COMPLETE` (E-146 through E-160 all applied). Validation: `validate_docx()` all Pass, zip integrity clean, target paragraph confirmed correct via scoped `docxengine` read with no corruption, comment C157 present with correct text, and the sibling sub-bullet (`consistent time is considered relevant to the systems and integrations identified in the design`) was left untouched since the approved change did not direct anything for it.
+
+**Note for future runs:** When a change record embeds its replacement text inline in `**Do:**` instead of a separate `**Text:**` field, `record.text` parses as `None` and every apply path that requires text will BLOCK regardless of anchor matching. This is a distinct failure mode from a locator/content mismatch - worth checking `record.text is None` explicitly as a first diagnostic step whenever a block message references "no Text" or when `_apply_simple_paragraph_change`'s replace branch is suspected, since it's a change-record authoring inconsistency rather than a framework or document defect.

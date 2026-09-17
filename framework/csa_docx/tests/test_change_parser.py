@@ -124,6 +124,59 @@ def test_markdown_bullets_become_separate_paragraphs():
     ]
 
 
+def test_markdown_to_paragraph_texts_strips_blockquote_markers():
+    # Change records write multi-paragraph **Text:** content as a Markdown
+    # blockquote (every line, including blank separators, prefixed with
+    # ">"). Regression for a bug (found via E-146/E-153 in Section 9) where
+    # the literal "> " prefix leaked into applied paragraph text because a
+    # bare ">" separator line is non-empty and was not recognised as a
+    # paragraph break.
+    raw = (
+        "> First paragraph of approved replacement text.\n"
+        ">\n"
+        "> Second paragraph, with a bullet list:\n"
+        ">\n"
+        "> - first point\n"
+        "> - second point\n"
+        ">\n"
+        "> Final paragraph."
+    )
+    assert markdown_to_paragraph_texts(raw) == [
+        "First paragraph of approved replacement text.",
+        "Second paragraph, with a bullet list:",
+        "- first point",
+        "- second point",
+        "Final paragraph.",
+    ]
+
+
+def test_markdown_to_paragraph_texts_raw_range_spec_replacement_has_no_blockquote_markers():
+    # End-to-end regression: the raw replacement text captured by
+    # _extract_range_spec (used for "Do: Replace ... through ...:" edits)
+    # bypasses change_parser's own blockquote stripping, so
+    # markdown_to_paragraph_texts must strip it itself.
+    raw_block = (
+        "**Where:** Section 9.3.2, sentence beginning exactly:\n\n"
+        "`Under IT/OT separation, IAMPS hosts will lose connectivity to the configured time sources`\n\n"
+        "**Do:** Replace the opening content through the line:\n\n"
+        "`Progressive divergence of system clocks`\n\n"
+        "**Text:**\n\n"
+        "> If IT/OT separation removes reachability, those hosts will no longer receive updates.\n"
+        ">\n"
+        "> The hosts will continue to operate using their local system clocks.\n\n"
+        "**Why:**  \nExplanatory rationale.\n"
+    )
+    spec = _extract_range_spec(raw_block)
+    assert spec is not None
+    _, _, replacement_text = spec
+    paragraphs = markdown_to_paragraph_texts(replacement_text)
+    assert paragraphs == [
+        "If IT/OT separation removes reachability, those hosts will no longer receive updates.",
+        "The hosts will continue to operate using their local system clocks.",
+    ]
+    assert not any(p.startswith(">") or " > " in p for p in paragraphs)
+
+
 def test_extract_following_bullet_count_from_action():
     assert _extract_following_bullet_count("Replace this sentence and its three bullets.") == 3
     assert _extract_following_bullet_count("Replace the sentence and 2 bullets.") == 2

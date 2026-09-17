@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 import re
 import xml.etree.ElementTree as ET
+from difflib import SequenceMatcher
 from pathlib import Path
 
 from .models import ChangeRecord, EditResult
@@ -24,6 +25,37 @@ def paragraph_text(paragraph: ET.Element) -> str:
 
 def normalise_text(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
+
+
+_BRITISH_SPELLING_PATTERNS = (
+    (re.compile(r"isation\b", re.IGNORECASE), "ization"),
+    (re.compile(r"isable\b", re.IGNORECASE), "izable"),
+    (re.compile(r"ising\b", re.IGNORECASE), "izing"),
+    (re.compile(r"ised\b", re.IGNORECASE), "ized"),
+    (re.compile(r"iser\b", re.IGNORECASE), "izer"),
+)
+
+
+def spelling_normalised_text(value: str) -> str:
+    """``normalise_text`` plus British "-ise"/"-isation" -> American "-ize"/"-ization".
+
+    Approved CSA change records are authored in Australian/British English
+    (for example "Section 9 - Time Synchronisation"), while the underlying Word
+    document heading may use American spelling for the same section (for
+    example "Time Synchronization"), or vice versa. A literal substring check
+    between a change record's section label and a document heading then fails
+    even though they name the same section, which silently defeats the
+    heading-scoped anchor disambiguation in
+    ``docxengine_adapter.DocxEngineEditor._scope_matches`` and produces a
+    spurious multi-match ``BLOCKED`` result for an anchor phrase (like
+    "This confirms:") that is reused, by design, across several subsections.
+    Apply this to both sides of a heading-name comparison, not to approved
+    edit text itself.
+    """
+    text = normalise_text(value)
+    for pattern, replacement in _BRITISH_SPELLING_PATTERNS:
+        text = pattern.sub(replacement, text)
+    return text
 
 
 def find_anchor(where: str) -> str | None:
@@ -52,10 +84,35 @@ def find_anchor(where: str) -> str | None:
     return None
 
 
+def _strip_blockquote_marker(line: str) -> str:
+    """Strip a leading Markdown blockquote marker ("> " or a bare ">").
+
+    The project's change records write multi-paragraph **Text:** replacement
+    content as a Markdown blockquote (each line, including blank separator
+    lines, prefixed with ">"). Without this, a bare ">" separator line is
+    non-empty and defeats blank-line paragraph splitting, and the literal
+    "> " prefix leaks into the applied document text. This mirrors the
+    stripping already done in change_parser._extract_text_block and in the
+    table/label extraction helpers below, applied here too since
+    markdown_to_paragraph_texts is the shared choke point every replacement
+    path (record.text-based and raw-regex-extracted range replacements
+    alike) funnels through before text is written into the DOCX.
+    """
+    stripped = line.rstrip()
+    left = stripped.lstrip()
+    if left.startswith(">"):
+        left = left[1:]
+        if left.startswith(" "):
+            left = left[1:]
+        return left
+    return stripped
+
+
 def markdown_to_paragraph_texts(markdown_text: str) -> list[str]:
     parts: list[str] = []
     current: list[str] = []
-    for line in markdown_text.splitlines():
+    for raw_line in markdown_text.splitlines():
+        line = _strip_blockquote_marker(raw_line)
         if not line.strip():
             if current:
                 parts.append("\n".join(current).strip())
@@ -858,6 +915,13 @@ def _has_range_replacement(record: ChangeRecord) -> bool:
 
 def _has_section_body_replacement(record: ChangeRecord) -> bool:
     return bool(re.search(r"\breplace all content in section\b", record.action, re.IGNORECASE))
+
+
+def _has_full_table_replacement(record: ChangeRecord) -> bool:
+    """True when the approved Do: instruction is a wholesale table-content
+    replacement (row labels and values may both change) rather than an update
+    of Observed/Assessment values under a stable, unchanged row label."""
+    return bool(re.search(r"\breplace the table content\b", record.action, re.IGNORECASE))
 
 
 def _has_anchor_plus_bullets_replacement(record: ChangeRecord) -> bool:
