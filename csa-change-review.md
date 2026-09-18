@@ -218,10 +218,10 @@ Before inspecting the DOCX deeply:
 Use this run-state path pattern:
 
 ```text
-.agents/run-state/csa-change-review-section-<SECTION>.md
+01 Current State AS Built/7 IAMPS/01 Final Version/run-state/csa-change-review-section-<SECTION>.md
 ```
 
-Create the `.agents/run-state` directory if it does not exist.
+Create the `01 Current State AS Built/7 IAMPS/01 Final Version/run-state` directory if it does not exist.
 
 The run-state file must contain:
 

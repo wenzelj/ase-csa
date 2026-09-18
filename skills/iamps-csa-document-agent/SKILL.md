@@ -54,7 +54,7 @@ The framework is the default worker. Run one bounded batch from the workspace ro
 
 ## Non-Negotiable Behaviour
 
-- Read `.agents/run-state/current-state-assessment-document-section-<SECTION>.md` before editing when it exists.
+- Read `01 Current State AS Built/7 IAMPS/01 Final Version/run-state/current-state-assessment-document-section-<SECTION>.md` before editing when it exists.
 - Do not create a new DOCX copy if the run-state or change report identifies a valid active working DOCX.
 - Make and verify a timestamped backup before every DOCX mutation.
 - Apply only the next bounded batch of approved edit IDs from the section change file, preferably through the Python framework.
@@ -67,5 +67,5 @@ The framework is the default worker. Run one bounded batch from the workspace ro
 
 - Agent definitions and project docs: `/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/.agents/`
 - Reusable framework: `/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/.agents/framework/csa_docx/`
-- Run-state files: `/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/.agents/run-state/`
+- Run-state files: `/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/01 Current State AS Built/7 IAMPS/01 Final Version/run-state/`
 - Learning log: `/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/.agents/skills/current-state-assessment-document-learnings.md`

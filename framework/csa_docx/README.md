@@ -13,7 +13,7 @@ The framework is intentionally conservative. It automates repeatable tasks and r
 - Use the vendored open-source `docxengine` library by default for anchored paragraph, list, section-body, heading-bounded range, subsection-delete, paragraph-plus-following-line, and supported table-cell edits.
 - Add Word comments with configured author and initials.
 - Validate ZIP integrity, XML parseability, comment relationships, comment marker pairing, and unsafe direct table-row comment markers.
-- Update `.agents/run-state/current-state-assessment-document-section-<SECTION>.md`.
+- Update `01 Current State AS Built/7 IAMPS/01 Final Version/run-state/current-state-assessment-document-section-<SECTION>.md`.
 - Append/update `## Changes Report` in the approved Markdown change file.
 - Replace `Observed` and `Assessment` cells for uniquely matched table rows.
 - Replace multi-row table values when the approved text labels each row, for example `Network Services - Observed`.

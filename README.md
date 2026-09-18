@@ -42,7 +42,7 @@ Review the requested section using the agent defaults.
 ## Folder Roles
 
 - `skills/`: append-only project learning notes used by the agents after each task.
-- `run-state/`: resumable checkpoints for section implementation and review runs.
+- `01 Current State AS Built/7 IAMPS/01 Final Version/run-state/`: resumable checkpoints for section implementation and review runs (moved out of .agents so it lives next to the document being changed).
 - `framework/`: reusable deterministic helper code for repeated DOCX and Markdown mechanics.
 
 ## Native Codex Skills

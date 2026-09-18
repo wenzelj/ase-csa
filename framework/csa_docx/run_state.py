@@ -6,7 +6,14 @@ from .models import ApplySummary, ChangeRecord
 
 
 def state_path(base_dir: Path, section: str) -> Path:
-    return base_dir / ".agents" / "run-state" / f"current-state-assessment-document-section-{section}.md"
+    return (
+        base_dir
+        / "01 Current State AS Built"
+        / "7 IAMPS"
+        / "01 Final Version"
+        / "run-state"
+        / f"current-state-assessment-document-section-{section}.md"
+    )
 
 
 def read_completed_ids(path: Path) -> set[str]:

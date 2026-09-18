@@ -37,12 +37,12 @@ For Codex CLI, EVO, Ollama, or slow local profiles, prefer `ITERATION_REVIEW_LIM
 - Check required content changes, Word comments, comment author `Wenzel Joubert`, initials `WJ`, report accuracy, and DOCX package integrity.
 - Render affected pages where available before claiming visual validation.
 - Append or update the section `## Change Review Report` in the same Markdown file.
-- Update `.agents/run-state/csa-change-review-section-<SECTION>.md` when the review is partial or resumable.
+- Update `01 Current State AS Built/7 IAMPS/01 Final Version/run-state/csa-change-review-section-<SECTION>.md` when the review is partial or resumable.
 - Add reusable review lessons to the project learning log when a real lesson is found.
 - Stop immediately after reporting `PASS`, `PASS WITH NOTES`, `FAIL`, or `BLOCKED`.
 
 ## Local Resources
 
 - Agent definitions and project docs: `/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/.agents/`
-- Run-state files: `/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/.agents/run-state/`
+- Run-state files: `/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/01 Current State AS Built/7 IAMPS/01 Final Version/run-state/`
 - Review learning log: `/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/.agents/skills/csa-change-review-learnings.md`
