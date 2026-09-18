@@ -1,18 +1,18 @@
 # Current State Assessment Document Run State
 
 - Section: 10
-- Status: BLOCKED
+- Status: SECTION_COMPLETE
 - Change file: /Users/wenzel/Work/ASE/IAMPS/06 IAMPS/01 Current State AS Built/7 IAMPS/01 Final Version/reviews/ChangesCSA_IAMPS_Section10_E161_E176.md
-- Working DOCX: /Users/wenzel/Work/ASE/IAMPS/06 IAMPS/01 Current State AS Built/7 IAMPS/01 Final Version/Current State Assessment - IAMPS - v1.docx
-- Backup: /Users/wenzel/Work/ASE/IAMPS/06 IAMPS/01 Current State AS Built/7 IAMPS/01 Final Version/Current State Assessment - IAMPS - v1.docx.before_section_10_20260917-134239.bak
+- Working DOCX: /Users/wenzel/Work/ASE/IAMPS/06 IAMPS/01 Current State AS Built/7 IAMPS/01 Final Version/Current State Assessment - IAMPS.docx
+- Backup: /Users/wenzel/Work/ASE/IAMPS/06 IAMPS/01 Current State AS Built/7 IAMPS/01 Final Version/Current State Assessment - IAMPS.docx.before_section_10_20260918-073813.bak
 - Full edit inventory: E-161, E-162, E-163, E-164, E-165, E-166, E-167, E-168, E-169, E-170, E-171, E-172, E-173, E-174, E-175, E-176
-- Current iteration edit IDs: E-161, E-162, E-163, E-164, E-165, E-166, E-167, E-168, E-169, E-170
-- Completed edit IDs: E-161, E-162, E-163, E-164, E-165
+- Current iteration edit IDs: E-171, E-172, E-173, E-174, E-175
+- Completed edit IDs: E-161, E-162, E-163, E-164, E-165, E-166, E-167, E-168, E-169, E-171, E-172, E-173, E-174, E-175
 - Already applied edit IDs: None
-- Blocked edit IDs: E-166
+- Blocked edit IDs: None
 - Unresolved edit IDs: None
 - Skipped edit IDs: None
-- Next edit ID: E-166
+- Next edit ID: None
 - Report updated: Yes
 
 ## Validation Evidence
@@ -27,9 +27,8 @@
 
 ## Edit Results
 
-- E-161: APPLIED - Replaced paragraph range beginning: The purpose of this assessment is to determine how security controls are impleme with DocxEngine (comment ID C158)
-- E-162: APPLIED - Replaced anchored paragraph with DocxEngine (comment ID C159)
-- E-163: APPLIED - Replaced paragraph range beginning: The design further indicates that: with DocxEngine (comment ID C160)
-- E-164: APPLIED - Replaced body content under heading: Observed Security Controls (comment ID C161)
-- E-165: APPLIED - Replaced body content under heading: Host-Level Observations (comment ID C162)
-- E-166: BLOCKED - Anchor match count was 0; expected 1
+- E-171: APPLIED - Replaced anchored paragraph with DocxEngine (comment ID C17)
+- E-172: APPLIED - Replaced paragraph range beginning: If security controls are: with DocxEngine (comment ID C18)
+- E-173: APPLIED - Replaced paragraph range beginning: This results in: with DocxEngine (comment ID C19)
+- E-174: APPLIED - Replaced body content under heading: Operational Behaviour (comment ID C20)
+- E-175: APPLIED - Replaced body content under heading: Assessment (comment ID C21)

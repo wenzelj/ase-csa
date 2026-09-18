@@ -484,7 +484,7 @@ class DocxEngineEditor:
         if not record.text:
             return EditResult(record.edit_id, "BLOCKED", "Table row change has no Text")
 
-        pipe_rows = _extract_pipe_row_replacements(record.text, record.where)
+        pipe_rows = _extract_pipe_row_replacements(record.text)
         if pipe_rows:
             return self._apply_pipe_row_replacements(pipe_rows, record, author, initials)
 
@@ -525,24 +525,15 @@ class DocxEngineEditor:
             if row_ref is None:
                 return EditResult(record.edit_id, "BLOCKED", f"Table row anchor not unique or not found: {row_label}", row_label)
             row_cell_count = len(row_ref.cell_texts)
-            # `cells` may be the full new row (Where supplied a distinct
-            # anchor from the row's own content) or just the non-label cells
-            # (historical shape: the label cell is the anchor and stays
-            # untouched). Detect which by matching the cell count rather
-            # than assuming a fixed offset.
-            if row_cell_count == len(cells):
-                start_index = 0
-            elif row_cell_count == len(cells) + 1:
-                start_index = 1
-            else:
+            if row_cell_count != len(cells) + 1:
                 return EditResult(
                     record.edit_id,
                     "BLOCKED",
-                    f"Pipe row for {row_label} supplies {len(cells)} value(s); table row has {row_cell_count} cells (expected {row_cell_count} or {row_cell_count - 1})".strip(),
+                    f"Pipe row for {row_label} supplies {len(cells)} value(s); table row has {row_cell_count} cells (expected label + {row_cell_count - 1})".strip(),
                     row_label,
                 )
             for position, value in enumerate(cells):
-                updates.append(TableCellUpdate(row_ref.table_anchor, row_ref.row_index, position + start_index, row_label, value))
+                updates.append(TableCellUpdate(row_ref.table_anchor, row_ref.row_index, position + 1, row_label, value))
 
         return self._apply_table_updates(updates, record, author, initials)
 
@@ -751,22 +742,8 @@ class DocxEngineEditor:
                     continue
                 ref = TableRowRef(table_anchor, row_index, headers, cell_texts)
                 all_rows.append(ref)
-                # Some tables (e.g. a "Section | Title | Purpose | ..." map)
-                # split what a Where clause describes as one label -- e.g.
-                # "6 Architectural Review" -- across the first two cells
-                # ("6", "Architectural Review") rather than storing it in a
-                # single cell. Try progressively longer joins of the leading
-                # cells so both conventions resolve, but only count the row
-                # once even if more than one join happens to match.
-                joined = ""
-                row_matches = False
-                for cell in cell_texts:
-                    joined = f"{joined} {cell}".strip() if joined else cell
-                    candidate = normalise_text(joined)
-                    if candidate == wanted or candidate.startswith(wanted):
-                        row_matches = True
-                        break
-                if row_matches:
+                first_cell = normalise_text(cell_texts[0])
+                if first_cell == wanted or first_cell.startswith(wanted):
                     matches.append(ref)
         if len(matches) == 1:
             return matches[0]
@@ -1194,7 +1171,6 @@ def _extract_delete_until_heading(record: ChangeRecord) -> str | None:
 
 class TableRowRef:
     def __init__(self, table_anchor: str, row_index: int, headers: list[str], cell_texts: list[str]):
-        self.table_anchor = table_anchor
         self.row_index = row_index
         self.headers = headers
         self.cell_texts = cell_texts

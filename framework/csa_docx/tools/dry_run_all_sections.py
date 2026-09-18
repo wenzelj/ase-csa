@@ -94,6 +94,20 @@ def _section_is_complete(section: int) -> bool:
 
 
 def replay_section(section: int, scratch_dir: Path) -> dict:
+    """Replay one section's not-yet-completed edits.
+
+    A section can be *partially* complete (its run-state file has Status
+    other than SECTION_COMPLETE but a non-empty "Completed edit IDs" list -
+    real work was done and recorded, just not the whole section yet). Those
+    already-completed edit IDs are skipped here, exactly like a fully
+    SECTION_COMPLETE section is skipped by main(): replaying an
+    already-applied edit against the current (already-edited) document
+    always "blocks" on its now-superseded anchor text, which is a false
+    signal, not a real regression. This was found the hard way on Section 10:
+    its run-state showed E-161 through E-165 genuinely APPLIED (comment IDs
+    C158-C162 present in the document), but a naive from-scratch replay of
+    the whole file reported all five as newly blocked.
+    """
     cf = REVIEWS_DIR / SECTION_FILES[section]
     section_label, records = parse_change_file(cf)
     heading = None
@@ -102,12 +116,16 @@ def replay_section(section: int, scratch_dir: Path) -> dict:
     elif section_label:
         heading = section_label.strip()
 
+    already_done = read_completed_ids(state_path(WORKSPACE_ROOT, section))
+    records_to_replay = [r for r in records if r.edit_id not in already_done]
+    skipped = [r.edit_id for r in records if r.edit_id in already_done]
+
     scratch_docx = scratch_dir / f"section_{section}.docx"
     shutil.copy(WORKING_DOCX, scratch_docx)
     editor = DocxEngineEditor(scratch_docx, section_heading=heading)
 
     results = []
-    for record in records:
+    for record in records_to_replay:
         try:
             result = editor.apply_change(record, "Wenzel Joubert", "WJ")
         except Exception as exc:  # noqa: BLE001 - want every failure captured, not raised
@@ -115,7 +133,8 @@ def replay_section(section: int, scratch_dir: Path) -> dict:
         results.append({"edit_id": record.edit_id, "status": result.status, "message": result.message})
     scratch_docx.unlink(missing_ok=True)
     return {
-        "total": len(results),
+        "total": len(records),
+        "skipped_already_completed": skipped,
         "applied": sum(1 for r in results if r["status"] == "APPLIED"),
         "blocked": [r for r in results if r["status"] == "BLOCKED"],
         "other": [r for r in results if r["status"] not in ("APPLIED", "BLOCKED")],
@@ -146,7 +165,7 @@ def main() -> int:
     section_reports = {}
     reason_counter: Counter[str] = Counter()
     reason_examples: dict[str, list[str]] = defaultdict(list)
-    total_edits = total_applied = total_blocked = 0
+    total_edits = total_applied = total_blocked = total_skipped = 0
 
     for sec in sections:
         report = replay_section(sec, scratch_dir)
@@ -154,24 +173,35 @@ def main() -> int:
         total_edits += report["total"]
         total_applied += report["applied"]
         total_blocked += len(report["blocked"])
+        total_skipped += len(report.get("skipped_already_completed", []))
         for r in report["blocked"]:
             norm = re.sub(r"\d+", "N", r["message"])
             reason_counter[norm] += 1
             if len(reason_examples[norm]) < 3:
                 reason_examples[norm].append(f"Section {sec} {r['edit_id']}: {r['message']}")
+        skipped_note = (
+            f", {len(report['skipped_already_completed'])} already-completed (skipped)"
+            if report.get("skipped_already_completed")
+            else ""
+        )
         print(
             f"Section {sec}: {report['total']} edits, {report['applied']} applied, "
-            f"{len(report['blocked'])} blocked, {len(report['other'])} other"
+            f"{len(report['blocked'])} blocked, {len(report['other'])} other{skipped_note}"
         )
 
     shutil.rmtree(scratch_dir, ignore_errors=True)
 
     print()
     if total_edits:
-        print(
-            f"TOTAL: {total_edits} edits, {total_applied} applied ({100 * total_applied / total_edits:.0f}%), "
-            f"{total_blocked} blocked ({100 * total_blocked / total_edits:.0f}%)"
-        )
+        replayed = total_edits - total_skipped
+        if replayed:
+            print(
+                f"TOTAL: {total_edits} edits ({total_skipped} already completed, skipped; {replayed} replayed), "
+                f"{total_applied} applied ({100 * total_applied / replayed:.0f}% of replayed), "
+                f"{total_blocked} blocked ({100 * total_blocked / replayed:.0f}% of replayed)"
+            )
+        else:
+            print(f"TOTAL: {total_edits} edits, all already completed and skipped - nothing replayed.")
     print()
     print("Blocker reasons (normalised), most common first:")
     for reason, count in reason_counter.most_common():

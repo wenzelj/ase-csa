@@ -141,3 +141,350 @@ Recommended order, each step independently valuable and each verified by the Dir
 - Rewriting the `.md` schema beyond the two additive fields in §6 — not needed, and risks re-litigating every already-approved change record.
 - Replacing DocxEngine or building a parallel editing engine — the data doesn't support that; the dominant problem is addressing/lookup, not DocxEngine's edit primitives, which already do everything Direction B needs.
 - Sections 5–9: already applied and verified clean; nothing here proposes touching them again except as the harness's known-good baseline.
+
+---
+
+## §9. Section 3 diagnosis (Task: "implement the plan" step 3) - CORRECTED, see below
+
+**This section's original diagnosis was wrong and has been retracted.** It
+concluded Section 3 needed all 31 change records re-authored against
+"independently rewritten" document text. The real cause, found immediately
+after: Sections 1-4 were already fully applied and review-agent-signed-off in
+earlier work sessions (real timestamped backups exist for all four, and each
+change file's own "Changes Report"/"Edit verification" section records every
+edit as Applied/CORRECT with full DOCX-integrity and unauthorised-change
+validation) - but `.agents/run-state/` had no run-state file for any of
+Sections 1-4 (only Sections 5 onward were ever tracked there). The dry-run
+harness's "is this section already complete" check
+(`_section_is_complete()`) therefore treated all four sections as pending and
+replayed their change records against the *already-edited* document, which
+correctly can't find the old (now-superseded) anchor text - hence 31/31
+"blocked" for Section 3, and confusingly-partial results for Sections 1, 2
+and 4 (an INSERT-type edit's anchor is often stable text that wasn't itself
+replaced, so those falsely came back APPLIED - which would have silently
+duplicated content if this had been a real, non-dry-run apply rather than a
+harness replay).
+
+**Fix applied:** backfilled `.agents/run-state/current-state-assessment-document-section-{1,2,3,4}.md`
+from each change file's own completion evidence, marking all four
+`SECTION_COMPLETE`. No change-file re-authoring was needed or performed -
+the user's initial approval ("Re-author the 31 records") was given before
+this correction was found and does not apply; Wenzel was notified of the
+retraction directly. This is now also flagged as a real framework gap worth
+carrying into Direction B (§4): completion tracking should not depend solely
+on a side-channel run-state file that can silently go missing - the change
+file's own embedded Changes Report should be treated as an authoritative
+alternate source of truth for "is this section already done", and the
+harness/CLI should check both before ever treating a section as pending.
+
+<details>
+<summary>Original (incorrect) diagnosis, kept for the record</summary>
+
+
+
+**Finding: Section 3's 31/31 block rate is a document-content mismatch, not a framework bug.**
+
+Every one of Section 3's 31 change records quotes a "Where" anchor sentence that
+is claimed to exist verbatim in the reviewed document (e.g. *"The IAMPS platform
+is assessed as an OT-hosted operational integration and processing system"*,
+*"Running RabbitMQ / Erlang services, with ports:"*, *"Supporting multi-protocol
+communication, including:"*). None of these strings - or anything close to them
+- exist anywhere in the current working DOCX's "System Assessment Overview"
+section (verified by direct substring search across all 1,731 paragraphs, not
+just the section-scoped range).
+
+The section-heading scope itself resolves correctly (`System Assessment
+Overview` appears exactly once, at paragraph 144, so `_section_scope` is not
+picking the wrong occurrence). The actual paragraphs inside that scope cover
+the same *topics* the change records discuss (RabbitMQ/Erlang messaging,
+multi-protocol integration interfaces, AMP servers, enterprise dependencies)
+but in **entirely different, much terser wording** - short bullet fragments
+("Messaging services (RabbitMQ / Erlang)", "Provides asynchronous
+communication between systems") rather than the fuller narrative sentences the
+change records quote. A near-miss of one anchor phrase ("RabbitMQ / Erlang
+services active:") does exist in the document, but sits in Section 2's
+inventory content (paragraph 103), outside Section 3 entirely - i.e. even the
+closest match is in the wrong place, not just reworded.
+
+**Conclusion:** the live working DOCX's Section 3 body was substantively
+rewritten/condensed at some point after these 31 change records were drafted
+against an earlier draft of that section. Improving anchor-matching
+(fuzzy/partial matching, scope fallback, etc. - Task #22) will not safely fix
+this: the target sentences don't exist in any recognisable form, so a fuzzy
+matcher would either find nothing (safe, same as today) or risk matching the
+wrong bullet fragment to the wrong instruction (unsafe - silently misapplying
+an approved edit's comment/rationale to unrelated text).
+
+**This is a document-quirk, not a framework-gap**, and needs a human decision
+before any further automated work on Section 3:
+1. Re-author the 31 Section 3 change records against the *current* wording of
+   "System Assessment Overview" in the working DOCX (the review intent -
+   "don't mix evidence levels, don't over-interpret ports, don't state
+   untested failure behaviour as fact, don't drift into migration planning" -
+   likely still applies to the new wording, but the specific sentence-level
+   instructions need to be re-targeted), or
+2. Locate whichever intermediate draft of the CSA document these 31 records
+   were actually written against, confirm what changed between that draft and
+   the current working DOCX's Section 3, and reconcile from there.
+
+No framework code change is proposed for this specific finding. Section 3 is
+left untouched (still 31/31 blocked) pending that decision - forcing a
+"fix" here would mean guessing which document content each instruction should
+land on, which is exactly the failure mode the review/sign-off phases (§4,
+Direction B) exist to prevent.
+
+
+</details>
+
+---
+
+## §10. Step 4 progress: anchor-matching generalisation (Sections 10-16)
+
+A second instance of the same "false block from an already-completed edit"
+bug was found, this time at the *individual edit* level rather than whole
+sections: Section 10 is genuinely in progress (run-state `Status: BLOCKED`)
+but its run-state correctly lists E-161 through E-165 as already `APPLIED`.
+The dry-run harness didn't check per-edit completion for a non-`SECTION_COMPLETE`
+section, so it replayed all 16 of Section 10's records from scratch and
+reported five already-done edits as newly blocked. Fixed: `replay_section()`
+now consults `run_state.read_completed_ids()` for every section (not only as
+a whole-section skip gate) and skips already-completed edit IDs individually.
+
+Also closed three `find_anchor()` pattern gaps (`immediately before/after
+[...]:` with optional filler words before the colon, and `standalone text
+exactly:`), which fixed E-190 and E-196 outright and moved E-177 from a
+mis-extraction failure to a distinct, real DocxEngine stale-anchor-hash
+error worth its own investigation.
+
+Corrected baseline for the only sections with real remaining work (10-16):
+**78 edits exercised, 60 applied (77%), 18 genuinely blocked (23%)**. The
+remaining blockers split into distinct categories - not a single root cause -
+logged in `.agents/skills/current-state-assessment-document-learnings.md`
+under "2026-09-17 - Harness fix (partial-completion skip) and find_anchor
+pattern generalisation". Most notable: a whole new problem class -
+**sequential/dependent edits** whose Where clause refers to another edit's
+own output ("after the revised Section 10.2.2", "after the revised Findings
+text from E-189") rather than to literal document text. No current anchor
+pattern can resolve this safely, and it should not be pattern-matched (doing
+so risks anchoring to the wrong, unrelated text) - it needs the editor to
+track and expose each edit's resulting paragraph anchor within a single
+batch run, which is a real design addition, not a regex fix.
+
+### §10.1 Additional fixes this pass
+
+- **Real bug fixed:** `_result_anchor()` didn't recognise `docx_insert`'s actual
+  result shape (`{"new_anchors": [...]}`, plural/list) and always fell back to
+  a now-stale pre-insert anchor for the immediately-following comment-attach
+  call. Fixed to also read `new_anchors`/`anchors`. This affects every
+  insert-before/insert-after edit in the framework, not just the one that
+  surfaced it (E-177) - see learnings file for the full diagnosis trail.
+- **New recognised pattern (not a bug):** a fine-grained edit blocks because
+  an *earlier* edit in the same file already replaced the whole subsection
+  containing its target ("supersession"). Confirmed for E-170/E-176 (Section
+  10) and E-199 (Section 12). Deliberately not auto-detected/auto-skipped -
+  each needs a one-line human check that the broader edit's approved text
+  really does cover the finer edit's intent before marking it skipped.
+- **Remaining open, genuinely ambiguous:** E-213 (Section 13), E-224/226/230
+  (Section 14) - a short generic anchor phrase repeats 2-3 times within
+  section scope with no current tie-breaker, in both isolated and sequential
+  replay. Not attempted - a wrong automatic guess here is worse than the
+  current clear block.
+- E-241 (Section 15): table-cell extraction gap, not yet investigated this
+  pass.
+
+**Final baseline for this step:** Sections 10-16, 78 edits exercised, 61
+applied (78%), 17 genuinely blocked (22%) - up from 59/71% before this pass.
+
+---
+
+## §11. Step 5 complete: Phase 1 tracked changes, review sign-off, Phase 3 cleanup agent
+
+`DocxEngineEditor` now defaults to `track_changes=True` (constructor param,
+threaded through every mutation call site: `doc.insert`, `doc.delete`,
+`doc.edit_paragraph`). `cli_apply_section.py` exposes `--track-changes`
+(default) / `--no-track-changes` on the same switch. Verified end-to-end on a
+real section: applying with tracked changes on produces real `w:ins`/`w:del`
+markup (75 insertions / 79 deletions on Section 11's batch), the file stays a
+valid DOCX zip throughout, and `docx_revision accept_all` cleanly finalises
+all of it (154 revisions accepted, zero `w:ins`/`w:del` remaining
+afterwards, zip still valid). Confirmed via the regression harness that
+flipping the default doesn't change which edits apply or block (same 78
+replayed / 61 applied / 17 blocked as before the flip) - tracked-changes mode
+only changes *how* an already-successful edit is written into the XML, not
+whether it succeeds.
+
+`csa-change-review.md` (Phase 2) gained a `## Sign-Off For Cleanup` section
+and a `Sign-off for cleanup: YES/NO/NOT APPLICABLE` + `Edit IDs covered by
+this sign-off:` line in its report format. `PASS`/`PASS WITH NOTES` sign off;
+`FAIL`/`BLOCKED` do not; an ambiguous "can't tell if tracked changes are even
+on" case signs off `NOT APPLICABLE` rather than guessing.
+
+New file `.agents/csa-change-cleanup.md` - the Phase 3 cleanup agent.
+Deliberately small and mechanical: it does not decide anything is correct
+(that's Phase 2's job, expressed only through the sign-off line), it only
+finalises what's already been signed off, via `docx_revision accept_all`
+(whole-section sign-off) or a scoped `docx_revision accept` per revision
+(batch sign-off). Six explicit Hard Stop Conditions cover every way a sign-off
+could be missing, negative, ambiguous, or scoped narrower than what's being
+asked of it - the agent stops and reports rather than guessing in every one
+of those cases. Full text delivered to Wenzel and saved to
+`.agents/csa-change-cleanup.md`.
+
+This completes plan step 5 of §7's sequencing.
+
+---
+
+## §12. Step 6 in progress: Direction A (bookmark-based Anchor ID retrofit)
+
+DocxEngine has no bookmark tool, so this is a small raw-XML extension:
+`csa_docx/bookmarks.py`. It splices real OOXML `w:bookmarkStart`/`w:bookmarkEnd`
+tags directly into `word/document.xml` bytes, using
+`docxengine._anchors.build_anchor_index()` to locate a paragraph's byte span.
+Two functions: `add_bookmark_at_anchor(editor, anchor, edit_id)` (writes a
+bookmark named `CSA_<sanitised edit id>` around the paragraph at `anchor`) and
+`find_bookmark(editor, edit_id)` (looks up that bookmark's current anchor, or
+`None` if it was never tagged).
+
+**Why this matters:** DocxEngine's own anchors (`P{ordinal}#{hash4}`) are
+deliberately ephemeral - ordinal shifts the moment any earlier paragraph is
+inserted or deleted, and the docstring for `Paragraph` says so explicitly.
+Every blocker this project has hit so far where an edit's `**Where:**` text
+still matches but the anchor doesn't is exactly this problem one level removed
+- literal text matching is more durable than the anchor, but still breaks
+when a supersedeing edit changes the wording nearby. A bookmark tied to the
+edit ID itself is immune to both: it moves with its paragraph regardless of
+ordinal or nearby text changes, and is looked up by the edit ID, not by
+matching text at all.
+
+**Wired into the framework** (`docxengine_adapter.py`):
+- `_apply_simple_paragraph_change()` now checks `find_bookmark(self,
+  record.edit_id)` *first*. If a bookmark exists, it resolves the target
+  paragraph directly from the bookmark's current anchor, skipping
+  `find_anchor()`/`_matching_paragraphs()` (and every text-matching failure
+  mode) entirely. Only when no bookmark exists yet does it fall back to the
+  original text-matching path.
+- After every successful insert-before / insert-after / replace in that
+  method, a new best-effort helper `_tag_bookmark(edit_id, anchor)` writes a
+  bookmark for that edit ID, so the *next* touch of the same edit (a re-run,
+  a repair, a review-driven correction) goes through the bookmark path
+  instead of text-matching again. Swallows exceptions deliberately - this is
+  a durability improvement, not a requirement, and must never turn a
+  successful edit into a failure.
+- **Scope, honestly stated:** only `_apply_simple_paragraph_change` has this
+  integration so far. The other six dispatch methods (table-row, full
+  section-body replacement, explicit range replacement, anchor+bullets
+  replacement, delete-until-heading, full-table replacement,
+  subsection-end-insert) do not yet look up or write bookmarks. Confirmed
+  directly in a live test on Section 11: simple insert/replace edits
+  (E-177, E-179, E-180) got bookmarks; paragraph-*range* replacements
+  (E-178, E-181, which dispatch elsewhere) did not. This is a real gap, not
+  an oversight to paper over - extending bookmark integration to the other
+  six dispatch methods is the natural next unit of work, each one small but
+  needing its own verification the way this one got.
+
+**Verified, not just written:**
+1. *Round-trip durability*: a bookmark written for a paragraph, after the
+   document is saved and reopened, still resolves to the same paragraph.
+2. *Survives upstream shifts*: bookmarked E-177 resolved to anchor
+   `P1166#4751` right after being tagged; after two more edits were applied
+   earlier in the document (shifting every later paragraph's ordinal),
+   `find_bookmark` correctly resolved it to the new anchor `P1172#4751` -
+   proving the bookmark, not the stale ordinal-based anchor, is what's doing
+   the work.
+3. *Re-apply through the bookmark path*: re-invoking `apply_change()` for
+   the same edit ID after that shift succeeded by resolving through
+   `find_bookmark` rather than re-matching text.
+4. *No regression*: full regression harness re-run across Sections 10-16
+   after wiring this in - **78 edits replayed, 61 applied (78%), 17 blocked
+   (22%)**, identical counts and identical blocker set to the pre-bookmark
+   baseline in §10.1. The bookmark-first path changes *how* an edit is
+   re-resolved, not whether today's first-time applies succeed.
+
+**Not yet done, left for the next pass:**
+- Extend bookmark-first lookup + auto-tagging to the other six dispatch
+  methods listed above.
+- Decide whether a human-authored "Anchor ID" field is still needed in the
+  `.md` change-file schema (plan §6's original idea) now that auto-tagging
+  exists - auto-tagging means the *first successful apply* self-assigns the
+  durable anchor without needing a human to pre-author one, which may
+  substantially reduce or eliminate the need for that schema field. Worth
+  revisiting once bookmark coverage is complete across all dispatch paths,
+  not before.
+
+**Coverage extended (same session, second pass):** wired bookmark-first
+lookup + auto-tagging into four more dispatch methods, and auto-tagging-only
+into a fifth:
+
+- `_apply_anchor_plus_bullets_replacement`, `_apply_section_body_replacement`,
+  `_apply_anchor_plus_following_content` - all three resolve a single anchor
+  paragraph via `_matching_paragraphs()`, so they now share a new
+  `_resolve_paragraph_index()` helper that checks `find_bookmark()` first,
+  exactly like `_apply_simple_paragraph_change`.
+- `_replace_range_by_index()` - the shared range-replacement helper used by
+  all four of the methods above plus `_apply_explicit_range_replacement` -
+  now auto-tags a bookmark on the replacement's resulting anchor after every
+  successful replace. This gives all four callers auto-tagging in one place;
+  `_apply_explicit_range_replacement` gets auto-tagging but not
+  bookmark-first lookup on entry, since it resolves a *range* (start anchor
+  and end anchor via `_scoped_unique_index`) rather than a single anchor, and
+  extending the helper to a two-boundary case wasn't judged worth the added
+  risk this pass.
+- `_apply_subsection_end_insert` - bookmark-first lookup added directly (own
+  shape: resolves a numbered-subsection heading, not free text), with a
+  fix alongside it: the method's success message referenced
+  `paragraphs[heading_index]`, which would have raised `TypeError` when the
+  bookmark path resolved without ever computing `heading_index`. Caught before
+  it could ship, via a guarded `heading_label` computed once up front.
+
+**Still untouched, with reasons:**
+- `_apply_delete_until_heading` - deletes the range; there is no paragraph
+  left afterwards to bookmark for a future re-lookup.
+- `_apply_table_row_change` / `_apply_full_table_replacement` - table cells
+  are addressed by `(table_anchor, row_index, cell_index)`, not by paragraph
+  anchor; the current `bookmarks.py` only bookmarks paragraphs. Extending
+  Direction A to tables is a distinct, not-yet-designed piece of work.
+
+**Verified again after this extension:** live test on Section 11 confirmed
+the two previously-untagged edits in that batch (E-178, E-181 - both dispatch
+through `_apply_explicit_range_replacement`) now get bookmarks too, alongside
+the three simple-paragraph edits already covered. Full regression harness
+re-run across Sections 10-16: **78 replayed, 61 applied (78%), 17 blocked
+(22%)** - identical to both the pre-bookmark baseline and the first-pass
+bookmark baseline above. No behavioural change to first-time applies; only
+re-resolution durability changed, now across six of the eight dispatch
+methods.
+
+**Genuinely not yet done, left for the next pass:**
+- Table-cell bookmarking (`_apply_table_row_change`,
+  `_apply_full_table_replacement`) and delete-range handling
+  (`_apply_delete_until_heading`, which has no post-edit paragraph to tag) -
+  two different problems, neither trivially an extension of the paragraph
+  bookmark mechanism.
+- Decide whether a human-authored "Anchor ID" field is still needed in the
+  `.md` change-file schema (plan §6's original idea) now that auto-tagging
+  covers six of eight dispatch paths - likely much less necessary now, but
+  worth a deliberate revisit rather than a default keep/drop.
+
+**Decided:** no human-authored Anchor ID field. Auto-tagging and a
+human-authored field would have solved the same problem twice - a bookmark
+for an edit ID, present before the edit is first resolved. The distinction
+that actually matters is *when* the anchor needs to exist:
+
+- For an edit that has *already* applied successfully once, auto-tagging
+  writes the bookmark itself, at zero authoring cost. A human field here
+  would be redundant - the system now assigns it, correctly, every time.
+- For an edit that has *never* applied - the 17 current blockers - there is
+  no bookmark yet, because none was ever written, and a human-authored field
+  would only exist if a person manually resolved that edit's location and
+  typed the ID in. That is not a schema improvement; it is doing the
+  resolution work by hand and recording the answer. The `.md` schema was
+  never actually the bottleneck for these - the resolution judgment is
+  (disambiguating a repeated phrase, fixing a drifted `Where` clause,
+  confirming a supersession). A field would not have saved that judgment,
+  only given it somewhere to be written down after the fact.
+
+So this closes plan §6's original idea cleanly: dropped, superseded by
+auto-tagging for the case it actually covers, with no replacement needed for
+the case it doesn't (that case is human judgment, tracked per-edit in the
+blockers list below, not a schema gap).
+

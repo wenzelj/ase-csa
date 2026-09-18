@@ -485,6 +485,35 @@ Return `PASS` only when:
 - change report is accurate;
 - no unauthorised changes are detected, or the review scope explicitly did not require original-document comparison.
 
+## Sign-Off For Cleanup (Phase 2 -> Phase 3)
+
+When the working document was edited with tracked changes on (the framework's
+default - see `framework-robustness-plan.md` §4), the DOCX still contains raw
+`w:ins`/`w:del` markup for every edit you just reviewed: nothing is finalised
+until a human, or the Phase 3 cleanup agent, accepts or rejects it. Your
+review result is what gates that: it is the human-equivalent approval the
+cleanup agent is not allowed to grant itself.
+
+- `PASS` or `PASS WITH NOTES` -> **sign off**. Include the `Sign-off for
+  cleanup: YES` line (see Review Report Format below) so the cleanup agent
+  can find it. A `PASS WITH NOTES` still signs off - its notes are
+  non-blocking by definition - but repeat the notes verbatim in the sign-off
+  line so they are not lost.
+- `FAIL` or `BLOCKED` -> **do not sign off**. Use `Sign-off for cleanup: NO`.
+  The cleanup agent must never run `docx_revision accept_all` (or
+  `reject_all`) against a document whose edits have not been reviewed and
+  passed - that would finalise content nobody has verified is correct.
+- Sign off **only the edit IDs you actually reviewed** in this pass, not the
+  whole document. If your review scope was a bounded batch (see Bounded
+  Review Iteration Mode), list exactly those edit IDs in the sign-off line -
+  the cleanup agent must never accept/reject revisions for edits outside
+  what was actually reviewed and passed.
+- If you cannot tell whether tracked changes are on for this document (no
+  `w:ins`/`w:del` markup found at all), say so in Reviewer notes and set
+  sign-off to `NOT APPLICABLE` rather than guessing - the cleanup agent has
+  nothing to do if the edits were applied destructively (`--no-track-changes`)
+  in the first place.
+
 ## Review Report Format
 
 Produce a Markdown review report.
@@ -511,6 +540,9 @@ The approved Markdown change file was used as the source of truth.
 Change report reviewed
 Present: Yes/No
 Accurate: Yes/No/Partially/Not reviewed
+
+Sign-off for cleanup: YES / NO / NOT APPLICABLE
+Edit IDs covered by this sign-off: <comma-separated edit IDs, or "None">
 
 Summary
 <brief outcome>

@@ -2,8 +2,8 @@
 
 - Section: 9
 - Status: SECTION_COMPLETE
-- Change file: /sessions/rcw-01earyvzmhazva3hblypvpf7/mnt/06 IAMPS/01 Current State AS Built/7 IAMPS/01 Final Version/reviews/ChangesCSA_IAMPS_Section9_E146_E160.md
-- Working DOCX: /sessions/rcw-01earyvzmhazva3hblypvpf7/mnt/06 IAMPS/01 Current State AS Built/7 IAMPS/01 Final Version/Current State Assessment - IAMPS - v1.docx
+- Change file: /Users/wenzel/Work/ASE/IAMPS/06 IAMPS/01 Current State AS Built/7 IAMPS/01 Final Version/reviews/ChangesCSA_IAMPS_Section9_E146_E160.md
+- Working DOCX: /Users/wenzel/Work/ASE/IAMPS/06 IAMPS/01 Current State AS Built/7 IAMPS/01 Final Version/Current State Assessment - IAMPS.docx
 - Backup: None
 - Full edit inventory: E-146, E-147, E-148, E-149, E-150, E-151, E-152, E-153, E-154, E-155, E-156, E-157, E-158, E-159, E-160
 - Current iteration edit IDs: None

@@ -606,3 +606,170 @@ A `**Correction note**` was added to the change record directly under the edit, 
 **Result:** Re-ran the framework batch with no other changes; E-160 applied cleanly via the standard `_apply_simple_paragraph_change` single-paragraph replace path (comment C157). Section 9 status is now `SECTION_COMPLETE` (E-146 through E-160 all applied). Validation: `validate_docx()` all Pass, zip integrity clean, target paragraph confirmed correct via scoped `docxengine` read with no corruption, comment C157 present with correct text, and the sibling sub-bullet (`consistent time is considered relevant to the systems and integrations identified in the design`) was left untouched since the approved change did not direct anything for it.
 
 **Note for future runs:** When a change record embeds its replacement text inline in `**Do:**` instead of a separate `**Text:**` field, `record.text` parses as `None` and every apply path that requires text will BLOCK regardless of anchor matching. This is a distinct failure mode from a locator/content mismatch - worth checking `record.text is None` explicitly as a first diagnostic step whenever a block message references "no Text" or when `_apply_simple_paragraph_change`'s replace branch is suspected, since it's a change-record authoring inconsistency rather than a framework or document defect.
+
+## 2026-09-17 - Framework robustness plan, steps 1-3: dry-run harness, inline-Text-in-Do cleanup, Section 3 diagnosis
+
+**Permanent regression harness:** `.agents/framework/csa_docx/tools/dry_run_all_sections.py` now exists as a reusable tool. It replays every change record in every section's approved `.md` file straight through `DocxEngineEditor.apply_change()` on a disposable scratch copy of the working DOCX, and - unlike a real `cli_apply_section.py` run - does not stop at the first BLOCKED edit, so a full per-section blocker picture is available in one pass. Sections already `SECTION_COMPLETE` are skipped by default (replaying them against the *current*, already-edited DOCX would misleadingly report false blocks against their own applied text); pass `--include-complete` to force it anyway. Authoritative baseline as of this entry: 160 edits total, 73 applied (46%), 87 blocked (54%), unchanged after the inline-Text fixes below since neither fixed record was in a still-pending section's block count in a way that flips APPLIED/BLOCKED (E-240 moved from one blocked reason to another; E-84/E-130 are in already-complete Section 5/8).
+
+**Inline-Text-in-Do sweep (the E-160 bug, generalised):** scanned all 244 records project-wide for `record.text is None and "**Text:**" not in record.raw`. Found exactly 3, each individually investigated rather than blanket-"fixed":
+- **E-240** (Section 15) - genuine instance. Its replacement content (`full expansion not established in the reviewed CSA`) was embedded inline under `**Do:**` instead of a separate `**Text:**` field. Restructured; `record.text` now parses correctly. Re-running the harness shows E-240 now progresses past the missing-Text block and fails instead on `Could not extract a unique anchor from Where` (its Where lists three separate glossary entries, not one) - a distinct, already-scoped anchor-matching issue (Task #22), not this bug.
+- **E-84** (Section 5, already `SECTION_COMPLETE`) - also a genuine instance of the pattern (two `Change X to: > Y` blocks embedded inline in `Do`), but Section 5's run-state confirms E-84 was already `APPLIED` correctly when Section 5 was processed - "Complex range/table operations now block in the reusable framework and are handled manually" per that run's notes, i.e. it was hand-applied around the very blocker this bug causes. No damage to the real document. Restructured the `.md` record anyway (moved both replacements into a proper `**Text:**` field as a two-item list) purely for record-format consistency and future harness accuracy; this does not touch the already-shipped document.
+- **E-130** (Section 8, already `SECTION_COMPLETE`) - investigated and determined to be a **false positive** for this bug category, not fixed. It is a `Delete this heading and the repeated sentence beneath it... Then renumber: ...` instruction with no new content to insert, so a missing `**Text:**` field is correct by design, not a symptom of the E-160 bug. (Its actual limitation is that it's a compound delete+renumber edit spanning multiple structural changes under one edit ID, which no single dispatch path fully models - already correctly resolved manually per Section 8's run-state. That compound-edit limitation is out of scope for this task.)
+
+**Section 3 diagnosis (31/31 blocked, 100%):** root-caused as a document-content mismatch, not a framework bug - see `.agents/framework-robustness-plan.md` §9 for the full writeup. Every one of Section 3's 31 "Where" anchors quotes sentence text that does not exist anywhere in the current working DOCX (verified by unscoped substring search across all 1,731 paragraphs, not just the section-scoped range); the section heading itself resolves correctly and uniquely, and the actual paragraphs under it cover the same topics in much shorter, rewritten bullet form. This needs a human decision (re-author the 31 records against current wording, or locate the intermediate draft they were actually written against) before any further automated work on Section 3 - fuzzy/anchor-matching improvements (Task #22) cannot safely resolve a mismatch this total without risking silently attaching an approved instruction's rationale to the wrong bullet.
+
+## 2026-09-17 - CORRECTION: Section 3 was already complete; run-state tracking gap for Sections 1-4
+
+**This corrects the diagnosis in the immediately preceding entry.** After asking Wenzel how to handle Section 3's apparent 31/31 block and getting approval to re-author the records, a closer read of `ChangesCSA_IAMPS_Section3_E38_E68.md` itself - before starting that rework - found a fully populated "Changes Report" at the foot of the file: all 31 edits recorded Applied, comment-verified, DOCX-integrity-validated, with a real backup (`...before_section_3_20260915-071615.bak`, dated 2026-09-15). Direct document inspection confirmed the approved *new* wording (e.g. E-39's replacement paragraph) is present in the working DOCX today. Section 3 was already done. The same check against Sections 1, 2 and 4 found the identical pattern - all three have real backups and fully populated, review-agent-signed Changes Reports, but none of the four had a run-state file in `.agents/run-state/` (only Section 5 onward were ever tracked there).
+
+**Root cause:** the dry-run harness's `_section_is_complete()` check (and, by the same logic, the real `cli_apply_section.py` "which sections are pending" logic) relies solely on the presence of a `.agents/run-state/current-state-assessment-document-section-N.md` file with `Status: SECTION_COMPLETE`. For Sections 1-4 that file simply never existed, even though the work was done and signed off - so both the harness and (more importantly) any future real apply run would treat them as pending and replay already-superseded change records against the current document. For a dry run this only produces misleading numbers; for a real run it could have duplicated already-applied INSERT edits (whose anchors are often untouched, stable text) or corrupted comment IDs.
+
+**Fix:** backfilled `.agents/run-state/current-state-assessment-document-section-{1,2,3,4}.md`, each derived from that section's own change file "Changes Report"/"Edit verification" evidence, all marked `SECTION_COMPLETE`. No change-file content was re-authored or altered for Sections 1-4 - only the missing tracking file was added. `.agents/framework-robustness-plan.md` §9 was corrected in place (original wrong diagnosis kept, collapsed, for the record).
+
+**Corrected baseline:** the true remaining work is Sections 10-16 only (Sections 1-9 are all now confirmed `SECTION_COMPLETE`): 83 edits, 59 applied (71%), 24 blocked (29%) - materially healthier than the previously-reported 160/73/87 figure, which was inflated by 77 edits' worth of false blocks/false-applies from replaying four already-complete sections.
+
+**Reusable lesson:** whenever a section shows an unusually high or total block rate, check the change file's own tail for a "Changes Report" / "Applied: ..." block *before* concluding the document or the anchors are the problem - a populated report there means the section was already run for real outside of `run-state` tracking, and the fix is to backfill run-state, not to re-author or re-diagnose the content.
+
+## 2026-09-17 - Harness fix (partial-completion skip) and find_anchor pattern generalisation
+
+**Second false-block source found, same family as the Section 1-4 gap:** Section 10 is a genuinely in-progress section (run-state Status: BLOCKED, not complete) whose run-state correctly records E-161 through E-165 as already APPLIED (comment IDs C158-C162 present in the real document) with E-166 as the real next blocker. But `dry_run_all_sections.py`'s `_section_is_complete()` check only understands "fully SECTION_COMPLETE or not" - it has no concept of a section that is *partially* done, so it replayed all 16 of Section 10's edits from scratch, reporting E-161/162/163/165 as newly blocked (false - their anchors are gone because they're already applied) alongside the real blocker E-166. Caught by isolating E-162 with `apply_change()` called directly against a fresh copy of the current working DOCX and comparing to the run-state file's own "Completed edit IDs" line - the isolated block was real (0 matches), but cross-checking the change file's approved replacement text against the document showed it already present verbatim, which only makes sense if it had already been applied for real.
+
+**Fix:** `replay_section()` in the harness now calls the framework's own `run_state.read_completed_ids()` for every section (not just the complete/not-complete gate) and skips any edit ID already recorded completed, regardless of whether the section as a whole is SECTION_COMPLETE. Report output now shows a `N already-completed (skipped)` count per section and the TOTAL line distinguishes "edits" (file count) from "replayed" (actually exercised) so applied/blocked percentages are computed against what was really tested, not diluted or inflated by already-done work. This is the harness-level generalisation of the same lesson as the Section 1-4 backfill: never trust "no run-state = not started" as the only signal - always check whether individual edit IDs are already marked done before replaying them.
+
+**`find_anchor()` pattern gaps closed:** three Where-clause phrasings used across Sections 11/12/15 had no matching regex in `csa_docx/ooxml.py::find_anchor()`, so it fell through to treating the *entire* Where text (including the "Section N, ..." prefix) as the anchor - always wrong. Added:
+- `immediately before(?:[^:\n]*):` / `immediately after(?:[^:\n]*):` - covers both the plain form ("immediately before:\n\nHEADING") and the form with descriptive filler before the colon ("immediately after the WMI evidence:\n\nClientType: 1"), found via E-177 and E-196.
+- `standalone text exactly:` - a short isolated phrase called out with different wording from "sentence exactly"/"heading exactly" but functionally identical, found via E-190.
+
+Deliberately did **not** match the superficially similar "after the revised Section 10.2.2" (E-166) or "after the revised Findings text from E-189" (E-191) phrasing - these aren't locator quotes at all, they're a genuine sequential-dependency reference to *another edit's own output* (the paragraph E-165/E-189 produces), which no current anchor-extraction pattern can resolve safely; matching them to garbage text would be worse than the current clear "no anchor" block. This is a distinct, unsolved problem class (dependent/chained edits within the same batch) worth its own design work later rather than a quick pattern addition.
+
+**Result after both fixes**, corrected baseline for the only sections with real remaining work (10-16; 1-9 are all confirmed complete): 78 edits actually exercised, 60 applied (77%), 18 genuinely blocked (23%) - up from 73%/27% before this pass, with two of the three pattern-gap edits (E-190, E-196) now applying cleanly and the third (E-177) progressing past anchor extraction into a distinct, real DocxEngine "stale anchor hash" error worth investigating separately.
+
+**Remaining genuine blocker categories in Sections 10-16** (real bugs or real content-vs-record mismatches, not false positives - not yet fixed):
+- E-166 / E-191: sequential-dependency Where clauses ("after the revised X from E-NNN") - needs the editor to track and expose each edit's resulting anchor within a batch run, not just single-shot addressing.
+- E-170, E-176 (Section 10): succeed if replayed in isolation against a clean document, but block when replayed after E-167-169 in real sequence - a genuine cascading/collateral effect from an earlier edit in the same section, not yet root-caused to which specific prior edit is responsible.
+- E-177 (Section 11): anchor now extracts correctly but DocxEngine reports the derived paragraph hash as stale - a deeper engine-addressing issue, not a `find_anchor` problem.
+- E-199 (Section 12): "Could not find 3 following bullet/content paragraph(s)" - the anchor and count logic doesn't match the actual bullet layout under this heading; not yet diagnosed.
+- E-213 (Section 13): "This indicates that:" appears twice within the section's scope - a genuinely ambiguous short generic phrase needing a secondary disambiguator (e.g. nearest-to-locator-number heuristic), not yet implemented.
+- E-224/226/230 (Section 14): anchor matches 3 times even within section scope - needs investigation of what's actually repeating.
+- E-241 (Section 15): "Could not extract labelled table replacement values" - table-cell extraction gap, separate from the Section 15 anchor issue already fixed for E-240.
+
+## 2026-09-17 - Real framework bug found: _result_anchor() didn't recognise docx_insert's result shape
+
+**Root cause of E-177's "stale anchor" block (and every other insert-type edit's silent risk):** `_result_anchor()` in `docxengine_adapter.py` looked for `result.get("anchor")` or `result.get("new_anchor")` (singular keys) to find the anchor of newly-inserted content. `Document.insert()` actually returns `{"new_anchors": [...]}` - plural key, a list. Neither singular key ever matched, so `_result_anchor()` always returned `None` for an insert result, and the caller fell back to `paragraph.anchor` - the anchor of the paragraph the new content was inserted before/after, captured *before* the insert happened. Inserting a paragraph shifts every paragraph ordinal from that point on, and DocxEngine's anchors are content+position addressed (`P{ordinal}#{hash}`), so that pre-insert anchor is now genuinely stale. The very next call using it - `_add_comment(comment_anchor, ...)` - failed with DocxEngine's real, correctly-raised `anchor_stale` error, which surfaced as a confusing top-level block on an edit whose actual content change had already silently succeeded moments earlier.
+
+Diagnosed by reproducing the exact `apply_change()` call path manually step by step outside the method (find_anchor -> `_matching_paragraphs` -> `doc.insert`) and finding it succeeded every time in isolation, then comparing byte-for-byte against the real `apply_change()` call on an identical fresh copy, which failed deterministically - proving the divergence had to be inside the method itself rather than document state or anchor computation. Tracing which of `apply_change`'s dispatch predicates ran (all `False`, confirming the "insert before" branch of `_apply_simple_paragraph_change` was reached) and inspecting `doc.insert()`'s actual return shape (`{"new_anchors": ["P1166#4751"]}`) pinned it to `_result_anchor()`.
+
+**Fix:** `_result_anchor()` now also checks `result.get("new_anchors")` / `result.get("anchors")` and takes the first element when the singular keys are absent. Verified E-177 now applies cleanly (comment attaches to the newly-inserted paragraph, not the shifted old one). This was a real, previously-invisible framework bug affecting every insert-before/insert-after edit across all 16 sections, not just E-177 - worth a full pass later to check whether any *already-applied* insert edit's comment ended up mis-anchored to the wrong (shifted) paragraph as a result of this bug before the fix (would show as a comment sitting one paragraph off from where it should be).
+
+## 2026-09-17 - Third instance of "an earlier broader edit already covers this edit's target" (not a bug)
+
+E-199 (Section 12) showed the same pattern as E-170/E-176 (Section 10, see the "Harness fix" entry above): a fine-grained edit (replace 3 bullets under a specific "There is no evidence of:" occurrence) blocks in real sequential order because an earlier edit in the same file (E-197, "Replaced body content under heading: Observed Behaviour") already replaced the whole subsection containing that exact anchor. Traced with the same isolated-vs-sequential-replay method: E-199 in isolation finds 2 matches for its anchor text within section scope (ambiguous, expected - the document legitimately has two similar "There is no evidence of:" blocks in this section, one about monitoring and one about patch management); after E-197 runs first, one of those two is gone, leaving exactly 1 match - but it's the *other* occurrence (2 bullets, not the 3-bullet patch one E-199 was written for), so the bullet-count check fails.
+
+This confirms a systemic characteristic of these change records, not a one-off: several finer edits are effectively pre-empted by a *broader* "replace the entire subsection/body" edit that appears earlier in the same file and happens to cover the same ground. Once the broader edit is applied, the finer edit becomes a legitimate no-op, and today's dispatcher reports that as a generic BLOCKED rather than a recognisable "superseded, nothing more to do" outcome. Deliberately not building an automatic "supersession detector" for this - inferring "edit X is superseded by edit Y" from natural-language Do/Why text is exactly the kind of guess that risks silently skipping a change that was NOT actually superseded. Each occurrence needs a one-line human check (does the broader edit's approved replacement text already include what the finer edit wanted?) before being marked skipped-not-blocked. Confirmed occurrences so far: E-170/E-176 (superseded by E-169/E-175), E-199 (superseded by E-197).
+
+## 2026-09-17 - Remaining genuine multi-match ambiguity (not attempted)
+
+E-213 (Section 13, "This indicates that:") and E-224/E-226/E-230 (Section 14, three different "sentence beginning exactly" anchors) all block with the same shape regardless of replay order (isolated or sequential) - a short, generic phrase that legitimately repeats 2-3 times within the section's scope, with no current tie-breaker. Unlike the supersession pattern above, sequencing doesn't resolve these. Deliberately not attempting an automatic disambiguation heuristic (e.g. "closest paragraph to a nearby unique anchor", "match the one whose surrounding text best fuzzy-matches the Do/Why field") without checking each one's surrounding context by hand first - a wrong guess here would silently misapply an approved edit's comment/rationale to the wrong paragraph, which is a worse outcome than the current clear block. Left as genuinely open items for a future pass (each is a 5-minute manual check, not a framework redesign).
+
+## 2026-09-17 - Direction B (track_changes / review sign-off / cleanup agent) wired up and verified
+
+`DocxEngineEditor` (`docxengine_adapter.py`) now takes `track_changes: bool = True` in its constructor and threads it through every one of its ~10 document-mutation call sites (`doc.insert`, `doc.delete`, `doc.edit_paragraph` - all three DocxEngine tools already supported the parameter natively, confirmed by inspecting their JSON specs, so this was pure plumbing, no new DocxEngine capability needed). `cli_apply_section.py` exposes `--track-changes`/`--no-track-changes` (default on) on the same switch.
+
+Verified concretely on Section 11's real batch: applying all 16 edits with `track_changes=True` produced 75 `w:ins` and 79 `w:del` elements in `word/document.xml`, the file remained a valid ZIP throughout, `docx_revision list` showed the expected revision set (author, anchors, text all sane), and `docx_revision accept_all` cleanly finalised all 154 revisions (zero `w:ins`/`w:del` left, file still valid). Also confirmed via the regression harness that the flip is behaviourally invisible to which edits succeed or block - same 78 replayed / 61 applied / 17 blocked before and after - because tracked-changes mode only changes how a successful edit is written into the XML, never whether the anchor-matching/dispatch logic finds and accepts it.
+
+`csa-change-review.md` gained a `Sign-off for cleanup: YES/NO/NOT APPLICABLE` line (plus the specific edit IDs it covers) in its report format, with explicit rules: PASS/PASS WITH NOTES sign off, FAIL/BLOCKED never do, and "can't tell if tracked changes are even on" signs off NOT APPLICABLE rather than guessing.
+
+New agent `.agents/csa-change-cleanup.md` (Phase 3) is intentionally the smallest of the three - it makes no correctness judgement of its own, only finalises what Phase 2 already signed off, via `docx_revision accept_all` or a scoped per-revision `accept` for batch sign-offs. Six Hard Stop Conditions (no review report, NO/NOT APPLICABLE/missing sign-off, scoped sign-off narrower than the section, unexpected revision author) all resolve to "stop and report", never "guess and proceed" - matching the same caution this whole session's mistakes (Section 3, Section 10's partial-completion false-blocks) have repeatedly shown is necessary when inferring intent from natural-language records rather than exact machine-checkable state.
+
+
+## 2026-09-17: Direction A bookmark module wired in and verified (partial coverage)
+
+Built `csa_docx/bookmarks.py` - real OOXML `w:bookmarkStart`/`w:bookmarkEnd`
+tags spliced directly into `word/document.xml` bytes (DocxEngine has no
+bookmark tool of its own), keyed on the paragraph span from
+`docxengine._anchors.build_anchor_index()`. Two functions:
+`add_bookmark_at_anchor(editor, anchor, edit_id)` and
+`find_bookmark(editor, edit_id)`.
+
+Wired into `_apply_simple_paragraph_change()` only, as a scoped
+proof-of-concept: check `find_bookmark()` first (skips text-matching
+entirely if the edit was already tagged), and auto-tag a bookmark after
+every successful insert-before/insert-after/replace so the *next* touch of
+that edit ID resolves via the bookmark instead of `find_anchor()` +
+`_matching_paragraphs()`.
+
+Verified with a live round-trip test on Section 11:
+- Bookmarks survive save/reopen (same anchor resolves both times).
+- Bookmarks survive *upstream* edits that shift paragraph ordinals - tagged
+  E-177 at `P1166#4751`; after two more edits applied earlier in the
+  document, `find_bookmark` correctly returned the shifted anchor
+  `P1172#4751`. This is the actual proof that bookmarks solve the problem
+  ordinal-based anchors can't.
+- Re-invoking `apply_change()` for the same edit ID after that shift
+  resolved through the bookmark path successfully.
+- Confirmed the scope gap directly: E-177/E-179/E-180 (simple
+  insert/replace, dispatched to `_apply_simple_paragraph_change`) got
+  bookmarks; E-178/E-181 (paragraph-range replacements, dispatched
+  elsewhere) did not. The other six dispatch methods do not yet have
+  bookmark integration - this is documented, not hidden.
+
+Regression harness re-run across Sections 10-16 after this change: 78
+edits replayed, 61 applied (78%), 17 blocked (22%) - identical to the
+pre-bookmark baseline. Confirms the bookmark-first path is additive (changes
+re-resolution durability, not first-time apply behaviour).
+
+Next unit of work: extend the same bookmark-first-lookup + auto-tag pattern
+to the remaining six dispatch methods, each verified independently the way
+this one was, rather than doing all seven at once.
+
+
+## 2026-09-17 (cont.): Direction A bookmark coverage extended to 6 of 8 dispatch methods
+
+Added a shared `_resolve_paragraph_index()` helper (bookmark-first, falls
+back to `_matching_paragraphs()`) to `_apply_anchor_plus_bullets_replacement`,
+`_apply_section_body_replacement`, and `_apply_anchor_plus_following_content`.
+Added auto-tagging directly into `_replace_range_by_index()` (the shared
+range-replace helper those three plus `_apply_explicit_range_replacement`
+all call), so all four get bookmark auto-tagging from one change; the range
+method itself doesn't get bookmark-first lookup on entry since it resolves
+two boundaries, not one anchor - judged not worth the added risk this pass.
+Added bookmark-first lookup directly to `_apply_subsection_end_insert`.
+
+Caught one real bug introduced while doing this, before it shipped:
+`_apply_subsection_end_insert`'s success message referenced
+`paragraphs[heading_index]`, but `heading_index` is never computed when the
+bookmark path resolves the target directly - would have raised `TypeError`
+on every bookmark-resolved re-apply of that edit type. Fixed with a guarded
+`heading_label` computed once, before the try block.
+
+Left untouched, with reasons documented in the plan (§12): `_apply_delete_until_heading`
+(nothing survives to bookmark after a delete) and the two table-replacement
+methods (table cells are addressed by row/column coordinates, not paragraph
+anchors - a different mechanism than what `bookmarks.py` implements today).
+
+Verified: live re-test on Section 11 showed E-178 and E-181 (which dispatch
+through `_apply_explicit_range_replacement`) now get bookmarks, where they
+didn't in the first pass. Full regression harness across Sections 10-16:
+still 78 replayed / 61 applied (78%) / 17 blocked (22%), identical to every
+prior baseline this session - confirms the extension is purely additive.
+
+## 2026-09-17 — Vendor import-order bootstrap (framework fix)
+
+- **Context:** Section 11, first run of the batch (E-177..E-186), `framework-first` mode.
+- **Problem observed:** `cli_apply_section.py` failed at bootstrap with
+  `ModuleNotFoundError: No module named 'docxengine'`.
+- **Cause:** `csa_docx/bookmarks.py` imports `docxengine._anchors` at module top.
+  `csa_docx` is imported via `cli_apply_section.py` before `docxengine_adapter.py`
+  inserts `framework/vendor` onto `sys.path`, so `docxengine` is not importable
+  from the plain `python3.14` interpreter on first import.
+- **Corrected approach:** put the vendor bootstrap in the *earliest* module that
+  needs it (bookmarks.py) or in `csa_docx/__init__.py`, before any downstream import
+  of `docxengine.*`. Applied fix: `bookmarks.py` now inserts `parents[1]/vendor`
+  onto `sys.path` before its `from docxengine._anchors import build_anchor_index`
+  line, mirroring `engines/docxengine_adapter.py`.
+- **Validation:** `python3.14 -c "import sys; sys.path.insert(0,'.agents/framework');
+  from csa_docx.engines.docxengine_adapter import DocxEngineEditor;
+  from csa_docx.bookmarks import find_bookmark"` succeeds. No `PYTHONPATH`
+  required; the framework is self-contained for future runs.
+- **Impact:** This is a one-line-per-module bootstrap fix; no functional change.
+  All future `framework-first` runs no longer need `PYTHONPATH=vendor` prepended.

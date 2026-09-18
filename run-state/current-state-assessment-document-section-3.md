@@ -1,13 +1,13 @@
 # Current State Assessment Document Run State
 
-- Section: 7
+- Section: 3
 - Status: SECTION_COMPLETE
-- Change file: /Users/wenzel/Work/ASE/IAMPS/06 IAMPS/01 Current State AS Built/7 IAMPS/01 Final Version/reviews/ChangesCSA_IAMPS_Section7_E112_E128.md
+- Change file: /Users/wenzel/Work/ASE/IAMPS/06 IAMPS/01 Current State AS Built/7 IAMPS/01 Final Version/reviews/ChangesCSA_IAMPS_Section3_E38_E68.md
 - Working DOCX: /Users/wenzel/Work/ASE/IAMPS/06 IAMPS/01 Current State AS Built/7 IAMPS/01 Final Version/Current State Assessment - IAMPS.docx
 - Backup: None
-- Full edit inventory: E-112, E-113, E-114, E-115, E-116, E-117, E-118, E-119, E-120, E-121, E-122, E-123, E-124, E-125, E-126, E-127, E-128
+- Full edit inventory: E-38, E-39, E-40, E-41, E-42, E-43, E-44, E-45, E-46, E-47, E-48, E-49, E-50, E-51, E-52, E-53, E-54, E-55, E-56, E-57, E-58, E-59, E-60, E-61, E-62, E-63, E-64, E-65, E-66, E-67, E-68
 - Current iteration edit IDs: None
-- Completed edit IDs: E-112, E-113, E-114, E-115, E-116, E-117, E-118, E-119, E-120, E-121, E-122, E-123, E-124, E-125, E-126, E-127, E-128
+- Completed edit IDs: E-38, E-39, E-40, E-41, E-42, E-43, E-44, E-45, E-46, E-47, E-48, E-49, E-50, E-51, E-52, E-53, E-54, E-55, E-56, E-57, E-58, E-59, E-60, E-61, E-62, E-63, E-64, E-65, E-66, E-67, E-68
 - Already applied edit IDs: None
 - Blocked edit IDs: None
 - Unresolved edit IDs: None

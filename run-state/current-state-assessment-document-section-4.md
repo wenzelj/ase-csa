@@ -1,13 +1,13 @@
 # Current State Assessment Document Run State
 
-- Section: 7
+- Section: 4
 - Status: SECTION_COMPLETE
-- Change file: /Users/wenzel/Work/ASE/IAMPS/06 IAMPS/01 Current State AS Built/7 IAMPS/01 Final Version/reviews/ChangesCSA_IAMPS_Section7_E112_E128.md
+- Change file: /Users/wenzel/Work/ASE/IAMPS/06 IAMPS/01 Current State AS Built/7 IAMPS/01 Final Version/reviews/ChangesCSA_IAMPS_Section4_E69_E76.md
 - Working DOCX: /Users/wenzel/Work/ASE/IAMPS/06 IAMPS/01 Current State AS Built/7 IAMPS/01 Final Version/Current State Assessment - IAMPS.docx
 - Backup: None
-- Full edit inventory: E-112, E-113, E-114, E-115, E-116, E-117, E-118, E-119, E-120, E-121, E-122, E-123, E-124, E-125, E-126, E-127, E-128
+- Full edit inventory: E-69, E-70, E-71, E-72, E-73, E-74, E-75, E-76
 - Current iteration edit IDs: None
-- Completed edit IDs: E-112, E-113, E-114, E-115, E-116, E-117, E-118, E-119, E-120, E-121, E-122, E-123, E-124, E-125, E-126, E-127, E-128
+- Completed edit IDs: E-69, E-70, E-71, E-72, E-73, E-74, E-75, E-76
 - Already applied edit IDs: None
 - Blocked edit IDs: None
 - Unresolved edit IDs: None

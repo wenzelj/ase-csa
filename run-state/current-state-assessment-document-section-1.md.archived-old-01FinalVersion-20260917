@@ -1,0 +1,31 @@
+# Current State Assessment Document Run State
+
+- Section: 1
+- Status: SECTION_COMPLETE
+- Change file: /Users/wenzel/Work/ASE/IAMPS/06 IAMPS/01 Current State AS Built/7 IAMPS/01 Final Version/reviews/ChangesCSA_IAMPS_Section1_E1_E13.md
+- Working DOCX: /Users/wenzel/Work/ASE/IAMPS/06 IAMPS/01 Current State AS Built/7 IAMPS/01 Final Version/Current State Assessment - IAMPS - v1.docx
+- Backup: /Users/wenzel/Work/ASE/IAMPS/06 IAMPS/01 Current State AS Built/7 IAMPS/01 Final Version/Current State Assessment - IAMPS - v1.docx.before_section1.bak
+- Full edit inventory: E-1, E-2, E-3, E-4, E-5, E-6, E-7, E-8, E-9, E-10, E-11, E-12, E-13, A-1
+- Completed edit IDs: E-1, E-2, E-3, E-4, E-5, E-6, E-7, E-8, E-9, E-10, E-11, E-12, E-13, A-1
+- Already applied edit IDs: None
+- Blocked edit IDs: None
+- Unresolved edit IDs: None
+- Skipped edit IDs: None
+- Next edit ID: None - Section 1 complete
+- Latest status: SECTION_COMPLETE
+- Report updated: Yes
+
+## Backfill note (2026-09-17)
+
+This run-state file did not exist before this entry - Section 1 was applied and
+independently reviewed in an earlier work session (backup timestamp 2026-09-10,
+review-agent verdict recorded at the foot of the change file: all 14 edits
+CORRECT, full DOCX integrity/comment/unauthorised-change validation passed),
+but no run-state file was ever written for it. This left the dry-run
+regression harness (and any future real `cli_apply_section.py` run) unable to
+tell Section 1 was already done, causing it to replay Section 1's edits
+against the already-edited document and report false blocks/false
+duplicate-applies. Backfilled from the change file's own "Changes Report" and
+"Edit verification" tables plus the confirmed backup file - see
+`.agents/framework-robustness-plan.md` §9 (corrected) for the full
+investigation.

@@ -62,7 +62,9 @@ def main() -> int:
         if args.engine == "docxengine":
             from csa_docx.engines.docxengine_adapter import DocxEngineEditor
 
-            editor = DocxEngineEditor(docx, section_heading=_section_heading(section_label))
+            editor = DocxEngineEditor(
+                docx, section_heading=_section_heading(section_label), track_changes=args.track_changes
+            )
         else:
             package = extract_docx(docx)
             editor = DocumentEditor(package.path("word/document.xml"), section_heading=_section_heading(section_label))
@@ -112,6 +114,24 @@ def parse_args() -> argparse.Namespace:
         default=os.environ.get("CSA_DOCX_ENGINE", "docxengine"),
         help="DOCX edit engine. Defaults to docxengine; legacy is retained only for explicit fallback.",
     )
+    track_changes_group = parser.add_mutually_exclusive_group()
+    track_changes_group.add_argument(
+        "--track-changes",
+        dest="track_changes",
+        action="store_true",
+        help="Apply edits as Word tracked changes (default). Old and new content both stay in the "
+        "document until a human accepts/rejects them in Word, or the Phase 3 cleanup agent runs "
+        "docx_revision accept_all after Phase 2 review sign-off. See framework-robustness-plan.md §4.",
+    )
+    track_changes_group.add_argument(
+        "--no-track-changes",
+        dest="track_changes",
+        action="store_false",
+        help="Apply edits destructively (old framework behaviour, pre-Direction-B) - old content is "
+        "removed immediately, no accept/reject step. Only the docxengine engine supports tracked "
+        "changes at all, so this flag has no effect with --engine legacy.",
+    )
+    parser.set_defaults(track_changes=True)
     return parser.parse_args()
 
 
