@@ -6,7 +6,7 @@ import zipfile
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from csa_docx.change_parser import parse_change_records
-from csa_docx.cli_apply_section import _scope_records
+from csa_docx.tools import _scope_records
 from csa_docx.ooxml import (
     DocumentEditor,
     make_paragraph,

@@ -108,4 +108,4 @@ Keep the assessment (what is) and the roadmap (what to do) as clearly separable 
 
 ## Relationship to this workspace's other agents
 
-This skill is general reference methodology — it is not a wrapper around a project-local agent definition (unlike `iamps-csa-document-agent` and `iamps-csa-change-review-agent`, which wrap `current-state-assessment-document.md` and `csa-change-review.md`). Use it for framing scope, structuring findings, or checking coverage before or alongside those execution agents, e.g. when drafting or reviewing the actual IAMPS Current State Assessment DOCX content for a given section.
+This skill is general reference methodology — it is not a wrapper around a project-local agent definition (unlike `csa-document-agent` and `csa-change-review-agent`, which wrap `current-state-assessment-document.md` and `csa-change-review.md`). Use it for framing scope, structuring findings, or checking coverage before or alongside those execution agents, e.g. when drafting or reviewing the actual IAMPS Current State Assessment DOCX content for a given section.

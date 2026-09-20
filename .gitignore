@@ -1,4 +1,4 @@
-# Ignore Python cache directories and bytecode
 __pycache__/
 *.py[cod]
 .DS_Store
+framework/csa_docx/section_manifest.json

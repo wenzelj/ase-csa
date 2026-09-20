@@ -6,14 +6,12 @@ from .models import ApplySummary, ChangeRecord
 
 
 def state_path(base_dir: Path, section: str) -> Path:
-    return (
-        base_dir
-        / "01 Current State AS Built"
-        / "7 IAMPS"
-        / "01 Final Version"
-        / "run-state"
-        / f"current-state-assessment-document-section-{section}.md"
-    )
+    # The run-state lives in a ``run-state`` directory under the section's
+    # Final Version workspace. Derive it from ``base_dir`` (which already
+    # points at that Final Version folder) rather than hard-coding the
+    # project path - the old version doubled the path and wrote run-state to
+    # a nested duplicate, leaving the canonical file stale.
+    return base_dir / "run-state" / f"current-state-assessment-document-section-{section}.md"
 
 
 def read_completed_ids(path: Path) -> set[str]:

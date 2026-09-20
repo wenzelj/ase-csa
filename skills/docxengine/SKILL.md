@@ -79,7 +79,7 @@ doc.save("contract-amended.docx")                 # or doc.to_bytes() for in-mem
 
 ## How this workspace uses it
 
-`framework/vendor/docxengine/` is the vendored copy; `framework/csa_docx/engines/docxengine_adapter.py` wraps it as the default engine for this workspace's CSA document framework (see the `iamps-csa-document-agent` / `iamps-csa-change-review-agent` skills). Notable local integration details:
+`framework/vendor/docxengine/` is the vendored copy; `framework/csa_docx/engines/docxengine_adapter.py` wraps it as the default engine for this workspace's CSA document framework (see the `csa-document-agent` / `csa-change-review-agent` skills). Notable local integration details:
 
 - Imported as a library (`from docxengine import Document`), not run as a separate MCP process — the adapter inserts `framework/vendor` onto `sys.path` and imports directly.
 - Requires a Python interpreter matching DocxEngine's `Requires-Python: >=3.12` with dataclass `slots` support; this workspace's default `python3` is too old and fails with `dataclass() got an unexpected keyword argument 'slots'` — use `/opt/homebrew/bin/python3.14` (see `framework/csa_docx/README.md`).

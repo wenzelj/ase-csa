@@ -82,6 +82,11 @@ def find_anchor(where: str) -> str | None:
         # before/after..." prefix.
         r"immediately before(?:[^:\n]*):\s*(.+)$",
         r"immediately after(?:[^:\n]*):\s*(.+)$",
+        # "Anchor: in Section N.M.K" / "Anchor: in the paragraph after X" -
+        # the anchor itself, with a location description after "in". The old
+        # code fell through to treating the whole string (including the
+        # "in Section ..." suffix) as the anchor, which matches no paragraph.
+        r"^(?P<anch>.+?)\s+in\s+(?:section|subsection|paragraph|heading|the paragraph)(?:\s+.*)?$",
         # "standalone text exactly:" - a short, deliberately isolated phrase
         # (e.g. a one-word subheading) called out differently from
         # "sentence exactly"/"heading exactly" but functionally identical.

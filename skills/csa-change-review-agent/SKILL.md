@@ -1,11 +1,11 @@
 ---
-name: iamps-csa-change-review-agent
-description: Use the IAMPS project-local C-S-A-Change-Review Agent to verify that approved Markdown change records were correctly applied to the IAMPS Current State Assessment DOCX, including Word comments, report accuracy, and DOCX integrity. Use for IAMPS CSA section review or csa-change-review tasks.
+name: csa-change-review-agent
+description: Use the project-local C-S-A-Change-Review Agent to verify that approved Markdown change records were correctly applied to a Current State Assessment DOCX, including Word comments, report accuracy, and DOCX integrity. Use for CSA section review on any Current State Assessment project, or csa-change-review tasks.
 ---
 
-# IAMPS CSA Change Review Agent
+# CSA Change Review Agent
 
-Use this skill when the user wants Codex to act as the IAMPS C-S-A-Change-Review Agent or review a completed IAMPS Current State Assessment section implementation.
+Use this skill when the user wants Codex to act as the C-S-A-Change-Review Agent or review a completed Current State Assessment section implementation.
 
 The project-local review agent definition is authoritative:
 
@@ -28,8 +28,13 @@ RUN_SCOPE=next-batch
 
 For Codex CLI, EVO, Ollama, or slow local profiles, prefer `ITERATION_REVIEW_LIMIT=2` unless the user explicitly requests a larger review batch.
 
+## Step 0: Prepare The Document
+
+Before inspecting any DOCX, call `prepareDocument()` (the `csa-mcp` tool, no `section` argument) to confirm the working DOCX is safe to review (not open in Word, not corrupt) and that its stable-ID manifest is current. `status: NOT_READY` -> stop and report the `reasons`. Then, when locating each edit's anchor in the DOCX, call `lookupStableId(query=<the Where field>)` instead of searching by eye -- it resolves an `@H...` ID or a text snippet deterministically against the manifest `prepareDocument` just built. See `## Framework Tools (csa-mcp)` in the full agent definition for the decision tree on `unique_id`/`match_count`.
+
 ## Non-Negotiable Behaviour
 
+- Call `prepareDocument()` first; stop on `NOT_READY`.
 - Read the approved section Markdown file and its `## Changes Report` before trusting any run-state.
 - Identify the working DOCX from the change report or run-state.
 - Review the Markdown change file as the source of truth.

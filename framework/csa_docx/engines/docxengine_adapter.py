@@ -15,6 +15,7 @@ if VENDOR_DIR.exists() and str(VENDOR_DIR) not in sys.path:
 
 from csa_docx.bookmarks import add_bookmark_at_anchor, find_bookmark
 from csa_docx.models import ChangeRecord, EditResult
+from csa_docx.stable_ids import extract_stable_id, build_id_map
 from csa_docx.ooxml import (
     CONTENT_TYPES_NS,
     REL_NS,
@@ -178,22 +179,43 @@ class DocxEngineEditor:
         # not yet retrofitted, i.e. all of them at the time this was added).
         bookmarked_anchor = find_bookmark(self, record.edit_id)
         anchor_text = find_anchor(record.where)
+        paragraphs = self.doc.paragraphs()
         if bookmarked_anchor:
-            paragraphs = self.doc.paragraphs()
             paragraph = next((p for p in paragraphs if p.anchor == bookmarked_anchor), None)
             if paragraph is None:
                 return EditResult(record.edit_id, "BLOCKED", "Bookmarked location no longer resolves to a paragraph", anchor_text)
             matches = [paragraph]
         else:
-            if not anchor_text:
-                return EditResult(record.edit_id, "BLOCKED", "Could not extract a unique anchor from Where")
-            matches = self._matching_paragraphs(anchor_text, record.where)
-            if len(matches) != 1:
-                return EditResult(record.edit_id, "BLOCKED", f"Anchor match count was {len(matches)}; expected 1", anchor_text)
-            paragraph = matches[0]
+            stable_id = extract_stable_id(record.where)
+            if stable_id:
+                id_map = build_id_map(paragraphs)
+                id_str = str(stable_id)
+                if id_str in id_map:
+                    paragraph = paragraphs[id_map[id_str]]
+                    matches = [paragraph]
+                    anchor_text = anchor_text or id_str
+                else:
+                    return EditResult(record.edit_id, "BLOCKED", f"Stable ID {id_str} not found in document", id_str)
+            else:
+                if not anchor_text:
+                    return EditResult(record.edit_id, "BLOCKED", "Could not extract a unique anchor from Where")
+                matches = self._matching_paragraphs(anchor_text, record.where)
+                if len(matches) != 1:
+                    return EditResult(record.edit_id, "BLOCKED", f"Anchor match count was {len(matches)}; expected 1", anchor_text)
+                paragraph = matches[0]
         action = record.action.lower()
 
         try:
+            if "confirm" in action and "confirm" not in record.where.lower():
+                # Reviewer-approved "retain as-is / verify no change" outcome.
+                # Locates the target element, leaves its text untouched and
+                # records a verification comment. Used for retain/no-op edits
+                # (e.g. glossary "full expansion not established" rows).
+                comment_id = self._add_comment(paragraph.anchor, record, author, initials)
+                self._tag_bookmark(record.edit_id, paragraph.anchor)
+                return EditResult(record.edit_id, "APPLIED",
+                    "Confirmed existing content (no document change per approved record)", anchor_text, comment_id)
+
             if "insert before" in action:
                 if not record.text:
                     return EditResult(record.edit_id, "BLOCKED", "Insert action has no Text", anchor_text)
@@ -267,6 +289,8 @@ class DocxEngineEditor:
         Mirrors the logic in _apply_simple_paragraph_change. Returns
         (index, None) on success, or (None, EditResult) with a BLOCKED
         result to return as-is when resolution fails either way.
+        Stable-ID resolution takes priority over text matching when the
+        Where field contains an @-prefixed structural ID.
         """
         bookmarked_anchor = find_bookmark(self, record.edit_id)
         if bookmarked_anchor:
@@ -274,6 +298,13 @@ class DocxEngineEditor:
                 if paragraph.anchor == bookmarked_anchor:
                     return index, None
             return None, EditResult(record.edit_id, "BLOCKED", "Bookmarked location no longer resolves to a paragraph", anchor_text)
+        stable_id = extract_stable_id(record.where)
+        if stable_id:
+            id_map = build_id_map(paragraphs)
+            id_str = str(stable_id)
+            if id_str in id_map:
+                return id_map[id_str], None
+            return None, EditResult(record.edit_id, "BLOCKED", f"Stable ID {id_str} not found in document", id_str)
         matches = self._matching_paragraphs(anchor_text, record.where, paragraphs)
         if len(matches) != 1:
             return None, EditResult(record.edit_id, "BLOCKED", f"{mismatch_label} was {len(matches)}; expected 1", anchor_text)
@@ -350,13 +381,22 @@ class DocxEngineEditor:
     def _apply_section_body_replacement(self, record: ChangeRecord, author: str, initials: str) -> EditResult:
         if not record.text:
             return EditResult(record.edit_id, "BLOCKED", "Section body replacement has no Text")
-        anchor_text = find_anchor(record.where)
-        if not anchor_text:
-            return EditResult(record.edit_id, "BLOCKED", "Could not extract section body anchor from Where")
         paragraphs = self.doc.paragraphs()
-        anchor_index, blocked = self._resolve_paragraph_index(record, anchor_text, paragraphs, "Section body anchor match count")
-        if blocked:
-            return blocked
+        stable_id = extract_stable_id(record.where)
+        if stable_id:
+            id_str = str(stable_id)
+            id_map = build_id_map(paragraphs)
+            if id_str in id_map:
+                anchor_index = id_map[id_str]
+            else:
+                return EditResult(record.edit_id, "BLOCKED", f"Stable ID {id_str} not found in document", id_str)
+        else:
+            anchor_text = find_anchor(record.where)
+            if not anchor_text:
+                return EditResult(record.edit_id, "BLOCKED", "Could not extract section body anchor from Where")
+            anchor_index, blocked = self._resolve_paragraph_index(record, anchor_text, paragraphs, "Section body anchor match count")
+            if blocked:
+                return blocked
         heading_index = self._previous_heading_index(paragraphs, anchor_index)
         if heading_index is None:
             return EditResult(record.edit_id, "BLOCKED", "Could not identify containing section heading", anchor_text)
@@ -925,17 +965,32 @@ class DocxEngineEditor:
         of a "Section N" edit and also resolves anchors that are globally
         duplicated (e.g. a leftover orphan copy of a section) to the one inside the
         intended section.
+
+        Section labels in change files are "N - Title" but the document
+        headings carry only the title (the number is structural, assigned by
+        ordinal position - see stable_ids.py). Match on the title part.
         """
         if not self.section_heading:
             return None
         paragraphs = paragraphs if paragraphs is not None else self.doc.paragraphs()
         wanted = spelling_normalised_text(self.section_heading)
+        title_wanted = wanted
+        if " - " in wanted:
+            title_wanted = wanted.split(" - ", 1)[1].strip()
         candidates: list[tuple[int, int | None]] = []
         for index, paragraph in enumerate(paragraphs):
             if not _is_heading(paragraph):
                 continue
-            if wanted in spelling_normalised_text(paragraph.text):
+            if title_wanted in spelling_normalised_text(paragraph.text):
                 candidates.append((index, _heading_level(paragraph)))
+        if not candidates:
+            # Fall back to the full "N - Title" form (some documents do
+            # number their headings explicitly).
+            for index, paragraph in enumerate(paragraphs):
+                if not _is_heading(paragraph):
+                    continue
+                if wanted in spelling_normalised_text(paragraph.text):
+                    candidates.append((index, _heading_level(paragraph)))
         if not candidates:
             return None
         finite = [(index, level) for index, level in candidates if level is not None]
@@ -952,6 +1007,25 @@ class DocxEngineEditor:
                 break
         return root_index, root_index + 1, body_end
 
+    def _scoped_matches(self, matches, paragraphs):
+        """Narrow a full-document match list to the run's section body.
+
+        Must run against the *same* paragraph list the matches came from
+        (``self.doc.paragraphs()`` returns fresh objects on every call, so a
+        scope built from a second call would never match by identity or
+        anchor - the first version of this filter silently returned an empty
+        list for every anchor, which is exactly the "match count was 0"
+        block seen for scoped anchors like "Confirms: in Section 2.2.2").
+        Returns the list unchanged when there is no scope or the match list
+        is already unique.
+        """
+        scope = self._section_scope(paragraphs)
+        if scope is None or len(matches) <= 1:
+            return matches
+        _, body_start, body_end = scope
+        scope_anchors = {paragraphs[index].anchor for index in range(body_start, body_end + 1)}
+        return [match for match in matches if match.anchor in scope_anchors]
+
     def _scoped_unique_index(self, anchor_text: str, paragraphs, *, allow_prefix: bool = False, allow_suffix: bool = False) -> int | None:
         """Resolve an anchor to a unique paragraph index.
 
@@ -961,6 +1035,16 @@ class DocxEngineEditor:
         section rather than blocked. Still returns ``None`` when there is no
         unique resolution - never guessing.
         """
+        # Stable-ID anchors resolve deterministically (structural, not text),
+        # so a range boundary given as an @H... id is exact even when the same
+        # wording repeats elsewhere in the section.
+        stable_id = extract_stable_id(anchor_text)
+        if stable_id:
+            id_str = str(stable_id)
+            id_map = build_id_map(paragraphs)
+            if id_str in id_map:
+                return id_map[id_str]
+            return None
         index = self._unique_paragraph_index(anchor_text, paragraphs, allow_prefix=allow_prefix, allow_suffix=allow_suffix)
         if index is not None:
             return index
@@ -986,25 +1070,15 @@ class DocxEngineEditor:
     def _matching_paragraphs(self, anchor_text: str, where: str, paragraphs=None):
         paragraphs = paragraphs if paragraphs is not None else self.doc.paragraphs()
         variants = _anchor_variants(anchor_text)
-        scope = self._section_scope(paragraphs)
-        scope_anchors: set[str] | None = None
-        if scope is not None:
-            _, body_start, body_end = scope
-            scope_anchors = {paragraphs[index].anchor for index in range(body_start, body_end + 1)}
-
-        def apply_scope(matches):
-            if scope_anchors is None or len(matches) <= 1:
-                return matches
-            return [match for match in matches if match.anchor in scope_anchors]
 
         exact_matches = [p for p in paragraphs if normalise_text(p.text) in variants]
         if exact_matches:
-            return apply_scope(exact_matches)
+            return self._scoped_matches(exact_matches, paragraphs)
         if "beginning exactly" in where.lower() or "text beginning" in where.lower() or "words beginning" in where.lower():
             prefix_matches = [p for p in paragraphs if any(normalise_text(p.text).startswith(variant) for variant in variants)]
-            return apply_scope(prefix_matches)
+            return self._scoped_matches(prefix_matches, paragraphs)
         contains_matches = [p for p in paragraphs if any(variant in normalise_text(p.text) for variant in variants)]
-        return apply_scope(contains_matches)
+        return self._scoped_matches(contains_matches, paragraphs)
 
     def _following_content_end(self, paragraphs, anchor_index: int, count: int) -> int | None:
         found = 0

@@ -115,6 +115,7 @@ At the beginning of every review:
 
 - load and read this agent definition completely;
 - load and read the applicable document-editing/DOCX skill completely before inspecting a DOCX;
+- call `prepareDocument()` (the `csa-mcp` tool, no `section` argument -- see Framework Tools below) before inspecting the DOCX at all. If it returns `NOT_READY`, stop and report the `reasons` -- do not review a document that is open in Word or already failing integrity checks. Its `id_manifest_summary` also confirms whether the stable-ID manifest anchors in the change file resolve against is current;
 - read the full approved `.md` change file, including any `## Changes Report` section;
 - parse the approved edit records before trusting the appended change report;
 - identify every edit ID, including administrative IDs such as `A-1`;
@@ -122,6 +123,17 @@ At the beginning of every review:
 - identify the DOCX path reported in the change report and verify it matches the DOCX being reviewed.
 
 The change report is evidence to be checked. It is not the source of truth.
+
+## Framework Tools (`csa-mcp`)
+
+The `csa_docx` framework (`.agents/framework/csa_docx/`, exposed as MCP tools via `csa-mcp` -- see `framework/csa_docx/README.md`) gives this agent two deterministic tools. Prefer them over manual text search or hand-parsing DOCX XML wherever they apply; they never guess and fail loud (`{"status": "ERROR"/"NOT_READY", ...}`) instead of picking a wrong location silently.
+
+- **`prepareDocument()`** -- call once at the start of every review, no `section` argument (see First Actions above). It confirms the working DOCX is safe to inspect and that the stable structural ID manifest (`@H<path>-P<n>` / `@H<path>-T<n>-R<n>`, one entry per heading/paragraph/table-row in the whole document) is current. `status: NOT_READY` means stop; do not review a locked or corrupt document.
+- **`lookupStableId(query)`** -- use this instead of manually re-deriving where an edit's `Where:` anchor lands in the reviewed DOCX:
+  - If the approved edit's `Where:` field is already an `@H...` stable ID, call `lookupStableId(query="@H...")` to confirm it still resolves and see its current text -- this is a direct, unambiguous check of "did the edit land in the right place", not a search.
+  - If `Where:` is a text anchor (the older convention), call `lookupStableId(query="<snippet from Where>")` to locate the paragraph/row deterministically instead of scanning the DOCX by eye. Check `unique_id`: non-null means an unambiguous match (use its `id` and `text` as the located anchor); null with `match_count > 1` means the snippet is itself ambiguous in the document, which is worth noting as a review observation, not silently picking one; `match_count == 0` means the expected text is genuinely absent -- material evidence toward a `MISSING` or `INCORRECT` finding.
+  - `lookupStableId` is read-only and never modifies the DOCX, consistent with the Read-Only Default below. It only reads the manifest `prepareDocument` already built, so it's cheap to call once per edit while working through the verification inventory.
+- Both tools require `prepareDocument()` to have been run first (that's why it's in First Actions) and take no `section` argument in normal use -- the manifest covers the whole document, not one section. Only pass `section=<N>` if a call errors saying the workspace has more than one distinct working DOCX and needs one to disambiguate; that is not the normal case for this IAMPS workspace.
 
 ## Read-Only Default
 
@@ -138,7 +150,7 @@ Review one section per execution cycle unless the user explicitly requests a mul
 For each edit ID in the `.md` file:
 
 1. Read the approved instruction.
-2. Locate the expected section, anchor, table row, paragraph, heading, field, or surrounding context in the new DOCX.
+2. Locate the expected section, anchor, table row, paragraph, heading, field, or surrounding context in the new DOCX -- call `lookupStableId(query=<the Where field, or a snippet of it>)` first (see Framework Tools above) rather than searching by eye; fall back to manual search only if the tool call itself errors.
 3. Verify the approved replacement, insertion, or deletion is present exactly or materially as authorised.
 4. Verify old text is absent where the approved instruction required replacement or deletion.
 5. Verify the change did not spill into neighbouring content.

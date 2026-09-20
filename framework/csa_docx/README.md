@@ -85,3 +85,87 @@ Alongside `docxengine`, `framework/vendor/` also carries:
 - `rapidfuzz` (MIT) - fuzzy row-label matching for the labelled table-row lookup. Vendored as a wheel built for the Mac's `/opt/homebrew/bin/python3.14` (macOS arm64, cp314); the adapter falls back to `difflib` if that wheel doesn't import on whatever interpreter actually runs it.
 
 Both were fetched by running `python3.14 -m pip download <package> --no-deps -d .` on the Mac (network access to PyPI is not available from every environment this framework may run in) and unpacked directly into `framework/vendor/` the same way the `docxengine` wheel is - no system-wide `pip install` required on any machine that runs this framework.
+
+## Function Factory / MCP Server
+
+For a tool-calling model (including a small one, e.g. qwen3-4b) that can't reliably construct the `--change-file`/`--docx` paths above from a section number alone, the framework also exposes itself as a handful of named functions instead of a CLI to be constructed from prose:
+
+- `manifest.py` - deterministically resolves `section -> (change_file, docx)` by scanning for `ChangesCSA_..._Section<N>_E<a>_E<b>.md` files under `reviews/` directories (skipping anything under an `archive`/`old*` folder) and pairing each with the one `.docx` in its `Final Version` folder. Fails loudly (`ManifestError`) on any ambiguity - never guesses. The manifest is derived fresh from the live folder layout on every call and is never cached to disk, so archiving an old Final Version folder and dropping in a new document is picked up automatically with no reset step (the old section_manifest.json cache was removed for exactly this reason: it silently pointed at dead paths once the workspace moved). refresh_manifest() is therefore just a re-scan that returns the current mapping; it no longer rebuilds any cache.
+- `tools.py` - `list_sections()`, `get_section_status(section)`, `prepareDocument(section=None, force_regenerate=False)`, `lookupStableId(query, section=None, kind=None, limit=10, case_sensitive=False)`, `apply_next_batch(section, limit=3)`, `validate_section(section)`, `refresh_manifest()`. Each takes primitive arguments and a section number (never a path), returns plain JSON, and reports failures as `{"status": "ERROR", ...}` rather than raising. `apply_next_batch` is the same logic `cli_apply_section.py` runs (the CLI now calls into this module so there is exactly one implementation).
+- **`prepareDocument()` - step 0, the very first call of a project.** This is meant to run before *anything else exists* - before a `reviews/` folder, before any `ChangesCSA_*.md` change file. At this point the workspace holds nothing but the raw working `.docx`, so `section` is not just optional, it's meaningless: there's no section manifest yet for it to name a section *from*. Call it with no arguments. `_resolve_shared_document` handles both states a workspace can be in:
+  - **No `reviews/` change file exists anywhere yet (true step 0).** `_find_workspace_docx` finds the one `.docx` in the workspace directly (recursively, skipping Word lock files and anything under an `archive`/`old*` folder) and prepares that. `section` and `change_file` come back `null` in the response - there's nothing to report yet.
+  - **`reviews/` change files already exist** (a later re-run, or a project that was already underway when `prepareDocument` was introduced). Every section normally resolves to the same working `.docx` (`manifest.py`'s one-docx-per-Final-Version-folder rule), so `_resolve_shared_document` scans the manifest and prepares that document directly; the lowest-numbered section is reported as a readable label, with no other significance.
+
+  Either way it never silently guesses: if the workspace genuinely has more than one candidate `.docx` (no section to disambiguate with yet) or more than one distinct working `.docx` across sections (once they exist), `prepareDocument()` fails loud with `{"status": "ERROR", ...}` naming the ambiguity rather than picking one. Passing an explicit `section` still works once the section manifest exists, and resolves to the same document in the common one-docx case.
+
+  The readiness checks and the stable structural ID manifest this builds or refreshes (`@H<section_path>-P<n>` / `@H<section_path>-T<n>-R<n>`, from `stable_ids.py`) both cover *every* heading, paragraph, and table row in the entire `.docx` - the same thing `cli_apply_section.py --dump-ids` prints, but written to disk and reachable over MCP. The manifest is cached at `run-state/stable-ids-<docx-filename>.json`, keyed by the resolved document path, so calling this again later - with or without a section, once `reviews/` exists or not - is an instant `"regenerated": false` no-op rather than a rebuild, as long as the heading structure hasn't drifted.
+
+  Once the document is prepared, the `csa-change-review-agent` (`.agents/csa-change-review.md`) - the authoring step that creates the `reviews/` folder and walks the document section by section deciding what needs to change, writing that out as `ChangesCSA_*.md` files - looks up each change's `@H...` ID straight out of the one shared manifest via `lookupStableId` and drops it into `Where:` instead of quoting text (that decision - "walk the document and decide what needs to change" - is judgment work for a human or bigger model, same as `BLOCKED` resolution; `prepareDocument` only guarantees the ID each decision maps to is already sitting there waiting). Returns:
+
+  ```json
+  // prepareDocument() at true step 0 -- nothing but the raw .docx exists yet
+  {
+    "status": "READY",
+    "reasons": [],
+    "section": null,
+    "change_file": null,
+    "docx": ".../Current State Assessment - IAMPS.docx",
+    "id_manifest_summary": {
+      "paragraphs": 1918, "runs": 0, "headings": 217, "table_rows": 0,
+      "regenerated": true, "reason": "created",
+      "path": ".../run-state/stable-ids-Current_State_Assessment_IAMPS.json"
+    },
+    "validation": {"archive_integrity": "Pass", "...": "..."}
+  }
+  ```
+  ```json
+  // prepareDocument() again, later -- reviews/ now exists, structure unchanged
+  {
+    "status": "READY",
+    "reasons": [],
+    "section": "7",
+    "docx": ".../Current State Assessment - IAMPS - v1.docx",
+    "change_file": ".../reviews/ChangesCSA_IAMPS_Section7_E112_E135.md",
+    "id_manifest_summary": {
+      "paragraphs": 412, "runs": 96, "headings": 58, "table_rows": 96,
+      "regenerated": false, "reason": "unchanged",
+      "path": ".../run-state/stable-ids-Current_State_Assessment_IAMPS.json"
+    },
+    "validation": {"archive_integrity": "Pass", "...": "..."}
+  }
+  ```
+
+  Regenerating is idempotent: the cached manifest is fingerprinted on the document's *heading skeleton* (heading count, level, and assigned section path), which is exactly what stable IDs are derived from. Body-text edits therefore leave it valid and a second call - from the same section or any other section sharing the document - is a reported no-op (`"regenerated": false, "reason": "unchanged"`); a heading added, removed, or reordered is drift, so the manifest is rebuilt and the response says so (`"reason": "structure_drift"`) rather than changing underfoot. `force_regenerate=True` rebuilds unconditionally (`"reason": "forced"`). `runs` counts the `-R<n>` table-row IDs and is the same number as `table_rows`.
+
+- **`lookupStableId(query, section=None)` - the deterministic complement to `prepareDocument`, for drafting a change file.** `section` is optional here too, for the same reason: once the document has been prepared (`prepareDocument()`, no section needed), this is how an authoring step - a small model, a bigger one, or a human - turns "I found something to fix here" into the right `Where:` anchor, without shelling out to `jq` or hand-editing JSON or needing to know a section number at all. It never opens the DOCX itself; it only reads the manifest `prepareDocument` already cached, so it's cheap to call once per edit. Two query modes, auto-detected: a plain snippet of the paragraph/row text (case-insensitive substring match by default) returns the matching `@H...` ID(s); an `@H...` ID itself is looked up exactly, to confirm it's still current. `kind` optionally narrows to `"heading"` / `"paragraph"` / `"table_row"`; `limit` caps how many matches come back (`truncated: true` if there were more). It never BLOCKS and never picks among ambiguous matches for you - `unique_id` is only set when `match_count == 1`, so a caller can check that before trusting a lookup as safe to use unquoted; deciding which of several matches is the right one is the same kind of judgment call this framework always leaves to whoever is drafting the change, not something a deterministic tool should guess at.
+
+  ```json
+  // lookupStableId(query="DNS Location")
+  {
+    "status": "OK",
+    "match_count": 1,
+    "truncated": false,
+    "unique_id": "@H2.1.4-P2",
+    "matches": [{"id": "@H2.1.4-P2", "kind": "paragraph", "section_path": "2.1.4", "text": "DNS Location: Enterprise IT hosted...", "anchor": "..."}],
+    "possibly_stale": false,
+    "manifest_generated_at": "2026-09-19T11:02:26+00:00"
+  }
+  ```
+  ```markdown
+  **Where:** `@H2.1.4-P2`
+  ```
+  The framework resolves `@`-prefixed IDs before falling back to text matching, so no anchor sentence needs to be quoted at all once you have the ID. `possibly_stale` is a cheap mtime comparison (docx modified after the manifest was written) - it's advisory, not a block; re-run `prepareDocument` if it's `true` and you want a fresh manifest before trusting the result. Returns `{"status": "ERROR", ...}` if `prepareDocument` hasn't been run for this section yet - there is no implicit auto-prepare.
+- **`NOT_READY` - the step-0 preconditions.** `prepareDocument` *and* `apply_next_batch` both run the same checks before anything is written; in `apply_next_batch` they run before `create_backup()`, so a `NOT_READY` result means the working DOCX was not touched at all - no backup, no partial batch, no run-state write. Checked cheapest-first, first failure wins, and the failing check's tag lands in `reasons`:
+
+  | `reasons` entry | Meaning |
+  | --- | --- |
+  | `missing_docx` | The resolved path does not exist (dropped mount, moved file). |
+  | `empty_docx` | Zero bytes - a failed copy or an in-progress write. |
+  | `locked_by_word` | A Word owner/lock file sits beside the document, i.e. somebody has it open. Both naming conventions are checked: `~$<filename>.docx` and Word's usual truncated `~$` + filename-minus-first-two-characters (`Report.docx` -> `~$port.docx`). Close the document in Word and retry. |
+  | `unreadable_archive` | The file does not open as a zip package, or `testzip()` finds a corrupt member - catches a corrupt or mid-write DOCX before DocxEngine does. |
+  | `validation_failed` | `validate_docx()` already reports failures *before* any edit. The full `validation` dict comes back attached so the caller can see which check failed. |
+
+  `validate_docx()` is therefore now a pre-flight check as well as the post-edit one it has always been.
+- `mcp.py` + `bin/csa-mcp` - a small stdio JSON-RPC MCP server (same `tools/list`/`tools/call` shape as the vendored `docxengine-mcp`) exposing the seven functions above as MCP tools. Point any MCP-capable harness (Codex CLI, Claude Code, ...) at `bin/csa-mcp`'s absolute path via its `mcp_servers` config; set `CSA_MCP_WORKSPACE` to this workspace root if the server's default working directory isn't already there.
+
+See `.agents/qwen-mcp-factory-plan.md` for the full design and rationale.
