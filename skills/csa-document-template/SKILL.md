@@ -9,14 +9,23 @@ Every Current State Assessment must look and be laid out the same: cover, header
 
 ## Where things are
 
+Shared across every project (fixed paths):
+
 ```text
-Template (read-only, never edit):  /Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS/CSA Template/CSA_Template_v<highest>.dotx
-Template guide + preview:          .../CSA Template/README.md, CSA_Template_v<highest>_preview.pdf
 Scripts (Python 3.8+, stdlib):     /Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-document-template/scripts/
 Structure and framework notes:     /Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-document-template/references/template-structure.md  (read it before drafting)
 ```
 
-The scripts pick the highest `CSA_Template_v*.dotx` in `CSA Template/` unless `--template` is given. Run them from the workspace root (`/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS`) or pass `--workspace`. Relative `--out` paths are resolved under `--workspace`: check the path before running.
+Per-project (resolve `<project_root>` from the active project's entry in `csa-context/PROJECTS.yaml`, or from a `WORK_DIR`/workspace path supplied directly -- never assume IAMPS):
+
+```text
+Template (read-only, never edit):  <project_root>/CSA Template/CSA_Template_v<highest>.dotx
+Template guide + preview:          <project_root>/CSA Template/README.md, CSA_Template_v<highest>_preview.pdf
+```
+
+For IAMPS example: `/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS/CSA Template/CSA_Template_v<highest>.dotx`. Before using this skill on any project, confirm that project actually wants a template-based build -- e.g. UTC DTC's project context records that its existing working document keeps its own pre-existing template and must not be run through this skill; check `known_constraints` in the active project's context file first.
+
+The scripts pick the highest `CSA_Template_v*.dotx` in `CSA Template/` unless `--template` is given. Run them from that project's workspace root (its `project_root`, e.g. `/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS` for IAMPS) or pass `--workspace`. Relative `--out` paths are resolved under `--workspace`: check the path before running.
 
 ## Rules
 
@@ -38,7 +47,7 @@ python3 /Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-docume
   [--date dd/mm/yyyy] [--doc-version 0.1] [--status "..."] [--prepared-by "..."] [--author "Wenzel Joubert"]
 ```
 
-Take the system name and any program values from the user or `csa-context/IAMPS_PROJECT_CONTEXT.yaml`; do not invent them. Prepared For, Prepared By, Project and Reference Standard default to the template's program values. The script sets the `CSA_*` properties, rewrites the cached text of every field, removes the template guidance comments, asks Word to refresh fields on first open, and refuses to overwrite (`--force` only if the user asked). It prints JSON; require `"status": "CREATED"` and an empty `properties_without_fields`.
+Take the system name and any program values from the user or the active project's context file in `csa-context/` (e.g. `IAMPS_PROJECT_CONTEXT.yaml` for IAMPS, `UTC_DTC_PROJECT_CONTEXT.yaml` for UTC DTC -- resolve via `PROJECTS.yaml`, never assume IAMPS); do not invent them. Prepared For, Prepared By, Project and Reference Standard default to the template's program values. The script sets the `CSA_*` properties, rewrites the cached text of every field, removes the template guidance comments, asks Word to refresh fields on first open, and refuses to overwrite (`--force` only if the user asked). It prints JSON; require `"status": "CREATED"` and an empty `properties_without_fields`.
 
 Then run `check_csa.py` (section 3) once: on a fresh file it must report 0 errors and only the placeholder and rating warnings.
 

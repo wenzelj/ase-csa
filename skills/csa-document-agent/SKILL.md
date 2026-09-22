@@ -35,7 +35,7 @@ When the prompt includes `EXECUTION_MODE=framework-first`, act as a thin control
 Before the first `apply_next_batch` of a run, call `prepareDocument` once. **Do not pass `section`** - it prepares the whole document, not one section, so there's nothing to name:
 
 - **Over MCP (`csa-mcp`):** `prepareDocument()`.
-- **In Python:** `csa_docx.tools.prepareDocument(workspace="/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS")`.
+- **In Python:** `csa_docx.tools.prepareDocument(workspace=<active project's root, e.g. "/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS">)`. Never hardcode a project here -- pass whichever project this run is for.
 
 It confirms the working DOCX is editable (not open in Word, not zero-byte or corrupt, not already failing `validate_docx`), and builds or refreshes the stable structural-ID manifest (`@H<section_path>-P<n>` / `@H<section_path>-T<n>-R<n>`) that `@`-prefixed change-file anchors resolve against, covering every heading/paragraph/table-row in the whole document, cached at `run-state/stable-ids-<docx-filename>.json`. With no `section` given, it finds the one working DOCX every CSA section's change file already points at; a second call - with or without a section - is an instant `regenerated: false` no-op. Do not loop it over every section - one call is enough unless `force_regenerate=True` is actually needed. (An explicit `section=<N>` is only required if the call errors saying the workspace has more than one distinct working DOCX and needs one to disambiguate - that's not the normal case.)
 
@@ -61,7 +61,20 @@ You can also pass an `@H...` ID itself as `query` to confirm it's still current 
 
 ## CSA DOCX Framework (run this, not hand-edits)
 
-The framework is the default worker. Run one bounded batch from the workspace root (`/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS`):
+The framework is the default worker. This `.agents` folder is shared by every CSA project, so `--workspace` and every path inside the command must point at the active project's own root -- never assume IAMPS. Run one bounded batch from that project's workspace root:
+
+```text
+/opt/homebrew/bin/python3.14 /Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/framework/csa_docx/cli_apply_section.py \
+  --section <SECTION> \
+  --change-file "<change-file for this project and section, from run-state or the reviews/ folder>" \
+  --docx "<this project's working DOCX, from run-state or the change report -- never assume a filename>" \
+  --workspace "<this project's root, e.g. /Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS>" \
+  --limit <ITERATION_EDIT_LIMIT> \
+  --comment-author "Wenzel Joubert" \
+  --comment-initials "WJ"
+```
+
+Example for IAMPS specifically (do not reuse these literal paths for another project):
 
 ```text
 /opt/homebrew/bin/python3.14 /Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/framework/csa_docx/cli_apply_section.py \
@@ -98,9 +111,11 @@ The framework is the default worker. Run one bounded batch from the workspace ro
 
 ## Local Resources
 
-- Agent definitions and project docs: `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/`
-- Reusable framework: `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/framework/csa_docx/`
-- Run-state files: `/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS/01 Current State AS Built/01 Final Version/run-state/`
-- Learnings inbox: `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/current-state-assessment-document-learnings.md`
-- Fixed issues log: `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/issues-fixed-log.md`
-- Evidence matrix: `/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS/csa-work/evidence-matrix.csv` (access only via the `csa-evidence-matrix` skill)
+This skill is shared by every CSA project under `/Users/wenzel/Work/ASE/CurrentStateAssessments/`. Only the framework itself, the learnings inbox, and the issues log are shared -- everything else is per-project:
+
+- Agent definitions and project docs (shared): `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/`
+- Reusable framework (shared): `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/framework/csa_docx/`
+- Run-state files (per project, inside that project's own working-document folder; for IAMPS example: `/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS/01 Current State AS Built/01 Final Version/run-state/`)
+- Learnings inbox (shared): `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/current-state-assessment-document-learnings.md` -- entries are dated and name their project; check which project an entry is about before applying it to another.
+- Fixed issues log (shared): `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/issues-fixed-log.md`
+- Evidence matrix (per project, inside that project's own `WORK_DIR`; for IAMPS example: `/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS/csa-work/evidence-matrix.csv`) (access only via the `csa-evidence-matrix` skill)

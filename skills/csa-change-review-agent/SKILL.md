@@ -41,15 +41,20 @@ Before inspecting any DOCX, call `prepareDocument()` (the `csa-mcp` tool, no `se
 - Verify only the requested section and selected review batch unless the user explicitly requests `RUN_SCOPE=full-section`.
 - Check required content changes, Word comments, comment author `Wenzel Joubert`, initials `WJ`, report accuracy, and DOCX package integrity.
 - Render affected pages where available before claiming visual validation.
-- Run the Evidence Check from the agent definition using the `csa-evidence-matrix` skill (`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-evidence-matrix/SKILL.md`): for fact-bearing edits in the batch, look up `csa-work/evidence-matrix.csv` first, search Discovery Data only if the matrix has no answer, append new findings back to the matrix (append-only), and report `Evidence` per edit. A matrix row is a lead, not proof.
+- Run the Evidence Check from the agent definition using the `csa-evidence-matrix` skill (`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-evidence-matrix/SKILL.md`): for fact-bearing edits in the batch, look up this project's `csa-work/evidence-matrix.csv` first, search this project's Discovery Data only if the matrix has no answer, append new findings back to the matrix (append-only), and report `Evidence` per edit. A matrix row is a lead, not proof.
 - Append or update the section `## Change Review Report` in the same Markdown file.
-- Update `01 Current State AS Built/01 Final Version/run-state/csa-change-review-section-<SECTION>.md` when the review is partial or resumable.
+- Update `<project_root>/01 Current State AS Built/01 Final Version/run-state/csa-change-review-section-<SECTION>.md` (this project's run-state directory) when the review is partial or resumable.
 - Add reusable review lessons to the project learning log when a real lesson is found.
 - Stop immediately after reporting `PASS`, `PASS WITH NOTES`, `FAIL`, or `BLOCKED`.
 
 ## Local Resources
 
+Shared across every project (fixed paths):
+
 - Agent definitions and project docs: `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/`
-- Run-state files: `/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS/01 Current State AS Built/01 Final Version/run-state/`
-- Evidence matrix: `/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS/csa-work/evidence-matrix.csv` (access only via the `csa-evidence-matrix` skill)
-- Review learning log: `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-change-review-learnings.md`
+- Review learning log: `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-change-review-learnings.md` (dated entries may be project-specific -- read for the pattern, don't assume every lesson generalises)
+
+Per-project (resolve from the active project's entry in `csa-context/PROJECTS.yaml`, or from `PROJECT_CONTEXT`/`WORK_DIR` if supplied directly -- never assume IAMPS):
+
+- Run-state files: `<project_root>/01 Current State AS Built/01 Final Version/run-state/` (for IAMPS example: `/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS/01 Current State AS Built/01 Final Version/run-state/`)
+- Evidence matrix: `<work_dir>/evidence-matrix.csv` (for IAMPS example: `/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS/csa-work/evidence-matrix.csv`; access only via the `csa-evidence-matrix` skill)

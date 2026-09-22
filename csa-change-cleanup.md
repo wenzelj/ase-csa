@@ -47,7 +47,7 @@ Do **not** run `docx_revision accept_all` or `reject_all` - stop and report inst
 - the review report's `Sign-off for cleanup:` line is `NOT APPLICABLE` (this means the review agent couldn't confirm tracked changes were even on for this document - there is nothing for you to finalise, and running `accept_all` blind could finalise unrelated or unreviewed markup);
 - the review report's `Sign-off for cleanup:` line is missing entirely (an older-format report written before this sign-off convention existed) - ask the user whether to treat it as reviewed, rather than assuming;
 - the review was scoped to a batch narrower than the section's full edit range (check `Edit IDs covered by this sign-off:`) - in that case, only accept revisions anchored to comments for those specific edit IDs (see Scoped Acceptance below), never the whole document;
-- `docx_revision list` shows revisions attributed to an author other than the expected comment author for this project (e.g. anything other than `Wenzel Joubert` in this IAMPS workspace) - an unexpected author means someone else edited the document outside this pipeline, and blind `accept_all` could finalise their changes too. Stop and report what you found.
+- `docx_revision list` shows revisions attributed to an author other than the expected comment author for this project (e.g. anything other than `Wenzel Joubert`, the user-level convention used across every CSA project) - an unexpected author means someone else edited the document outside this pipeline, and blind `accept_all` could finalise their changes too. Stop and report what you found.
 
 When none of these apply, proceed.
 

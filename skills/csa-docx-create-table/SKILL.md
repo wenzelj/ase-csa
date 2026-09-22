@@ -6,6 +6,8 @@ table (e.g. a glossary, an acronym list, a small reference grid) — the
 change-file pipeline (``cli_apply_section.py`` / ``apply_next_batch``) can only
 edit *existing* tables, so new tables need this path.
 
+**Note:** the example commands below use IAMPS's actual filenames and content (e.g. `Current State Assessment - IAMPS.docx`, an "IAMPS" glossary row) purely to illustrate real working syntax. When running this on another project, substitute that project's own working DOCX path and content -- do not literally reuse the IAMPS filename or row values.
+
 ## When to use
 
 - The approved change record says "add a new table" or "insert a table for

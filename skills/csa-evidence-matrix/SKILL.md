@@ -5,11 +5,13 @@ description: Matrix-first evidence lookup and append-only recording for the Curr
 
 # CSA Evidence Matrix (read + write skill)
 
-The evidence matrix is the shared memory of what has already been established about the assessed system:
+The evidence matrix is the shared memory of what has already been established about the assessed system. It lives at `<work_dir>/evidence-matrix.csv`, where `<work_dir>` is the active project's `work_dir` from `csa-context/PROJECTS.yaml` (or the `WORK_DIR` supplied directly) -- never assume IAMPS. For example, IAMPS's matrix is at:
 
 ```text
 /Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS/csa-work/evidence-matrix.csv
 ```
+
+and UTC DTC's is at its own `csa-work/evidence-matrix.csv` under its project root. Always resolve this path per-project; writing one project's findings into another project's matrix is a data-integrity error.
 
 Each row is one atomic claim with a stable `E-nnn` ID, an evidence class, its source, and an exact excerpt. This skill is how the three pipeline agents read it and write to it, so a fact found once is never searched for twice and every claim can be traced to a source.
 

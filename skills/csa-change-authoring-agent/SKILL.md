@@ -56,8 +56,10 @@ Before reading the DOCX or searching Discovery Data, call `prepareDocument()` (t
 
 ## Local Resources
 
-- Agent definitions and project docs: `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/`
-- Discovery Data evidence: `/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS/01 Current State AS Built/IAMPS Discovery Data/`
-- Run-state files: `/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS/01 Current State AS Built/01 Final Version/run-state/`
-- Evidence matrix: `/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS/csa-work/evidence-matrix.csv` (access only via the `csa-evidence-matrix` skill)
-- Authoring learning log: `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-change-authoring-learnings.md`
+This skill is shared by every CSA project under `/Users/wenzel/Work/ASE/CurrentStateAssessments/`. Everything below the framework itself is per-project -- resolve it from the active run's `PROJECT_CONTEXT` / workspace, never assume it is IAMPS:
+
+- Agent definitions and project docs (shared, same for every project): `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/`
+- Discovery Data evidence (per project -- see that project's `authoritative_sources` in its `csa-context/<PROJECT>_PROJECT_CONTEXT.yaml`; for IAMPS example: `/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS/01 Current State AS Built/IAMPS Discovery Data/`)
+- Run-state files (per project, inside that project's own working-document folder; for IAMPS example: `/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS/01 Current State AS Built/01 Final Version/run-state/`)
+- Evidence matrix (per project, inside that project's own `WORK_DIR`; for IAMPS example: `/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS/csa-work/evidence-matrix.csv`) (access only via the `csa-evidence-matrix` skill)
+- Authoring learning log (shared): `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-change-authoring-learnings.md` -- entries are dated and name their project; a lesson written against one project's data is not automatically true of another's, so check which project an entry is about before applying it.

@@ -100,7 +100,7 @@ When the user gives a short section review instruction, use these defaults:
 - if the reviewed section's `.md` file has no `## Changes Report`, use the previous completed section's report to identify the working DOCX only when this is safe and unambiguous;
 - use bounded review iteration mode for large sections and review only the next safe batch unless the user explicitly requests `RUN_SCOPE=full-section`;
 - use the original/source DOCX in the same document folder for unauthorised-change comparison when it can be identified safely;
-- use `Wenzel Joubert` and `WJ` as the expected Word comment author and initials in this IAMPS workspace;
+- use `Wenzel Joubert` and `WJ` as the expected Word comment author and initials (this is a user-level convention that applies across every CSA project, not just IAMPS);
 - verify approved edits, Word comments, question comments, change-report accuracy, DOCX integrity, table-comment OOXML safety, and render/open status where tools are available;
 - append or update the `## Change Review Report` in the same section `.md` change file;
 - add any reusable learning from the review to this agent's local skill notes for future runs;
@@ -133,7 +133,7 @@ The `csa_docx` framework (`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agent
   - If the approved edit's `Where:` field is already an `@H...` stable ID, call `lookupStableId(query="@H...")` to confirm it still resolves and see its current text -- this is a direct, unambiguous check of "did the edit land in the right place", not a search.
   - If `Where:` is a text anchor (the older convention), call `lookupStableId(query="<snippet from Where>")` to locate the paragraph/row deterministically instead of scanning the DOCX by eye. Check `unique_id`: non-null means an unambiguous match (use its `id` and `text` as the located anchor); null with `match_count > 1` means the snippet is itself ambiguous in the document, which is worth noting as a review observation, not silently picking one; `match_count == 0` means the expected text is genuinely absent -- material evidence toward a `MISSING` or `INCORRECT` finding.
   - `lookupStableId` is read-only and never modifies the DOCX, consistent with the Read-Only Default below. It only reads the manifest `prepareDocument` already built, so it's cheap to call once per edit while working through the verification inventory.
-- Both tools require `prepareDocument()` to have been run first (that's why it's in First Actions) and take no `section` argument in normal use -- the manifest covers the whole document, not one section. Only pass `section=<N>` if a call errors saying the workspace has more than one distinct working DOCX and needs one to disambiguate; that is not the normal case for this IAMPS workspace.
+- Both tools require `prepareDocument()` to have been run first (that's why it's in First Actions) and take no `section` argument in normal use -- the manifest covers the whole document, not one section. Only pass `section=<N>` if a call errors saying the workspace has more than one distinct working DOCX and needs one to disambiguate; that is not the normal case for a CSA project workspace.
 
 ## Read-Only Default
 
@@ -400,7 +400,7 @@ The comment must:
 - be anchored to the changed text, inserted text, changed table cell, changed heading, or nearest surviving location for deletions;
 - use the required author when specified.
 
-For this IAMPS workspace, the required comment author is:
+For every CSA project workspace, the required comment author is:
 
 ```text
 Wenzel Joubert
