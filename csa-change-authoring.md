@@ -56,7 +56,7 @@ Do not hard-code IAMPS, Aurizon, OT 3.5, section numbers, or project-specific te
 Use this source-of-truth order:
 
 1. User's explicit current instruction
-2. Discovery Data evidence for the assessed system
+2. Discovery Data evidence for the assessed system, including evidence matrix rows and any orchestrator-pipeline analysis/draft files that cite it (`WORK_DIR/analysis/*.md`, `WORK_DIR/drafts/*.md` -- see Evidence Mapping) -- these are a synthesis of Discovery Data, not a separate source above it; a claim only carries this authority level once verified against its cited E-id
 3. The document's own front matter / control page, for confirmed context (assessed system name, programme name, authoritative document date) -- read it, don't assume it from a prior run
 4. Existing document wording and structure, for what to leave alone absent evidence to the contrary
 
@@ -68,6 +68,7 @@ To author one section, identify or ask for:
 
 - the working DOCX (already prepared -- `prepareDocument()` must have returned `READY` for this run; see First Actions);
 - the Discovery Data evidence folder for the assessed system (for IAMPS: `01 Current State AS Built/IAMPS Discovery Data/`, containing `PROD/`, `UAT/`, and loose `tg_discovery_*` runs -- generalise this location per project);
+- `WORK_DIR/analysis/` and `WORK_DIR/drafts/`, if the evidence-led orchestrator workflow has been run for this project -- not required to exist, but check for them (see First Actions and Evidence Mapping);
 - the section number to author (the requested section's H1 heading), or "the next section with no existing change file" when none is given.
 
 ## Simple Invocation Defaults
@@ -92,6 +93,7 @@ At the beginning of every authoring run:
 - if `reviews/` does not yet exist next to the working DOCX, this is the first section ever authored for this document -- you will create that folder when you write your first change file;
 - read `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-evidence-matrix/SKILL.md` and run `evidence_matrix.py stats` once to see what the evidence matrix (`csa-work/evidence-matrix.csv`) already holds -- every evidence question in this run goes through that skill (see Evidence Matrix First below);
 - read `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-change-authoring-learnings.md` if it exists, for evidence-to-topic mappings and authoring lessons already established by earlier runs (this section's or another's) -- reuse and refine them rather than starting blind (see Evidence Mapping below);
+- list `WORK_DIR/analysis/` and `WORK_DIR/drafts/`, if either exists. These hold the evidence-led orchestrator workflow's output (technical-analyst structured analyses and writer-agent section drafts) for this project, if that workflow has been run -- a synthesized starting point this agent must check before drafting edits from scratch. See Evidence Mapping below for how to use them;
 - scan every existing `reviews/*.md` file for this section (there may be none, if this is truly the first section authored) and identify the highest `S<N>-E<n>` and the highest `S<N>-A<n>` already used in this section's files. Your first content edit is `S<N>-E` followed by the next integer after that; your first administrative edit is `S<N>-A` followed by the next integer after that. IDs are section-scoped and sequential within the section -- they never reset between sections, and never re-derived from a stale counter file (there isn't one; this scan is the source of truth, the same reason `manifest.py` never caches its own manifest);
 - identify the requested section's heading text and read its current content (from the stable-ID manifest's text previews, or a direct read of the paragraphs/table rows under that heading).
 
@@ -116,9 +118,10 @@ There is no predefined mapping from a document topic to which Discovery Data fil
 
 1. Read the section's current text and identify the technical topics it actually covers (e.g. "DNS", "time synchronisation", "listening ports and processes", "authentication configuration").
 2. Before searching from scratch, check `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-change-authoring-learnings.md` for a mapping already recorded for the same or a related topic from an earlier run, and reuse or refine it.
-3. For each claim or topic, first do the Evidence Matrix First lookup below. Only for what the matrix does not answer, search the Discovery Data folder for evidence speaking to those topics, across every host present (`PROD`, `UAT`, and any standalone discovery runs) -- host-level evidence is organised as numbered per-topic files (for example `14_resolver.txt`, `41_dns_query_tests.txt` for DNS; `20_listening_ports.txt`, `10_listeners_by_process.txt` for network services; `52_auth_configs.txt` for authentication; `00_host_summary.txt` for OS/version facts on every host) -- the exact numbering and filenames are discovered by listing the folder, not assumed from this description.
-4. Correlate across hosts: a claim that holds on one host but not another is itself a finding worth recording (either as an edit that qualifies the claim, or as an open question if the discrepancy itself needs a human judgement call).
-5. At the end of every run, add or refine an entry in `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-change-authoring-learnings.md`: `<topic> -> <discovery file name patterns that were actually useful, and any caveat about them>`. This is a required step, not optional housekeeping -- the entire point of this rule is that the mapping gets more reliable every time this agent runs, on this section or a different one.
+3. **Check the orchestrator's analysis/drafts (required, before Discovery Data).** Skim `WORK_DIR/analysis/*.md` and `WORK_DIR/drafts/*.md` (listed in First Actions) for a filename or heading matching this section's topics -- e.g. an `infrastructure-analysis.md` or `security-posture-analysis.md` for an infrastructure/security section, a `drafts/<topic>.md` for a topic the writer agent already drafted. If nothing matches, this is a fast no-op; do not search further for these files or treat their absence as a problem -- the orchestrator workflow may not have been run for this topic at all. If something matches, use it as a synthesized starting point and a map of which evidence already answers which claim, but do not treat it as evidence in itself: every material claim in an analysis or draft file already cites its E-id(s) -- verify the claim against the cited E-id via Evidence Matrix First below (an E-id that doesn't actually support the claim as written means the analysis overreached; don't carry that overreach into the change file) before relying on it, and cite that E-id in the edit's `Why`, never the analysis/draft file itself.
+4. For each claim or topic, first do the Evidence Matrix First lookup below (this is also how step 3's analysis-file citations get verified). Only for what the matrix does not answer, search the Discovery Data folder for evidence speaking to those topics, across every host present (`PROD`, `UAT`, and any standalone discovery runs) -- host-level evidence is organised as numbered per-topic files (for example `14_resolver.txt`, `41_dns_query_tests.txt` for DNS; `20_listening_ports.txt`, `10_listeners_by_process.txt` for network services; `52_auth_configs.txt` for authentication; `00_host_summary.txt` for OS/version facts on every host) -- the exact numbering and filenames are discovered by listing the folder, not assumed from this description.
+5. Correlate across hosts: a claim that holds on one host but not another is itself a finding worth recording (either as an edit that qualifies the claim, or as an open question if the discrepancy itself needs a human judgement call).
+6. At the end of every run, add or refine an entry in `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-change-authoring-learnings.md`: `<topic> -> <discovery file name patterns that were actually useful, and any caveat about them>`, and note whether an existing analysis/draft file was found and useful for that topic. This is a required step, not optional housekeeping -- the entire point of this rule is that the mapping gets more reliable every time this agent runs, on this section or a different one.
 
 ### Evidence Matrix First (required)
 
@@ -336,8 +339,10 @@ READ AGENT
 -> READ DOCUMENT SKILL
 -> CALL prepareDocument()
 -> READ LEARNINGS FILE
+-> LIST WORK_DIR/analysis/ AND WORK_DIR/drafts/ (if present)
 -> IDENTIFY SECTION TEXT AND CLAIMS
--> LOOKUP EVIDENCE MATRIX (csa-evidence-matrix skill) FOR EACH CLAIM
+-> CHECK ANALYSIS/DRAFTS FOR A MATCHING TOPIC (pointer to E-ids, not evidence itself)
+-> LOOKUP EVIDENCE MATRIX (csa-evidence-matrix skill) FOR EACH CLAIM, INCLUDING ANY CITED BY ANALYSIS/DRAFTS
 -> SEARCH DISCOVERY DATA ONLY FOR WHAT THE MATRIX DID NOT ANSWER
 -> APPEND NEW FINDINGS (AND NOT_FOUND + SCOPE) TO THE MATRIX
 -> FOR EACH SUPPORTED GAP: lookupStableId -> DRAFT EDIT

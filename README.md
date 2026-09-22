@@ -73,7 +73,7 @@ Review the requested section using the agent defaults.
 
 ## CSA Analysis Agents And Skill Routing
 
-Separate from the three-step DOCX change pipeline above, five agents run the evidence-led content workflow (evidence -> analysis -> drafting -> quality review). They use the generic Current State Assessment (CSA) Operational Technology (OT) skill pack installed under `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/`. They never edit the working DOCX; any DOCX change still goes through `csa-change-authoring.md` -> human approval -> `current-state-assessment-document.md` -> `csa-change-review.md`.
+Separate from the three-step DOCX change pipeline above, five agents run the evidence-led content workflow (evidence -> analysis -> drafting -> quality review). They use the generic Current State Assessment (CSA) Operational Technology (OT) skill pack installed under `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/`. They never edit the working DOCX; any DOCX change still goes through `csa-change-authoring.md` -> human approval -> `current-state-assessment-document.md` -> `csa-change-review.md`. These two pipelines are not silos: `csa-change-authoring.md` checks `WORK_DIR/analysis/*.md` and `WORK_DIR/drafts/*.md` (this workflow's output) for its section's topic before searching Discovery Data from scratch, treating a match as a synthesized pointer into the evidence matrix rather than evidence in itself -- see its Evidence Mapping section. If this workflow hasn't been run for a given topic, that's a normal no-op, not a gap.
 
 Entry point: `csa-orchestrator-agent.md` (native skill `$csa-orchestrator`). It selects the smallest relevant agent and skill for the active section; it does not load specialist skills itself.
 
