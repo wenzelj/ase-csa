@@ -5,7 +5,7 @@ description: Produce a concise, evidence-aligned stakeholder summary from a comp
 
 # Executive Summary
 
-Create a short summary for readers who will not read the full assessment.
+Create a short summary for readers who will not read the full assessment. Load `csa-writing-style` (`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-writing-style/SKILL.md`) before drafting -- an executive summary is exactly the kind of text that tends to read as AI-generated boilerplate if that skill isn't applied.
 
 Cover:
 

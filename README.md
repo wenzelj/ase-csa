@@ -82,13 +82,14 @@ Entry point: `csa-orchestrator-agent.md` (native skill `$csa-orchestrator`). It 
 | `csa-orchestrator-agent.md` | `csa-orchestrator` | always (this is the coordinator) |
 | `csa-evidence-investigator-agent.md` | `evidence-investigator`; `csa-gap-analysis` | evidence work; gap mode only |
 | `csa-technical-analyst-agent.md` | `application-discovery`; `infrastructure-analysis`; `ot-architecture-analysis` + `dependency-analysis`; `dependency-analysis`; `network-connectivity-analysis`; `identity-access-analysis`; `resilience-analysis`; `operations-support-analysis`; `security-posture-analysis` | one task at a time, as named by the orchestrator (`ANALYSIS_SKILL`) |
-| `csa-writer-agent.md` | `csa-section-writer`; `technical-explainer`; `executive-summary` | section drafting; explanation on request; executive summary only after the detailed assessment is stable and reviewed |
+| `csa-writer-agent.md` | `csa-writing-style`; `csa-section-writer`; `technical-explainer`; `executive-summary` | section drafting; explanation on request; executive summary only after the detailed assessment is stable and reviewed |
 | `csa-quality-reviewer-agent.md` | `csa-quality-review`; `technical-explainer` | content review; explanation on request |
 
 Routing rules:
 
 - No agent loads all skills. Specialist skills are loaded one task at a time.
 - `csa-section-writer` writes from approved evidence and does not search sources independently.
+- `csa-writing-style` is the single style guide for any prose landing in a CSA document (human-sounding, not AI-sounding). The CSA Writer Agent owns it. The C-S-A-Change-Authoring Agent (the separate change-file pipeline, see below) also loads and follows it when drafting an edit's replacement/insertion text -- it borrows the Writer Agent's voice rather than defining its own, so document prose reads consistently regardless of which pipeline produced a given sentence.
 - `csa-quality-review` reports findings and does not silently rewrite approved content for style.
 - `technical-explainer` output is a labelled `Technical explanation`, kept separate from project evidence. General technical knowledge is never presented as verified IAMPS or AZNOPS evidence.
 - `executive-summary` is used only after the detailed assessment is stable and the reviewer verdict is `READY` or `READY WITH DECLARED GAPS`.

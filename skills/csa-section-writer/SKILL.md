@@ -7,6 +7,8 @@ description: Write or revise a Current State Assessment section from an approved
 
 Write for technical and operational readers using the existing document's structure and style unless the user requests a redesign.
 
+Before drafting, load `csa-writing-style` (`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-writing-style/SKILL.md`) and write to it -- it governs how the sentences read; the rules below govern what they're allowed to claim.
+
 ## Rules
 
 - Use approved evidence as the factual basis.
