@@ -1,8 +1,13 @@
-# IAMPS CSA Agents
+# CSA Agents (shared framework)
 
-This folder contains project-local agent definitions, run-state files, learning notes, and helper code for the IAMPS Current State Assessment workflow.
+This folder contains the agent definitions, skills, and helper code for the Current State Assessment (CSA) workflow, shared across every CSA project under `/Users/wenzel/Work/ASE/CurrentStateAssessments/`. It moved here from inside the IAMPS project folder specifically so IAMPS and UTC DTC (and any future CSA project placed alongside them) use the exact same agents, skills, and framework code instead of drifting copies.
 
-These files are intentionally kept inside the IAMPS workspace so each section run can use the same source of truth, change reports, backups, and recovery state.
+Project-specific facts live in each project's own file under `csa-context/` (`IAMPS_PROJECT_CONTEXT.yaml`, `UTC_DTC_PROJECT_CONTEXT.yaml`) -- always pass the right one via `PROJECT_CONTEXT` (see the orchestrator section below). Per-run working state (`csa-work/`, run-state, reviews, backups of the working DOCX) stays inside each project's own folder, not here, so runs for different projects never collide.
+
+Current CSA projects:
+
+- IAMPS: `/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS`
+- UTC DTC with KVM: `/Users/wenzel/Work/ASE/CurrentStateAssessments/UTC DTC/07 UTC DTC with KVM` (working document stays on its own pre-existing template -- see `known_constraints` in its project context file; do not run it through `csa-document-template` / `new_csa.py`)
 
 ## Agent Definitions
 
@@ -23,7 +28,7 @@ Start an authoring run with:
 
 ```text
 Load this agent definition:
-/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/.agents/csa-change-authoring.md
+/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-change-authoring.md
 
 Act as the C-S-A-Change-Authoring Agent.
 
@@ -40,7 +45,7 @@ Start an implementation run with:
 
 ```text
 Load this agent definition:
-/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/.agents/current-state-assessment-document.md
+/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/current-state-assessment-document.md
 
 Act as the Current-State-Assessment-Document Agent.
 
@@ -55,7 +60,7 @@ Start a review run with:
 
 ```text
 Load this agent definition:
-/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/.agents/csa-change-review.md
+/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-change-review.md
 
 Act as the C-S-A-Change-Review Agent.
 
@@ -68,7 +73,7 @@ Review the requested section using the agent defaults.
 
 ## CSA Analysis Agents And Skill Routing
 
-Separate from the three-step DOCX change pipeline above, five agents run the evidence-led content workflow (evidence -> analysis -> drafting -> quality review). They use the generic Current State Assessment (CSA) Operational Technology (OT) skill pack installed under `.agents/skills/`. They never edit the working DOCX; any DOCX change still goes through `csa-change-authoring.md` -> human approval -> `current-state-assessment-document.md` -> `csa-change-review.md`.
+Separate from the three-step DOCX change pipeline above, five agents run the evidence-led content workflow (evidence -> analysis -> drafting -> quality review). They use the generic Current State Assessment (CSA) Operational Technology (OT) skill pack installed under `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/`. They never edit the working DOCX; any DOCX change still goes through `csa-change-authoring.md` -> human approval -> `current-state-assessment-document.md` -> `csa-change-review.md`.
 
 Entry point: `csa-orchestrator-agent.md` (native skill `$csa-orchestrator`). It selects the smallest relevant agent and skill for the active section; it does not load specialist skills itself.
 
@@ -87,20 +92,20 @@ Routing rules:
 - `csa-quality-review` reports findings and does not silently rewrite approved content for style.
 - `technical-explainer` output is a labelled `Technical explanation`, kept separate from project evidence. General technical knowledge is never presented as verified IAMPS or AZNOPS evidence.
 - `executive-summary` is used only after the detailed assessment is stable and the reviewer verdict is `READY` or `READY WITH DECLARED GAPS`.
-- Skills and agent definitions stay generic. Project facts live in `csa-context/IAMPS_PROJECT_CONTEXT.yaml` and in assessment evidence.
+- Skills and agent definitions stay generic. Project facts live in each project's own `csa-context/<PROJECT>_PROJECT_CONTEXT.yaml` and in that project's assessment evidence -- never in the shared agent/skill files.
 
-Working files: `csa-context/` holds the project context; `csa-templates/` holds blank templates (project context, assessment state, evidence matrix, section coverage guide) copied from the skill pack. Per-run working files (`assessment-state.yaml`, `evidence-matrix.csv`, `analysis/`, `drafts/`, `reviews/`) go in `WORK_DIR`, default `csa-work/` at the project root, created from the templates on first use.
+Working files: `csa-context/` holds every project's context file (one YAML per project, named `<PROJECT>_PROJECT_CONTEXT.yaml`); `csa-templates/` holds blank templates (project context, assessment state, evidence matrix, section coverage guide) copied from the skill pack. Per-run working files (`assessment-state.yaml`, `evidence-matrix.csv`, `analysis/`, `drafts/`, `reviews/`) go in `WORK_DIR`, which must be set to that project's own `csa-work/` folder (created from the templates on first use) -- since `.agents` is shared, there is no single "project root" to default to, so always pass `WORK_DIR` as an absolute path inside the right project.
 
-Start a CSA analysis run with:
+Start a CSA analysis run with (example: IAMPS):
 
 ```text
 Load this agent definition:
-/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/.agents/csa-orchestrator-agent.md
+/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-orchestrator-agent.md
 
 Act as the CSA Orchestrator Agent.
 
-PROJECT_CONTEXT=.agents/csa-context/IAMPS_PROJECT_CONTEXT.yaml
-WORK_DIR=csa-work
+PROJECT_CONTEXT=/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-context/IAMPS_PROJECT_CONTEXT.yaml
+WORK_DIR=/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS/csa-work
 SECTION=<section-name>
 SOURCE_SET=<documents or folders that count as evidence>
 
@@ -125,20 +130,20 @@ The `.agents` files are project-local prompts. They are not native Codex skills 
 This workspace also contains repo-scoped native Codex skill wrappers:
 
 ```text
-.agents/skills/csa-change-authoring-agent/SKILL.md
-.agents/skills/csa-document-agent/SKILL.md
-.agents/skills/csa-change-review-agent/SKILL.md
-.agents/skills/it-ot-current-state-assessment/SKILL.md
-.agents/skills/docxengine/SKILL.md
-.agents/skills/csa-evidence-matrix/SKILL.md
-.agents/skills/csa-document-template/SKILL.md
+/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-change-authoring-agent/SKILL.md
+/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-document-agent/SKILL.md
+/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-change-review-agent/SKILL.md
+/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/it-ot-current-state-assessment/SKILL.md
+/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/docxengine/SKILL.md
+/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-evidence-matrix/SKILL.md
+/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-document-template/SKILL.md
 ```
 
-The CSA OT skill pack (16 skills: `csa-orchestrator`, `evidence-investigator`, `application-discovery`, `infrastructure-analysis`, `ot-architecture-analysis`, `network-connectivity-analysis`, `identity-access-analysis`, `dependency-analysis`, `resilience-analysis`, `operations-support-analysis`, `security-posture-analysis`, `csa-gap-analysis`, `csa-section-writer`, `csa-quality-review`, `technical-explainer`, `executive-summary`) is also installed under `.agents/skills/`; see `CSA Analysis Agents And Skill Routing` above for which agent loads which.
+The CSA OT skill pack (16 skills: `csa-orchestrator`, `evidence-investigator`, `application-discovery`, `infrastructure-analysis`, `ot-architecture-analysis`, `network-connectivity-analysis`, `identity-access-analysis`, `dependency-analysis`, `resilience-analysis`, `operations-support-analysis`, `security-posture-analysis`, `csa-gap-analysis`, `csa-section-writer`, `csa-quality-review`, `technical-explainer`, `executive-summary`) is also installed under `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/`; see `CSA Analysis Agents And Skill Routing` above for which agent loads which.
 
-`csa-evidence-matrix` is a shared read + write skill used by the authoring, document and review agents. It makes `csa-work/evidence-matrix.csv` the first place every agent looks for a technical fact (`lookup`), sends them to Discovery Data only for what the matrix does not answer, and has them write new findings back (`append`, append-only, validated, backed up to `csa-work/backups/`, audited in `csa-work/evidence-matrix-audit.jsonl`). Helper: `.agents/skills/csa-evidence-matrix/scripts/evidence_matrix.py` (`lookup`, `get`, `stats`, `verify`, `append`).
+`csa-evidence-matrix` is a shared read + write skill used by the authoring, document and review agents. It makes `csa-work/evidence-matrix.csv` the first place every agent looks for a technical fact (`lookup`), sends them to Discovery Data only for what the matrix does not answer, and has them write new findings back (`append`, append-only, validated, backed up to `csa-work/backups/`, audited in `csa-work/evidence-matrix-audit.jsonl`). Helper: `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-evidence-matrix/scripts/evidence_matrix.py` (`lookup`, `get`, `stats`, `verify`, `append`).
 
-`csa-document-template` is the skill for the CSA Word template (`CSA Template/CSA_Template_v*.dotx`, highest version wins). It gives agents three scripts under `.agents/skills/csa-document-template/scripts/` (run with Python 3.10+, Word closed): `new_csa.py` creates a new CSA `.docx` from the template and fills the cover and Document Control properties; `scaffold_csa.py` adds table rows or bullets to a domain section before `prepareDocument()` and the change records fill them (the framework cannot add bullets or rows cleanly through change records); `check_csa.py` verifies a CSA still matches the template's structure and styles (use `--final` before release). `references/template-structure.md` lists the section skeleton, the 17 domain blocks, styles and framework limits. Use it before step 1 of the pipeline when starting a new CSA, and after step 3 to check the result. Prompt: `Use $csa-document-template.` followed by the system name and output path.
+`csa-document-template` is the skill for the CSA Word template (`CSA Template/CSA_Template_v*.dotx`, highest version wins). It gives agents three scripts under `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-document-template/scripts/` (run with Python 3.10+, Word closed): `new_csa.py` creates a new CSA `.docx` from the template and fills the cover and Document Control properties; `scaffold_csa.py` adds table rows or bullets to a domain section before `prepareDocument()` and the change records fill them (the framework cannot add bullets or rows cleanly through change records); `check_csa.py` verifies a CSA still matches the template's structure and styles (use `--final` before release). `references/template-structure.md` lists the section skeleton, the 17 domain blocks, styles and framework limits. Use it before step 1 of the pipeline when starting a new CSA, and after step 3 to check the result. Prompt: `Use $csa-document-template.` followed by the system name and output path.
 
 `it-ot-current-state-assessment` and `docxengine` are different from the other three: they are general reference skills, not wrappers around a project-local execution agent definition.
 

@@ -10,8 +10,8 @@ This agent reviews *content quality*. It is different from `csa-change-review.md
 
 Load:
 
-- `.agents/skills/csa-quality-review/SKILL.md`
-- `.agents/skills/technical-explainer/SKILL.md` only when a finding needs a plain-language explanation for the user
+- `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-quality-review/SKILL.md`
+- `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/technical-explainer/SKILL.md` only when a finding needs a plain-language explanation for the user
 
 Do not load writer, analysis, evidence, or executive-summary skills.
 

@@ -10,15 +10,15 @@ The orchestrator names the analysis skill for the task (`ANALYSIS_SKILL=<name>`)
 
 | Task area | Skill file(s) |
 | --- | --- |
-| Application profile | `.agents/skills/application-discovery/SKILL.md` |
-| Infrastructure and hosting | `.agents/skills/infrastructure-analysis/SKILL.md` |
-| OT architecture | `.agents/skills/ot-architecture-analysis/SKILL.md` and `.agents/skills/dependency-analysis/SKILL.md` |
-| Dependencies only | `.agents/skills/dependency-analysis/SKILL.md` |
-| Network and connectivity | `.agents/skills/network-connectivity-analysis/SKILL.md` |
-| Identity and access | `.agents/skills/identity-access-analysis/SKILL.md` |
-| Availability, backup, recovery | `.agents/skills/resilience-analysis/SKILL.md` |
-| Operations and support | `.agents/skills/operations-support-analysis/SKILL.md` |
-| Security posture | `.agents/skills/security-posture-analysis/SKILL.md` |
+| Application profile | `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/application-discovery/SKILL.md` |
+| Infrastructure and hosting | `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/infrastructure-analysis/SKILL.md` |
+| OT architecture | `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/ot-architecture-analysis/SKILL.md` and `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/dependency-analysis/SKILL.md` |
+| Dependencies only | `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/dependency-analysis/SKILL.md` |
+| Network and connectivity | `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/network-connectivity-analysis/SKILL.md` |
+| Identity and access | `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/identity-access-analysis/SKILL.md` |
+| Availability, backup, recovery | `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/resilience-analysis/SKILL.md` |
+| Operations and support | `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/operations-support-analysis/SKILL.md` |
+| Security posture | `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/security-posture-analysis/SKILL.md` |
 
 Never load the whole list. If no `ANALYSIS_SKILL` is given, infer the single best match from the task; if it is genuinely ambiguous, return to the orchestrator for a routing decision. Each skill hands off adjacent topics to its sibling skills; note the hand-off in your output instead of loading the sibling.
 

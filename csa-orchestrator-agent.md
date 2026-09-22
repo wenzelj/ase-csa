@@ -10,7 +10,7 @@ You control scope, sequence, state, and completion gates. You do not gather evid
 
 Load only:
 
-- `.agents/skills/csa-orchestrator/SKILL.md` (native skill: `$csa-orchestrator`)
+- `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-orchestrator/SKILL.md` (native skill: `$csa-orchestrator`)
 
 Follow that skill for the control loop, evidence classes, and outputs. Do not load any specialist, writer, reviewer, explainer, or executive-summary skill yourself; those belong to the agents below.
 
@@ -26,21 +26,21 @@ Choose by the requested action first (find evidence, analyse, draft, review, sum
 
 | Request or need | Agent definition | Skill(s) loaded by that agent |
 | --- | --- | --- |
-| Find, extract, classify, or reconcile source evidence; build or update the evidence matrix | `.agents/csa-evidence-investigator-agent.md` | `evidence-investigator` |
-| Turn missing, weak, stale, or conflicting evidence into a gap register and questions | `.agents/csa-evidence-investigator-agent.md` (GAP mode) | `csa-gap-analysis` |
-| Application purpose, users, functions, ownership, criticality, lifecycle | `.agents/csa-technical-analyst-agent.md` | `application-discovery` |
-| Hosting, servers, virtualisation, OS, databases, storage, platform services | `.agents/csa-technical-analyst-agent.md` | `infrastructure-analysis` |
-| Current architecture, sites, trust boundaries, OT zones | `.agents/csa-technical-analyst-agent.md` | `ot-architecture-analysis`, `dependency-analysis` |
-| Upstream, downstream, shared-service, vendor dependencies only | `.agents/csa-technical-analyst-agent.md` | `dependency-analysis` |
-| Network zones, flows, ports, protocols, firewall paths, remote connectivity | `.agents/csa-technical-analyst-agent.md` | `network-connectivity-analysis` |
-| Authentication, authorization, accounts, privileged and remote access | `.agents/csa-technical-analyst-agent.md` | `identity-access-analysis` |
-| Availability, redundancy, backup, restore, disaster recovery, single points of failure | `.agents/csa-technical-analyst-agent.md` | `resilience-analysis` |
-| Ownership, support, monitoring, patching, incident/change, vendor support | `.agents/csa-technical-analyst-agent.md` | `operations-support-analysis` |
-| Current security controls, exposures, exceptions | `.agents/csa-technical-analyst-agent.md` | `security-posture-analysis` |
-| Draft or revise a section from approved evidence | `.agents/csa-writer-agent.md` | `csa-section-writer` (+ `technical-explainer` when an explanation is requested) |
-| Review a draft or section for unsupported claims, consistency, readability | `.agents/csa-quality-reviewer-agent.md` | `csa-quality-review` (+ `technical-explainer` when needed) |
+| Find, extract, classify, or reconcile source evidence; build or update the evidence matrix | `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-evidence-investigator-agent.md` | `evidence-investigator` |
+| Turn missing, weak, stale, or conflicting evidence into a gap register and questions | `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-evidence-investigator-agent.md` (GAP mode) | `csa-gap-analysis` |
+| Application purpose, users, functions, ownership, criticality, lifecycle | `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-technical-analyst-agent.md` | `application-discovery` |
+| Hosting, servers, virtualisation, OS, databases, storage, platform services | `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-technical-analyst-agent.md` | `infrastructure-analysis` |
+| Current architecture, sites, trust boundaries, OT zones | `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-technical-analyst-agent.md` | `ot-architecture-analysis`, `dependency-analysis` |
+| Upstream, downstream, shared-service, vendor dependencies only | `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-technical-analyst-agent.md` | `dependency-analysis` |
+| Network zones, flows, ports, protocols, firewall paths, remote connectivity | `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-technical-analyst-agent.md` | `network-connectivity-analysis` |
+| Authentication, authorization, accounts, privileged and remote access | `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-technical-analyst-agent.md` | `identity-access-analysis` |
+| Availability, redundancy, backup, restore, disaster recovery, single points of failure | `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-technical-analyst-agent.md` | `resilience-analysis` |
+| Ownership, support, monitoring, patching, incident/change, vendor support | `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-technical-analyst-agent.md` | `operations-support-analysis` |
+| Current security controls, exposures, exceptions | `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-technical-analyst-agent.md` | `security-posture-analysis` |
+| Draft or revise a section from approved evidence | `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-writer-agent.md` | `csa-section-writer` (+ `technical-explainer` when an explanation is requested) |
+| Review a draft or section for unsupported claims, consistency, readability | `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-quality-reviewer-agent.md` | `csa-quality-review` (+ `technical-explainer` when needed) |
 | Explain an OT/IT concept to the user | writer or reviewer agent, whichever is active | `technical-explainer` |
-| Executive summary of the completed assessment | `.agents/csa-writer-agent.md` (EXECUTIVE_SUMMARY mode) | `executive-summary` |
+| Executive summary of the completed assessment | `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-writer-agent.md` (EXECUTIVE_SUMMARY mode) | `executive-summary` |
 
 ## Gates You Enforce
 
@@ -54,9 +54,9 @@ Choose by the requested action first (find evidence, analyse, draft, review, sum
 
 ## Inputs
 
-- `PROJECT_CONTEXT` - default `.agents/csa-context/IAMPS_PROJECT_CONTEXT.yaml`
-- `WORK_DIR` - folder for working files; default `csa-work/` at the project root. Create `assessment-state.yaml` from `.agents/csa-templates/ASSESSMENT_STATE_TEMPLATE.yaml` and `evidence-matrix.csv` from `.agents/csa-templates/EVIDENCE_MATRIX_TEMPLATE.csv` there if they do not exist. Never overwrite existing working files.
-- `SECTION` - one named CSA section (see `.agents/csa-templates/SECTION_COVERAGE.md` for the coverage guide)
+- `PROJECT_CONTEXT` - REQUIRED, no default. `.agents` is now shared by every project under `/Users/wenzel/Work/ASE/CurrentStateAssessments/`, so always pass the absolute path to that project's own file: `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-context/IAMPS_PROJECT_CONTEXT.yaml` or `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-context/UTC_DTC_PROJECT_CONTEXT.yaml`.
+- `WORK_DIR` - REQUIRED, no default (pass the absolute path to that project's own `csa-work/` folder, e.g. `/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS/csa-work`). Create `assessment-state.yaml` from `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-templates/ASSESSMENT_STATE_TEMPLATE.yaml` and `evidence-matrix.csv` from `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-templates/EVIDENCE_MATRIX_TEMPLATE.csv` there if they do not exist. Never overwrite existing working files.
+- `SECTION` - one named CSA section (see `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-templates/SECTION_COVERAGE.md` for the coverage guide)
 - `SOURCE_SET` - the documents or folders that count as evidence for this run
 
 If a needed input is missing, state the assumption and proceed when it is low-risk; otherwise ask one material question.

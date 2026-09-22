@@ -853,3 +853,43 @@ def refresh_manifest(*, workspace: str | Path = ".") -> dict:
         "sections": sorted(manifest, key=int),
         "manifest": {section: entry.to_dict() for section, entry in manifest.items()},
     }
+
+
+# ---------------------------------------------------------------------------
+# create_table: insert a new table that matches the document's own tables.
+#
+# Thin re-export of :func:`csa_docx.tables.create_table` so the public API
+# surface (this module) is the only thing callers need to import. The
+# implementation lives in :mod:`csa_docx.tables` so it can be tested and
+# extended in isolation.
+# ---------------------------------------------------------------------------
+
+
+def create_table(
+    docx: str | Path,
+    *,
+    after: str,
+    rows: int | None = None,
+    cols: int = 2,
+    data: list[list[str]] | None = None,
+    header: bool = True,
+    backup: bool = True,
+) -> dict:
+    """Insert a new table immediately after the paragraph ``after``.
+
+    The new table's style, banding, and cell markup are cloned from one of
+    the document's existing tables (discovered at run time), so it looks
+    identical to its siblings. See :func:`csa_docx.tables.create_table` for
+    the full contract, return shape, and failure modes.
+    """
+    from .tables import create_table as _impl
+
+    return _impl(
+        docx,
+        after=after,
+        rows=rows,
+        cols=cols,
+        data=data,
+        header=header,
+        backup=backup,
+    )

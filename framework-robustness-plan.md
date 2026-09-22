@@ -82,7 +82,7 @@ You asked for phase 1 to never hard-delete, instead marking things for deletion 
 That maps the three phases onto three agents, two of which already exist:
 
 - **Phase 1 — Apply (existing `csa-document-agent`, one change):** run every edit — including deletes — with `track_changes=True`. Nothing is physically removed or lost; the DOCX shows every pending change as a reviewable redline, same as a human editor would see in Word's Track Changes view. This directly removes the risk you're flagging: an over-eager delete under the current framework is permanent and unrecoverable the moment it's applied; under this model it's just marked, and any mistake is a `docx_revision reject` away from being undone, even after the fact.
-- **Phase 2 — Verify and sign off (existing `csa-change-review-agent`, one addition):** this agent already reviews applied edits against the approved change record and reports PASS/PASS WITH NOTES/FAIL/BLOCKED, read-only. Add an explicit **sign-off** output once a section's edits are all PASS: a small `## Cleanup Authorisation` block appended to the run-state (or a new `.agents/run-state/csa-cleanup-<SECTION>.md`), naming the section, the reviewed edit IDs, the reviewer, and a timestamp. This is the gate — nothing in Phase 3 may run without it.
+- **Phase 2 — Verify and sign off (existing `csa-change-review-agent`, one addition):** this agent already reviews applied edits against the approved change record and reports PASS/PASS WITH NOTES/FAIL/BLOCKED, read-only. Add an explicit **sign-off** output once a section's edits are all PASS: a small `## Cleanup Authorisation` block appended to the run-state (or a new `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/run-state/csa-cleanup-<SECTION>.md`), naming the section, the reviewed edit IDs, the reviewer, and a timestamp. This is the gate — nothing in Phase 3 may run without it.
 - **Phase 3 — Cleanup (new, small agent):** only for a section that has Phase 2 sign-off, call `docx_revision accept_all` (scoped to that section's author/date range) to finalise the tracked changes into normal text, save, validate, and report. This agent does no interpretation of content at all — it is mechanical, which keeps it low-risk to build and easy to trust.
 
 This is a genuine improvement independent of Direction A — it's worth doing even before the bookmark work lands, since it removes the single scariest failure mode (an incorrect delete) at essentially zero new code, just a default flag flip plus one small new agent.
@@ -93,7 +93,7 @@ This is what makes the other two directions safe to build incrementally rather t
 
 ### 5.1 A permanent dry-run harness
 
-Promote the throwaway script used to produce the table in §1 into a real, checked-in framework asset: `.agents/framework/csa_docx/tests/dry_run_all_sections.py` (or similar). It should:
+Promote the throwaway script used to produce the table in §1 into a real, checked-in framework asset: `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/framework/csa_docx/tests/dry_run_all_sections.py` (or similar). It should:
 
 - Copy the current working DOCX to a scratch path (never touch the real one or the real `.md` files).
 - For every section's change file, replay every record through `DocxEngineEditor.apply_change()` **without stopping at the first block** (unlike the real CLI's batch loop, which deliberately does stop — that's correct behaviour for a real run, wrong for measuring coverage).
@@ -153,7 +153,7 @@ after: Sections 1-4 were already fully applied and review-agent-signed-off in
 earlier work sessions (real timestamped backups exist for all four, and each
 change file's own "Changes Report"/"Edit verification" section records every
 edit as Applied/CORRECT with full DOCX-integrity and unauthorised-change
-validation) - but `.agents/run-state/` had no run-state file for any of
+validation) - but `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/run-state/` had no run-state file for any of
 Sections 1-4 (only Sections 5 onward were ever tracked there). The dry-run
 harness's "is this section already complete" check
 (`_section_is_complete()`) therefore treated all four sections as pending and
@@ -165,7 +165,7 @@ replaced, so those falsely came back APPLIED - which would have silently
 duplicated content if this had been a real, non-dry-run apply rather than a
 harness replay).
 
-**Fix applied:** backfilled `.agents/run-state/current-state-assessment-document-section-{1,2,3,4}.md`
+**Fix applied:** backfilled `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/run-state/current-state-assessment-document-section-{1,2,3,4}.md`
 from each change file's own completion evidence, marking all four
 `SECTION_COMPLETE`. No change-file re-authoring was needed or performed -
 the user's initial approval ("Re-author the 31 records") was given before
@@ -259,7 +259,7 @@ error worth its own investigation.
 Corrected baseline for the only sections with real remaining work (10-16):
 **78 edits exercised, 60 applied (77%), 18 genuinely blocked (23%)**. The
 remaining blockers split into distinct categories - not a single root cause -
-logged in `.agents/skills/current-state-assessment-document-learnings.md`
+logged in `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/current-state-assessment-document-learnings.md`
 under "2026-09-17 - Harness fix (partial-completion skip) and find_anchor
 pattern generalisation". Most notable: a whole new problem class -
 **sequential/dependent edits** whose Where clause refers to another edit's
@@ -319,7 +319,7 @@ this sign-off:` line in its report format. `PASS`/`PASS WITH NOTES` sign off;
 `FAIL`/`BLOCKED` do not; an ambiguous "can't tell if tracked changes are even
 on" case signs off `NOT APPLICABLE` rather than guessing.
 
-New file `.agents/csa-change-cleanup.md` - the Phase 3 cleanup agent.
+New file `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-change-cleanup.md` - the Phase 3 cleanup agent.
 Deliberately small and mechanical: it does not decide anything is correct
 (that's Phase 2's job, expressed only through the sign-off line), it only
 finalises what's already been signed off, via `docx_revision accept_all`
@@ -328,7 +328,7 @@ finalises what's already been signed off, via `docx_revision accept_all`
 could be missing, negative, ambiguous, or scoped narrower than what's being
 asked of it - the agent stops and reports rather than guessing in every one
 of those cases. Full text delivered to Wenzel and saved to
-`.agents/csa-change-cleanup.md`.
+`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-change-cleanup.md`.
 
 This completes plan step 5 of §7's sequencing.
 

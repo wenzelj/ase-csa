@@ -2,8 +2,7 @@
 
 Append-only inbox for reusable lessons from applying approved Current State Assessment changes to the DOCX. It is not a diary and not an issue tracker:
 
-- Defects, blocked edits and recurring problems go to `.agents/issues-open.md`.
-- Questions only Wenzel can answer go to `.agents/needs-decision.md`.
+- Defects, blocked edits, mismatches and questions only Wenzel can answer are raised immediately in the run's response when found (see "Issue Escalation" in `current-state-assessment-document.md`), not filed here or in a register.
 - A lesson stays here until Wenzel reviews it. Each one is then promoted (playbook rule, validator or test) or dropped, and its `Status` is updated.
 
 The previous log (45 entries, 14-17 Sep 2026) was cleared on 2026-09-21. It is recoverable from git history (last commit touching this file: `3492f3b`) and summarised in `.agents/csa-document-learnings-assessment.md`.
@@ -69,3 +68,88 @@ Framework-first with --engine docxengine (default) and default --track-changes w
 
 Validation:
 Final DOCX: unzip -t OK; comment authors = {Wenzel Joubert}; initials = {WJ}; 23 comments with balanced range start/reference; 27 tracked-change insertions. All per-section batches returned validation Pass. Backups present for each applied section (before_section_4/6/7/8/9/10/13). No BLOCKED, NO_PROGRESS_STOP, or validator failures this run.
+
+## 2026-09-22: Reusable "create table that matches the document's own tables"
+
+**What was added**
+
+- `csa_docx/tables.py` — new module with `create_table(docx, *, after, rows=None,
+  cols=2, data=None, header=True, backup=True) -> dict`. Resolves the anchor
+  via `stable_ids.build_id_map` + `Document.paragraphs()`, discovers the
+  document's own table style at run time (no hardcoded `w:tblStyle`), clones
+  the reference table's `<w:tblPr>` / `<w:tblGrid>` / `<w:tr>` / `<w:tc>` /
+  `<w:p>` markup, and splices the new table immediately after the resolved
+  anchor paragraph. Runs `validate_docx` and returns the result.
+- `csa_docx/tools.py` — re-export of `create_table` so the public API surface
+  (this module) is the only thing callers need to import.
+- `csa_docx/cli_create_table.py` — CLI wrapper with `--docx`, `--after`,
+  `--cols`, `--header`, `--row` (repeatable), `--data` (JSON), `--no-backup`.
+- `csa_docx/__init__.py` — `tables` added to `__all__`.
+- `.agents/skills/csa-docx-create-table/SKILL.md` — thin skill documenting
+  when/how to use, the gotchas, and a smoke test.
+
+**Why it was needed**
+
+The change-file pipeline (`cli_apply_section.py` / `apply_next_batch`) can
+only edit *existing* tables (`set_cells`, row/col insert/delete, whole-table
+content replacement). It has no "new table" operation. The glossary-table
+work in Section 15 required a brand-new 2-column table with "Term" /
+"Definition" headings and ~29 rows of term/definition pairs; the only way to
+do it was to bypass the pipeline and build the table directly. Doing that by
+hand produced a `TableGrid`-style table that looked different from the
+document's 29 `GridTable4-Accent6` siblings, which had to be restyled by
+stripping `<w:tcW>`, `<w:shd fill="D9D9D9"/>`, and stamping the dominant
+`<w:tblStyle>` / `<w:tblLook>` — a manual, error-prone step that should not
+have to be repeated.
+
+**Key design choices (the "what I learned")**
+
+1. **No hardcoded style names.** The function scans all existing `<w:tbl>`
+   elements and picks the one whose column count best matches the new
+   table's. It clones that table's `<w:tblPr>` verbatim (style + `tblLook`
+   banding flag), trims the `<w:tblGrid>` to the new column count, and
+   clones row 0 from the reference's header row (firstRow=1 cnfStyle banding)
+   and subsequent rows from the reference's data row (oddHBand/evenHBand
+   banding). Each `<w:tc>` is cloned with its `w:tcW type="pct"`,
+   `w:hideMark`, and `<w:p>` (Arial font, `w:spacing after="200"
+   line="276" lineRule="auto"`). Only the `<w:t>` text is replaced. If the
+   document's style changes in the future, the new table still matches.
+2. **Anchor by stable-ID or live anchor, not by text.** The heading text
+   can also appear in the cached TOC; a naive `find("Glossary")` can match
+   the TOC entry instead of the real heading. Always resolve via
+   `build_id_map` (or a live `P#hash` anchor) to the exact paragraph
+   ordinal.
+3. **DOCX is a ZIP — edit the `word/document.xml` member, not the file
+   bytes.** `Path.read_text` on a `.docx` raises `UnicodeDecodeError`.
+   Read via `zipfile`, modify the `word/document.xml` string, rewrite the
+   whole zip preserving every other member's `ZipInfo`.
+4. **Comment markers must live inside `w:tr -> w:tc -> w:p`**, never
+   directly under `w:tr`. The validator's `table_row_comment_safety` check
+   catches the unsafe form; Word will not open a document with the unsafe
+   form.
+5. **Always back up before mutating.** Default `backup=True` creates a
+   timestamped `.bak` next to the working DOCX.
+
+**Verification (this session)**
+
+- Smoke test on a throwaway copy of the working DOCX (`/tmp/csa_cli_test.docx`):
+  `create_table(..., after="@H16", cols=2, data=[["Term","Definition"],
+  ["IAMPS","Integrated Airport Management and Planning System"], ...])`
+  returned `status: OK`, `style: GridTable4-Accent6`,
+  `table_count_after: 31` (live doc was 30), and all validation checks
+  `Pass` (`archive_integrity`, `xml_parse:*`, `comment_id_consistency`,
+  `table_row_comment_safety`). `Document.open` succeeded and the new table
+  landed immediately after the "Glossary and Acronyms" heading.
+- The new table's `<w:tblPr>` is byte-identical in shape to the existing
+  2-column tables (same `GridTable4-Accent6` style, same `tblLook` banding
+  flags, same `cnfStyle` banding on rows, same Arial font, same `w:tcW
+  type="pct"` widths).
+
+**Limits**
+
+- The function does not edit existing tables — that is still the
+  change-file pipeline's job (`apply_next_batch`).
+- The function does not add comments to the new table — anchor any
+  subsequent comment to the cell's paragraph, not the row.
+- The function requires at least one existing styled table in the document
+  to clone from; a table-less document will be blocked.

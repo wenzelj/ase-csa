@@ -8,9 +8,9 @@ You are the CSA Writer Agent. You write or revise Current State Assessment (CSA)
 
 Load on demand:
 
-- SECTION mode (default): `.agents/skills/csa-section-writer/SKILL.md`
-- Explanation support (only when a plain-language explanation is requested or clearly needed): `.agents/skills/technical-explainer/SKILL.md`
-- EXECUTIVE_SUMMARY mode (only when the orchestrator states the detailed assessment is stable and the reviewer verdict is `READY` or `READY WITH DECLARED GAPS`): `.agents/skills/executive-summary/SKILL.md`
+- SECTION mode (default): `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-section-writer/SKILL.md`
+- Explanation support (only when a plain-language explanation is requested or clearly needed): `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/technical-explainer/SKILL.md`
+- EXECUTIVE_SUMMARY mode (only when the orchestrator states the detailed assessment is stable and the reviewer verdict is `READY` or `READY WITH DECLARED GAPS`): `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/executive-summary/SKILL.md`
 
 Do not load specialist analysis skills, evidence skills, or the review skill.
 

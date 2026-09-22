@@ -385,13 +385,13 @@ Always run the framework with the Python interpreter at `/opt/homebrew/bin/pytho
 Framework path:
 
 ```text
-.agents/framework/csa_docx/
+/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/framework/csa_docx/
 ```
 
 Primary apply command:
 
 ```text
-/opt/homebrew/bin/python3.14 .agents/framework/csa_docx/cli_apply_section.py \
+/opt/homebrew/bin/python3.14 /Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/framework/csa_docx/cli_apply_section.py \
   --engine docxengine \
   --section <SECTION> \
   --change-file "<approved section .md>" \
@@ -405,7 +405,7 @@ Primary apply command:
 Framework command defaults to DocxEngine. Keep the explicit engine flag in examples so CLI/EVO runs are unambiguous:
 
 ```text
-/opt/homebrew/bin/python3.14 .agents/framework/csa_docx/cli_apply_section.py \
+/opt/homebrew/bin/python3.14 /Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/framework/csa_docx/cli_apply_section.py \
   --engine docxengine \
   --section <SECTION> \
   --change-file "<approved section .md>" \
@@ -908,7 +908,7 @@ to introduce additional document changes.
 
 The approved `.md` change file remains the only source of edits. The evidence check never adds, changes, skips or reorders an approved edit.
 
-After a batch has been applied and saved, for each applied edit whose Text asserts a technical fact about the assessed system (hosts, services, ports, addresses, software, configuration, dates), use the `csa-evidence-matrix` skill (`.agents/skills/csa-evidence-matrix/SKILL.md`):
+After a batch has been applied and saved, for each applied edit whose Text asserts a technical fact about the assessed system (hosts, services, ports, addresses, software, configuration, dates), use the `csa-evidence-matrix` skill (`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-evidence-matrix/SKILL.md`):
 
 1. `evidence_matrix.py lookup "<claim keywords>"` -- matrix first.
 2. If the matrix answers it, record `supported (E-nnn)` or `contradicted by E-nnn`.
@@ -958,7 +958,7 @@ At the beginning of each execution:
 - identify existing change comments;
 - identify existing question comments;
 - determine which Edit IDs have already been applied;
-- read `.agents/issues-open.md` and `.agents/needs-decision.md` (see Continuous Skill Improvement And Issue Feedback Loop);
+- if anything was raised for a decision in a prior run and is still open, check for Wenzel's answer before touching that item again (see Issue Escalation);
 - process only the requested section.
 
 Never reapply earlier changes unnecessarily.
@@ -1009,12 +1009,11 @@ Saved
 Backup
 <full backup filename>
 
-Issue register
-Opened: <IDs or None>
-Re-seen: <IDs or None>
-Fixed pending verification: <IDs or None>
-Awaiting decision: <IDs or None>
-Oldest open issue: <ID and first-seen date, or None>
+Escalations
+Raised this run: <what, or None>
+Resolved this run: <what and how, or None>
+Still waiting on Wenzel: <what, or None>
+Logged to issues-fixed-log.md: <yes/no, or None>
 ```
 
 For bounded iterations, use the same structure but label the status as `PARTIAL_COMPLETE`, `SECTION_COMPLETE`, `BLOCKED`, or `NO_PROGRESS_STOP`. Include the current iteration edit IDs and the next edit ID when the section is not complete.
@@ -1043,20 +1042,22 @@ When something is found during a run that is wrong, blocked, or needs a call onl
 
 Before stopping on `BLOCKED`, `NO_PROGRESS_STOP`, or a failed validator:
 
-- describe what was found: the symptom, the evidence (section, edit ID, file), and what would resolve it;
+- search `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/issues-fixed-log.md` for a similar symptom (same error text, same edit shape, same file/section). This is a quick recurrence check, not a triage step;
+- describe what was found: the symptom, the evidence (section, edit ID, file), and what would resolve it. If the search above found a likely match, say so and name it ("this looks like the same thing fixed on <date>: <one line>");
 - if there is a genuine choice to make, lay out the options with a recommended default, the way you would ask a colleague, directly in the response - not in a separate file;
 - wait for Wenzel's direction on that item before proceeding with it. Do not guess to unblock; the Anchor Mismatch Rule and Absolute Change Control Rule are unchanged;
-- once Wenzel responds, apply the decision only as stated and only within the approved changes. If it requires editing an approved change record, do that only when Wenzel says so explicitly.
+- once Wenzel responds, apply the decision only as stated and only within the approved changes. If it requires editing an approved change record, do that only when Wenzel says so explicitly;
+- once the fix is applied and confirmed, append one entry to `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/issues-fixed-log.md` using the format in that file (where, symptom, fix). Do not log something still waiting on Wenzel.
 
 ### At the end of a run
 
-- append any reusable lesson to the learnings inbox (`.agents/skills/current-state-assessment-document-learnings.md`) using the format in that file. A one-off defect or blocked edit belongs in the run's response, not the inbox;
+- append any reusable lesson to the learnings inbox (`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/current-state-assessment-document-learnings.md`) using the format in that file. A one-off defect or blocked edit that was fixed this run belongs in `issues-fixed-log.md`, not the inbox - the inbox is for generic process lessons, the log is for "have we hit this exact thing before";
 - only add lessons that are generic enough to help future Current State Assessment document work; keep project facts and approved technical changes out unless needed as a one-line example, and do not copy confidential document content unless it is already present in the approved `.md` change file;
 - if the learnings inbox has more than 15 entries, or an entry is contradicted by a newer one, say so in the completion report so Wenzel can review it;
 - if a lesson changes how this agent should behave on every future run, update this agent `.md` with a small, controlled instruction change and mention that in the `## Changes Report`;
-- note in the completion report and in the `## Changes Report` anything that was raised for a decision during this run and how it was resolved (or that it is still waiting on Wenzel). Use `None` if nothing was raised.
+- note in the completion report and in the `## Changes Report` anything that was raised for a decision during this run and how it was resolved (or that it is still waiting on Wenzel), and whether it was logged to `issues-fixed-log.md`. Use `None` if nothing was raised.
 
-Do not rewrite approved change instructions in the reviewed section `.md`. Do not modify global Codex skills unless the user explicitly asks for that. The learnings inbox is append-only unless the user explicitly asks for cleanup. Prefer short, evidence-backed entries over broad rules.
+Do not rewrite approved change instructions in the reviewed section `.md`. Do not modify global Codex skills unless the user explicitly asks for that. The learnings inbox and the fixed-issues log are both append-only unless the user explicitly asks for cleanup. Prefer short, evidence-backed entries over broad rules.
 
 
 ## Final Document Rule

@@ -1,0 +1,49 @@
+# UTC DTC with KVM CSA project context (working file, created from csa-templates/PROJECT_CONTEXT_TEMPLATE.yaml,
+# mirroring how csa-context/IAMPS_PROJECT_CONTEXT.yaml was set up in the IAMPS workspace).
+# Only facts confirmed by the project owner's instructions are populated. Blank fields are intentionally
+# unfilled: do not guess owners, servers, architecture, network zones, versions, controls, dates, or
+# dependencies. Add a value only when it is confirmed by project documentation or the project owner.
+# Existing document owners, reviewers, and approvers are controlled fields in the assessment document and
+# are not recorded or changed here.
+#
+# IMPORTANT -- this project does NOT use the CSA Word template (CSA Template/CSA_Template_v*.dotx).
+# The existing working document predates the template and the project owner has said to keep it as-is
+# for now: do not run it through new_csa.py / csa-document-template, and do not restructure it to match
+# the template. The three-step change pipeline (prepareDocument -> csa-change-authoring -> human approval
+# -> current-state-assessment-document -> csa-change-review) still applies -- it builds its stable-ID
+# manifest from the document's own headings and does not require template styles.
+project:
+  assessment_name: "Current State Assessment - UTC and DTC"
+  assessment_type: "Current State Assessment"
+  program: "OT 3.5 Migration Program"
+  environment: ""
+  application: "UTC and DTC"
+  organisation: "Aurizon Network Pty Ltd"
+  as_of_date: ""
+  scope_in: []
+  scope_out: []
+  authoritative_sources:
+    # Paths relative to the project root ("07 UTC DTC with KVM").
+    - path: "01 Current State AS Built/UTC Discovery Data"
+      role: "evidence data"
+      confirmed_by: "project owner instruction, 2026-09-22"
+    - path: "02 Current State Assessment/NetSeg_Current_State_Assessment - UTC and DTC Access - v0.4.docx"
+      role: "existing current state assessment document (v0.4, Draft, kept in its current template -- do not convert)"
+      confirmed_by: "document control page, read 2026-09-22"
+    - path: "01 Current State AS Built/NetSeg_Current_State_Design As Built - UTC and DTC AccessTv0.4.docx"
+      role: "as-built design document"
+      confirmed_by: "folder present in workspace, observed 2026-09-22 -- confirm role with project owner"
+  terminology: {}
+  known_constraints:
+    - "Working document uses its own pre-existing template/styles, not the CSA Word template -- keep as-is, do not run csa-document-template / new_csa.py against it."
+  stakeholders: []
+  required_deliverables:
+    - detailed_current_state_assessment
+    - consumable_summary
+
+working_preferences:
+  evidence_only_factual_claims: true
+  expand_abbreviations_on_first_use: true
+  explain_ot_concepts_separately: true
+  preserve_existing_document_structure: true
+  do_not_design_future_state_unless_requested: true

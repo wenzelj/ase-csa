@@ -7,5 +7,6 @@ __all__ = [
     "ooxml",
     "report_writer",
     "run_state",
+    "tables",
     "validator",
 ]

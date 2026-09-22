@@ -87,8 +87,8 @@ At the beginning of every authoring run:
 - load and read the applicable document-editing/DOCX skill before reading the document;
 - call `prepareDocument()` (the `csa-mcp` tool, no `section` argument -- see Framework Tools below). If it returns `NOT_READY`, stop and report the `reasons`; do not author against a document that might be open in Word or already failing integrity checks. `id_manifest_summary` confirms the stable-ID manifest is current;
 - if `reviews/` does not yet exist next to the working DOCX, this is the first section ever authored for this document -- you will create that folder when you write your first change file;
-- read `.agents/skills/csa-evidence-matrix/SKILL.md` and run `evidence_matrix.py stats` once to see what the evidence matrix (`csa-work/evidence-matrix.csv`) already holds -- every evidence question in this run goes through that skill (see Evidence Matrix First below);
-- read `.agents/skills/csa-change-authoring-learnings.md` if it exists, for evidence-to-topic mappings and authoring lessons already established by earlier runs (this section's or another's) -- reuse and refine them rather than starting blind (see Evidence Mapping below);
+- read `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-evidence-matrix/SKILL.md` and run `evidence_matrix.py stats` once to see what the evidence matrix (`csa-work/evidence-matrix.csv`) already holds -- every evidence question in this run goes through that skill (see Evidence Matrix First below);
+- read `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-change-authoring-learnings.md` if it exists, for evidence-to-topic mappings and authoring lessons already established by earlier runs (this section's or another's) -- reuse and refine them rather than starting blind (see Evidence Mapping below);
 - scan every existing `reviews/*.md` file for this section (there may be none, if this is truly the first section authored) and identify the highest `S<N>-E<n>` and the highest `S<N>-A<n>` already used in this section's files. Your first content edit is `S<N>-E` followed by the next integer after that; your first administrative edit is `S<N>-A` followed by the next integer after that. IDs are section-scoped and sequential within the section -- they never reset between sections, and never re-derived from a stale counter file (there isn't one; this scan is the source of truth, the same reason `manifest.py` never caches its own manifest);
 - identify the requested section's heading text and read its current content (from the stable-ID manifest's text previews, or a direct read of the paragraphs/table rows under that heading).
 
@@ -112,10 +112,10 @@ One top-level (H1) heading in the stable-ID manifest is one "section", matching 
 There is no predefined mapping from a document topic to which Discovery Data files matter. Figure it out on every run, and get better at it over time:
 
 1. Read the section's current text and identify the technical topics it actually covers (e.g. "DNS", "time synchronisation", "listening ports and processes", "authentication configuration").
-2. Before searching from scratch, check `.agents/skills/csa-change-authoring-learnings.md` for a mapping already recorded for the same or a related topic from an earlier run, and reuse or refine it.
+2. Before searching from scratch, check `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-change-authoring-learnings.md` for a mapping already recorded for the same or a related topic from an earlier run, and reuse or refine it.
 3. For each claim or topic, first do the Evidence Matrix First lookup below. Only for what the matrix does not answer, search the Discovery Data folder for evidence speaking to those topics, across every host present (`PROD`, `UAT`, and any standalone discovery runs) -- host-level evidence is organised as numbered per-topic files (for example `14_resolver.txt`, `41_dns_query_tests.txt` for DNS; `20_listening_ports.txt`, `10_listeners_by_process.txt` for network services; `52_auth_configs.txt` for authentication; `00_host_summary.txt` for OS/version facts on every host) -- the exact numbering and filenames are discovered by listing the folder, not assumed from this description.
 4. Correlate across hosts: a claim that holds on one host but not another is itself a finding worth recording (either as an edit that qualifies the claim, or as an open question if the discrepancy itself needs a human judgement call).
-5. At the end of every run, add or refine an entry in `.agents/skills/csa-change-authoring-learnings.md`: `<topic> -> <discovery file name patterns that were actually useful, and any caveat about them>`. This is a required step, not optional housekeeping -- the entire point of this rule is that the mapping gets more reliable every time this agent runs, on this section or a different one.
+5. At the end of every run, add or refine an entry in `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-change-authoring-learnings.md`: `<topic> -> <discovery file name patterns that were actually useful, and any caveat about them>`. This is a required step, not optional housekeeping -- the entire point of this rule is that the mapping gets more reliable every time this agent runs, on this section or a different one.
 
 ### Evidence Matrix First (required)
 
@@ -294,7 +294,7 @@ After every run, capture what was learned so future authoring runs are faster an
 Use this local skill-notes path for this agent:
 
 ```text
-.agents/skills/csa-change-authoring-learnings.md
+/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-change-authoring-learnings.md
 ```
 
 At the end of each run:
@@ -319,7 +319,7 @@ If asked to also apply the changes it just drafted, decline and hand off to the 
 For IAMPS, an example evidence folder is:
 
 ```text
-/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/01 Current State AS Built/IAMPS Discovery Data/
+/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS/01 Current State AS Built/IAMPS Discovery Data/
 ```
 
 containing `PROD/`, `UAT/`, and standalone `tg_discovery_*` runs, each with numbered per-host evidence files. Use this layout when it is the supplied workspace, but keep this agent generic for any other application's Current State Assessment and evidence layout.

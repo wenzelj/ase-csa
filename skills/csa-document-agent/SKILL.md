@@ -10,7 +10,7 @@ Use this skill when a session (Hermes, Codex, or another agent profile) acts as 
 The project-local agent definition is authoritative:
 
 ```text
-/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/.agents/current-state-assessment-document.md
+/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/current-state-assessment-document.md
 ```
 
 Before acting, read that full agent definition and follow it. Do not copy its instructions from memory.
@@ -35,7 +35,7 @@ When the prompt includes `EXECUTION_MODE=framework-first`, act as a thin control
 Before the first `apply_next_batch` of a run, call `prepareDocument` once. **Do not pass `section`** - it prepares the whole document, not one section, so there's nothing to name:
 
 - **Over MCP (`csa-mcp`):** `prepareDocument()`.
-- **In Python:** `csa_docx.tools.prepareDocument(workspace="/Users/wenzel/Work/ASE/IAMPS/06 IAMPS")`.
+- **In Python:** `csa_docx.tools.prepareDocument(workspace="/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS")`.
 
 It confirms the working DOCX is editable (not open in Word, not zero-byte or corrupt, not already failing `validate_docx`), and builds or refreshes the stable structural-ID manifest (`@H<section_path>-P<n>` / `@H<section_path>-T<n>-R<n>`) that `@`-prefixed change-file anchors resolve against, covering every heading/paragraph/table-row in the whole document, cached at `run-state/stable-ids-<docx-filename>.json`. With no `section` given, it finds the one working DOCX every CSA section's change file already points at; a second call - with or without a section - is an instant `regenerated: false` no-op. Do not loop it over every section - one call is enough unless `force_regenerate=True` is actually needed. (An explicit `section=<N>` is only required if the call errors saying the workspace has more than one distinct working DOCX and needs one to disambiguate - that's not the normal case.)
 
@@ -61,14 +61,14 @@ You can also pass an `@H...` ID itself as `query` to confirm it's still current 
 
 ## CSA DOCX Framework (run this, not hand-edits)
 
-The framework is the default worker. Run one bounded batch from the workspace root (`/Users/wenzel/Work/ASE/IAMPS/06 IAMPS`):
+The framework is the default worker. Run one bounded batch from the workspace root (`/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS`):
 
 ```text
-/opt/homebrew/bin/python3.14 .agents/framework/csa_docx/cli_apply_section.py \
+/opt/homebrew/bin/python3.14 /Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/framework/csa_docx/cli_apply_section.py \
   --section <SECTION> \
   --change-file "01 Current State AS Built/01 Final Version/reviews/ChangesCSA_IAMPS_Section<N>.md" \
   --docx "01 Current State AS Built/01 Final Version/Current State Assessment - IAMPS.docx" \
-  --workspace "/Users/wenzel/Work/ASE/IAMPS/06 IAMPS" \
+  --workspace "/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS" \
   --limit <ITERATION_EDIT_LIMIT> \
   --comment-author "Wenzel Joubert" \
   --comment-initials "WJ"
@@ -91,17 +91,16 @@ The framework is the default worker. Run one bounded batch from the workspace ro
 - Add Word comments using `Wenzel Joubert` and `WJ` when the tooling supports it.
 - Update the section Markdown `## Changes Report` and the run-state file after the batch.
 - Validate DOCX archive/XML/comment safety and render affected pages where available.
-- Read `.agents/issues-open.md` and `.agents/needs-decision.md` before the first batch. On `BLOCKED`, `NO_PROGRESS_STOP` or a validator failure, log or update the issue in `.agents/issues-open.md` before stopping (bucket, fingerprint, evidence). Never set an issue to `closed`; only Wenzel closes issues.
-- Include the `Issue register` counts block in the completion report and the `## Changes Report`.
-- After applying a batch, run the Evidence Check from the agent definition using the `csa-evidence-matrix` skill (`/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/.agents/skills/csa-evidence-matrix/SKILL.md`): look up `csa-work/evidence-matrix.csv` first for each applied fact-bearing edit, search Discovery Data only if the matrix has no answer, append new findings back to the matrix, and report the result under `Evidence check`. It never changes an approved edit. Disabled by `EVIDENCE_CHECK=off`; in `EXECUTION_MODE=framework-first` it runs only with `EVIDENCE_CHECK=on`.
+- On `BLOCKED`, `NO_PROGRESS_STOP` or a validator failure, check `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/issues-fixed-log.md` for a similar symptom first, then describe the symptom and evidence (naming any likely match found), and if there is a choice to make, give the options and a recommended default, directly in the response, so Wenzel can decide with full context. See Issue Escalation in the agent definition. Once resolved, append one entry to `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/issues-fixed-log.md`.
+- Include the `Escalations` block in the completion report and the `## Changes Report`.
+- After applying a batch, run the Evidence Check from the agent definition using the `csa-evidence-matrix` skill (`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-evidence-matrix/SKILL.md`): look up `csa-work/evidence-matrix.csv` first for each applied fact-bearing edit, search Discovery Data only if the matrix has no answer, append new findings back to the matrix, and report the result under `Evidence check`. It never changes an approved edit. Disabled by `EVIDENCE_CHECK=off`; in `EXECUTION_MODE=framework-first` it runs only with `EVIDENCE_CHECK=on`.
 - Stop immediately after reporting `PARTIAL_COMPLETE`, `SECTION_COMPLETE`, `BLOCKED`, `NOT_READY`, or `NO_PROGRESS_STOP`.
 
 ## Local Resources
 
-- Agent definitions and project docs: `/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/.agents/`
-- Reusable framework: `/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/.agents/framework/csa_docx/`
-- Run-state files: `/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/01 Current State AS Built/01 Final Version/run-state/`
-- Learnings inbox: `/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/.agents/skills/current-state-assessment-document-learnings.md`
-- Evidence matrix: `/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/csa-work/evidence-matrix.csv` (access only via the `csa-evidence-matrix` skill)
-- Open issues register: `/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/.agents/issues-open.md`
-- Decisions needed: `/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/.agents/needs-decision.md`
+- Agent definitions and project docs: `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/`
+- Reusable framework: `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/framework/csa_docx/`
+- Run-state files: `/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS/01 Current State AS Built/01 Final Version/run-state/`
+- Learnings inbox: `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/current-state-assessment-document-learnings.md`
+- Fixed issues log: `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/issues-fixed-log.md`
+- Evidence matrix: `/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS/csa-work/evidence-matrix.csv` (access only via the `csa-evidence-matrix` skill)

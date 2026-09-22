@@ -8,7 +8,7 @@ description: Matrix-first evidence lookup and append-only recording for the Curr
 The evidence matrix is the shared memory of what has already been established about the assessed system:
 
 ```text
-/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/csa-work/evidence-matrix.csv
+/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS/csa-work/evidence-matrix.csv
 ```
 
 Each row is one atomic claim with a stable `E-nnn` ID, an evidence class, its source, and an exact excerpt. This skill is how the three pipeline agents read it and write to it, so a fact found once is never searched for twice and every claim can be traced to a source.
@@ -34,7 +34,7 @@ Never skip step 1 for a technical fact about hosts, services, ports, addresses, 
 One stdlib-only helper (Python 3.8+; `python3` or `/opt/homebrew/bin/python3.14` both work). All output is JSON. Exit code `2` means rejected and nothing was written.
 
 ```text
-S="/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/.agents/skills/csa-evidence-matrix/scripts/evidence_matrix.py"
+S="/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-evidence-matrix/scripts/evidence_matrix.py"
 ```
 
 Read:
