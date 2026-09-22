@@ -35,6 +35,10 @@ Before applying anything below, read a paragraph or two of the section's surroun
 - When two adjacent items in a list or table row are similar, it's fine for their phrasing to differ slightly rather than following an identical template every time, the way two different people describing the same ten hosts would naturally vary their phrasing slightly from row to row.
 - Read the paragraph back once before finalising it and ask: would a technical writer on this team actually have typed this sentence, or does it read like a summary of what a sentence like this should contain? Rewrite anything that fails that check.
 
+## Evidence IDs never appear in the body text
+
+Traceability (E-id citations) belongs in the change record's `Why` field and, from there, the Word comment attached to the edit -- never in the drafted prose itself. Do not write "`[E-042]`" or similar inline into a sentence or table cell that will land in the document. If a claim is `INFERRED`, `UNCONFIRMED`, or `CONFLICTING`, say so in plain words in the sentence ("has not been directly observed," "reported inconsistently across hosts") rather than a bracketed status tag -- the citation marker and the uncertainty label are both metadata, and metadata stays out of the reader-facing text.
+
 ## What this skill does not change
 
 This is a prose-style skill only. It does not relax any evidence, citation, traceability, or scope rule from `csa-section-writer`, `executive-summary`, `technical-explainer`, or `csa-change-authoring.md` -- every factual and citation requirement in those still applies in full. This skill only governs how the words are put together once the content is already decided.

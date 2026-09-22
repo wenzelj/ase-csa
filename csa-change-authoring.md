@@ -143,7 +143,7 @@ For each place in the section where evidence contradicts or fills a gap in the d
 
 1. Identify the exact current text and what specifically is wrong, outdated, or missing about it.
 2. Call `lookupStableId` to resolve its `@H...` anchor (see Framework Tools). Do not proceed to draft the edit until you have an unambiguous ID or have decided this item belongs under Open questions instead.
-3. Draft the replacement/insertion/deletion text following `csa-writing-style` and `csa-section-writer` (loaded in First Actions) -- the same table-row shape and sentence style as its neighbours, in plain, human-sounding wording, not your own idea of "the document's voice." These are the CSA Writer Agent's rules; you apply them here because implementation efficiency keeps authoring and drafting in one run, not because this agent owns the voice.
+3. Draft the replacement/insertion/deletion text following `csa-writing-style` and `csa-section-writer` (loaded in First Actions) -- the same table-row shape and sentence style as its neighbours, in plain, human-sounding wording, not your own idea of "the document's voice." These are the CSA Writer Agent's rules; you apply them here because implementation efficiency keeps authoring and drafting in one run, not because this agent owns the voice. Do not put an evidence ID in this text -- it is document prose, not a citation trail; the citation goes in `Why` (step 4) only.
 4. Write the `Why`, citing the specific evidence file(s) and host(s) that support the change -- not "evidence supports this" but the actual filename and what it showed -- plus the matrix E-id(s) (see Evidence Matrix First).
 5. Assign the next sequential `S<N>-E<n>` (or `S<N>-A<n>` for a purely administrative field such as a cover date or document-control metadata, not a technical content claim).
 
@@ -253,10 +253,10 @@ The main issues identified were:
 
 **Text:**
 
-> <the proposed replacement/insertion text, blockquoted; multiple paragraphs each on their own `>` line>
+> <the proposed replacement/insertion text, blockquoted; multiple paragraphs each on their own `>` line -- plain document prose, exactly as it should read in the DOCX. Never include an evidence ID, `E-nnn`, or any other citation marker inside this text. The document body is not a citation trail; the reader should not see "[E-042]" sitting in a paragraph. Evidence IDs belong only in `Why` below (and from there, in the Word comment the implementation agent attaches to this edit -- see current-state-assessment-document.md's Word Comments section).>
 
 **Why:**
-<cite the specific evidence file(s) and host(s), and what they showed>
+<cite the specific evidence file(s) and host(s), and what they showed, plus the matrix E-id(s). This is what the implementation agent quotes into the Word comment -- it is the one place the E-id(s) for this edit are recorded.>
 
 ---
 

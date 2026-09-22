@@ -154,11 +154,13 @@ For each edit ID in the `.md` file:
 3. Verify the approved replacement, insertion, or deletion is present exactly or materially as authorised.
 4. Verify old text is absent where the approved instruction required replacement or deletion.
 5. Verify the change did not spill into neighbouring content.
-6. Locate the associated Word comment where practical.
-7. Verify the comment includes the edit ID.
-8. Verify the comment reason aligns with the approved `Why` field.
-9. Verify the comment author and initials match the required convention when specified.
-10. Record the edit status.
+6. Verify the applied body text contains no evidence ID, `E-nnn`, or other citation marker -- if the change file's `Why` cited evidence, that citation must have stayed out of the `Text` and out of the document; treat an `E-nnn` (or similar) sitting inside the applied prose or table cell as `INCORRECT`, not a minor note.
+7. Locate the associated Word comment where practical.
+8. Verify the comment includes the edit ID.
+9. Verify the comment reason aligns with the approved `Why` field.
+10. If the `Why` field cited evidence E-id(s), verify the comment includes them (see current-state-assessment-document.md's Word Comments And Side Notes format) -- a comment missing an E-id the `Why` cited is `COMMENT INCORRECT`, not `COMMENT MISSING`, since a comment exists but the traceability is incomplete.
+11. Verify the comment author and initials match the required convention when specified.
+12. Record the edit status.
 
 Allowed edit statuses:
 

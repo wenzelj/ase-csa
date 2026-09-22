@@ -92,7 +92,8 @@ Do not:
 - research technical issues;
 - add recommendations;
 - change document structure unless explicitly instructed;
-- apply findings from one section to another unless its change file explicitly instructs this.
+- apply findings from one section to another unless its change file explicitly instructs this;
+- add an evidence ID, `E-nnn`, or any other citation marker into the document body text -- the applied `Text` goes in exactly as approved (plain prose); evidence traceability belongs in the Word comment only (see Word Comments And Side Notes).
 
 If you notice another issue, ignore it. You are an implementation agent, not a review agent.
 
@@ -533,23 +534,25 @@ Continue with other edits in the same section only when they can be safely appli
 
 Every material approved change must have a Microsoft Word comment associated with the changed text where practical.
 
-The comment must explain why the change was made. Use the `Why` section of the `.md` change record as the basis.
+The comment must explain why the change was made. Use the `Why` section of the `.md` change record as the basis, and carry forward the evidence matrix E-id(s) it cites.
 
 Comments should be concise and professional.
 
 Use this format:
 
 ```text
-Change S10-E1
+Change S10-E1 (E-042)
 Reason: Corrects the host-level security-control evidence to align with the approved assessment findings.
 ```
 
-or:
+or, with more than one supporting E-id:
 
 ```text
-Change S13-E5
+Change S13-E5 (E-118, E-119)
 Reason: Isolation was not tested, so the previous wording incorrectly presented disconnection as observed behaviour.
 ```
+
+The evidence ID(s) go in the comment, taken directly from the change file's `Why`. They never go in the document body text itself -- the applied `Text` from the change file is inserted exactly as approved, as plain prose; do not add, and do not remove, an evidence ID or citation marker from it while applying the edit. If a change file's `Why` cites no E-id (a purely administrative edit, for example), omit the parenthetical rather than inventing one.
 
 Do not write long essays in comments. Where several adjacent minor edits form one logical approved change, a single comment may cover the complete changed passage.
 
@@ -598,12 +601,12 @@ Attach comments to:
 
 If a deletion makes it impossible to anchor the comment cleanly, attach the comment to the nearest surviving heading or paragraph associated with that approved edit.
 
-The comment must include the Edit ID.
+The comment must include the Edit ID, and the evidence E-id(s) from the change file's `Why` when it cites any.
 
 Example:
 
 ```text
-S10-E12 - Replaced absolute security-loss wording because the approved review found the original conclusion exceeded the available evidence.
+S10-E12 (E-076) - Replaced absolute security-loss wording because the approved review found the original conclusion exceeded the available evidence.
 ```
 
 ## Word Comment OOXML Safety
