@@ -199,6 +199,17 @@ User-level native Codex skills can also live under:
 
 The native skill wrappers for this workspace should load these project-local agent definitions instead of duplicating their full contents.
 
+## Cross-Project Safety Guard
+
+This `.agents` framework is shared by every CSA project. Two independent layers stop one project's agent run from reading or writing another project's evidence, DOCX, or run-state:
+
+1. **Human-facing:** the orchestrator's Project Selection step (see `csa-orchestrator-agent.md`) asks which project a run is for whenever it isn't supplied explicitly, and every agent definition resolves `PROJECT_CONTEXT`/`WORK_DIR`/`workspace` from that answer rather than guessing.
+2. **Code-enforced, independent of what any agent or instruction says:** every `csa_docx` framework function that takes a `workspace` argument (`prepareDocument`, `lookupStableId`, `apply_next_batch`, `get_section_status`, `list_sections`, `validate_section`, `refresh_manifest` -- so every `csa-mcp` tool call and every `cli_apply_section.py` run) and `evidence_matrix.py` (`lookup`, `get`, `stats`, `verify`, `append`) validate the resolved workspace against `csa-context/PROJECTS.yaml` before touching any file. If the workspace is not a registered project's `project_root` (or a path under it), the call refuses with `"status": "ERROR"` and a `WORKSPACE_NOT_REGISTERED` message -- it does not fall back to a guessed path, an empty default, or whatever the cwd happens to be. `evidence_matrix.py`'s old fallback (a hardcoded relative path from its own script location, stale since the framework was consolidated into one shared folder) has been replaced by this same check.
+
+`prepareDocument()`'s successful response additionally carries `"project": {"key": ..., "label": ...}` -- the agent definitions require checking this against the project the run was confirmed for before trusting anything else in the response, so a wrong-but-technically-registered workspace (e.g. the other project, passed by mistake) is still caught even though it wouldn't trigger `WORKSPACE_NOT_REGISTERED`.
+
+Layer 2 is the one that actually prevents contamination if layer 1 is ever bypassed, skipped, or gets a wrong answer -- it does not depend on any agent correctly following its instructions. Adding a new project only requires registering it in `PROJECTS.yaml`; no code change is needed for either layer.
+
 ## Safety Rules
 
 - A drafted `ChangesCSA_*.md` is a proposal, not an authority, until a human approves it -- the authoring agent's `**Status:** Proposed changes for approval` line is the gate; nothing in this framework applies a change file automatically just because it exists.

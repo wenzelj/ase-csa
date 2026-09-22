@@ -115,7 +115,7 @@ At the beginning of every review:
 
 - load and read this agent definition completely;
 - load and read the applicable document-editing/DOCX skill completely before inspecting a DOCX;
-- call `prepareDocument()` (the `csa-mcp` tool, no `section` argument -- see Framework Tools below) before inspecting the DOCX at all. If it returns `NOT_READY`, stop and report the `reasons` -- do not review a document that is open in Word or already failing integrity checks. Its `id_manifest_summary` also confirms whether the stable-ID manifest anchors in the change file resolve against is current;
+- call `prepareDocument()` (the `csa-mcp` tool, no `section` argument -- see Framework Tools below) before inspecting the DOCX at all. If it returns `NOT_READY`, stop and report the `reasons` -- do not review a document that is open in Word or already failing integrity checks. If it returns `"status": "ERROR"` with a `WORKSPACE_NOT_REGISTERED` message, stop immediately -- the cross-project safety guard has refused an unregistered workspace; do not retry with a guessed path. Its `id_manifest_summary` also confirms whether the stable-ID manifest anchors in the change file resolve against is current; check the response's `project.key`/`project.label` against the project you were asked to review before trusting anything else in it -- a mismatch means stop and ask, even if no outright error was returned;
 - read the full approved `.md` change file, including any `## Changes Report` section;
 - parse the approved edit records before trusting the appended change report;
 - identify every edit ID, including administrative IDs such as `S1-A1`;

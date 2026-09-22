@@ -55,13 +55,89 @@ SECRET_RE = re.compile(
 
 
 # --------------------------------------------------------------------------- paths
+def _load_project_registry():
+    """Parse csa-context/PROJECTS.yaml (fixed-shape, no PyYAML dependency).
+    Returns [] if the registry can't be found or read -- callers then skip
+    the cross-project check rather than blocking every command on a
+    framework installation problem.
+
+    This script's own location is .agents/skills/csa-evidence-matrix/scripts/
+    -- three parents up is .agents/.
+    """
+    registry_path = Path(__file__).resolve().parents[3] / "csa-context" / "PROJECTS.yaml"
+    if not registry_path.is_file():
+        return []
+    projects = []
+    current = {}
+    try:
+        for raw_line in registry_path.read_text(encoding="utf-8").splitlines():
+            stripped = raw_line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if raw_line[:1] not in (" ", "\t"):
+                # Top-level key (e.g. the "projects:" list header) -- not
+                # part of an entry, so nothing to record.
+                continue
+            if stripped.startswith("- key:"):
+                if current:
+                    projects.append(current)
+                current = {}
+                stripped = stripped[2:]
+            if ":" not in stripped:
+                continue
+            key, _, value = stripped.partition(":")
+            current[key.strip()] = value.strip().strip('"').strip("'")
+        if current:
+            projects.append(current)
+    except OSError:
+        return []
+    return projects
+
+
+def _resolve_registered_project(workspace):
+    for project in _load_project_registry():
+        root = project.get("project_root")
+        if not root:
+            continue
+        try:
+            root_path = Path(root).expanduser().resolve()
+        except OSError:
+            continue
+        if workspace == root_path or root_path in workspace.parents:
+            return project
+    return None
+
+
 def resolve_paths(args):
     ws = args.workspace or os.environ.get("CSA_WORKSPACE")
     if ws:
         workspace = Path(ws).expanduser().resolve()
     else:
-        # .agents/skills/csa-evidence-matrix/scripts/evidence_matrix.py -> workspace root
-        workspace = Path(__file__).resolve().parents[4]
+        # No --workspace / CSA_WORKSPACE given: fall back to cwd, the same
+        # default the csa-mcp server uses (CSA_MCP_WORKSPACE / cwd). Do NOT
+        # guess a path relative to this script's own location -- this
+        # script is shared by every CSA project, so a relative guess from
+        # here has no reliable relationship to any one project's root.
+        workspace = Path.cwd().resolve()
+
+    # Cross-project safety guard: this script (like the rest of the shared
+    # .agents framework) is used by more than one CSA project. Refuse to
+    # read or write an evidence matrix whose workspace isn't a registered
+    # project's project_root (or a path under it) in csa-context/PROJECTS.yaml
+    # -- never silently fall back to a wrong or empty project's matrix. If
+    # the registry itself can't be read, skip this check rather than
+    # blocking every command on an installation problem.
+    registry = _load_project_registry()
+    if registry and _resolve_registered_project(workspace) is None:
+        fail(
+            f"WORKSPACE_NOT_REGISTERED: {workspace} is not the project_root (or a "
+            "path under it) of any project listed in csa-context/PROJECTS.yaml. "
+            "Refusing to read or write an evidence matrix for an unregistered "
+            "workspace -- pass --workspace <project_root> explicitly, or register "
+            "this project in PROJECTS.yaml first.",
+            workspace=str(workspace),
+        )
+
     matrix = args.matrix or os.environ.get("CSA_EVIDENCE_MATRIX")
     matrix = Path(matrix).expanduser().resolve() if matrix else workspace / "csa-work" / "evidence-matrix.csv"
     return workspace, matrix

@@ -15,6 +15,8 @@ This `.agents` framework is shared by every CSA project under `/Users/wenzel/Wor
 3. Once the project is known, set `PROJECT_CONTEXT`, `WORK_DIR`, and (unless the caller gave `SOURCE_SET` explicitly) `SOURCE_SET` from that project's entry in `PROJECTS.yaml` (`project_context`, `work_dir`, `default_source_set`). State which project you are proceeding with in your first reply so the user can catch a wrong pick immediately.
 4. If a new project is ever placed under `/Users/wenzel/Work/ASE/CurrentStateAssessments/` and it has no entry in `PROJECTS.yaml` yet, say so and ask the user for its `project_context` / `work_dir` paths rather than inventing them -- do not silently add an entry to `PROJECTS.yaml` without the user confirming its paths first.
 
+This step is a human-facing safeguard, not the only one. The `csa_docx` framework and `evidence_matrix.py` also independently validate every workspace path against this same `PROJECTS.yaml` before touching any file, and refuse with `WORKSPACE_NOT_REGISTERED` rather than silently operating against the wrong project -- see `README.md`'s Cross-Project Safety Guard section. Getting this step right still matters: it's what determines which registered project every downstream tool call is scoped to for the rest of this run.
+
 ## Skills
 
 Load only:

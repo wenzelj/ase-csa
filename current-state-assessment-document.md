@@ -451,6 +451,12 @@ When `EXECUTION_MODE=framework-first` is supplied:
 
 The framework is conservative and does not yet handle every edit. A blocker should now mean a real ambiguity or unsupported document feature, not an unrecognised wording variant. Manual fallback remains allowed for edits that require preserving complex inline formatting, fields, headers, footers, images, relationships, styles, or any operation where framework validation fails.
 
+### Cross-Project Safety Guard
+
+This framework is shared by every CSA project. Every framework call that takes a `--workspace`/`workspace` argument validates it against `csa-context/PROJECTS.yaml` before doing anything else, and refuses with `"status": "ERROR", "message": "WORKSPACE_NOT_REGISTERED: ..."` if the resolved workspace is not a registered project's `project_root` (or a path under it) -- never silently falling back to whatever `--workspace` happened to be (a stale value, an empty default, a copy-pasted path from another project). Treat this exactly like `NOT_READY`: stop immediately, do not retry with a guessed path, and report the message to the user. This is not a blocker to work around; it means the workspace passed to this run does not match the project the user asked for, and something upstream (the invocation, a copy-pasted command) needs correcting first.
+
+`prepareDocument()`'s response also carries a `"project": {"key": ..., "label": ...}` field once the workspace resolves successfully. Before trusting anything else in that response, confirm `project.key`/`project.label` matches the project the user asked you to work on this run (see the orchestrator's Project Selection step, or the `PROJECT_CONTEXT`/`WORKSPACE` the user supplied directly). A mismatch here -- even without an outright `WORKSPACE_NOT_REGISTERED` error -- means stop and ask, do not proceed on the assumption it's close enough.
+
 ## Change Order
 
 Apply edits in the exact documented sequence.

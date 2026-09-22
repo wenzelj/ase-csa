@@ -43,6 +43,95 @@ def _error(message: str) -> dict:
     return {"status": "ERROR", "message": message}
 
 
+def _load_project_registry() -> list[dict]:
+    """Parse ``csa-context/PROJECTS.yaml`` -- a small, fixed-shape list of
+    project entries -- without requiring PyYAML. Returns ``[]`` if the file
+    is missing or unparseable; callers treat an empty registry as "the
+    cross-project safety check is unavailable" rather than blocking every
+    operation on a framework installation issue.
+    """
+    registry_path = Path(__file__).resolve().parents[2] / "csa-context" / "PROJECTS.yaml"
+    if not registry_path.is_file():
+        return []
+    projects: list[dict] = []
+    current: dict = {}
+    try:
+        for raw_line in registry_path.read_text(encoding="utf-8").splitlines():
+            stripped = raw_line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if raw_line[:1] not in (" ", "\t"):
+                # Top-level key (e.g. the "projects:" list header) -- not
+                # part of an entry, so nothing to record.
+                continue
+            if stripped.startswith("- key:"):
+                if current:
+                    projects.append(current)
+                current = {}
+                stripped = stripped[2:]  # drop leading "- "
+            if ":" not in stripped:
+                continue
+            key, _, value = stripped.partition(":")
+            current[key.strip()] = value.strip().strip('"').strip("'")
+        if current:
+            projects.append(current)
+    except OSError:
+        return []
+    return projects
+
+
+def _resolve_registered_project(workspace_path: Path) -> dict | None:
+    """Return the PROJECTS.yaml entry whose ``project_root`` is exactly
+    ``workspace_path`` or an ancestor of it, or ``None`` if no registered
+    project matches.
+    """
+    for project in _load_project_registry():
+        root = project.get("project_root")
+        if not root:
+            continue
+        try:
+            root_path = Path(root).expanduser().resolve()
+        except OSError:
+            continue
+        if workspace_path == root_path or root_path in workspace_path.parents:
+            return project
+    return None
+
+
+def _check_workspace_registered(workspace_path: Path) -> dict | None:
+    """Cross-project safety guard.
+
+    This framework is shared by more than one CSA project. A stale cwd, an
+    unset ``workspace`` argument, or a copy-pasted path from the wrong
+    project could otherwise make a tool call silently read or write another
+    project's DOCX, run-state, or evidence data. Before any operation
+    touches a workspace, confirm that workspace is exactly the
+    ``project_root`` of a project registered in ``csa-context/PROJECTS.yaml``
+    (or a path under it) -- never a guess, never a partial match.
+
+    Returns an ``{"status": "ERROR", ...}`` dict to hand straight back to
+    the caller if the workspace is not registered, or ``None`` if it is
+    fine to proceed. If the registry itself can't be read, this check is
+    skipped (returns ``None``) rather than blocking every call in the
+    framework on an installation problem -- that failure mode is reported
+    separately, not silently treated as "safe".
+    """
+    if not _load_project_registry():
+        return None
+    if _resolve_registered_project(workspace_path) is not None:
+        return None
+    return _error(
+        "WORKSPACE_NOT_REGISTERED: "
+        f"{workspace_path} is not the project_root (or a path under it) of any "
+        "project listed in csa-context/PROJECTS.yaml. Refusing to operate against "
+        "an unregistered workspace -- this is the cross-project safety guard that "
+        "stops one project's agent run from reading or writing another project's "
+        "data. If this is a genuine new project, register it in PROJECTS.yaml "
+        "first (see the Project Selection step in csa-orchestrator-agent.md); "
+        "otherwise check the workspace path passed to this call."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Step 0: readiness / lock precondition.
 #
@@ -425,7 +514,9 @@ def prepareDocument(section: str | None = None, *, workspace: str | Path = ".", 
     their structural names.
     """
     workspace_path = Path(workspace).resolve()
-
+    _workspace_guard = _check_workspace_registered(workspace_path)
+    if _workspace_guard is not None:
+        return _workspace_guard
     # section=None resolves the working docx directly -- via the section
     # manifest if reviews/ change files already exist (the normal re-run
     # case), or straight off the workspace's one .docx if none do yet (true
@@ -439,6 +530,13 @@ def prepareDocument(section: str | None = None, *, workspace: str | Path = ".", 
     section = target.section
     docx = target.docx
 
+    resolved_project = _resolve_registered_project(workspace_path)
+    project_stamp = (
+        {"key": resolved_project.get("key"), "label": resolved_project.get("label")}
+        if resolved_project
+        else None
+    )
+
     readiness = _check_document_ready(docx)
     if not readiness.ok:
         return {
@@ -449,6 +547,7 @@ def prepareDocument(section: str | None = None, *, workspace: str | Path = ".", 
             "docx": str(docx),
             "id_manifest_summary": {"paragraphs": 0, "runs": 0, "regenerated": False},
             "validation": readiness.validation,
+            "project": project_stamp,
         }
 
     # Same opening path cli_apply_section.py's --dump-ids uses: DocxEngine
@@ -523,6 +622,10 @@ def prepareDocument(section: str | None = None, *, workspace: str | Path = ".", 
             "path": str(manifest_path),
         },
         "validation": readiness.validation,
+        # Cross-project safety: which registered project this workspace
+        # resolved to. Agents confirm this matches the project they believe
+        # they are working on before using anything else in this response.
+        "project": project_stamp,
     }
 
 
@@ -566,6 +669,9 @@ def lookupStableId(
     wording judgment to a human or bigger model everywhere else.
     """
     workspace_path = Path(workspace).resolve()
+    _workspace_guard = _check_workspace_registered(workspace_path)
+    if _workspace_guard is not None:
+        return _workspace_guard
     try:
         target = _resolve_shared_document(workspace_path, section)
     except (ManifestError, ValueError) as exc:
@@ -658,7 +764,9 @@ def apply_next_batch(
     completely untouched -- no backup, no partial batch.
     """
     workspace_path = Path(workspace).resolve()
-
+    _workspace_guard = _check_workspace_registered(workspace_path)
+    if _workspace_guard is not None:
+        return _workspace_guard
     if change_file is None or docx is None:
         try:
             entry = resolve_section(workspace_path, section)
@@ -774,6 +882,9 @@ def get_section_status(section: str, *, workspace: str | Path = ".") -> dict:
     anything. Returns ``{"status": "NOT_STARTED", ...}`` when no run-state
     file exists yet for that section."""
     workspace_path = Path(workspace).resolve()
+    _workspace_guard = _check_workspace_registered(workspace_path)
+    if _workspace_guard is not None:
+        return _workspace_guard
     try:
         entry = resolve_section(workspace_path, section)
     except ManifestError as exc:
@@ -811,6 +922,9 @@ def list_sections(*, workspace: str | Path = ".", force_refresh: bool = False) -
     This is the one call a small model needs to decide what to work on
     next — no path or naming-convention knowledge required."""
     workspace_path = Path(workspace).resolve()
+    _workspace_guard = _check_workspace_registered(workspace_path)
+    if _workspace_guard is not None:
+        return _workspace_guard
     try:
         manifest = get_manifest(workspace_path, force_refresh=force_refresh)
     except ManifestError as exc:
@@ -827,6 +941,9 @@ def validate_section(section: str, *, workspace: str | Path = ".") -> dict:
     comment-ID consistency, table-row comment safety) for one section's
     working docx, without applying any edits."""
     workspace_path = Path(workspace).resolve()
+    _workspace_guard = _check_workspace_registered(workspace_path)
+    if _workspace_guard is not None:
+        return _workspace_guard
     try:
         entry = resolve_section(workspace_path, section)
     except ManifestError as exc:
@@ -844,6 +961,9 @@ def refresh_manifest(*, workspace: str | Path = ".") -> dict:
     no-op reset for stale paths: archiving old files and adding a new
     document is picked up on the next call automatically."""
     workspace_path = Path(workspace).resolve()
+    _workspace_guard = _check_workspace_registered(workspace_path)
+    if _workspace_guard is not None:
+        return _workspace_guard
     try:
         manifest = _refresh_manifest_impl(workspace_path)
     except ManifestError as exc:

@@ -13,6 +13,8 @@ The evidence matrix is the shared memory of what has already been established ab
 
 and UTC DTC's is at its own `csa-work/evidence-matrix.csv` under its project root. Always resolve this path per-project; writing one project's findings into another project's matrix is a data-integrity error.
 
+**Built-in guard:** `evidence_matrix.py` validates the resolved `--workspace` (or cwd, if `--workspace`/`CSA_WORKSPACE` was omitted) against `csa-context/PROJECTS.yaml` before touching any file, for every command (`lookup`, `get`, `stats`, `verify`, `append`). If the workspace is not a registered project's `project_root` (or a path under it), the command fails loudly with `"status": "ERROR"` and a `WORKSPACE_NOT_REGISTERED` message instead of silently reading or writing the wrong project's matrix -- always pass `--workspace <this project's project_root>` explicitly rather than relying on the cwd default.
+
 Each row is one atomic claim with a stable `E-nnn` ID, an evidence class, its source, and an exact excerpt. This skill is how the three pipeline agents read it and write to it, so a fact found once is never searched for twice and every claim can be traced to a source.
 
 Agents that use this skill: **csa-change-authoring-agent**, **csa-document-agent**, **csa-change-review-agent**. The evidence-investigator and orchestrator agents write to the same file under their own rules; this skill is compatible with them.
