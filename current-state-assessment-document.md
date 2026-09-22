@@ -1042,12 +1042,12 @@ When something is found during a run that is wrong, blocked, or needs a call onl
 
 Before stopping on `BLOCKED`, `NO_PROGRESS_STOP`, or a failed validator:
 
-- search `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/issues-fixed-log.md` for a similar symptom (same error text, same edit shape, same file/section). This is a quick recurrence check, not a triage step;
+- search this project's own `<work_dir>/issues-fixed-log.md` (per-project, not shared -- for IAMPS example: `/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS/csa-work/issues-fixed-log.md`) for a similar symptom (same error text, same edit shape, same file/section). This is a quick recurrence check, not a triage step;
 - describe what was found: the symptom, the evidence (section, edit ID, file), and what would resolve it. If the search above found a likely match, say so and name it ("this looks like the same thing fixed on <date>: <one line>");
 - if there is a genuine choice to make, lay out the options with a recommended default, the way you would ask a colleague, directly in the response - not in a separate file;
 - wait for Wenzel's direction on that item before proceeding with it. Do not guess to unblock; the Anchor Mismatch Rule and Absolute Change Control Rule are unchanged;
 - once Wenzel responds, apply the decision only as stated and only within the approved changes. If it requires editing an approved change record, do that only when Wenzel says so explicitly;
-- once the fix is applied and confirmed, append one entry to `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/issues-fixed-log.md` using the format in that file (where, symptom, fix). Do not log something still waiting on Wenzel.
+- once the fix is applied and confirmed, append one entry to this project's own `issues-fixed-log.md` (in its `work_dir`) using the format in that file (where, symptom, fix). Do not log something still waiting on Wenzel, and never append to another project's log.
 
 ### At the end of a run
 

@@ -104,18 +104,18 @@ Example for IAMPS specifically (do not reuse these literal paths for another pro
 - Add Word comments using `Wenzel Joubert` and `WJ` when the tooling supports it.
 - Update the section Markdown `## Changes Report` and the run-state file after the batch.
 - Validate DOCX archive/XML/comment safety and render affected pages where available.
-- On `BLOCKED`, `NO_PROGRESS_STOP` or a validator failure, check `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/issues-fixed-log.md` for a similar symptom first, then describe the symptom and evidence (naming any likely match found), and if there is a choice to make, give the options and a recommended default, directly in the response, so Wenzel can decide with full context. See Issue Escalation in the agent definition. Once resolved, append one entry to `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/issues-fixed-log.md`.
+- On `BLOCKED`, `NO_PROGRESS_STOP` or a validator failure, check this project's `<work_dir>/issues-fixed-log.md` for a similar symptom first (for IAMPS example: `/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS/csa-work/issues-fixed-log.md`), then describe the symptom and evidence (naming any likely match found), and if there is a choice to make, give the options and a recommended default, directly in the response, so Wenzel can decide with full context. See Issue Escalation in the agent definition. Once resolved, append one entry to this project's `issues-fixed-log.md`.
 - Include the `Escalations` block in the completion report and the `## Changes Report`.
 - After applying a batch, run the Evidence Check from the agent definition using the `csa-evidence-matrix` skill (`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-evidence-matrix/SKILL.md`): look up `csa-work/evidence-matrix.csv` first for each applied fact-bearing edit, search Discovery Data only if the matrix has no answer, append new findings back to the matrix, and report the result under `Evidence check`. It never changes an approved edit. Disabled by `EVIDENCE_CHECK=off`; in `EXECUTION_MODE=framework-first` it runs only with `EVIDENCE_CHECK=on`.
 - Stop immediately after reporting `PARTIAL_COMPLETE`, `SECTION_COMPLETE`, `BLOCKED`, `NOT_READY`, or `NO_PROGRESS_STOP`.
 
 ## Local Resources
 
-This skill is shared by every CSA project under `/Users/wenzel/Work/ASE/CurrentStateAssessments/`. Only the framework itself, the learnings inbox, and the issues log are shared -- everything else is per-project:
+This skill is shared by every CSA project under `/Users/wenzel/Work/ASE/CurrentStateAssessments/`. Only the agent/skill definitions, the reusable framework, and the learnings inbox are shared -- everything that holds run state (run-state files, the fixed issues log, the evidence matrix) is per-project and must never be pointed at another project's `work_dir`:
 
 - Agent definitions and project docs (shared): `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/`
 - Reusable framework (shared): `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/framework/csa_docx/`
 - Run-state files (per project, inside that project's own working-document folder; for IAMPS example: `/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS/01 Current State AS Built/01 Final Version/run-state/`)
 - Learnings inbox (shared): `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/current-state-assessment-document-learnings.md` -- entries are dated and name their project; check which project an entry is about before applying it to another.
-- Fixed issues log (shared): `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/issues-fixed-log.md`
+- Fixed issues log (per-project, not shared -- lives in `<work_dir>/issues-fixed-log.md`; for IAMPS example: `/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS/csa-work/issues-fixed-log.md`)
 - Evidence matrix (per project, inside that project's own `WORK_DIR`; for IAMPS example: `/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS/csa-work/evidence-matrix.csv`) (access only via the `csa-evidence-matrix` skill)
