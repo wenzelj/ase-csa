@@ -96,7 +96,7 @@ Routing rules:
 
 Working files: `csa-context/` holds every project's context file (one YAML per project, named `<PROJECT>_PROJECT_CONTEXT.yaml`); `csa-templates/` holds blank templates (project context, assessment state, evidence matrix, section coverage guide) copied from the skill pack. Per-run working files (`assessment-state.yaml`, `evidence-matrix.csv`, `analysis/`, `drafts/`, `reviews/`) go in `WORK_DIR`, which must be set to that project's own `csa-work/` folder (created from the templates on first use) -- since `.agents` is shared, there is no single "project root" to default to, so always pass `WORK_DIR` as an absolute path inside the right project.
 
-Start a CSA analysis run with (example: IAMPS):
+Start a CSA analysis run with:
 
 ```text
 Load this agent definition:
@@ -104,15 +104,22 @@ Load this agent definition:
 
 Act as the CSA Orchestrator Agent.
 
-PROJECT_CONTEXT=/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-context/IAMPS_PROJECT_CONTEXT.yaml
-WORK_DIR=/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS/csa-work
 SECTION=<section-name>
-SOURCE_SET=<documents or folders that count as evidence>
 
 Progress the requested section using the routing table in the agent definition.
 ```
 
-Or, with native skills: `Use $csa-orchestrator.` followed by the same inputs. To run one specialist directly for a narrow task, load its agent definition (for example `csa-evidence-investigator-agent.md`) or invoke the skill by name (for example `$evidence-investigator`).
+Since `PROJECT_CONTEXT` and `SOURCE_SET` are not given, the orchestrator's Project Selection step reads `csa-context/PROJECTS.yaml`, lists the available projects (currently IAMPS and UTC DTC with KVM), and asks which one this run is for before doing anything else -- reply with the project name or key. To skip the question, supply `PROJECT_CONTEXT`/`WORK_DIR` directly instead, exactly as before:
+
+```text
+PROJECT_CONTEXT=/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-context/IAMPS_PROJECT_CONTEXT.yaml
+WORK_DIR=/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS/csa-work
+SOURCE_SET=<documents or folders that count as evidence>
+```
+
+Or, with native skills: `Use $csa-orchestrator.` followed by the same inputs (or nothing, to be asked). To run one specialist directly for a narrow task, load its agent definition (for example `csa-evidence-investigator-agent.md`) or invoke the skill by name (for example `$evidence-investigator`) -- these agents assume the orchestrator (or the caller) already resolved `PROJECT_CONTEXT`/`WORK_DIR`, so pass them through explicitly when invoking a specialist directly rather than via the orchestrator.
+
+Adding a new CSA project later: create its project root under `/Users/wenzel/Work/ASE/CurrentStateAssessments/`, add its `<PROJECT>_PROJECT_CONTEXT.yaml` to `csa-context/` (copy `csa-templates/PROJECT_CONTEXT_TEMPLATE.yaml`), and add one block for it to `csa-context/PROJECTS.yaml` -- nothing else in this shared framework needs to change.
 
 ## Folder Roles
 

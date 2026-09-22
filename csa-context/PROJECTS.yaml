@@ -1,0 +1,20 @@
+# Registry of every CSA project sharing this .agents framework. The orchestrator agent reads this
+# file first, before doing anything else, to ask which project a run is for when PROJECT_CONTEXT /
+# WORK_DIR were not given explicitly. Add a new block here whenever a new CSA project is placed
+# under /Users/wenzel/Work/ASE/CurrentStateAssessments/ -- nothing else in the shared framework
+# needs to change.
+
+projects:
+  - key: iamps
+    label: "IAMPS"
+    project_root: "/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS"
+    project_context: "/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-context/IAMPS_PROJECT_CONTEXT.yaml"
+    work_dir: "/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS/csa-work"
+    default_source_set: "/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS/01 Current State AS Built/IAMPS Discovery Data"
+
+  - key: utcdtc
+    label: "UTC DTC with KVM"
+    project_root: "/Users/wenzel/Work/ASE/CurrentStateAssessments/UTC DTC/07 UTC DTC with KVM"
+    project_context: "/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-context/UTC_DTC_PROJECT_CONTEXT.yaml"
+    work_dir: "/Users/wenzel/Work/ASE/CurrentStateAssessments/UTC DTC/07 UTC DTC with KVM/csa-work"
+    default_source_set: "/Users/wenzel/Work/ASE/CurrentStateAssessments/UTC DTC/07 UTC DTC with KVM/01 Current State AS Built/UTC Discovery Data"
