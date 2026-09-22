@@ -34,24 +34,30 @@ from dataclasses import dataclass
 class StableId:
     kind: str            # "P" (paragraph) | "T" (table row)
     section_path: str    # e.g. "2.1.4"
-    ordinal: int = 1     # 1-based ordinal
+    ordinal: int = 1     # 1-based ordinal (P ordinal, or T table ordinal)
+    row: int | None = None  # 1-based table row ordinal; None for non-table kinds
 
     def __str__(self) -> str:
+        if self.kind == "T" and self.row is not None:
+            return f"@H{self.section_path}-T{self.ordinal}-R{self.row}"
         return f"@H{self.section_path}-{self.kind}{self.ordinal}"
 
 
-_ID_RE = re.compile(r"@(H(\d+(?:\.\d+)*)(?:-(P|T)(\d+))?)")
+_ID_RE = re.compile(r"@(H(\d+(?:\.\d+)*)(?:-(P)(\d+)|-(T)(\d+)(?:-(R)(\d+))?)?)")
 
 
 def extract_stable_id(where: str) -> StableId | None:
     match = _ID_RE.search(where)
-    if not match or not match.group(2) or not match.group(3):
+    if not match or not match.group(2):
         return None
-    return StableId(
-        kind=match.group(3),
-        section_path=match.group(2),
-        ordinal=int(match.group(4) or 1),
-    )
+    section_path = match.group(2)
+    # group(4)=P ordinal | group(6)=T ordinal | group(8)=R row
+    if match.group(3):
+        return StableId(kind="P", section_path=section_path, ordinal=int(match.group(4)))
+    if match.group(5):
+        row = int(match.group(8)) if match.group(8) else None
+        return StableId(kind="T", section_path=section_path, ordinal=int(match.group(6)), row=row)
+    return None
 
 
 def _heading_level(paragraph) -> int | None:

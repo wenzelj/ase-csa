@@ -150,7 +150,11 @@ class DocxEngineEditor:
         where_lower = record.where.lower()
         if _has_full_table_replacement(record):
             return self._apply_full_table_replacement(record, author, initials)
-        if "row beginning" in where_lower or "table" in where_lower:
+        if (
+            "row beginning" in where_lower
+            or "table" in where_lower
+            or (extract_stable_id(record.where) is not None and extract_stable_id(record.where).kind == "T")
+        ):
             return self._apply_table_row_change(record, author, initials)
         if _has_section_body_replacement(record) or "replace the entire subsection" in record.action.lower():
             return self._apply_section_body_replacement(record, author, initials)
@@ -165,7 +169,38 @@ class DocxEngineEditor:
         return self._apply_simple_paragraph_change(record, author, initials)
 
     def save(self) -> None:
-        self.doc.save(self.docx_path)
+        # The vendor library's docx_save gate refuses any package with an
+        # error-severity validation issue, but the CSA source documents can
+        # legitimately arrive carrying a pre-existing structural wart (e.g. an
+        # orphaned part with no [Content_Types].xml entry) that has nothing to
+        # do with the edits this batch just made. DocxEngine ships a narrow,
+        # mechanical repair (content-type defaults, orphaned-relationship
+        # cleanup, revision-id dedup, orphaned reference removal) that is safe
+        # to run for exactly this reason: it only fixes what the validator
+        # flagged, it does not touch document content, and it leaves
+        # warning-severity issues alone. We run it here, before the gate,
+        # only when the gate would have refused the save, and only report the
+        # structural fixes (not their internal reasoning) to the caller via
+        # the ``save_repair`` attribute - callers can surface this in their
+        # changes report if they want to, but it is never a blocker on its
+        # own. If the package is still invalid after the vendor repair (i.e.
+        # the problem was not one of the mechanical classes the repair covers),
+        # the original save error is raised unchanged so the controller still
+        # sees a hard failure rather than silently shipping a bad package.
+        try:
+            self.doc.save(self.docx_path)
+            return
+        except ToolError as exc:
+            self.save_repair = []
+            from docxengine._validate import repair_package, is_valid, validate_package
+
+            package = self.doc._session.get(self.doc.doc_id).package
+            fixed, remaining = repair_package(package)
+            if not is_valid(validate_package(package)):
+                self.save_repair = None
+                raise
+            self.save_repair = fixed
+            self.doc.save(self.docx_path)
 
     def _apply_simple_paragraph_change(self, record: ChangeRecord, author: str, initials: str) -> EditResult:
         # Direction A (framework-robustness-plan.md section 3): a durable OOXML
@@ -780,7 +815,71 @@ class DocxEngineEditor:
                 tables.append(entry.anchor)
         return tables
 
+    def _stable_id_map(self) -> dict[str, int]:
+        if not hasattr(self, "_stable_id_map_cache"):
+            from csa_docx.stable_ids import build_id_map
+            self._stable_id_map_cache = build_id_map(self.paragraphs_with_table_rows())
+        return self._stable_id_map_cache
+
+    def _resolve_stable_table_row(self, stable_id) -> "TableRowRef | None":
+        """Resolve a T-kind StableId to a TableRowRef using _table_rows().
+
+        build_id_map assigns table rows in document order (T1, T2, ...) and
+        1-based row ordinals within each table. _table_rows() uses the same
+        document-order T{ordinal} anchor convention, so the two line up:
+        ordinal N here is table index N-1 there.
+        """
+        id_map = self._stable_id_map()
+        id_str = str(stable_id)
+        index = id_map.get(id_str)
+        if index is None:
+            return None
+        paragraphs = self.paragraphs_with_table_rows()
+        entry = paragraphs[index]
+        table_anchor = getattr(entry, "table_anchor", None)
+        if not table_anchor:
+            return None
+        # table_anchor is "T{n}"; find the matching table in _table_rows()
+        # and use the stable row ordinal (1-based) as row_index (0-based).
+        m = re.match(r"T(\d+)$", table_anchor)
+        if not m:
+            return None
+        table_ordinal = int(m.group(1))
+        all_tables = self._table_rows()
+        if table_ordinal - 1 >= len(all_tables):
+            return None
+        anchor, rows = all_tables[table_ordinal - 1]
+        row_index = (stable_id.row or 1) - 1
+        if row_index >= len(rows):
+            return None
+        headers = rows[0] if rows else []
+        return TableRowRef(anchor, row_index, headers, rows[row_index])
+
     def _find_unique_table_row(self, row_label: str) -> "TableRowRef | None":
+        # Stable structural ID (e.g. "@H2.8-T1-R10") takes priority over any
+        # cell-text matching: it is immune to wording drift and is the
+        # authoritative locator the change file supplies. Resolve it against
+        # the same manifest builder (build_id_map over
+        # paragraphs_with_table_rows) that prepareDocument/lookupStableId use,
+        # then map that entry's (table ordinal, row ordinal) onto the
+        # T{ordinal}/row-index convention _table_rows() uses. Falls through
+        # to the existing text/fuzzy matching below when the label is not a
+        # resolvable stable ID.
+        stable_id = extract_stable_id(row_label)
+        if stable_id is not None and stable_id.kind == "T":
+            # A resolvable table-row stable ID is a precise structural
+            # locator - trust it and skip cell-text/fuzzy matching entirely
+            # (the label text in a Where clause is frequently a quoted
+            # human-readable row with literal "|" separators that will never
+            # equal the pipe-less cell-join used for text matching). If the
+            # ID is well-formed but no longer resolves (document drifted
+            # since the manifest was built), surface a clear BLOCKED rather
+            # than silently guessing a different row by text.
+            row_ref = self._resolve_stable_table_row(stable_id)
+            if row_ref is not None:
+                return row_ref
+            return None
+
         wanted = normalise_text(row_label)
         matches: list[TableRowRef] = []
         all_rows: list[TableRowRef] = []
@@ -850,6 +949,50 @@ class DocxEngineEditor:
                 rows.append(cells)
             tables.append((f"T{table_index}", rows))
         return tables
+
+    def paragraphs_with_table_rows(self) -> list["Paragraph | _ManifestTableRow"]:
+        """Body paragraphs and table rows, interleaved in true document order.
+
+        ``self.doc.paragraphs()`` (the vendored ``docxengine.Document.paragraphs``)
+        only ever returns body-level ``w:p`` elements -- tables are a deliberately
+        separate concern in that library (see its docstring: "Tables anchor as
+        ``T{ordinal}``... cell text is a projection concern"). ``stable_ids.py``'s
+        manifest builder *does* implement ``@H<section>-T<n>-R<n>`` table-row IDs,
+        but never saw any, because nothing ever fed it a paragraph-shaped object
+        with a ``table_anchor`` set -- ``prepareDocument()`` always reported
+        ``table_rows: 0`` even though the document has tables (confirmed against
+        `word/document.xml` directly during Section 1 CSA authoring on
+        2026-09-20).
+
+        This walks the same body-level anchor index the vendor library itself
+        derives paragraph/table anchors from (``build_anchor_index``), so each
+        table's position relative to the surrounding headings/paragraphs -- and
+        therefore its ``@H<section>`` attribution -- is exact, then expands each
+        table into its rows via ``_table_rows()`` (already used by the table-edit
+        path, so the ``T{n}`` numbering is guaranteed to line up: both walk the
+        same body-level ``w:tbl`` elements in the same order).
+        """
+        package = self.doc._doc.package
+        ordered_paragraphs = self.doc.paragraphs()
+        rows_by_table = dict(self._table_rows())
+        merged: list[Paragraph | _ManifestTableRow] = []
+        p_index = 0
+        for entry in build_anchor_index(package):
+            if entry.kind == "paragraph":
+                merged.append(ordered_paragraphs[p_index])
+                p_index += 1
+            elif entry.kind == "table":
+                table_anchor = entry.anchor  # e.g. "T3" -- same scheme _table_rows() uses
+                for row_index, cells in enumerate(rows_by_table.get(table_anchor, []), start=1):
+                    preview = " | ".join(cell for cell in cells if cell)
+                    merged.append(
+                        _ManifestTableRow(
+                            anchor=f"{table_anchor}-R{row_index}",
+                            text=preview,
+                            table_anchor=table_anchor,
+                        )
+                    )
+        return merged
 
     def _add_table_cell_comment(self, update: "TableCellUpdate", record: ChangeRecord, author: str, initials: str) -> str | None:
         package = self.doc._doc.package
@@ -1272,6 +1415,26 @@ class TableRowRef:
         self.row_index = row_index
         self.headers = headers
         self.cell_texts = cell_texts
+
+
+class _ManifestTableRow:
+    """Paragraph-shaped view of one table row, for ``stable_ids``'s manifest builder only.
+
+    ``stable_ids.build_id_map``/``generate_manifest`` read a paragraph-like
+    object's ``style``, ``text``, ``anchor``, and ``table_anchor`` via
+    ``getattr(...)`` with defaults, so this only needs to supply those four
+    attributes -- it is never passed to any DocxEngine edit call (table edits
+    go through ``_apply_table_row_change``'s row-label matching instead, which
+    reads the DOCX directly and does not use this class).
+    """
+
+    __slots__ = ("anchor", "text", "style", "table_anchor")
+
+    def __init__(self, anchor: str, text: str, table_anchor: str, style: str | None = None) -> None:
+        self.anchor = anchor
+        self.text = text
+        self.style = style
+        self.table_anchor = table_anchor
 
 
 class TableCellUpdate:

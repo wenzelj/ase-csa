@@ -35,7 +35,7 @@ After completing one section:
 - validate the changes;
 - save the Word document;
 - report what was changed;
-- capture reusable lessons from the run and improve the agent's local skill notes;
+- record issues and reusable lessons from the run (issue register and learnings inbox);
 - stop.
 
 Do not automatically continue to the next section. Wait for explicit instruction from the user before processing another section.
@@ -54,9 +54,9 @@ This is the document that must be copied and edited. Never modify the original d
 
 Examples may look like:
 
-- `ChangesCSA_IAMPS_Section1_E1_E13_Suggested.md`
-- `ChangesCSA_IAMPS_Section2_E14_E37.md`
-- `ChangesCSA_IAMPS_Section10_E161_E176.md`
+- `ChangesCSA_IAMPS_Section1.md`
+- `ChangesCSA_IAMPS_Section2.md`
+- `ChangesCSA_IAMPS_Section10.md`
 
 These files contain approved instructions such as:
 
@@ -64,7 +64,7 @@ These files contain approved instructions such as:
 - `Do`
 - `Text`
 - `Why`
-- edit number, for example `E-161`
+- edit number, for example `S10-E1`
 
 Treat these instructions as authoritative. Do not independently reinterpret the technical subject matter unless necessary to execute the edit accurately.
 
@@ -107,7 +107,7 @@ Before making the first approved change:
 
 Example:
 
-- Current: `Current State Assessment - IAMPS - v1.docx`
+- Current: `Current State Assessment - IAMPS.docx`
 - Create: `Current State Assessment - IAMPS - v2.docx`
 
 If the filename uses another version convention such as `V01`, `v1.0`, or `Version 1`, preserve the existing convention and increment it logically.
@@ -244,8 +244,8 @@ The user may override these with:
 
 ```text
 SECTION=3
-START_EDIT_ID=E-38
-END_EDIT_ID=E-42
+START_EDIT_ID=S3-E1
+END_EDIT_ID=S3-E5
 Apply the requested section using the agent defaults.
 ```
 
@@ -295,10 +295,10 @@ Before editing the DOCX:
 Use this run-state path pattern:
 
 ```text
-01 Current State AS Built/7 IAMPS/01 Final Version/run-state/current-state-assessment-document-section-<SECTION>.md
+01 Current State AS Built/01 Final Version/run-state/current-state-assessment-document-section-<SECTION>.md
 ```
 
-Create the `01 Current State AS Built/7 IAMPS/01 Final Version/run-state` directory if it does not exist.
+Create the `01 Current State AS Built/01 Final Version/run-state` directory if it does not exist.
 
 The run-state file must contain:
 
@@ -458,11 +458,11 @@ Apply edits in the exact documented sequence.
 For example:
 
 ```text
-E-112
-E-113
-E-114
+S7-E1
+S7-E2
+S7-E3
 ...
-E-128
+S7-E17
 ```
 
 Do not reorder them unless necessary because an earlier approved edit changes the anchor text needed by a later edit.
@@ -534,14 +534,14 @@ Comments should be concise and professional.
 Use this format:
 
 ```text
-Change E-161
+Change S10-E1
 Reason: Corrects the host-level security-control evidence to align with the approved assessment findings.
 ```
 
 or:
 
 ```text
-Change E-204
+Change S13-E5
 Reason: Isolation was not tested, so the previous wording incorrectly presented disconnection as observed behaviour.
 ```
 
@@ -597,7 +597,7 @@ The comment must include the Edit ID.
 Example:
 
 ```text
-E-173 - Replaced absolute security-loss wording because the approved review found the original conclusion exceeded the available evidence.
+S10-E12 - Replaced absolute security-loss wording because the approved review found the original conclusion exceeded the available evidence.
 ```
 
 ## Word Comment OOXML Safety
@@ -808,7 +808,7 @@ Do not create a new version number for every section.
 
 For example:
 
-- Original: `Current State Assessment - IAMPS - v1.docx`
+- Original: `Current State Assessment - IAMPS.docx`
 - Working document: `Current State Assessment - IAMPS - v2.docx`
 - Section 1 edits: save `v2`
 - Section 2 edits: save the same `v2`
@@ -904,6 +904,19 @@ Do not use:
 
 to introduce additional document changes.
 
+## Evidence Check (csa-evidence-matrix skill)
+
+The approved `.md` change file remains the only source of edits. The evidence check never adds, changes, skips or reorders an approved edit.
+
+After a batch has been applied and saved, for each applied edit whose Text asserts a technical fact about the assessed system (hosts, services, ports, addresses, software, configuration, dates), use the `csa-evidence-matrix` skill (`.agents/skills/csa-evidence-matrix/SKILL.md`):
+
+1. `evidence_matrix.py lookup "<claim keywords>"` -- matrix first.
+2. If the matrix answers it, record `supported (E-nnn)` or `contradicted by E-nnn`.
+3. If the matrix has no answer, search Discovery Data (`01 Current State AS Built/IAMPS Discovery Data/`) for that point only, then append what you found with `evidence_matrix.py append --agent csa-document-agent --context "Section <N> <edit IDs>"` (or a NOT_FOUND row with the scope searched).
+4. Report the outcome per edit in the completion report under `Evidence check`: `supported (E-nnn)`, `no evidence on record`, or `contradicted by E-nnn`. A contradiction is reported, never a reason to alter or skip an approved edit; the human decides.
+
+Bounds: one lookup per applied fact-bearing edit, at most two Discovery Data searches per batch. Skip edits that only change wording, structure, dates of the document, or governance fields. `EVIDENCE_CHECK=off` in the prompt disables this step. In `EXECUTION_MODE=framework-first` (thin controller) run the check only when the prompt says `EVIDENCE_CHECK=on`. Never edit `csa-work/evidence-matrix.csv` directly; the skill's append is the only write path. Do not write evidence notes into the section `## Changes Report` or run-state, because the framework rewrites those on the next batch.
+
 ## Conflict Handling
 
 If two approved `.md` instructions conflict:
@@ -945,6 +958,7 @@ At the beginning of each execution:
 - identify existing change comments;
 - identify existing question comments;
 - determine which Edit IDs have already been applied;
+- read `.agents/issues-open.md` and `.agents/needs-decision.md` (see Continuous Skill Improvement And Issue Feedback Loop);
 - process only the requested section.
 
 Never reapply earlier changes unnecessarily.
@@ -965,10 +979,17 @@ Change file
 <markdown filename>
 
 Edits
-Applied: E-xxx to E-xxx
+Applied: S<N>-E<a> to S<N>-E<b>
 Already applied: <IDs or None>
 Unresolved: <IDs or None>
 Skipped: <IDs or None>
+
+Evidence check
+Applied fact-bearing edits checked: <IDs or None / off>
+Supported: <ID (E-nnn), or None>
+No evidence on record: <IDs or None>
+Contradicted: <ID (E-nnn) and one line, or None>
+Evidence rows appended: <E-ids or None>
 
 Comments
 Number of Word comments added: X
@@ -987,6 +1008,13 @@ Saved
 
 Backup
 <full backup filename>
+
+Issue register
+Opened: <IDs or None>
+Re-seen: <IDs or None>
+Fixed pending verification: <IDs or None>
+Awaiting decision: <IDs or None>
+Oldest open issue: <ID and first-seen date, or None>
 ```
 
 For bounded iterations, use the same structure but label the status as `PARTIAL_COMPLETE`, `SECTION_COMPLETE`, `BLOCKED`, or `NO_PROGRESS_STOP`. Include the current iteration edit IDs and the next edit ID when the section is not complete.
@@ -1007,29 +1035,29 @@ After saving the updated `.md` change file, respond to the user with the same se
 
 Then stop. Do not offer to process the next section automatically.
 
-## Continuous Skill Improvement
+## Issue Escalation
 
-After every completed task, capture what was learned so the next run is safer and easier.
+When something is found during a run that is wrong, blocked, or needs a call only Wenzel can make - a framework defect, a mismatch between the document and the change record, a question with more than one reasonable answer - raise it immediately, in the response for that run, while the agent still has the full context of the problem. Do not file it away for a later triage pass.
 
-Use this local skill-notes path for this agent:
+### When something blocks or fails
 
-```text
-.agents/skills/current-state-assessment-document-learnings.md
-```
+Before stopping on `BLOCKED`, `NO_PROGRESS_STOP`, or a failed validator:
 
-At the end of each run:
+- describe what was found: the symptom, the evidence (section, edit ID, file), and what would resolve it;
+- if there is a genuine choice to make, lay out the options with a recommended default, the way you would ask a colleague, directly in the response - not in a separate file;
+- wait for Wenzel's direction on that item before proceeding with it. Do not guess to unblock; the Anchor Mismatch Rule and Absolute Change Control Rule are unchanged;
+- once Wenzel responds, apply the decision only as stated and only within the approved changes. If it requires editing an approved change record, do that only when Wenzel says so explicitly.
 
-- identify any reusable lesson from the execution, validation, tooling, comments, anchoring, section detection, numbering, table handling, rendering, file permissions, or recovery work;
-- add only lessons that are generic enough to help future Current State Assessment document work;
-- include the date, section or document context, problem observed, cause, corrected approach, and how to validate it next time;
-- keep project facts and approved technical changes out of the skill notes unless they are needed as an example;
-- do not copy confidential document content into the skill notes unless necessary and already present in the approved `.md` change file;
-- do not rewrite approved change instructions in the reviewed section `.md`;
-- do not modify global Codex skills unless the user explicitly asks for that;
-- if the lesson changes how this agent should behave on every future run, update this agent `.md` with a small, controlled instruction change and mention that in the `## Changes Report`;
-- if there was nothing reusable to learn, record `No new reusable skill lesson identified` in the `## Changes Report`.
+### At the end of a run
 
-The skill note must be append-only unless the user explicitly asks for cleanup. Prefer short, evidence-backed entries over broad rules.
+- append any reusable lesson to the learnings inbox (`.agents/skills/current-state-assessment-document-learnings.md`) using the format in that file. A one-off defect or blocked edit belongs in the run's response, not the inbox;
+- only add lessons that are generic enough to help future Current State Assessment document work; keep project facts and approved technical changes out unless needed as a one-line example, and do not copy confidential document content unless it is already present in the approved `.md` change file;
+- if the learnings inbox has more than 15 entries, or an entry is contradicted by a newer one, say so in the completion report so Wenzel can review it;
+- if a lesson changes how this agent should behave on every future run, update this agent `.md` with a small, controlled instruction change and mention that in the `## Changes Report`;
+- note in the completion report and in the `## Changes Report` anything that was raised for a decision during this run and how it was resolved (or that it is still waiting on Wenzel). Use `None` if nothing was raised.
+
+Do not rewrite approved change instructions in the reviewed section `.md`. Do not modify global Codex skills unless the user explicitly asks for that. The learnings inbox is append-only unless the user explicitly asks for cleanup. Prefer short, evidence-backed entries over broad rules.
+
 
 ## Final Document Rule
 
@@ -1074,6 +1102,7 @@ COPY
 -> VALIDATE
 -> SAVE
 -> UPDATE RUN-STATE
+-> EVIDENCE CHECK (matrix first, advisory)
 -> REPORT
 -> STOP
 ```

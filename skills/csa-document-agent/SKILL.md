@@ -66,8 +66,8 @@ The framework is the default worker. Run one bounded batch from the workspace ro
 ```text
 /opt/homebrew/bin/python3.14 .agents/framework/csa_docx/cli_apply_section.py \
   --section <SECTION> \
-  --change-file "01 Current State AS Built/<n> IAMPS/01 Final Version/reviews/ChangesCSA_IAMPS_Section<N>_E<a>_E<b>.md" \
-  --docx "01 Current State AS Built/<n> IAMPS/01 Final Version/Current State Assessment - IAMPS - v1.docx" \
+  --change-file "01 Current State AS Built/01 Final Version/reviews/ChangesCSA_IAMPS_Section<N>.md" \
+  --docx "01 Current State AS Built/01 Final Version/Current State Assessment - IAMPS.docx" \
   --workspace "/Users/wenzel/Work/ASE/IAMPS/06 IAMPS" \
   --limit <ITERATION_EDIT_LIMIT> \
   --comment-author "Wenzel Joubert" \
@@ -84,18 +84,24 @@ The framework is the default worker. Run one bounded batch from the workspace ro
 ## Non-Negotiable Behaviour
 
 - Call `prepareDocument` for the section before the first batch of a run, and stop on `NOT_READY` instead of editing.
-- Read `01 Current State AS Built/7 IAMPS/01 Final Version/run-state/current-state-assessment-document-section-<SECTION>.md` before editing when it exists.
+- Read `01 Current State AS Built/01 Final Version/run-state/current-state-assessment-document-section-<SECTION>.md` before editing when it exists.
 - Do not create a new DOCX copy if the run-state or change report identifies a valid active working DOCX.
 - Make and verify a timestamped backup before every DOCX mutation.
 - Apply only the next bounded batch of approved edit IDs from the section change file, preferably through the Python framework.
 - Add Word comments using `Wenzel Joubert` and `WJ` when the tooling supports it.
 - Update the section Markdown `## Changes Report` and the run-state file after the batch.
 - Validate DOCX archive/XML/comment safety and render affected pages where available.
+- Read `.agents/issues-open.md` and `.agents/needs-decision.md` before the first batch. On `BLOCKED`, `NO_PROGRESS_STOP` or a validator failure, log or update the issue in `.agents/issues-open.md` before stopping (bucket, fingerprint, evidence). Never set an issue to `closed`; only Wenzel closes issues.
+- Include the `Issue register` counts block in the completion report and the `## Changes Report`.
+- After applying a batch, run the Evidence Check from the agent definition using the `csa-evidence-matrix` skill (`/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/.agents/skills/csa-evidence-matrix/SKILL.md`): look up `csa-work/evidence-matrix.csv` first for each applied fact-bearing edit, search Discovery Data only if the matrix has no answer, append new findings back to the matrix, and report the result under `Evidence check`. It never changes an approved edit. Disabled by `EVIDENCE_CHECK=off`; in `EXECUTION_MODE=framework-first` it runs only with `EVIDENCE_CHECK=on`.
 - Stop immediately after reporting `PARTIAL_COMPLETE`, `SECTION_COMPLETE`, `BLOCKED`, `NOT_READY`, or `NO_PROGRESS_STOP`.
 
 ## Local Resources
 
 - Agent definitions and project docs: `/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/.agents/`
 - Reusable framework: `/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/.agents/framework/csa_docx/`
-- Run-state files: `/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/01 Current State AS Built/7 IAMPS/01 Final Version/run-state/`
-- Learning log: `/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/.agents/skills/current-state-assessment-document-learnings.md`
+- Run-state files: `/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/01 Current State AS Built/01 Final Version/run-state/`
+- Learnings inbox: `/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/.agents/skills/current-state-assessment-document-learnings.md`
+- Evidence matrix: `/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/csa-work/evidence-matrix.csv` (access only via the `csa-evidence-matrix` skill)
+- Open issues register: `/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/.agents/issues-open.md`
+- Decisions needed: `/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/.agents/needs-decision.md`

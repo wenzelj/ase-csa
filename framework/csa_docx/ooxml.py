@@ -820,20 +820,38 @@ def make_run(text: str) -> ET.Element:
 
 
 def _extract_row_labels(where: str, text: str) -> list[str]:
+    # A stable structural ID in the Where clause (e.g. "@H2.8-T1-R10") is the
+    # most precise locator available - prefer it over any quoted current-text
+    # anchor so the row is found structurally, not by (pipe-quoted) wording.
+    from csa_docx.stable_ids import extract_stable_id as _extract_stable_id
+    _stable = _extract_stable_id(where)
+    if _stable is not None and _stable.kind == "T":
+        return [str(_stable)]
+
+    def _clean(label: str) -> str:
+        # Trailing ellipses (… or ...) are a human-readable truncation marker
+        # in a Where clause's quoted current text, not part of the row's real
+        # content. Strip them so the label still matches the stored cell text.
+        label = label.strip()
+        while label and (label[-1] in ".\u2026"):
+            label = label[:-1].rstrip()
+        return label
+
     labels = re.findall(r"row beginning(?:\s+exactly)?\s*:?\s*`([^`]+)`", where, flags=re.IGNORECASE)
     if labels:
-        primary = [label.strip() for label in labels if label.strip()]
+        primary = [_clean(label) for label in labels if _clean(label)]
     else:
         plain_label = re.search(r"row beginning(?:\s+exactly)?\s*:?\s+(.+)$", where, flags=re.IGNORECASE)
         anchor = plain_label.group(1).strip() if plain_label else find_anchor(where)
         if anchor and anchor.lower().startswith("row beginning "):
             anchor = anchor[len("row beginning ") :].strip()
+        anchor = _clean(anchor) if anchor else None
         primary = [anchor] if anchor else []
 
     row_specific = []
     for label, _field, _value in _extract_labeled_value_triples(text):
         if label:
-            row_specific.append(label.strip())
+            row_specific.append(_clean(label))
 
     if row_specific:
         result: list[str] = []

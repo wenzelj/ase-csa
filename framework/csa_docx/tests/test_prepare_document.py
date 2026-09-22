@@ -248,7 +248,7 @@ def test_prepare_document_still_works_after_reviews_are_added_on_top(tmp_path):
 
     reviews = workspace / "reviews"
     reviews.mkdir()
-    (reviews / "ChangesCSA_IAMPS_Section1_E1_E1.md").write_text(
+    (reviews / "ChangesCSA_IAMPS_Section1.md").write_text(
         """# Section 1 - Network Services
 
 ### E-1 - Clarify the first body paragraph
@@ -485,12 +485,12 @@ def test_apply_next_batch_still_runs_when_no_lock_file_is_present(tmp_path):
 
 def _make_workspace(tmp_path) -> Path:
     """A minimal workspace laid out the way manifest.build_manifest expects:
-    one ``reviews/ChangesCSA_..._Section<N>_E<a>_E<b>.md`` and one working
+    one ``reviews/ChangesCSA_..._Section<N>.md`` and one working
     ``.docx`` in the Final Version folder one level up."""
     final_version = tmp_path / "workspace" / "01 Current State AS Built" / "7 IAMPS" / "01 Final Version"
     reviews = final_version / "reviews"
     reviews.mkdir(parents=True)
-    (reviews / "ChangesCSA_IAMPS_Section1_E1_E1.md").write_text(
+    (reviews / "ChangesCSA_IAMPS_Section1.md").write_text(
         """# Section 1 - Network Services
 
 ### E-1 - Clarify the first body paragraph
@@ -512,7 +512,7 @@ Fixture edit for the readiness tests.
     # manifest.build_manifest pairs it with the *same* single .docx in the
     # Final Version folder, exactly like every real CSA project's 16
     # sections sharing one working document.
-    (reviews / "ChangesCSA_IAMPS_Section2_E2_E2.md").write_text(
+    (reviews / "ChangesCSA_IAMPS_Section2.md").write_text(
         """# Section 2 - DNS
 
 ### E-2 - Clarify the DNS body paragraph
@@ -543,7 +543,7 @@ def _make_workspace_with_two_documents(tmp_path) -> Path:
     project_a = root / "Project A" / "01 Final Version"
     reviews_a = project_a / "reviews"
     reviews_a.mkdir(parents=True)
-    (reviews_a / "ChangesCSA_IAMPS_Section1_E1_E1.md").write_text(
+    (reviews_a / "ChangesCSA_IAMPS_Section1.md").write_text(
         """# Section 1 - Network Services
 
 ### E-1 - Clarify the first body paragraph
@@ -566,7 +566,7 @@ Fixture edit for the readiness tests.
     project_b = root / "Project B" / "01 Final Version"
     reviews_b = project_b / "reviews"
     reviews_b.mkdir(parents=True)
-    (reviews_b / "ChangesCSA_IAMPS_Section2_E2_E2.md").write_text(
+    (reviews_b / "ChangesCSA_IAMPS_Section2.md").write_text(
         """# Section 2 - DNS
 
 ### E-2 - Clarify the DNS body paragraph
@@ -660,3 +660,55 @@ def _make_heading(text: str, level: int) -> ET.Element:
     ET.SubElement(ppr, qn(W_NS, "pStyle"), {qn(W_NS, "val"): f"Heading{level}"})
     paragraph.insert(0, ppr)
     return paragraph
+
+
+def test_id_manifest_and_run_state_live_beside_the_working_docx(tmp_path):
+    """DECISION-002: state files sit next to the .docx, not in the workspace root."""
+    workspace = _make_workspace(tmp_path)
+    docx = _workspace_docx(workspace)
+    from csa_docx.run_state import state_path
+
+    assert tools._id_manifest_path(workspace, docx).parent == docx.parent / "run-state"
+    assert state_path(docx.parent, "1").parent == docx.parent / "run-state"
+    assert state_path(docx.parent, "1").name == "current-state-assessment-document-section-1.md"
+
+
+def test_get_section_status_reads_run_state_from_beside_the_docx(tmp_path):
+    workspace = _make_workspace(tmp_path)
+    docx = _workspace_docx(workspace)
+    from csa_docx.run_state import state_path
+
+    assert tools.get_section_status("1", workspace=workspace)["status"] == "NOT_STARTED"
+
+    state = state_path(docx.parent, "1")
+    state.parent.mkdir(parents=True, exist_ok=True)
+    state.write_text("# Run State\n\n- Section: 1\n- Status: PARTIAL_COMPLETE\n- Next edit ID: S1-E2\n", encoding="utf-8")
+    status = tools.get_section_status("1", workspace=workspace)
+    assert status["status"] == "PARTIAL_COMPLETE"
+    assert status["next_edit_id"] == "S1-E2"
+
+    # A file in the old workspace-root location must be ignored.
+    state.unlink()
+    old = workspace / "run-state" / "current-state-assessment-document-section-1.md"
+    old.parent.mkdir(parents=True, exist_ok=True)
+    old.write_text("- Status: SECTION_COMPLETE\n", encoding="utf-8")
+    assert tools.get_section_status("1", workspace=workspace)["status"] == "NOT_STARTED"
+
+
+def test_manifest_resolves_unnumbered_change_file_names_and_flags_a_duplicate_legacy_one(tmp_path):
+    """New change files carry no edit-ID numbers in the name. The legacy
+    numbered form is still matched, but two files for one section is an error."""
+    from csa_docx import manifest
+
+    workspace = _make_workspace(tmp_path)
+    entry = manifest.build_manifest(workspace)["1"]
+    assert Path(entry.change_file).name == "ChangesCSA_IAMPS_Section1.md"
+
+    reviews = Path(entry.change_file).parent
+    (reviews / "ChangesCSA_IAMPS_Section1_E1_E13.md").write_text("# legacy copy\n", encoding="utf-8")
+    try:
+        manifest.build_manifest(workspace)
+    except manifest.ManifestError as exc:
+        assert "Section 1 has 2 matching change files" in str(exc)
+    else:
+        raise AssertionError("expected ManifestError for a duplicate legacy-named file")

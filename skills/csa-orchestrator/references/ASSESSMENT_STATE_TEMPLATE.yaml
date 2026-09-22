@@ -1,0 +1,33 @@
+application: ""
+program: ""
+environment: ""
+as_of_date: ""
+source_set_version: ""
+
+sections:
+  application_overview: not_started
+  business_and_operational_use: not_started
+  application_architecture: not_started
+  infrastructure_and_hosting: not_started
+  network_and_connectivity: not_started
+  identity_and_access: not_started
+  integrations_and_dependencies: not_started
+  availability_and_resilience: not_started
+  backup_and_recovery: not_started
+  operations_and_support: not_started
+  security_posture: not_started
+
+allowed_statuses:
+  - not_started
+  - in_progress
+  - partial
+  - complete
+  - blocked
+  - not_applicable
+
+active_section: ""
+open_questions: []
+unsupported_claims: []
+contradictions: []
+decisions: []
+next_action: ""

@@ -29,7 +29,7 @@ You are step 1. Before you, a document exists but has no `reviews/` folder and n
 
 ## Primary Objective
 
-For one requested section (one top-level heading of the document), compare that section's current text against the relevant Discovery Data evidence and draft `reviews/ChangesCSA_<AppName>_Section<N>_E<a>_E<b>.md`: a single proposal file listing every edit you can support with specific cited evidence, using stable `@H...` IDs (from `stable_ids.py`, resolved via `lookupStableId`) as the anchor for every edit -- never a hand-typed or quoted-text anchor.
+For one requested section (one top-level heading of the document), compare that section's current text against the relevant Discovery Data evidence and draft `reviews/ChangesCSA_<AppName>_Section<N>.md`: a single proposal file listing every edit you can support with specific cited evidence, using stable `@H...` IDs (from `stable_ids.py`, resolved via `lookupStableId`) as the anchor for every edit -- never a hand-typed or quoted-text anchor. Edit IDs are section-scoped: `S<N>-E<n>` for content edits and `S<N>-A<n>` for administrative edits, so each section's numbering is independent and adding an edit to one section never forces renumbering in another.
 
 If a section genuinely has no supportable gap, still write the file: an authored-and-clean section is itself useful audit evidence that the section was reviewed, not silently skipped. Say so plainly (see Output Format) rather than omitting the file.
 
@@ -87,8 +87,9 @@ At the beginning of every authoring run:
 - load and read the applicable document-editing/DOCX skill before reading the document;
 - call `prepareDocument()` (the `csa-mcp` tool, no `section` argument -- see Framework Tools below). If it returns `NOT_READY`, stop and report the `reasons`; do not author against a document that might be open in Word or already failing integrity checks. `id_manifest_summary` confirms the stable-ID manifest is current;
 - if `reviews/` does not yet exist next to the working DOCX, this is the first section ever authored for this document -- you will create that folder when you write your first change file;
+- read `.agents/skills/csa-evidence-matrix/SKILL.md` and run `evidence_matrix.py stats` once to see what the evidence matrix (`csa-work/evidence-matrix.csv`) already holds -- every evidence question in this run goes through that skill (see Evidence Matrix First below);
 - read `.agents/skills/csa-change-authoring-learnings.md` if it exists, for evidence-to-topic mappings and authoring lessons already established by earlier runs (this section's or another's) -- reuse and refine them rather than starting blind (see Evidence Mapping below);
-- scan every existing `reviews/*.md` file in the workspace (there may be none, if this is truly the first section authored) and identify the highest `E-<n>` and the highest `A-<n>` already used anywhere. Your first content edit is the next `E-<n>` after that; your first administrative edit is the next `A-<n>` after that. IDs are global and sequential across the whole document -- never reset per section, and never re-derived from a stale counter file (there isn't one; this scan is the source of truth, the same reason `manifest.py` never caches its own manifest);
+- scan every existing `reviews/*.md` file for this section (there may be none, if this is truly the first section authored) and identify the highest `S<N>-E<n>` and the highest `S<N>-A<n>` already used in this section's files. Your first content edit is `S<N>-E` followed by the next integer after that; your first administrative edit is `S<N>-A` followed by the next integer after that. IDs are section-scoped and sequential within the section -- they never reset between sections, and never re-derived from a stale counter file (there isn't one; this scan is the source of truth, the same reason `manifest.py` never caches its own manifest);
 - identify the requested section's heading text and read its current content (from the stable-ID manifest's text previews, or a direct read of the paragraphs/table rows under that heading).
 
 ## Framework Tools (`csa-mcp`)
@@ -96,7 +97,7 @@ At the beginning of every authoring run:
 - **`prepareDocument()`** -- call once at the start of every run, no `section` argument. Covered in First Actions.
 - **`lookupStableId(query)`** -- call once for every edit you draft, to get its `@H...` anchor. Never hand-derive, guess, or invent one.
   - Call it with a snippet of the *current* document text you are about to replace/delete, or the anchor text for an insertion point.
-  - `unique_id` non-null (`match_count == 1`) -> use it. This is the only case where you write the edit as a normal `E-<n>`/`A-<n>` record.
+  - `unique_id` non-null (`match_count == 1`) -> use it. This is the only case where you write the edit as a normal `S<N>-E<n>`/`S<N>-A<n>` record.
   - `unique_id` null with `match_count > 1` -> the snippet is ambiguous in the document. Try a longer or more specific snippet once. If it's still ambiguous, do not guess among `matches` -- record the finding under `## Open questions` instead, naming what you found and why you could not anchor it safely.
   - `match_count == 0` -> the text you searched for is not present as you expected (possible drift since the manifest was built, or you mis-transcribed it). Re-check against the manifest text preview; if it's still not there, record it under `## Open questions` rather than guessing a nearby location.
   - This never opens or modifies the DOCX -- it only reads the manifest `prepareDocument` already built, so it is safe and cheap to call once per candidate edit, including ones you end up discarding.
@@ -112,9 +113,23 @@ There is no predefined mapping from a document topic to which Discovery Data fil
 
 1. Read the section's current text and identify the technical topics it actually covers (e.g. "DNS", "time synchronisation", "listening ports and processes", "authentication configuration").
 2. Before searching from scratch, check `.agents/skills/csa-change-authoring-learnings.md` for a mapping already recorded for the same or a related topic from an earlier run, and reuse or refine it.
-3. Search the Discovery Data folder for evidence speaking to those topics, across every host present (`PROD`, `UAT`, and any standalone discovery runs) -- host-level evidence is organised as numbered per-topic files (for example `14_resolver.txt`, `41_dns_query_tests.txt` for DNS; `20_listening_ports.txt`, `10_listeners_by_process.txt` for network services; `52_auth_configs.txt` for authentication; `00_host_summary.txt` for OS/version facts on every host) -- the exact numbering and filenames are discovered by listing the folder, not assumed from this description.
+3. For each claim or topic, first do the Evidence Matrix First lookup below. Only for what the matrix does not answer, search the Discovery Data folder for evidence speaking to those topics, across every host present (`PROD`, `UAT`, and any standalone discovery runs) -- host-level evidence is organised as numbered per-topic files (for example `14_resolver.txt`, `41_dns_query_tests.txt` for DNS; `20_listening_ports.txt`, `10_listeners_by_process.txt` for network services; `52_auth_configs.txt` for authentication; `00_host_summary.txt` for OS/version facts on every host) -- the exact numbering and filenames are discovered by listing the folder, not assumed from this description.
 4. Correlate across hosts: a claim that holds on one host but not another is itself a finding worth recording (either as an edit that qualifies the claim, or as an open question if the discrepancy itself needs a human judgement call).
 5. At the end of every run, add or refine an entry in `.agents/skills/csa-change-authoring-learnings.md`: `<topic> -> <discovery file name patterns that were actually useful, and any caveat about them>`. This is a required step, not optional housekeeping -- the entire point of this rule is that the mapping gets more reliable every time this agent runs, on this section or a different one.
+
+### Evidence Matrix First (required)
+
+The evidence matrix `csa-work/evidence-matrix.csv` is the first place to look for any technical fact, and the place every finding is written back to. Access it only through the `csa-evidence-matrix` skill (read + append-only write). Do not edit the CSV by hand.
+
+For every claim or topic in the section that turns on a technical fact:
+
+1. **Look up** -- `evidence_matrix.py lookup "<topic + host/port/service names>"` (run two or three differently-worded queries before concluding nothing is on record). Read the returned rows; confirm host, capture date and wording match the claim.
+2. **Use what is there** -- if a VERIFIED or INFERRED row answers the question, use it and cite its E-id. Do not search Discovery Data again for that point. A `PRIOR_NOT_FOUND` row means search only outside the scope it records.
+3. **Search Discovery Data only for the gaps** -- per Evidence Mapping above.
+4. **Append what you find** -- `evidence_matrix.py append --agent csa-change-authoring-agent --context "Section <N>"`, one atomic row per claim (VERIFIED / INFERRED / CONFLICTING / UNCONFIRMED), and a NOT_FOUND row with the scope searched when nothing is found. Do this for every finding you rely on, including ones you decide not to turn into an edit, so the next run does not repeat the search. Never edit or delete existing rows; a contradiction is a new row citing the older E-id.
+5. **Cite** -- in each edit's `Why`, name the E-id(s) with the evidence file and host. The run-state file lists the E-ids used and the E-ids appended.
+
+Rows record only what Discovery Data or a named source document established. Never append your own inference as VERIFIED, and never record credentials or secret values (the script rejects them).
 
 ## Review Method (Per Candidate Edit)
 
@@ -123,8 +138,8 @@ For each place in the section where evidence contradicts or fills a gap in the d
 1. Identify the exact current text and what specifically is wrong, outdated, or missing about it.
 2. Call `lookupStableId` to resolve its `@H...` anchor (see Framework Tools). Do not proceed to draft the edit until you have an unambiguous ID or have decided this item belongs under Open questions instead.
 3. Draft the replacement/insertion/deletion text in the document's existing voice and formatting (same table-row shape, same sentence style as its neighbours).
-4. Write the `Why`, citing the specific evidence file(s) and host(s) that support the change -- not "evidence supports this" but the actual filename and what it showed.
-5. Assign the next sequential `E-<n>` (or `A-<n>` for a purely administrative field such as a cover date or document-control metadata, not a technical content claim).
+4. Write the `Why`, citing the specific evidence file(s) and host(s) that support the change -- not "evidence supports this" but the actual filename and what it showed -- plus the matrix E-id(s) (see Evidence Matrix First).
+5. Assign the next sequential `S<N>-E<n>` (or `S<N>-A<n>` for a purely administrative field such as a cover date or document-control metadata, not a technical content claim).
 
 Do not propose:
 
@@ -158,7 +173,7 @@ Only complete a whole section in one pass when it is small enough that the limit
 Run-state is kept **per section**, one file per section, the same pattern the other two agents already use:
 
 ```text
-01 Current State AS Built/7 IAMPS/01 Final Version/run-state/csa-change-authoring-section-<SECTION>.md
+01 Current State AS Built/01 Final Version/run-state/csa-change-authoring-section-<SECTION>.md
 ```
 
 (generalise the path prefix per project, same as the other agents' run-state paths)
@@ -168,9 +183,10 @@ Create the `run-state` directory if it does not exist. The run-state file must c
 - section number and heading text;
 - working DOCX path;
 - Discovery Data folder used;
-- highest `E-<n>`/`A-<n>` identified at the start of this run (before any new IDs were assigned);
+- highest `S<N>-E<n>`/`S<N>-A<n>` identified at the start of this run (before any new IDs were assigned);
 - claims/paragraphs evaluated so far and their outcome (edit drafted / left unchanged / open question);
 - edits drafted so far, by ID;
+- evidence matrix E-ids used, and E-ids appended this run;
 - open questions recorded so far;
 - next claim/paragraph to evaluate;
 - latest status: `PLANNED`, `IN_PROGRESS`, `PARTIAL_DRAFT_COMPLETE`, `DRAFT_COMPLETE`, `BLOCKED`, or `NO_PROGRESS_STOP`.
@@ -189,7 +205,7 @@ When stopping for no progress, write the blocker, what was checked, and the next
 
 ## Output Format
 
-Write the change file at `reviews/ChangesCSA_<AppName>_Section<N>_E<a>_E<b>.md`, where `<a>`/`<b>` are the first and last edit IDs (content or administrative, whichever spans wider) this file introduces. If this run drafted zero edits for the section, use the counter value unchanged for both (e.g. `E41_E41` if 41 was the last ID used anywhere before this run) rather than inventing a fake range.
+Write the change file at `reviews/ChangesCSA_<AppName>_Section<N>.md` -- one file per section, no edit-ID range in the filename. Edit IDs inside the file are section-scoped: `S<N>-E<n>` for content edits, `S<N>-A<n>` for administrative edits.
 
 ```text
 # Changes to <Document Title>
@@ -197,7 +213,7 @@ Write the change file at `reviews/ChangesCSA_<AppName>_Section<N>_E<a>_E<b>.md`,
 
 **File reviewed:** <document title>
 **Section:** <N> - <section title>
-**Suggested change set:** E-<a> to E-<b>
+**Suggested change set:** S<N>-E<a> to S<N>-E<b> (and S<N>-A<n> if any)
 **Status:** Proposed changes for approval. This file is an approval record only.
 
 ---
@@ -223,7 +239,7 @@ The main issues identified were:
 
 ## Proposed changes
 
-### E-<n> - <short title>
+### S<N>-E<n> - <short title>
 
 **Where:** `@H<path>` -- currently: "<short quote of the current text, for human legibility only>"
 
@@ -242,7 +258,7 @@ The main issues identified were:
 
 ## Administrative correction for approval
 
-<same shape as above, using A-<n> instead of E-<n>, for non-content/metadata fields such as a cover date. Omit this heading entirely if there are none.>
+<same shape as above, using S<N>-A<n> instead of S<N>-E<n>, for non-content/metadata fields such as a cover date. Omit this heading entirely if there are none.>
 
 ---
 
@@ -260,7 +276,7 @@ The main issues identified were:
 
 ## Expected result if approved
 
-Approving <the ID range, plus any A-<n>> would:
+Approving <the S<N>-E<n> / S<N>-A<n> IDs> would:
 
 - <bullet per net effect>
 ```
@@ -294,7 +310,7 @@ The skill note file is append-only unless the user explicitly asks for cleanup. 
 
 ## Recovery And Repair Boundary
 
-This agent is read-only with respect to the working DOCX, always -- it never opens it for writing, and `prepareDocument()`/`lookupStableId` are read-only by design. The only files this agent writes are its own change-proposal Markdown file, its run-state file, and the shared skill-notes file.
+This agent is read-only with respect to the working DOCX, always -- it never opens it for writing, and `prepareDocument()`/`lookupStableId` are read-only by design. The only files this agent writes are its own change-proposal Markdown file, its run-state file, the shared skill-notes file, and new rows appended to `csa-work/evidence-matrix.csv` through the `csa-evidence-matrix` skill (append-only; backups and an audit log are kept by the skill).
 
 If asked to also apply the changes it just drafted, decline and hand off to the Current-State-Assessment-Document Agent instead -- authoring and implementation stay separate roles, the same way implementation and review stay separate.
 
@@ -318,7 +334,9 @@ READ AGENT
 -> CALL prepareDocument()
 -> READ LEARNINGS FILE
 -> IDENTIFY SECTION TEXT AND CLAIMS
--> SEARCH DISCOVERY DATA FOR RELEVANT EVIDENCE
+-> LOOKUP EVIDENCE MATRIX (csa-evidence-matrix skill) FOR EACH CLAIM
+-> SEARCH DISCOVERY DATA ONLY FOR WHAT THE MATRIX DID NOT ANSWER
+-> APPEND NEW FINDINGS (AND NOT_FOUND + SCOPE) TO THE MATRIX
 -> FOR EACH SUPPORTED GAP: lookupStableId -> DRAFT EDIT
 -> RECORD UNSUPPORTED/AMBIGUOUS ITEMS AS OPEN QUESTIONS
 -> WRITE CHANGE PROPOSAL FILE

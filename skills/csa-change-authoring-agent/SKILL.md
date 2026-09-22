@@ -44,6 +44,7 @@ Before reading the DOCX or searching Discovery Data, call `prepareDocument()` (t
 
 - Call `prepareDocument()` first; stop on `NOT_READY`.
 - Every proposed edit's `Where:` field is an `@H...` ID resolved via `lookupStableId`, never a hand-typed or quoted-text anchor.
+- Evidence is matrix-first: for every technical fact, use the `csa-evidence-matrix` skill (`/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/.agents/skills/csa-evidence-matrix/SKILL.md`) to look up `csa-work/evidence-matrix.csv` before searching Discovery Data; search Discovery Data only for what the matrix does not answer; append every new finding (and NOT_FOUND with its scope) back to the matrix; cite E-ids in each edit's `Why`.
 - Only propose an edit backed by specific cited Discovery Data evidence (file + host) or the document's own control page -- never a stylistic opinion.
 - Never propose changes to Document Owner, Reviewer(s), Approver(s), signatures, or distribution-list placeholders unless explicitly authorised.
 - Record ambiguous or unsupported findings under `## Open questions`, never as a guessed edit.
@@ -57,5 +58,6 @@ Before reading the DOCX or searching Discovery Data, call `prepareDocument()` (t
 
 - Agent definitions and project docs: `/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/.agents/`
 - Discovery Data evidence: `/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/01 Current State AS Built/IAMPS Discovery Data/`
-- Run-state files: `/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/01 Current State AS Built/7 IAMPS/01 Final Version/run-state/`
+- Run-state files: `/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/01 Current State AS Built/01 Final Version/run-state/`
+- Evidence matrix: `/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/csa-work/evidence-matrix.csv` (access only via the `csa-evidence-matrix` skill)
 - Authoring learning log: `/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/.agents/skills/csa-change-authoring-learnings.md`

@@ -3,7 +3,7 @@
 Phase 1 of the qwen-mcp-factory-plan.md function factory: nothing calling
 into this module ever has to know the workspace's folder-naming convention
 or guess a filename. Every section's change file already follows one fixed
-pattern (``ChangesCSA_<slug>_Section<N>_E<a>_E<b>[_Suggested].md`` inside a
+pattern (``ChangesCSA_<slug>_Section<N>.md`` inside a
 ``.../<Final Version folder>/reviews/`` directory) and pairs with the single
 ``.docx`` that sits one level up from ``reviews/``. ``build_manifest`` scans
 for that pattern and fails loudly on anything ambiguous rather than guessing.
@@ -15,8 +15,12 @@ import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+# Canonical filename: ChangesCSA_<slug>_Section<N>.md -- NO edit-ID numbers in the
+# name (edit IDs live inside the file as S<N>-E<n>). The legacy
+# _E<a>_E<b>[_Suffix] form is still matched so old files keep resolving, but new
+# files must not use it. Having both forms for one section is a loud error.
 _CHANGE_FILE_RE = re.compile(
-    r"^ChangesCSA_.*_Section(?P<section>\d+)_E(?P<start>\d+)_E(?P<end>\d+)(?:_.*)?\.md$"
+    r"^ChangesCSA_.*_Section(?P<section>\d+)(?:_E\d+_E\d+(?:_.*)?)?\.md$"
 )
 
 class ManifestError(RuntimeError):
@@ -30,8 +34,6 @@ class SectionEntry:
     section: str
     change_file: str
     docx: str
-    edit_id_start: str
-    edit_id_end: str
 
     def to_dict(self) -> dict[str, str]:
         return asdict(self)
@@ -77,8 +79,6 @@ def build_manifest(workspace: Path) -> dict[str, SectionEntry]:
                 "Resolve the duplicate before the manifest can be trusted."
             )
         change_file = paths[0]
-        match = _CHANGE_FILE_RE.match(change_file.name)
-        assert match is not None  # already matched above
 
         final_version_dir = change_file.parent.parent
         docx_candidates = sorted(
@@ -115,8 +115,6 @@ def build_manifest(workspace: Path) -> dict[str, SectionEntry]:
             section=section,
             change_file=str(change_file),
             docx=str(docx_candidates[0]),
-            edit_id_start=f"E-{match.group('start')}",
-            edit_id_end=f"E-{match.group('end')}",
         )
 
     return entries
@@ -155,6 +153,6 @@ def resolve_section(workspace: Path, section: str) -> SectionEntry:
         raise ManifestError(
             f"No change file found for section {section} under {workspace}. "
             "Expected a file matching ChangesCSA_..._Section"
-            f"{section}_E<a>_E<b>.md inside a reviews/ directory."
+            f"{section}.md inside a reviews/ directory."
         )
     return manifest[section]

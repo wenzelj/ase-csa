@@ -53,40 +53,38 @@ WORKSPACE_ROOT = Path(__file__).resolve().parents[4]
 REVIEWS_DIR = (
     WORKSPACE_ROOT
     / "01 Current State AS Built"
-    / "7 IAMPS"
     / "01 Final Version"
     / "reviews"
 )
 WORKING_DOCX = (
     WORKSPACE_ROOT
     / "01 Current State AS Built"
-    / "7 IAMPS"
     / "01 Final Version"
-    / "Current State Assessment - IAMPS - v1.docx"
+    / "Current State Assessment - IAMPS.docx"
 )
 
 SECTION_FILES = {
-    1: "ChangesCSA_IAMPS_Section1_E1_E13.md",
-    2: "ChangesCSA_IAMPS_Section2_E14_E37.md",
-    3: "ChangesCSA_IAMPS_Section3_E38_E68.md",
-    4: "ChangesCSA_IAMPS_Section4_E69_E76.md",
-    5: "ChangesCSA_IAMPS_Section5_E77_E94.md",
-    6: "ChangesCSA_IAMPS_Section6_E95_E111.md",
-    7: "ChangesCSA_IAMPS_Section7_E112_E128.md",
-    8: "ChangesCSA_IAMPS_Section8_E129_E145.md",
-    9: "ChangesCSA_IAMPS_Section9_E146_E160.md",
-    10: "ChangesCSA_IAMPS_Section10_E161_E176.md",
-    11: "ChangesCSA_IAMPS_Section11_E177_E192.md",
-    12: "ChangesCSA_IAMPS_Section12_E193_E207.md",
-    13: "ChangesCSA_IAMPS_Section13_E208_E221.md",
-    14: "ChangesCSA_IAMPS_Section14_E222_E238.md",
-    15: "ChangesCSA_IAMPS_Section15_E239_E241.md",
-    16: "ChangesCSA_IAMPS_Section16_E242_E243.md",
+    1: "ChangesCSA_IAMPS_Section1.md",
+    2: "ChangesCSA_IAMPS_Section2.md",
+    3: "ChangesCSA_IAMPS_Section3.md",
+    4: "ChangesCSA_IAMPS_Section4.md",
+    5: "ChangesCSA_IAMPS_Section5.md",
+    6: "ChangesCSA_IAMPS_Section6.md",
+    7: "ChangesCSA_IAMPS_Section7.md",
+    8: "ChangesCSA_IAMPS_Section8.md",
+    9: "ChangesCSA_IAMPS_Section9.md",
+    10: "ChangesCSA_IAMPS_Section10.md",
+    11: "ChangesCSA_IAMPS_Section11.md",
+    12: "ChangesCSA_IAMPS_Section12.md",
+    13: "ChangesCSA_IAMPS_Section13.md",
+    14: "ChangesCSA_IAMPS_Section14.md",
+    15: "ChangesCSA_IAMPS_Section15.md",
+    16: "ChangesCSA_IAMPS_Section16.md",
 }
 
 
 def _section_is_complete(section: int) -> bool:
-    state = state_path(WORKSPACE_ROOT, section)
+    state = state_path(WORKING_DOCX.parent, section)
     if not state.exists():
         return False
     text = state.read_text(encoding="utf-8")
@@ -116,7 +114,7 @@ def replay_section(section: int, scratch_dir: Path) -> dict:
     elif section_label:
         heading = section_label.strip()
 
-    already_done = read_completed_ids(state_path(WORKSPACE_ROOT, section))
+    already_done = read_completed_ids(state_path(WORKING_DOCX.parent, section))
     records_to_replay = [r for r in records if r.edit_id not in already_done]
     skipped = [r.edit_id for r in records if r.edit_id in already_done]
 

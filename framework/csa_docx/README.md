@@ -13,7 +13,7 @@ The framework is intentionally conservative. It automates repeatable tasks and r
 - Use the vendored open-source `docxengine` library by default for anchored paragraph, list, section-body, heading-bounded range, subsection-delete, paragraph-plus-following-line, and supported table-cell edits.
 - Add Word comments with configured author and initials.
 - Validate ZIP integrity, XML parseability, comment relationships, comment marker pairing, and unsafe direct table-row comment markers.
-- Update `01 Current State AS Built/7 IAMPS/01 Final Version/run-state/current-state-assessment-document-section-<SECTION>.md`.
+- Update `01 Current State AS Built/01 Final Version/run-state/current-state-assessment-document-section-<SECTION>.md`.
 - Append/update `## Changes Report` in the approved Markdown change file.
 - Replace `Observed` and `Assessment` cells for uniquely matched table rows.
 - Replace multi-row table values when the approved text labels each row, for example `Network Services - Observed`.
@@ -37,8 +37,8 @@ The framework is intentionally conservative. It automates repeatable tasks and r
 /opt/homebrew/bin/python3.14 .agents/framework/csa_docx/cli_apply_section.py \
   --engine docxengine \
   --section 4 \
-  --change-file "7 IAMPS/01 Final Version/reviews/ChangesCSA_IAMPS_Section4_E69_E76.md" \
-  --docx "7 IAMPS/01 Final Version/Current State Assessment - IAMPS - v1.docx" \
+  --change-file "01 Current State AS Built/01 Final Version/reviews/ChangesCSA_IAMPS_Section4.md" \
+  --docx "01 Current State AS Built/01 Final Version/Current State Assessment - IAMPS.docx" \
   --limit 3 \
   --comment-author "Wenzel Joubert" \
   --comment-initials "WJ"
@@ -50,8 +50,8 @@ The framework defaults to DocxEngine. The explicit engine flag is still shown he
 /opt/homebrew/bin/python3.14 .agents/framework/csa_docx/cli_apply_section.py \
   --engine docxengine \
   --section 6 \
-  --change-file "7 IAMPS/01 Final Version/reviews/ChangesCSA_IAMPS_Section6_E95_E111.md" \
-  --docx "7 IAMPS/01 Final Version/Current State Assessment - IAMPS - v1.docx" \
+  --change-file "01 Current State AS Built/01 Final Version/reviews/ChangesCSA_IAMPS_Section6.md" \
+  --docx "01 Current State AS Built/01 Final Version/Current State Assessment - IAMPS.docx" \
   --limit 1 \
   --start-edit-id E-100 \
   --end-edit-id E-100
@@ -90,7 +90,7 @@ Both were fetched by running `python3.14 -m pip download <package> --no-deps -d 
 
 For a tool-calling model (including a small one, e.g. qwen3-4b) that can't reliably construct the `--change-file`/`--docx` paths above from a section number alone, the framework also exposes itself as a handful of named functions instead of a CLI to be constructed from prose:
 
-- `manifest.py` - deterministically resolves `section -> (change_file, docx)` by scanning for `ChangesCSA_..._Section<N>_E<a>_E<b>.md` files under `reviews/` directories (skipping anything under an `archive`/`old*` folder) and pairing each with the one `.docx` in its `Final Version` folder. Fails loudly (`ManifestError`) on any ambiguity - never guesses. The manifest is derived fresh from the live folder layout on every call and is never cached to disk, so archiving an old Final Version folder and dropping in a new document is picked up automatically with no reset step (the old section_manifest.json cache was removed for exactly this reason: it silently pointed at dead paths once the workspace moved). refresh_manifest() is therefore just a re-scan that returns the current mapping; it no longer rebuilds any cache.
+- `manifest.py` - deterministically resolves `section -> (change_file, docx)` by scanning for `ChangesCSA_<slug>_Section<N>.md` files (no edit-ID numbers in the name; the legacy `_E<a>_E<b>` suffix is still matched but must not be used for new files) under `reviews/` directories (skipping anything under an `archive`/`old*` folder) and pairing each with the one `.docx` in its `Final Version` folder. Fails loudly (`ManifestError`) on any ambiguity - never guesses. The manifest is derived fresh from the live folder layout on every call and is never cached to disk, so archiving an old Final Version folder and dropping in a new document is picked up automatically with no reset step (the old section_manifest.json cache was removed for exactly this reason: it silently pointed at dead paths once the workspace moved). refresh_manifest() is therefore just a re-scan that returns the current mapping; it no longer rebuilds any cache.
 - `tools.py` - `list_sections()`, `get_section_status(section)`, `prepareDocument(section=None, force_regenerate=False)`, `lookupStableId(query, section=None, kind=None, limit=10, case_sensitive=False)`, `apply_next_batch(section, limit=3)`, `validate_section(section)`, `refresh_manifest()`. Each takes primitive arguments and a section number (never a path), returns plain JSON, and reports failures as `{"status": "ERROR", ...}` rather than raising. `apply_next_batch` is the same logic `cli_apply_section.py` runs (the CLI now calls into this module so there is exactly one implementation).
 - **`prepareDocument()` - step 0, the very first call of a project.** This is meant to run before *anything else exists* - before a `reviews/` folder, before any `ChangesCSA_*.md` change file. At this point the workspace holds nothing but the raw working `.docx`, so `section` is not just optional, it's meaningless: there's no section manifest yet for it to name a section *from*. Call it with no arguments. `_resolve_shared_document` handles both states a workspace can be in:
   - **No `reviews/` change file exists anywhere yet (true step 0).** `_find_workspace_docx` finds the one `.docx` in the workspace directly (recursively, skipping Word lock files and anything under an `archive`/`old*` folder) and prepares that. `section` and `change_file` come back `null` in the response - there's nothing to report yet.
@@ -124,8 +124,8 @@ For a tool-calling model (including a small one, e.g. qwen3-4b) that can't relia
     "status": "READY",
     "reasons": [],
     "section": "7",
-    "docx": ".../Current State Assessment - IAMPS - v1.docx",
-    "change_file": ".../reviews/ChangesCSA_IAMPS_Section7_E112_E135.md",
+    "docx": ".../Current State Assessment - IAMPS.docx",
+    "change_file": ".../reviews/ChangesCSA_IAMPS_Section7.md",
     "id_manifest_summary": {
       "paragraphs": 412, "runs": 96, "headings": 58, "table_rows": 96,
       "regenerated": false, "reason": "unchanged",

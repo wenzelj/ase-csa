@@ -17,7 +17,6 @@ def main() -> int:
     args = parse_args()
 
     if args.dump_ids:
-        import json
         from csa_docx.stable_ids import generate_manifest
         try:
             from csa_docx.engines.docxengine_adapter import DocxEngineEditor
@@ -25,7 +24,7 @@ def main() -> int:
             print(f"error: docxengine unavailable: {exc}", file=sys.stderr)
             return 1
         editor = DocxEngineEditor(Path(args.docx), section_heading=args.section)
-        paragraphs = editor.doc.paragraphs()
+        paragraphs = editor.paragraphs_with_table_rows()
         manifest = generate_manifest(paragraphs)
         print(json.dumps(manifest, indent=2))
         return 0

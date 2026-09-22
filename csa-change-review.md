@@ -118,7 +118,7 @@ At the beginning of every review:
 - call `prepareDocument()` (the `csa-mcp` tool, no `section` argument -- see Framework Tools below) before inspecting the DOCX at all. If it returns `NOT_READY`, stop and report the `reasons` -- do not review a document that is open in Word or already failing integrity checks. Its `id_manifest_summary` also confirms whether the stable-ID manifest anchors in the change file resolve against is current;
 - read the full approved `.md` change file, including any `## Changes Report` section;
 - parse the approved edit records before trusting the appended change report;
-- identify every edit ID, including administrative IDs such as `A-1`;
+- identify every edit ID, including administrative IDs such as `S1-A1`;
 - identify expected `Where`, `Do`, `Text`, and `Why` values for each edit;
 - identify the DOCX path reported in the change report and verify it matches the DOCX being reviewed.
 
@@ -137,7 +137,7 @@ The `csa_docx` framework (`.agents/framework/csa_docx/`, exposed as MCP tools vi
 
 ## Read-Only Default
 
-Default to read-only review for DOCX files and original/source evidence.
+Default to read-only review for DOCX files and original/source evidence. The evidence matrix `csa-work/evidence-matrix.csv` is a shared working file, not the DOCX and not source evidence: the only permitted write to it is an append through the `csa-evidence-matrix` skill (see Evidence Check below).
 
 Do not change the DOCX or the original source DOCX during review unless the user explicitly asks you to repair a defect.
 
@@ -199,8 +199,8 @@ The user may override these with:
 
 ```text
 SECTION=3
-START_EDIT_ID=E-38
-END_EDIT_ID=E-45
+START_EDIT_ID=S3-E1
+END_EDIT_ID=S3-E7
 Review the requested section using the agent defaults.
 ```
 
@@ -230,10 +230,10 @@ Before inspecting the DOCX deeply:
 Use this run-state path pattern:
 
 ```text
-01 Current State AS Built/7 IAMPS/01 Final Version/run-state/csa-change-review-section-<SECTION>.md
+01 Current State AS Built/01 Final Version/run-state/csa-change-review-section-<SECTION>.md
 ```
 
-Create the `01 Current State AS Built/7 IAMPS/01 Final Version/run-state` directory if it does not exist.
+Create the `01 Current State AS Built/01 Final Version/run-state` directory if it does not exist.
 
 The run-state file must contain:
 
@@ -394,7 +394,7 @@ For every material approved change, verify a Word comment exists where practical
 
 The comment must:
 
-- include the edit ID, for example `E-13` or `A-1`;
+- include the edit ID, for example `S7-E1` or `S1-A1`;
 - state or summarise the reason for the change;
 - align with the approved `Why` field;
 - be anchored to the changed text, inserted text, changed table cell, changed heading, or nearest surviving location for deletions;
@@ -449,6 +449,21 @@ For heading and numbering edits:
 - verify section numbering did not restart unexpectedly;
 - verify table of contents impact is either correct or explicitly deferred;
 - verify cross-references and bookmarks were not obviously broken.
+
+## Evidence Check (csa-evidence-matrix skill)
+
+Verifying that the DOCX matches the approved change file is unchanged. This check adds one question: is the technical fact the edit states supported by evidence? Use the `csa-evidence-matrix` skill (`.agents/skills/csa-evidence-matrix/SKILL.md`; helper `scripts/evidence_matrix.py`):
+
+1. For each edit in the review batch whose Text asserts a technical fact, run `evidence_matrix.py lookup "<claim keywords>"` -- matrix first. Prefer the E-ids cited in the edit's `Why` (`evidence_matrix.py get E-nnn`).
+2. If the matrix answers it, compare. A matrix row is a lead, not proof: when a factual finding depends on it, open the cited source file and confirm before relying on it.
+3. If the matrix has no answer, search Discovery Data for that point only, then append what you found with `evidence_matrix.py append --agent csa-change-review-agent --context "Section <N> <edit ID>"` (or a NOT_FOUND row with the scope searched).
+4. Record the result in the review report's edit verification `Evidence` column and Findings:
+   - supported -> cite `E-nnn`;
+   - no evidence anywhere -> `P3 LOW` note `Evidence gap`;
+   - contradicted by VERIFIED evidence -> `P2 MEDIUM`, or `P1 HIGH` when the change file's own cited evidence is wrong.
+   Evidence findings never turn a correctly applied edit into `INCORRECT`; they are reported alongside its edit status.
+
+Bounds: one lookup per fact-bearing edit in the batch, at most two Discovery Data searches per batch. Never edit or delete existing matrix rows; a contradiction is a new row citing the older E-id.
 
 ## Finding Severity
 
@@ -562,12 +577,12 @@ Summary
 Edit verification
 | Edit ID | Status | Evidence | Comment check |
 |---|---|---|---|
-| E-1 | CORRECT / ... | <what was verified> | <comment author, anchor, reason> |
+| S<N>-E1 | CORRECT / ... | <what was verified; evidence: E-nnn / no evidence on record / contradicted by E-nnn> | <comment author, anchor, reason> |
 
 Findings
 | Severity | Area/Edit ID | Finding | Recommended action |
 |---|---|---|---|
-| P1 HIGH | E-4 | <issue> | <action> |
+| P1 HIGH | S<N>-E4 | <issue> | <action> |
 
 DOCX integrity validation
 - Archive integrity: Pass/Fail/Not run
@@ -654,7 +669,7 @@ When repairing:
 For IAMPS Section 1, an example approved change file is:
 
 ```text
-/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/01 Current State AS Built/7 IAMPS/01 Final Version/reviews/ChangesCSA_IAMPS_Section1_E1_E13.md
+/Users/wenzel/Work/ASE/IAMPS/06 IAMPS/01 Current State AS Built/01 Final Version/reviews/ChangesCSA_IAMPS_Section1.md
 ```
 
 Use that file as source of truth when it is the supplied change file, but keep this agent generic for any other application Current State Assessment.
@@ -673,6 +688,7 @@ READ AGENT
 -> VERIFY NEXT BOUNDED REVIEW BATCH OR COMPLETE SMALL SECTION
 -> VALIDATE OOXML AND RENDER AS NEEDED FOR THE BATCH
 -> DETECT UNAUTHORISED CHANGES WHEN POSSIBLE
+-> EVIDENCE CHECK (matrix first, then Discovery Data, append findings)
 -> UPDATE RUN-STATE
 -> REPORT PASS / PASS WITH NOTES / FAIL / BLOCKED
 -> STOP

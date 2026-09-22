@@ -214,8 +214,9 @@ def _id_manifest_path(workspace: Path, docx: Path) -> Path:
     Keyed by the resolved *document*, not the section: ``stable_ids``
     computes IDs for every heading/paragraph/table-row in the whole DOCX in
     one pass, unscoped to any one section (:mod:`csa_docx.stable_ids`
-    ``generate_manifest`` walks the full paragraph list DocxEngine returns,
-    and ``section_heading`` is never used to filter it). Most CSA projects
+    ``generate_manifest`` walks the full paragraph-and-table-row list
+    ``DocxEngineEditor.paragraphs_with_table_rows()`` returns, and
+    ``section_heading`` is never used to filter it). Most CSA projects
     have every section's change file pointing at the same single working
     DOCX (see ``manifest.py``), so a manifest keyed by section number would
     just be N identical copies of the same document-wide data. Keying by
@@ -225,7 +226,10 @@ def _id_manifest_path(workspace: Path, docx: Path) -> Path:
     "prepare the section" collapse into the same call.
     """
     safe_name = "".join(ch if ch.isalnum() else "_" for ch in docx.stem).strip("_") or "document"
-    return workspace / "run-state" / f"stable-ids-{safe_name}.json"
+    # Lives beside the working DOCX (``<Final Version>/run-state/``), the same
+    # place the section run-state files go (see ``run_state.state_path``).
+    # ``workspace`` is kept only so existing callers and tests keep working.
+    return docx.parent / "run-state" / f"stable-ids-{safe_name}.json"
 
 
 def _structure_fingerprint(entries: list[dict]) -> str:
@@ -450,11 +454,15 @@ def prepareDocument(section: str | None = None, *, workspace: str | Path = ".", 
     # Same opening path cli_apply_section.py's --dump-ids uses: DocxEngine
     # owns reading the package, stable_ids owns turning its paragraph list
     # into IDs. Opening a Document does not mutate it.
+    # paragraphs_with_table_rows() (not the vendor Document.paragraphs(),
+    # which excludes tables entirely) interleaves table rows in document
+    # order so stable_ids's existing table_anchor handling actually fires --
+    # see its docstring for why table_rows was always 0 before this.
     try:
         from .engines.docxengine_adapter import DocxEngineEditor
 
         editor = DocxEngineEditor(docx, section_heading=None)
-        entries = generate_manifest(editor.doc.paragraphs())
+        entries = generate_manifest(editor.paragraphs_with_table_rows())
     except Exception as exc:
         return _error(f"Could not read stable IDs from {docx}: {type(exc).__name__}: {exc}")
 
@@ -667,7 +675,7 @@ def apply_next_batch(
     if not docx.exists():
         return _error(f"Working DOCX does not exist: {docx}")
 
-    state = state_path(workspace_path, section)
+    state = state_path(docx.parent, section)
 
     section_label, records = parse_change_file(change_file)
     section = str(section) or (section_label or "unknown")
@@ -691,9 +699,16 @@ def apply_next_batch(
         summary.status = "SECTION_COMPLETE"
         summary.validation = validate_docx(docx)
         summary.completed_ids = [record.edit_id for record in records if record.edit_id in completed_ids]
-        write_state(state, records, summary)
-        update_changes_report(change_file, summary)
-        write_state(state, records, summary)
+        # A section with nothing left to do is already reflected in the
+        # existing run-state (the first completing run wrote the backup
+        # path, validation evidence and per-edit results there). Re-running
+        # the CLI on a finished section must not replace that state with a
+        # bare summary - only create it when the section has no run-state
+        # at all (e.g. completion recorded solely in the change file).
+        if not state.exists():
+            write_state(state, records, summary)
+            update_changes_report(change_file, summary)
+        summary.report_updated = False
         return _summary_payload(summary)
 
     # Step 0: never create a backup -- let alone start editing -- on a
@@ -764,7 +779,7 @@ def get_section_status(section: str, *, workspace: str | Path = ".") -> dict:
     except ManifestError as exc:
         return _error(str(exc))
 
-    state = state_path(workspace_path, section)
+    state = state_path(Path(entry.docx).parent, section)
     if not state.exists():
         return {
             "status": "NOT_STARTED",

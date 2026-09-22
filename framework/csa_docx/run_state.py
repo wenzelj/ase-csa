@@ -6,11 +6,10 @@ from .models import ApplySummary, ChangeRecord
 
 
 def state_path(base_dir: Path, section: str) -> Path:
-    # The run-state lives in a ``run-state`` directory under the section's
-    # Final Version workspace. Derive it from ``base_dir`` (which already
-    # points at that Final Version folder) rather than hard-coding the
-    # project path - the old version doubled the path and wrote run-state to
-    # a nested duplicate, leaving the canonical file stale.
+    # The run-state lives in a ``run-state`` directory beside the working
+    # DOCX (decision DECISION-002, 2026-09-21). ``base_dir`` must be the folder that
+    # contains the working DOCX (``01 Current State AS Built/01 Final
+    # Version``), NOT the workspace root - callers pass ``docx.parent``.
     return base_dir / "run-state" / f"current-state-assessment-document-section-{section}.md"
 
 

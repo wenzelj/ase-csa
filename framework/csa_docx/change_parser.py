@@ -5,7 +5,7 @@ from pathlib import Path
 
 from .models import ChangeRecord
 
-EDIT_HEADING_RE = re.compile(r"^###\s+([A-Z]+-\d+)\s*-\s*(.+?)\s*$", re.MULTILINE)
+EDIT_HEADING_RE = re.compile(r"^###\s+(S\d+-[EA]\d+|[EA]-\d+)\s+-\s+(.+?)\s*$", re.MULTILINE)
 SECTION_RE = re.compile(r"^\*\*Section:\*\*\s*(.+?)\s*$", re.MULTILINE)
 
 

@@ -1,0 +1,24 @@
+project:
+  assessment_name: ""
+  assessment_type: "Current State Assessment"
+  program: ""
+  environment: ""
+  application: ""
+  organisation: ""
+  as_of_date: ""
+  scope_in: []
+  scope_out: []
+  authoritative_sources: []
+  terminology: {}
+  known_constraints: []
+  stakeholders: []
+  required_deliverables:
+    - detailed_current_state_assessment
+    - consumable_summary
+
+working_preferences:
+  evidence_only_factual_claims: true
+  expand_abbreviations_on_first_use: true
+  explain_ot_concepts_separately: true
+  preserve_existing_document_structure: true
+  do_not_design_future_state_unless_requested: true
