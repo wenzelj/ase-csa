@@ -15,20 +15,24 @@ Drive the assessment to a finished, reviewable result. Work on one bounded secti
 
 ## Control loop
 
-For each section:
+For each section, follow the current-state reasoning loop in `csa-section-writer/references/current-state-reasoning.md`: `Discover -> Extract -> Correlate -> Validate -> Build System View -> Write -> Review`. The write step only starts once the system view is built; a draft that is a tour of the evidence has skipped correlation and must be redone.
 
 1. Define its questions and acceptance criteria.
 2. Gather candidate facts through `evidence-investigator`.
 3. Route verified evidence to the relevant specialist analysis skill.
 4. Record gaps without repeatedly searching the same unchanged source set.
 5. Ask only material questions that would change the assessment.
-6. Draft through `csa-section-writer` only after the evidence set is stable.
-7. Run `csa-quality-review` and resolve material findings.
+6. Draft through `csa-section-writer` (with `csa-writing-style`) only after the evidence set is stable. The draft must pass `csa-writing-style/scripts/prose_lint.py` before review.
+7. Run `csa-quality-review`, including its concision and flow check, and resolve material findings.
+
+To tighten a section that already exists in the working DOCX, route it to the change pipeline's `EDIT_MODE=editorial` pass (`csa-change-authoring.md`), not back through drafting.
 8. Mark the section complete, partial, blocked, or not applicable.
 
 Stop when the section definition of done is met. Do not reopen a completed section unless new evidence, a contradiction, or a user correction requires it.
 
 ## Evidence boundary
+
+The evidence classes and the current-state boundary live in `csa-section-writer/references/current-state-reasoning.md`. In short: the CSA describes the application and its system, not the evidence; a negative statement must carry its scope; and "not observed" is never written as "does not exist".
 
 Maintain these classes exactly: `VERIFIED`, `INFERRED`, `UNCONFIRMED`, `CONFLICTING`, and `NOT_FOUND`. General technical knowledge may explain significance but may not fill a current-state gap. Keep recommendations and future-state design out of a CSA unless explicitly requested.
 

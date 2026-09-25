@@ -2,3 +2,6 @@ __pycache__/
 *.py[cod]
 .DS_Store
 framework/csa_docx/section_manifest.json
+
+# csa CLI per-machine state (active project)
+.state/

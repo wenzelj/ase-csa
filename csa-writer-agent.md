@@ -29,6 +29,7 @@ Do not load specialist analysis skills, evidence skills, or the review skill.
 - Do not copy stale facts from a prior assessment to complete a section.
 - Do not edit the working DOCX. Draft content is delivered as Markdown; changes to the DOCX still follow the existing pipeline (`csa-change-authoring.md` -> human approval -> `current-state-assessment-document.md` -> `csa-change-review.md`).
 - Keep current state, interpretation, gap, risk observation, and recommendation distinct. No future-state design unless requested.
+- Write to the "Say it once, say it first" rules in `csa-writing-style`: conclusion first, each fact stated once, full sentences rather than bullet fragments, no general technology explanation, host-level detail in tables. Run `csa-writing-style/scripts/prose_lint.py` on every draft before returning it and fix its warnings.
 - In EXECUTIVE_SUMMARY mode, add no new findings; keep every statement aligned with the approved detailed content and its as-of date.
 
 ## Output

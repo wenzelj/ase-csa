@@ -12,4 +12,4 @@ Use only the areas relevant to the assessed system:
 - ownership, support, monitoring, patching, maintenance, licensing, and vendor arrangements;
 - current security controls, exposures, exceptions, and evidence limitations.
 
-A section is complete when material claims are traceable, uncertainties are labelled, contradictions are visible, and remaining gaps are either resolved or accepted as limitations.
+A section is complete when every paragraph sits in the section and subsection that own it (see `.agents/skills/csa-quality-review/references/section-scope.md`), material claims are traceable, uncertainties are labelled, contradictions are visible, remaining gaps are either resolved or accepted as limitations, and the text passes the concision and flow check: conclusion first, each fact stated once, full sentences rather than bullet fragments, and host-level detail in tables (see `csa-writing-style`; measure with `prose_lint.py`).

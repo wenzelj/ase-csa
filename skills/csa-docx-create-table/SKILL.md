@@ -1,3 +1,8 @@
+---
+name: csa-docx-create-table
+description: Create a brand-new table in a CSA DOCX that matches the document's existing table styling, via cli_create_table.py. Use when an approved change adds a new table (glossary, acronyms, reference grid) - the change-file pipeline can only edit existing tables.
+---
+
 # CSA DOCX Create Table
 
 Create a new table in a CSA DOCX that is visually indistinguishable from the

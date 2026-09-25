@@ -14,6 +14,7 @@ if VENDOR_DIR.exists() and str(VENDOR_DIR) not in sys.path:
     sys.path.insert(0, str(VENDOR_DIR))
 
 from csa_docx.bookmarks import add_bookmark_at_anchor, find_bookmark
+from csa_docx.comment_text import build_comment_text
 from csa_docx.models import ChangeRecord, EditResult
 from csa_docx.stable_ids import extract_stable_id, build_id_map
 from csa_docx.ooxml import (
@@ -156,6 +157,12 @@ class DocxEngineEditor:
             or (extract_stable_id(record.where) is not None and extract_stable_id(record.where).kind == "T")
         ):
             return self._apply_table_row_change(record, author, initials)
+        # New-table insertion: the approved Text contains a Markdown pipe
+        # table and the action is an insert/replace that does not target
+        # an existing table.  This is the path that handles "populate a
+        # previously empty section with a table" (e.g. Section 17 / S17-E1).
+        if record.text and _parse_markdown_table(record.text) is not None:
+            return self._apply_new_table_insertion(record, author, initials)
         if _has_section_body_replacement(record) or "replace the entire subsection" in record.action.lower():
             return self._apply_section_body_replacement(record, author, initials)
         if _has_range_replacement(record) or _extract_heading_to_sentence_range(record):
@@ -412,6 +419,161 @@ class DocxEngineEditor:
             initials,
             f"Replaced paragraph range beginning: {start_anchor[:80]} with DocxEngine",
         )
+
+    def _apply_new_table_insertion(
+        self, record: ChangeRecord, author: str, initials: str
+    ) -> EditResult:
+        """Insert a new native Word table when the approved Text contains a
+        Markdown pipe table and no existing table is the target.
+
+        Handles the "populate a previously empty section with a table" case
+        (e.g. Appendixes) that ``_apply_full_table_replacement`` cannot
+        cover because there is no existing table to overwrite.
+
+        Strategy:
+        1. Resolve the anchor paragraph (bookmark > stable-ID > text match).
+        2. Split ``record.text`` into non-table content, table data, and
+           non-table content (in document order).
+        3. Insert the non-table paragraphs around the table via DocxEngine.
+        4. Create the native table via ``csa_docx.tables.create_table``
+           (clones the document's own table style).
+        5. Add the Word comment on the table's first row.
+        """
+        from csa_docx.tables import create_table as _create_table
+
+        anchor_text = find_anchor(record.where)
+        paragraphs = self.doc.paragraphs()
+
+        # Resolve the anchor paragraph
+        bookmarked = find_bookmark(self, record.edit_id)
+        if bookmarked:
+            paragraph = next((p for p in paragraphs if p.anchor == bookmarked), None)
+            if paragraph is None:
+                return EditResult(record.edit_id, "BLOCKED", "Bookmarked location no longer resolves to a paragraph", anchor_text)
+            matches = [paragraph]
+        else:
+            stable_id = extract_stable_id(record.where)
+            if stable_id:
+                id_map = build_id_map(paragraphs)
+                id_str = str(stable_id)
+                if id_str in id_map:
+                    paragraph = paragraphs[id_map[id_str]]
+                    matches = [paragraph]
+                else:
+                    return EditResult(record.edit_id, "BLOCKED", f"Stable ID {id_str} not found in document", anchor_text)
+            else:
+                if not anchor_text:
+                    return EditResult(record.edit_id, "BLOCKED", "Could not extract a unique anchor from Where", None)
+                matches = self._matching_paragraphs(anchor_text, record.where)
+                if len(matches) != 1:
+                    return EditResult(record.edit_id, "BLOCKED", f"Anchor match count was {len(matches)}; expected 1", anchor_text)
+                paragraph = matches[0]
+
+        # Parse the text into segments
+        table_rows = _parse_markdown_table(record.text)
+        if not table_rows:
+            return EditResult(record.edit_id, "BLOCKED", "Could not parse a table from Text", None)
+        cols = max(len(row) for row in table_rows)
+
+        # Split text around the table block
+        # Find the table block boundaries in the raw text
+        lines = record.text.splitlines()
+        in_table = False
+        table_start = None
+        table_end = None
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped.startswith("|") and not in_table:
+                table_start = i
+                in_table = True
+            elif in_table:
+                if stripped.startswith("|"):
+                    table_end = i
+                else:
+                    break  # table block ended
+        if table_start is None:
+            return EditResult(record.edit_id, "BLOCKED", "Could not locate table block in Text", None)
+        if table_end is None:
+            table_end = len(lines) - 1
+
+        before_lines = lines[:table_start]
+        after_lines = lines[table_end + 1:]
+
+        # Filter out Markdown separator rows (|---|---|) from table_rows
+        data_rows = [
+            row for row in table_rows
+            if not all(re.match(r"^[\s:|-]+$", cell.strip()) for cell in row)
+        ]
+        if not data_rows:
+            return EditResult(record.edit_id, "BLOCKED", "Parsed table has no data rows", None)
+
+        # Determine the anchor for table insertion.
+        # If there is content before the table, insert those paragraphs first,
+        # then the table after the last inserted paragraph.
+        # If there is no content before, insert the table after the resolved anchor.
+        insert_after_anchor = paragraph.anchor
+        before_text = "\n".join(before_lines).strip()
+        after_text = "\n".join(after_lines).strip()
+
+        try:
+            # Insert "before" paragraphs (if any)
+            if before_text:
+                before_paras = markdown_to_paragraph_texts(before_text)
+                for pt in reversed(before_paras):
+                    self.doc.insert(pt, after=insert_after_anchor, author=author, track_changes=self.track_changes)
+                # The last inserted paragraph is now the anchor for the table
+                # We need to find it by its text
+                new_paras = self.doc.paragraphs()
+                last_text = before_paras[-1] if before_paras else None
+                if last_text:
+                    for p in reversed(new_paras):
+                        if p.text and p.text.strip() == last_text.strip():
+                            insert_after_anchor = p.anchor
+                            break
+            else:
+                # No before-content: table goes right after the resolved anchor
+                pass
+
+            # Create the native table
+            result = _create_table(
+                self.docx_path,
+                after=insert_after_anchor,
+                cols=cols,
+                data=data_rows,
+                header=True,
+                backup=False,  # framework already handles backup
+            )
+
+            if result.get("status") not in ("OK",):
+                return EditResult(
+                    record.edit_id, "BLOCKED",
+                    f"create_table failed: {result.get('message', result.get('status'))}",
+                    None,
+                )
+
+            # Insert "after" paragraphs (if any) - they go after the table
+            if after_text:
+                after_paras = markdown_to_paragraph_texts(after_text)
+                # We need to find the table's position to insert after it.
+                # The table was inserted after insert_after_anchor, so the
+                # next paragraph after that position is where we continue.
+                # For simplicity, insert after the anchor (DocxEngine will
+                # place it in document order after the table).
+                for pt in reversed(after_paras):
+                    self.doc.insert(pt, after=insert_after_anchor, author=author, track_changes=self.track_changes)
+
+            # Add comment on the anchor paragraph
+            comment_id = self._add_comment(insert_after_anchor, record, author, initials)
+            self._tag_bookmark(record.edit_id, insert_after_anchor)
+
+            return EditResult(
+                record.edit_id, "APPLIED",
+                f"Inserted new table ({len(data_rows)}x{cols}) with DocxEngine + create_table",
+                anchor_text, comment_id,
+            )
+
+        except ToolError as exc:
+            return EditResult(record.edit_id, "BLOCKED", f"DocxEngine error: {exc}", anchor_text)
 
     def _apply_section_body_replacement(self, record: ChangeRecord, author: str, initials: str) -> EditResult:
         if not record.text:
@@ -1061,7 +1223,7 @@ class DocxEngineEditor:
         paragraph = ET.SubElement(comment, qn(W_NS, "p"))
         run = ET.SubElement(paragraph, qn(W_NS, "r"))
         text = ET.SubElement(run, qn(W_NS, "t"))
-        text.text = f"{record.edit_id}: {record.why or record.title}"
+        text.text = build_comment_text(record)
         package.set_part(comments_part, ET.tostring(comments_root, encoding="utf-8", xml_declaration=True))
         self.doc._doc.mark_dirty()
         return comment_id
@@ -1314,11 +1476,7 @@ class DocxEngineEditor:
 
     def _add_comment(self, anchor: str, record: ChangeRecord, author: str, initials: str) -> str | None:
         self._ensure_comment_namespaces()
-        comment_text = f"{record.edit_id}: {record.why.strip()}"
-        if record.questions:
-            comment_text += "\nQuestions:\n" + "\n".join(f"- {question}" for question in record.questions)
-        if initials:
-            comment_text += f"\nInitials: {initials}"
+        comment_text = build_comment_text(record)  # author and initials are comment metadata, not text
         result = self.doc.comment("add", anchor=anchor, text=comment_text, author=author)
         return str(result.get("comment_id")) if result.get("comment_id") else None
 

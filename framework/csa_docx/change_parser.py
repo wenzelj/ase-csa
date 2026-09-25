@@ -39,12 +39,13 @@ def _parse_block(edit_id: str, title: str, block: str) -> ChangeRecord:
         why=_extract_label(block, "Why"),
         raw=block,
         questions=_extract_questions(block),
+        note=_extract_label(block, "Note"),
     )
 
 
 def _extract_label(block: str, label: str) -> str:
     pattern = re.compile(
-        rf"^\*\*{re.escape(label)}:\*\*\s*(.*?)(?=^\*\*(?:Where|Do|Text|Why):\*\*|\n---\n|\Z)",
+        rf"^\*\*{re.escape(label)}:\*\*\s*(.*?)(?=^\*\*(?:Where|Do|Text|Why|Note):\*\*|\n---[ \t]*(?:\n|\Z)|\Z)",
         re.MULTILINE | re.DOTALL,
     )
     match = pattern.search(block)
@@ -84,7 +85,7 @@ def _extract_questions(block: str) -> list[str]:
             in_open_questions = False
         if in_open_questions or "?" in stripped:
             cleaned = stripped.lstrip("-*0123456789. ").strip()
-            if cleaned and "no new open questions" not in cleaned.lower():
+            if cleaned and not re.match(r"(?:none\.?$|no (?:new |open )?questions|there are no (?:new |open )?questions)", cleaned, re.IGNORECASE):
                 questions.append(cleaned)
 
     return questions

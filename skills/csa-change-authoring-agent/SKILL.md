@@ -36,6 +36,8 @@ RUN_SCOPE=next-authoring-batch
 
 For Codex CLI, EVO, Ollama, or slow local profiles, prefer `AUTHOR_ITEM_LIMIT=6` unless the user explicitly requests a larger batch.
 
+`EDIT_MODE` defaults to `evidence`. With `EDIT_MODE=editorial` the agent runs a concision pass instead (no fact added, changed or dropped); see Editorial Mode in the agent definition.
+
 ## Step 0: Prepare The Document
 
 Before reading the DOCX or searching Discovery Data, call `prepareDocument()` (the `csa-mcp` tool, no `section` argument) to confirm the working DOCX is safe to read and that its stable-ID manifest is current. `status: NOT_READY` -> stop and report the `reasons`. Then, for every edit drafted, call `lookupStableId(query=<the current text being replaced>)` to get its `@H...` anchor -- never hand-type or guess one. See `## Framework Tools (csa-mcp)` in the full agent definition for the `unique_id`/`match_count` decision tree.

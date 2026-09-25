@@ -1,0 +1,101 @@
+---
+name: csa-writing-style
+description: Mandatory prose style rules for any text that will land in a Current State Assessment document. Load this whenever drafting, revising, or reviewing wording that goes into a CSA - section content, executive summary, technical explanations, or a change-authoring edit's replacement text. Covers voice (human, not AI-sounding) and concision and flow (answer first, each fact once, sentences not bullet fragments, detail in tables). Owned by the CSA Writer Agent; every other agent that must produce document prose follows this skill rather than inventing its own voice.
+---
+
+# CSA Writing Style
+
+The CSA Writer Agent is the single owner of how Current State Assessment prose reads. Any agent that drafts text destined for the working DOCX -- section content, an executive summary, a technical explanation note, or the replacement/insertion text of a change-authoring edit -- follows this skill instead of applying its own judgement about "voice." This keeps one consistent, human voice across the document regardless of which agent or pipeline produced a given sentence.
+
+## Goal
+
+Write the way a competent, slightly busy human assessor writes when they know the material and are not trying to impress anyone: plain, specific, a little uneven in rhythm, and free of the tics that make text read as machine-generated. A reader who has worked with the assessor before should not be able to tell this paragraph apart from one the assessor typed themselves.
+
+## Match the document's existing voice first
+
+Before applying anything below, read a paragraph or two of the section's surrounding, already-approved text. If this document has an established register (more formal, more clipped, more table-heavy), match it. These rules describe how to avoid AI-sounding prose within that register, not a house style to impose over it.
+
+Match the register (formality, terminology, spelling), not the structural habits. If the surrounding text breaks the "Say it once, say it first" rules below (bullet fragments, restated facts, announcing lead-ins), do not copy those habits into new text.
+
+## Say it once, say it first
+
+A Current State Assessment (CSA) gives decision-makers an evidenced baseline: what exists, how it differs from what the design or reference standard expects, and what that means for operations. Its readers are technical and operational people who already know the technologies. They need the facts and their consequence, not a tour of the evidence. These rules apply to every paragraph, bullet and table cell, and they outrank "match the existing voice".
+
+- **Answer first.** The first sentence of a section or subsection states its conclusion. Supporting facts follow; raw detail goes in a table or the appendix. Do not build up to the conclusion through a chain of "This confirms... As a result..." steps.
+- **Each fact once.** A fact (a host list, a server name, an IP address, a dependency, a consequence) is stated in the one place that owns it. Everywhere else, refer to it ("the two enterprise time servers", or a finding ID) rather than listing it again. When Findings, Assessment, Operational Behaviour and Impact subsections all restate the same dependency, each keeps only what is new to it.
+- **State, don't announce.** Delete lead-ins that announce a conclusion instead of stating it: "This confirms that", "This indicates", "This establishes that", "This results in:", "This represents", "As a result:", "The following findings are derived from...", "The analysis focuses on...". Write the conclusion itself as the sentence.
+- **Sentences, not fragments.** Write full sentences in paragraphs. Use a bullet list only for three or more parallel items a reader will scan (hosts, services, requirements). Never split one sentence across a lead-in line and bullets ("Loss of:" followed by "- ongoing time synchronisation"). No nested bullets.
+- **No textbook material.** Do not explain what DNS, NTP, Kerberos, a firewall or an endpoint agent is, or why such services matter in general. Say what it does in this system and why that matters here. If a reader needs background, it goes in a labelled `Technical explanation` note (`technical-explainer`), not in the finding.
+- **Findings, not log lines.** Never paste raw log or command output into the body. State what it shows and give a short source reference (file name and date); the raw lines stay in the evidence.
+- **Detail lives in tables and appendices.** Per-host lists, IP addresses, ports, capture dates and evidence file names belong in the observed-state or discovery table, or the evidence appendix. Prose carries what the detail means ("all eight captured hosts", "both production sites").
+- **State the evidence basis once.** How evidence was gathered, and what it could not see, is stated once in Scope and Methodology. Do not tag headings or sentences with "(Script Evidence)", "(Evidence-Based)" or "(Script Confirmed)". A limitation that affects one finding is stated once, precisely, in that finding ("not confirmed on six of eight hosts, whose captures did not include service inventories").
+- **Findings run condition, criteria, consequence.** Each finding is one short paragraph with a headline sentence that could stand alone: what is (condition), what the design or reference standard expects (criteria), and what it means for operations, including under the isolation scenario (consequence). Add the cause only when the evidence shows it. Recommendations sit separately and refer back to the finding.
+- **Rank by consequence.** Order findings by operational consequence, not by the order discovery happened.
+- **One term per thing.** Define a term once (for example the isolation scenario's name) and use only that term afterwards.
+- **Proportion.** A domain with one finding reads in well under a page. When a draft is longer than its facts justify, cut restatement before cutting facts.
+
+Flow comes from order (conclusion, support, consequence) and from linking sentences by their content, not from connector words. When two points relate, say how in one clause: "Unlike the DNS dependency, loss of time synchronisation degrades gradually."
+
+### Example
+
+Before:
+
+> Host-level discovery confirms that servers synchronise time from:
+> - TIMESRV01.corp.example
+> - TIMESRV02.corp.example
+>
+> This establishes that the system is:
+> - Fully dependent on externally provided time synchronisation services
+> - Operating without any local or fallback time source
+>
+> Time synchronisation is a foundational service that supports:
+> - Authentication (Kerberos time dependency)
+> - Event sequencing across systems
+>
+> As a result, accurate and consistent time is required for both:
+> - System operation
+> - Cross-system integrity
+
+After:
+
+> All captured hosts take time from two enterprise servers, TIMESRV01 and TIMESRV02, through the Windows Time client, with no local or fallback source. If the OT environment is isolated, the hosts keep running on their last synchronised time and drift apart. Once the skew passes the Kerberos tolerance, authentication fails; before that, log timestamps and message ordering lose accuracy. Unlike the DNS and directory dependencies, this failure is gradual rather than immediate.
+
+The rewrite keeps every fact, adds the consequence the original only implied, and drops the general explanation of why time matters.
+
+## Avoid these tells
+
+- **Stock transitions and hedges.** Don't reach for "moreover," "furthermore," "it is important to note," "it should be noted that," "in order to," "this highlights," "this underscores," "plays a crucial/vital role," "leverage," "robust," "seamless," "holistic," "landscape," "ecosystem." If a sentence needs one of these to make sense, the sentence is doing too little work -- rewrite it plainly instead.
+- **Symmetric triplets.** "Reliable, scalable, and secure" or any three-adjective/three-clause list used as a rhetorical flourish rather than because there are exactly three distinct, evidenced things to say. State what's actually true; stop when you've said it.
+- **Uniform paragraph and sentence rhythm.** Real technical writing varies -- a short sentence next to a longer one, a paragraph that's two sentences next to one that's five. Prose where every sentence is roughly the same length and every paragraph follows the same setup-detail-consequence shape reads as generated. Vary it.
+- **Over-signposting.** Don't narrate the structure of what you're about to say ("There are three key points to consider," "Let's break this down," "In summary," when nothing was actually summarised). State the finding; let the heading and table do the structural work the document already provides.
+- **Em dash overuse as a substitute for commas or full stops.** An occasional em dash is fine; a string of them in every paragraph is a tell. Prefer a comma, a full stop, or a colon where either reads more naturally.
+- **Manufactured enthusiasm or editorialising.** No exclamation points, no "excitingly," no implied opinion about whether a finding is good or bad beyond what the evidence and the document's risk/gap framing supports.
+- **Padding a sentence to sound authoritative.** "It is worth noting that the server was found to be running Windows Server 2019" is a sentence about nothing; "The server runs Windows Server 2019 (E-042)." says the same thing and reads like a person who trusts their own claim.
+- **Restating the obvious as a lead-in.** Don't open a paragraph by re-describing what the section is about before saying anything new ("When it comes to DNS configuration, it is important to understand that..."). Start with the fact.
+
+## Do this instead
+
+- Lead with the concrete fact or finding, then (only if needed) the implication. The evidence citation belongs in the change record, not the sentence (see below).
+- Use specific nouns: a hostname, a port number, a product version, a date -- not "the relevant infrastructure" or "various components."
+- Let sentence length vary naturally with the complexity of the point being made. A one-line fact doesn't need a scaffolded three-clause sentence.
+- Write a plain, declarative sentence before reaching for a more elaborate construction. Only add qualification (INFERRED, UNCONFIRMED, CONFLICTING) where the evidence actually requires it -- don't hedge a fact the evidence fully supports.
+- When two adjacent items in a list or table row are similar, it's fine for their phrasing to differ slightly rather than following an identical template every time, the way two different people describing the same ten hosts would naturally vary their phrasing slightly from row to row.
+- Read the paragraph back once before finalising it and ask: would a technical writer on this team actually have typed this sentence, or does it read like a summary of what a sentence like this should contain? Rewrite anything that fails that check.
+
+## Evidence IDs never appear in the body text
+
+Traceability (E-id citations) belongs in the change record's `Why` field and, from there, the Word comment attached to the edit -- never in the drafted prose itself. Do not write "`[E-042]`" or similar inline into a sentence or table cell that will land in the document. If a claim is `INFERRED`, `UNCONFIRMED`, or `CONFLICTING`, say so in plain words in the sentence ("has not been directly observed," "reported inconsistently across hosts") rather than a bracketed status tag -- the citation marker and the uncertainty label are both metadata, and metadata stays out of the reader-facing text.
+
+## Check before returning
+
+Run the prose lint on the draft (Markdown) or, for review, on the working DOCX section:
+
+```text
+python3 /Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-writing-style/scripts/prose_lint.py <draft.md | working.docx> [--section N]
+```
+
+It measures the rules above: bullet share, nested bullets, fragments and lead-ins, announcing connectors, identifiers repeated in prose, repeated sentences, evidence IDs or file names in prose, and heading label noise. New or rewritten text should produce no connector, nested-bullet, evidence-ID or heading-noise warnings, and no identifier stated in more than three prose paragraphs of one section. The lint is a guide, not a substitute for reading the paragraph back.
+
+## What this skill does not change
+
+This is a prose-style skill only. It does not relax any evidence, citation, traceability, or scope rule from `csa-section-writer`, `executive-summary`, `technical-explainer`, or `csa-change-authoring.md` -- every factual and citation requirement in those still applies in full. This skill only governs how the words are put together once the content is already decided.

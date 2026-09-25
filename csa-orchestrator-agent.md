@@ -48,8 +48,12 @@ Choose by the requested action first (find evidence, analyse, draft, review, sum
 | Availability, redundancy, backup, restore, disaster recovery, single points of failure | `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-technical-analyst-agent.md` | `resilience-analysis` |
 | Ownership, support, monitoring, patching, incident/change, vendor support | `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-technical-analyst-agent.md` | `operations-support-analysis` |
 | Current security controls, exposures, exceptions | `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-technical-analyst-agent.md` | `security-posture-analysis` |
-| Draft or revise a section from approved evidence | `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-writer-agent.md` | `csa-section-writer` (+ `technical-explainer` when an explanation is requested) |
-| Review a draft or section for unsupported claims, consistency, readability | `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-quality-reviewer-agent.md` | `csa-quality-review` (+ `technical-explainer` when needed) |
+| DNS / name resolution: resolvers, AD-integrated DNS, resolution behaviour, dependent services, isolation consequence (legacy Section 5, template 3.5) | `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-technical-analyst-agent.md` | `dns-name-resolution-analysis` |
+| Migration discovery: declared estate vs discovery population, installed apps and components, failover/replication, patch and update tooling, Group Policy, file transfer and local storage (legacy Section 6, template 4) | `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-technical-analyst-agent.md` | `migration-discovery-analysis` |
+| Draft or revise a section from approved evidence | `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-writer-agent.md` | `csa-writing-style` (always) + `csa-section-writer` (+ `technical-explainer` when an explanation is requested) |
+| Review a draft or section for unsupported claims, consistency, readability, concision and flow | `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-quality-reviewer-agent.md` | `csa-quality-review` (+ `technical-explainer` when needed); runs `prose_lint.py` |
+| Measure how a draft or DOCX section reads (bullet fragments, repetition, lead-ins, length) | none: run `skills/csa-writing-style/scripts/prose_lint.py <draft.md or DOCX> --heading "<section title>"` yourself, read-only, and record the result | none |
+| Tighten or condense a section that already exists in the working DOCX, with no new facts | hand off to the DOCX change pipeline, not the writer: `csa-change-authoring.md` with `EDIT_MODE=editorial` (then human approval, `current-state-assessment-document.md`, `csa-change-review.md`) | the authoring agent loads `csa-writing-style` and `csa-section-writer` itself |
 | Explain an OT/IT concept to the user | writer or reviewer agent, whichever is active | `technical-explainer` |
 | Executive summary of the completed assessment | `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-writer-agent.md` (EXECUTIVE_SUMMARY mode) | `executive-summary` |
 
@@ -57,7 +61,9 @@ Choose by the requested action first (find evidence, analyse, draft, review, sum
 
 - Evidence before analysis, analysis before drafting: hand a section to the writer only after its evidence set is stable and marked approved.
 - The writer receives approved evidence; it does not search sources independently.
-- Every drafted section goes to the quality reviewer before it is marked complete.
+- Every drafted section goes to the quality reviewer before it is marked complete. The review includes concision and flow (check 7 in `csa-quality-review`): a section with an open `MAJOR` concision finding (restated facts, overlapping summaries, conclusion missing from the start, far over its word budget, placeholder headings) is not complete.
+- A draft goes to the reviewer only after the writer has run `prose_lint.py` on it and fixed its warnings. Record the lint result for the section in `assessment-state.yaml`.
+- A request to shorten or tidy a section already in the DOCX goes to `EDIT_MODE=editorial`, and only after that section's evidence edits are applied. Rewriting it through the writer would bypass the approval gate.
 - The executive summary is requested only after the detailed sections are stable (complete, or partial with declared gaps) and the reviewer verdict is `READY` or `READY WITH DECLARED GAPS`.
 - General technical knowledge is never recorded as verified project evidence. It may explain significance only, and only through `technical-explainer`.
 - Keep recommendations and future-state design out of the CSA unless the user explicitly requests them.

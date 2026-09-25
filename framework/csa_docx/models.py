@@ -14,6 +14,7 @@ class ChangeRecord:
     why: str
     raw: str
     questions: list[str] = field(default_factory=list)
+    note: str = ""  # plain-language summary for the Word comment (**Note:** field)
 
 
 @dataclass(slots=True)

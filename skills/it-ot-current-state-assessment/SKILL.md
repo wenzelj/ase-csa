@@ -9,6 +9,8 @@ A current state assessment (CSA) establishes a factual, evidence-based baseline 
 
 Do not skip straight to recommendations. A CSA's value comes from being an honest, verifiable snapshot of *what is*, separated from *what should be*. Findings must be traceable to evidence (an inventory record, an interview, an observed config, a scan result) — never inferred or assumed.
 
+**The CSA describes the application and its system, not the evidence.** It is a system- and application-centric document: what exists, how it is architected, what it depends on, how it operates today. Evidence exists to establish and substantiate that view; it is the traceability record behind the statements, never the subject of them. Reasoning runs `Evidence → Correlation → Understanding → Current-State View → CSA Narrative`, not `Evidence → Description of Evidence`. The full working rules (subject rule, fact/evidence/gap classes, "not observed" vs "does not exist", correlation, scope, IT/OT terminology) live in `csa-section-writer/references/current-state-reasoning.md` and are binding on every section this methodology produces.
+
 ## 1. Scope and prepare
 
 Before any data gathering:

@@ -19,6 +19,16 @@ Each row is one atomic claim with a stable `E-nnn` ID, an evidence class, its so
 
 Agents that use this skill: **csa-change-authoring-agent**, **csa-document-agent**, **csa-change-review-agent**. The evidence-investigator and orchestrator agents write to the same file under their own rules; this skill is compatible with them.
 
+## Purpose separation: matrix vs analysis vs CSA
+
+Three artefacts, three jobs. Keep them separate and do not let one become the other.
+
+- **Evidence matrix** (`csa-work/evidence-matrix.csv`): records, organises, locates and traces the evidence used during the assessment. One atomic claim per row, with an E-id, its source, and an exact excerpt. This is the *input and traceability mechanism*.
+- **Analysis**: correlates the evidence and determines what it tells us about the application and system. This is the reasoning step (see `csa-section-writer/references/current-state-reasoning.md`).
+- **Current State Assessment** (the DOCX): presents a technically accurate, understandable description of the application and its current IT/OT operating environment. This is the *current-state view derived from the evidence*.
+
+The matrix is not the structure or subject of the CSA. The CSA body never takes the evidence as its subject; it states the system, and the matrix sits behind it as the traceability record. A reader of the CSA should be able to trace any material statement to an E-id in the matrix without the matrix being visible in the prose.
+
 ## The rule: matrix first, then data, then write back
 
 ```text

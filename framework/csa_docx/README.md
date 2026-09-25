@@ -169,3 +169,7 @@ For a tool-calling model (including a small one, e.g. qwen3-4b) that can't relia
 - `mcp.py` + `bin/csa-mcp` - a small stdio JSON-RPC MCP server (same `tools/list`/`tools/call` shape as the vendored `docxengine-mcp`) exposing the seven functions above as MCP tools. Point any MCP-capable harness (Codex CLI, Claude Code, ...) at `bin/csa-mcp`'s absolute path via its `mcp_servers` config; set `CSA_MCP_WORKSPACE` to this workspace root if the server's default working directory isn't already there.
 
 See `.agents/qwen-mcp-factory-plan.md` for the full design and rationale.
+
+## Word comment text (`comment_text.py`)
+
+Every applied edit gets one Word comment, built by `build_comment_text(record)` for all three comment paths (DocxEngine, DocxEngine table cells, legacy OOXML). It is the record's `**Note:**` (one or two plain sentences, 40 words at most, written to "Comment notes" in `csa-writing-style`) followed by `(Ref S9-E3; evidence E-082)`, with the E-ids taken from `Why`. Without a Note it falls back to the first sentence of `Why` when that is short and plain, else the record title. No initials line (Word stores author and initials as metadata) and no file-level open questions. Preview a change file: `python3 -m csa_docx.comment_text <ChangesCSA_*.md>` (exit 1 when any comment has a warning). Tests: `csa_docx/tests/test_comment_text.py` (runs without pytest or DocxEngine).

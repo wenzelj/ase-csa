@@ -157,7 +157,7 @@ For each edit ID in the `.md` file:
 6. Verify the applied body text contains no evidence ID, `E-nnn`, or other citation marker -- if the change file's `Why` cited evidence, that citation must have stayed out of the `Text` and out of the document; treat an `E-nnn` (or similar) sitting inside the applied prose or table cell as `INCORRECT`, not a minor note.
 7. Locate the associated Word comment where practical.
 8. Verify the comment includes the edit ID.
-9. Verify the comment reason aligns with the approved `Why` field.
+9. Verify the comment reason aligns with the approved `Why` field and reads as the record's `Note`: one or two plain sentences, 40 words at most, with no file names, host lists or stable IDs. A comment that is correct but fails this is a P3 note (comment readability), not `COMMENT INCORRECT`. `python3 -m csa_docx.comment_text <change file>` shows what each comment should say.
 10. If the `Why` field cited evidence E-id(s), verify the comment includes them (see current-state-assessment-document.md's Word Comments And Side Notes format) -- a comment missing an E-id the `Why` cited is `COMMENT INCORRECT`, not `COMMENT MISSING`, since a comment exists but the traceability is incomplete.
 11. Verify the comment author and initials match the required convention when specified.
 12. Record the edit status.
@@ -466,6 +466,15 @@ Verifying that the DOCX matches the approved change file is unchanged. This chec
    Evidence findings never turn a correctly applied edit into `INCORRECT`; they are reported alongside its edit status.
 
 Bounds: one lookup per fact-bearing edit in the batch, at most two Discovery Data searches per batch. Never edit or delete existing matrix rows; a contradiction is a new row citing the older E-id.
+
+## Editorial Edit Check
+
+An edit whose `Why` starts with `Editorial --` was proposed under the authoring agent's `EDIT_MODE=editorial`: a concision change that must not alter any fact. For each one in the batch, after confirming it was applied as approved:
+
+1. Compare the removed text with the applied text and list any fact (name, number, dependency, rating, limitation, uncertainty wording) that is gone from the edited location.
+2. For each such fact, check that the stable ID named in the `Why` as "still stated at" does state it in the current DOCX. Resolve that ID with `lookupStableId`; it may have moved if other edits were applied.
+3. A fact that is gone and not stated at the named location -> `P1 HIGH` `Editorial fact loss`. A fact that is weakened or strengthened in the new wording -> `P2 MEDIUM`.
+4. Optionally run `csa-writing-style/scripts/prose_lint.py --section <N>` on the DOCX and report the after-state metrics next to the change file's expected values. A lint shortfall is a `P3 LOW` note, never a fail on its own.
 
 ## Finding Severity
 

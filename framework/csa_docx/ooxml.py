@@ -6,6 +6,7 @@ import xml.etree.ElementTree as ET
 from difflib import SequenceMatcher
 from pathlib import Path
 
+from .comment_text import build_comment_text
 from .models import ChangeRecord, EditResult
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -622,7 +623,7 @@ class DocumentEditor:
         p = ET.SubElement(comment, qn(W_NS, "p"))
         r = ET.SubElement(p, qn(W_NS, "r"))
         t = ET.SubElement(r, qn(W_NS, "t"))
-        t.text = f"{record.edit_id}: {record.why or record.title}"
+        t.text = build_comment_text(record)
 
         children = list(paragraph)
         insert_at = 1 if children and children[0].tag == qn(W_NS, "pPr") else 0

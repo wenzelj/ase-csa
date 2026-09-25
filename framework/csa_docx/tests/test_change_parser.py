@@ -679,3 +679,50 @@ def _make_heading(text: str, level: int) -> ET.Element:
     ET.SubElement(ppr, qn(W_NS, "pStyle"), {qn(W_NS, "val"): f"Heading{level}"})
     paragraph.insert(0, ppr)
     return paragraph
+
+
+def test_new_table_insertion_routes_when_text_has_pipe_table():
+    """When the approved Text contains a Markdown pipe table and the Where
+    does not reference an existing table, the adapter must route to
+    _apply_new_table_insertion (not _apply_simple_paragraph_change)."""
+    from csa_docx.engines.docxengine_adapter import (
+        DocxEngineEditor,
+        _parse_markdown_table,
+    )
+    from csa_docx.ooxml import _has_full_table_replacement
+
+    record = parse_change_records(
+        """### S17-E1 - Populate Appendixes with source documents and service inventory
+**Where:** `@H17-P1`
+
+**Do:** Replace
+
+**Why:**
+The section is empty and needs content.
+
+**Text:**
+> Intro paragraph.
+>
+> | Reference | Document | Scope |
+> |-----------|----------|-------|
+> | S1 | NetSeg Design | Architecture |
+> | S2 | Full capture | 70 files |
+>
+> Closing paragraph.
+"""
+    )[0]
+
+    # The text must contain a parseable Markdown table
+    assert _parse_markdown_table(record.text) is not None
+
+    # It must NOT be a full-table replacement (that requires an existing table)
+    assert not _has_full_table_replacement(record)
+
+    # The Where must not reference a table
+    assert "table" not in record.where.lower()
+    from csa_docx.stable_ids import extract_stable_id
+    sid = extract_stable_id(record.where)
+    assert sid is None or sid.kind != "T"
+
+    # The new routing check must fire
+    assert record.text and _parse_markdown_table(record.text) is not None

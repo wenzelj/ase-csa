@@ -62,6 +62,8 @@ Use this source-of-truth order:
 
 The authoring question is not "how would I improve this document?" It is "what does the evidence specifically show is factually wrong, missing, or outdated in this section, that I can cite a source for?" Do not propose a change you cannot point to a specific evidence file (or the document's own control page) for. An opinion about clarity or tone is not a proposed edit; leave it out or, if it matters, raise it as a note rather than a numbered edit.
 
+That is the default, `EDIT_MODE=evidence`. The one exception is `EDIT_MODE=editorial` (see Editorial Mode below): a separate, explicitly requested pass that proposes concision edits against the measurable rules in `csa-writing-style`, never against taste.
+
 ## Required Inputs
 
 To author one section, identify or ask for:
@@ -80,6 +82,8 @@ SECTION=3
 Draft change proposals for the requested section using the agent defaults.
 ```
 
+`EDIT_MODE` defaults to `evidence`. Add `EDIT_MODE=editorial` only for a concision pass (see Editorial Mode).
+
 When a `SECTION=<number>` value is supplied, treat that value as the authored section everywhere in the run: identifying the section's current text, searching evidence, drafting edits, naming the output file, writing the run-state file, reporting to the user, and stopping. Do not require the section number to be repeated elsewhere in the prompt.
 
 ## First Actions
@@ -88,6 +92,7 @@ At the beginning of every authoring run:
 
 - load this agent definition completely;
 - load `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-writing-style/SKILL.md` and `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-section-writer/SKILL.md` -- these are the CSA Writer Agent's rules for how any drafted text must read and what it may claim; you will draft edit text to them in Review Method below, not to your own voice judgement;
+- read the section scope map `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-quality-review/references/section-scope.md` -- it says which section and subsection owns each topic, so every edit you draft lands in the right place (see Out-Of-Place Content below);
 - load and read the applicable document-editing/DOCX skill before reading the document;
 - call `prepareDocument()` (the `csa-mcp` tool, no `section` argument -- see Framework Tools below). If it returns `NOT_READY`, stop and report the `reasons`; do not author against a document that might be open in Word or already failing integrity checks. If it returns `"status": "ERROR"` with a `WORKSPACE_NOT_REGISTERED` message, stop immediately -- the cross-project safety guard has refused an unregistered workspace; do not retry with a guessed path. `id_manifest_summary` confirms the stable-ID manifest is current; check the response's `project.key`/`project.label` against the project you were asked to work on before trusting anything else in it -- a mismatch means stop and ask, even if no outright error was returned;
 - if `reviews/` does not yet exist next to the working DOCX, this is the first section ever authored for this document -- you will create that folder when you write your first change file;
@@ -95,6 +100,7 @@ At the beginning of every authoring run:
 - read `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-change-authoring-learnings.md` if it exists, for evidence-to-topic mappings and authoring lessons already established by earlier runs (this section's or another's) -- reuse and refine them rather than starting blind (see Evidence Mapping below);
 - list `WORK_DIR/analysis/` and `WORK_DIR/drafts/`, if either exists. These hold the evidence-led orchestrator workflow's output (technical-analyst structured analyses and writer-agent section drafts) for this project, if that workflow has been run -- a synthesized starting point this agent must check before drafting edits from scratch. See Evidence Mapping below for how to use them;
 - scan every existing `reviews/*.md` file for this section (there may be none, if this is truly the first section authored) and identify the highest `S<N>-E<n>` and the highest `S<N>-A<n>` already used in this section's files. Your first content edit is `S<N>-E` followed by the next integer after that; your first administrative edit is `S<N>-A` followed by the next integer after that. IDs are section-scoped and sequential within the section -- they never reset between sections, and never re-derived from a stale counter file (there isn't one; this scan is the source of truth, the same reason `manifest.py` never caches its own manifest);
+- search the other sections' `reviews/*.md` files for `Relocation:` open questions whose target is this section, and any `csa qa` section-fit findings for this section; treat each as a candidate edit (see Out-Of-Place Content);
 - identify the requested section's heading text and read its current content (from the stable-ID manifest's text previews, or a direct read of the paragraphs/table rows under that heading).
 
 ## Framework Tools (`csa-mcp`)
@@ -145,15 +151,77 @@ For each place in the section where evidence contradicts or fills a gap in the d
 2. Call `lookupStableId` to resolve its `@H...` anchor (see Framework Tools). Do not proceed to draft the edit until you have an unambiguous ID or have decided this item belongs under Open questions instead.
 3. Draft the replacement/insertion/deletion text following `csa-writing-style` and `csa-section-writer` (loaded in First Actions) -- the same table-row shape and sentence style as its neighbours, in plain, human-sounding wording, not your own idea of "the document's voice." These are the CSA Writer Agent's rules; you apply them here because implementation efficiency keeps authoring and drafting in one run, not because this agent owns the voice. Do not put an evidence ID in this text -- it is document prose, not a citation trail; the citation goes in `Why` (step 4) only.
 4. Write the `Why`, citing the specific evidence file(s) and host(s) that support the change -- not "evidence supports this" but the actual filename and what it showed -- plus the matrix E-id(s) (see Evidence Matrix First).
-5. Assign the next sequential `S<N>-E<n>` (or `S<N>-A<n>` for a purely administrative field such as a cover date or document-control metadata, not a technical content claim).
+5. Write the `Note`: the plain-language comment reviewers will see in Word (see "Comment notes" in `csa-writing-style`). One or two sentences, 40 words at most. Before finishing the file, preview every comment with `cd .agents/framework && python3 -m csa_docx.comment_text <change file>` and fix every warning it prints.
+6. Assign the next sequential `S<N>-E<n>` (or `S<N>-A<n>` for a purely administrative field such as a cover date or document-control metadata, not a technical content claim).
 
 Do not propose:
 
-- a wording or style change with no evidence behind it -- if nothing is factually wrong, leave it alone;
+- a wording or style change with no evidence behind it -- if nothing is factually wrong, leave it alone (in the default `EDIT_MODE=evidence`; `EDIT_MODE=editorial` proposes concision edits under the constraints in Editorial Mode);
 - a change to Document Owner, Reviewer(s), Approver(s), signatures, or distribution-list placeholders, unless the user's instruction explicitly authorises governance-field changes -- these are organisational decisions, not evidence-derivable facts;
 - a structural change (adding/removing a heading, reshaping a table) -- flag it under Open questions instead, the same way the apply-side framework `BLOCKS` an unsupported operation rather than reshaping something it wasn't asked to.
 
 Genuinely uncertain findings -- evidence that's ambiguous, contradicts itself across hosts, or isn't specific enough to justify an exact replacement -- go under `## Open questions`, not a guessed edit. A recorded open question with a clear description of what was found and why it wasn't resolved is more useful than a wrong edit.
+
+## Out-Of-Place Content
+
+Place every drafted edit where the section scope map says its topic and job belong: a finding goes in Findings, not Observed; a DNS fact goes in DNS, not Identity. When the section already holds content that belongs elsewhere (your own reading, or a `csa qa` section-fit finding for this section in `reviews/`):
+
+- **Wrong subsection, same section:** draft the move within this change file. Insert the text in the right subsection first (lower record number, per the bottom-up rule in Editorial Mode) and delete the original in a second record whose `Why` names where the text now sits.
+- **Wrong section:** you only write this section's change file, so record it under `## Open questions` as `Relocation: <stable ID> -> <target section and subsection>`, with the facts the text carries. The target section's authoring run inserts it (check `reviews/` of other sections for `Relocation` items aimed at yours during First Actions). Once the target holds the fact, the source section's next editorial run deletes it.
+- **A heading in the wrong place, or no owning section in this document:** `Structural suggestion` under Open questions. Change records cannot move headings.
+- **Out of scope** (a recommendation in a template CSA, general explanation): an editorial delete, provided the `Why` lists what was removed.
+
+## Editorial Mode (`EDIT_MODE=editorial`)
+
+Evidence mode deliberately never touches wording that is factually correct, so a section drafted in a fragmented, repetitive style stays that way through any number of evidence passes. Editorial mode is the fix: a concision pass over a section whose facts are settled, bringing the existing text into line with the "Say it once, say it first" rules in `csa-writing-style`. It runs only when the user asks for it.
+
+**When:** after the section's evidence edits have been approved, applied and reviewed. If `reviews/` holds unapplied evidence edits for the section, stop and report that; do not condense text that is about to be corrected. If no evidence pass has ever been run on the section, proceed only when the user asked for the editorial pass explicitly, and say in `## Review position` that the facts have not yet been checked against evidence.
+
+**Baseline:** before drafting, run the prose lint on the working DOCX for this section and record the result in the change file's `## Review position`:
+
+```text
+python3 /Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-writing-style/scripts/prose_lint.py "<working DOCX>" --section <N>
+```
+
+**Editorial edits may:**
+
+- replace a lead-in line and its bullet fragments with one or two sentences (a range Replace from the lead-in through the last bullet);
+- delete a paragraph or bullet whose facts are all stated elsewhere in the section;
+- replace a paragraph that announces a conclusion ("This confirms...", "As a result...") with the conclusion itself;
+- delete general technology explanation that says nothing specific about the assessed system;
+- remove evidence file names, capture dates and per-host lists from prose, but only where the same detail is already in a table or the evidence appendix;
+- move text to the subsection that owns its job, or delete text that belongs to another section once that section states it (see Out-Of-Place Content).
+
+**Editorial edits must not:**
+
+- add, change, strengthen or soften any fact, rating, risk, limitation or uncertainty label;
+- remove the only statement of a fact;
+- touch headings, table structure, controlled fields, or the Word comments of earlier edits;
+- carry an evidence correction. A factual error found during the pass becomes a separate evidence edit with its own evidence `Why`, or an open question.
+
+**Record format:** normal `S<N>-E<n>` numbering and the normal record layout (the framework parser only accepts E and A records). The `Why` starts with `Editorial --`, names the rule applied, lists every fact the removed text carried, and gives the stable ID (resolved with `lookupStableId`) where each fact is still stated after the change. For example:
+
+```markdown
+**Why:**
+Editorial -- each fact once; sentences not fragments. The removed bullets restated the two enterprise time sources and the absence of a local fallback. Both remain stated in @H10-P4 (Findings paragraph). No fact is removed.
+```
+
+Editorial edits need no E-id unless the replacement text states a fact in new words; then cite the E-id that already supports it. Their `Note` says what was tightened and that no facts changed, for example "Wording tightened: five bullets joined into one sentence. No facts changed." Keep each edit small enough for a human to accept or reject on its own.
+
+**Lessons from the first pilot (UTC DTC Security Services, 23 Sep 2026):**
+
+- **Number edits bottom-up.** Stable IDs are positional within a heading, and a range Replace collapses several paragraphs into one. The apply agent works in ID order, so give the edit lowest in the section `S<N>-E1` and work upwards. Every later anchor then still points at unchanged text when its turn comes. Say so in one line above the first edit.
+- **Range Replace format that parses:** `**Where:** \`@H<start-id>\`` and `**Do:** Replace this paragraph and all paragraphs through \`@H<end-id>\``. Check every record with `csa_docx.change_parser.parse_change_records` plus `ooxml._extract_range_spec` before finishing.
+- **Replace keeps the first paragraph's style.** A run of List Paragraph bullets collapses to one bullet, not a body paragraph, so the bullet share cannot fall through change records. Make each bullet a complete statement, and raise restyling prose as body paragraphs as a `Structural suggestion`.
+- **Raw log or command-output lines are evidence, not findings.** Replace them with the statement they support plus a short source reference (file name and date). List what was dropped (timestamps, process IDs, paths) in the `Why` with an "Approver check" line, so the human can reject the edit if they want the raw lines kept.
+- **Interpretation needs an approver check.** When joining fragments means deciding what an ambiguous sentence refers to ("This is explicitly denied by design"), state the reading in the `Why` and ask the approver to reject the edit if it is wrong. When the meaning cannot be recovered at all (for example a host list with no lead-in), leave it and raise an open question.
+- **Do not remove file-name lists that the appendix lacks.** Check the Evidence Appendix first. Missing entries become an open question, not a deletion.
+- **Section numbers:** the framework's `Section<N>` counts every Heading 1, including empty or hidden ones, so it can differ from Word's visible numbering. Resolve the section from the manifest (`@H<N+1>` is Section N) and state both numbers in the change file header. Run the lint with `--heading "<title>"` rather than `--section`.
+- **Expected-after metrics:** simulate the edits on the section text (apply each record's Text over its ID range) and lint the result, rather than estimating.
+
+Put what change records cannot do (merging subsections, removing duplicate headings, consolidating summary sections, fixing heading numbering) under `## Open questions`, each labelled `Structural suggestion`.
+
+In `## Expected result if approved`, give the section's prose word count and lint warnings before, and the expected values after, all editorial edits are applied.
 
 ## Bounded Authoring Iteration Mode
 
@@ -256,7 +324,10 @@ The main issues identified were:
 > <the proposed replacement/insertion text, blockquoted; multiple paragraphs each on their own `>` line -- plain document prose, exactly as it should read in the DOCX. Never include an evidence ID, `E-nnn`, or any other citation marker inside this text. The document body is not a citation trail; the reader should not see "[E-042]" sitting in a paragraph. Evidence IDs belong only in `Why` below (and from there, in the Word comment the implementation agent attaches to this edit -- see current-state-assessment-document.md's Word Comments section).>
 
 **Why:**
-<cite the specific evidence file(s) and host(s), and what they showed, plus the matrix E-id(s). This is what the implementation agent quotes into the Word comment -- it is the one place the E-id(s) for this edit are recorded.>
+<EDIT_MODE=editorial only: start with `Editorial --` and follow the Editorial Mode record format instead. Otherwise: cite the specific evidence file(s) and host(s), and what they showed, plus the matrix E-id(s). This is the audit trail for the approver and the review agent, and the one place the E-id(s) for this edit are recorded. It is not shown in the document.>
+
+**Note:**
+<the Word comment reviewers will read in the document: one or two plain sentences, 40 words at most, saying what changed and why. Written to "Comment notes" in `csa-writing-style`: no file names, host lists, stable IDs, status tags, change IDs or E-ids (the framework appends the change ID and the E-ids from `Why` in brackets itself).>
 
 ---
 

@@ -382,3 +382,25 @@ Validation:
 - S2, S3, S14, S15, S16: change files written as authored-and-clean (no edits), each with "items intentionally left unchanged" citing the supporting E-ids and a per-host-scope open question (E-078/E-085) where relevant. Run-states written (csa-change-authoring-section-2/3/14/15/16.md), all DRAFT_COMPLETE.
 - S1: re-review found the already-applied S1-E1/S1-E2 over-corrected (16/17) for a 16-section document. Live H1 count = 16 confirmed (no hidden/empty H1, no outlineLvl=0). S1-E3 (16→15) and S1-E4 (17→16) appended under "## Proposed changes"; "Expected result if approved" rewritten to cover S1-E1..E4 and note the partial reversal of the applied S1-E1/S1-E2. Run-state written (csa-change-authoring-section-1.md, DRAFT_COMPLETE). None applied (drafting only).
 - All six sections: DRAFT_COMPLETE. No DOCX mutation, no apply, no Word comments (authoring pass only).
+
+## 2026-09-23 - Editorial mode pilot (UTC DTC, Security Services, framework Section 10)
+
+- Scope: generic (applies to any CSA editorial pass).
+- Trigger: first `EDIT_MODE=editorial` run.
+- Lessons, now folded into csa-change-authoring.md (Editorial Mode, "Lessons from the first pilot"): number edits bottom-up; the @H range Replace format that parses; Replace keeps List Paragraph style, so bullet share cannot fall; raw log lines become statements plus a source reference, with dropped detail listed for the approver; interpretations get an approver-check line; do not remove file lists the appendix lacks; framework Section<N> counts empty Heading 1s, so use `prose_lint.py --heading`; simulate edits to get after-metrics.
+- Environment (Cowork device bridge): csa_docx needs the `datetime.UTC` shim on Python 3.10, and PROJECTS.yaml `/Users/wenzel/Work/ASE/...` roots must be mapped in-process to `~/mnt/...` for the workspace guard. The registry file itself was not changed.
+- Validation: 13 records parsed by change_parser (11 ranges, 2 singles); simulated lint 1,043 -> 902 prose words, lead-ins 8 -> 3, nested bullets 40 -> 25.
+
+## 2026-09-24 - UTC DTC Section 10 security evidence mapping
+
+- Topic: endpoint and host security controls.
+- Useful evidence patterns: `32_services_inventory.csv` for Nessus, Splunk and WLAN AutoConfig coverage; `59_gpresult_computer.txt` for applied and filtered AppLocker Group Policy Objects.
+- Caveat: distinguish the fully inventoried six-host `UTC_discovery_*` sample from the wider fleet. State counts and captured-host exceptions, then say wider fleet coverage is not confirmed.
+- Existing analysis: `csa-work/analysis/security-posture-analysis.md` was useful as a topic map, but each drafted claim was checked against the cited evidence-matrix row before use. No matching section draft existed.
+
+## 2026-09-24 - UTC DTC Section 10 complete security-section mapping
+
+- Topic: completing a mixed host-security and network-security section from an existing analysis.
+- Useful evidence patterns: `20_listening_ports.txt` plus `32_services_inventory.csv` for service exposure; `67_installed_software.csv` and Edge Update logs for browser currency and policy; `68_certificates_localmachine_my.csv` for certificate expiry and subject names; `31_firewall_profiles.txt` plus `33_firewall_rules.csv` for host-firewall posture; Vantage/Nozomi exports for public egress; `65_local_security_policy_export.txt` for the sampled CIS comparison.
+- Caveat: keep sample boundaries explicit. A service observed on six full captures, a lifecycle condition observed on twelve lightweight captures, and network-level traffic across eight exports are different evidence populations and must not be collapsed into one fleet-wide claim.
+- Existing analysis: `security-posture-analysis.md` efficiently identified gaps, but the completed authoring pass narrowed several statements to the host or capture where the matrix directly supported them.

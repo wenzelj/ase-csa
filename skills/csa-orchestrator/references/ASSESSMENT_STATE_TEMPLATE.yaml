@@ -30,4 +30,5 @@ open_questions: []
 unsupported_claims: []
 contradictions: []
 decisions: []
+prose_lint: {}  # per section: {date, prose_words, warnings} from csa-writing-style/scripts/prose_lint.py
 next_action: ""

@@ -19,6 +19,8 @@ The orchestrator names the analysis skill for the task (`ANALYSIS_SKILL=<name>`)
 | Availability, backup, recovery | `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/resilience-analysis/SKILL.md` |
 | Operations and support | `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/operations-support-analysis/SKILL.md` |
 | Security posture | `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/security-posture-analysis/SKILL.md` |
+| DNS / name resolution (legacy Section 5, template 3.5) | `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/dns-name-resolution-analysis/SKILL.md` |
+| Migration discovery -- estate coverage, installed apps, failover, patching, GPO, file transfer (legacy Section 6, template 4) | `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/migration-discovery-analysis/SKILL.md` |
 
 Never load the whole list. If no `ANALYSIS_SKILL` is given, infer the single best match from the task; if it is genuinely ambiguous, return to the orchestrator for a routing decision. Each skill hands off adjacent topics to its sibling skills; note the hand-off in your output instead of loading the sibling.
 

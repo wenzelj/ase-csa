@@ -1,0 +1,34 @@
+# Settings for the `csa` command. Per-machine overrides: environment variables
+# CSA_CLI, CSA_PYTHON, CSA_PROJECT.
+
+# Default agent CLI for `csa <verb>`: codex | claude | hermes. Override per call with --cli.
+default_cli: codex
+
+# Interpreter for the csa_docx framework and skill scripts (needs Python >= 3.11).
+# First one that exists wins.
+python: /opt/homebrew/bin/python3.14, python3.14, python3.13, python3.12, python3.11, python3
+
+# Word comment author for applied edits.
+comment_author: Wenzel Joubert
+comment_initials: WJ
+
+# How to launch each CLI. {prompt} is replaced by the generated prompt (passed as
+# one argument, never through a shell). interactive = you stay in the session;
+# headless = runs to completion and exits (used by --headless and `csa pipeline`).
+codex_interactive: codex {prompt}
+codex_headless: codex exec {prompt}
+claude_interactive: claude {prompt}
+claude_headless: claude -p {prompt}
+# Hermes has no "start interactive with a prompt" flag; both run the prompt as one query.
+hermes_interactive: hermes chat -q {prompt}
+hermes_headless: hermes chat -q {prompt}
+
+# `csa fleet`: run independent tasks side by side. One worker per slot; each task starts a
+# fresh headless CLI in a free slot and the process exits when the task is done. For codex,
+# each slot name is a Codex profile ({profile}); {last} is the file that gets the final message.
+# DOCX steps never overlap (see `locks:` in registry.yaml). Override: --slots, --cli, CSA_FLEET_SLOTS.
+fleet_cli: codex
+fleet_slots: local-qwen, evo-x3-qwen
+codex_fleet: codex exec --profile {profile} --skip-git-repo-check --output-last-message {last} {prompt}
+claude_fleet: claude -p {prompt}
+hermes_fleet: hermes chat -q {prompt}

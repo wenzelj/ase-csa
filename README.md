@@ -9,6 +9,37 @@ Current CSA projects:
 - IAMPS: `/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS`
 - UTC DTC with KVM: `/Users/wenzel/Work/ASE/CurrentStateAssessments/UTC DTC/07 UTC DTC with KVM` (working document stays on its own pre-existing template -- see `known_constraints` in its project context file; do not run it through `csa-document-template` / `new_csa.py`)
 
+## The `csa` command (start here)
+
+`bin/csa` is one entry point for everything below. It keeps the long prompt blocks, paths and project selection out of your hands; the manual prompts further down still work. Plan and design: `csa-cli-plan.md`.
+
+One-time setup on the Mac:
+
+```bash
+ln -s "/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/bin/csa" ~/.local/bin/csa   # or any folder on PATH
+csa doctor              # checks Python, framework, registry, skills, Word locks, CLIs
+csa use iamps           # active project (stored in .agents/.state/, git-ignored)
+csa mcp                 # prints the csa-mcp config for Codex and the `claude mcp add` line
+csa sync --codex-prompts  # wrapper skills, /csa-* slash commands, AGENTS.md (re-run after editing registry.yaml)
+```
+
+Daily use:
+
+```text
+csa status [N] | csa next                    where each section is, and what to do next
+csa author 6 [EDIT_MODE=editorial]           step 1 (agent)
+csa approve 6                                human approval gate - flips the change file's Status line
+csa apply 6 --until-done                     step 2, framework-first, batch after batch; stops on BLOCKED
+csa apply 6 --agent                          step 2 through the document agent (for BLOCKED edits)
+csa review 6 | csa cleanup 6                 steps 3 and 4 (agents)
+csa pipeline 6                               walks one section through all steps, stopping at every gate
+csa fleet "author 6" "author 7"              independent tasks in parallel, one worker per Codex profile
+csa ask Network | evidence | gaps | analyse <skill> | write | summary | qa      analysis workflow
+csa lookup "<text>" | csa ev lookup "<q>" | csa lint 6 | csa check --final      no-LLM helpers
+```
+
+Agent options: `--cli codex|claude|hermes` (default in `cli.yaml`), `--headless`, `--print` (show the prompt only), `-p <project>`, and `KEY=VALUE` overrides. Agents, their verbs, inputs and defaults are defined once in `registry.yaml`; edit that, then `csa sync`. `csa apply` refuses a change file that has not been approved with `csa approve` (existing change files still say "Proposed", so approve each before its next apply, or pass `--allow-unapproved`).
+
 ## Agent Definitions
 
 Three agents form the pipeline, run in this order:
@@ -38,6 +69,8 @@ RUN_SCOPE=next-authoring-batch
 
 Draft change proposals for the requested section using the agent defaults.
 ```
+
+To condense a section whose facts are already settled (after its evidence edits are applied and reviewed), run the same agent with `EDIT_MODE=editorial` added. It proposes concision edits only (no fact added, changed or dropped), each with a `Why` starting `Editorial --` that says where every removed fact is still stated. See `csa-change-authoring.md`, Editorial Mode, and the "Say it once, say it first" rules in `skills/csa-writing-style/SKILL.md`. To measure a section first: `python3 skills/csa-writing-style/scripts/prose_lint.py "<working DOCX>" --section <N>`.
 
 Then a human reads the drafted `ChangesCSA_*.md` and decides whether to approve it -- nothing applies it automatically; the file's own `**Status:** Proposed changes for approval` line says so.
 
@@ -90,7 +123,7 @@ Routing rules:
 - No agent loads all skills. Specialist skills are loaded one task at a time.
 - `csa-section-writer` writes from approved evidence and does not search sources independently.
 - `csa-writing-style` is the single style guide for any prose landing in a CSA document (human-sounding, not AI-sounding). The CSA Writer Agent owns it. The C-S-A-Change-Authoring Agent (the separate change-file pipeline, see below) also loads and follows it when drafting an edit's replacement/insertion text -- it borrows the Writer Agent's voice rather than defining its own, so document prose reads consistently regardless of which pipeline produced a given sentence.
-- `csa-quality-review` reports findings and does not silently rewrite approved content for style.
+- `csa-quality-review` reports findings and does not silently rewrite approved content for style. Its check 9 (Section fit) tests whether each paragraph sits in the right section and subsection, against `skills/csa-quality-review/references/section-scope.md`; `csa-section-writer` and `csa-change-authoring` read the same map so new text lands in the right place. Deterministic starting point: `skills/csa-quality-review/scripts/section_fit_scan.py <docx> --heading "<title>"`.
 - `technical-explainer` output is a labelled `Technical explanation`, kept separate from project evidence. General technical knowledge is never presented as verified IAMPS or AZNOPS evidence.
 - `executive-summary` is used only after the detailed assessment is stable and the reviewer verdict is `READY` or `READY WITH DECLARED GAPS`.
 - Skills and agent definitions stay generic. Project facts live in each project's own `csa-context/<PROJECT>_PROJECT_CONTEXT.yaml` and in that project's assessment evidence -- never in the shared agent/skill files.
