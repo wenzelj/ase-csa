@@ -3,6 +3,8 @@ name: migration-discovery-analysis
 description: Establish the migration-relevant current state of an Operational Technology application's system environment -- which hosts it runs on and which of them were examined, installed applications and components, failover and replication behaviour, patch and update tooling, Group Policy, and file transfer / local storage. Use for the Migration Discovery domain of a CSA (legacy Section 6, template section 4).
 ---
 
+> Examples in this skill come from the UTC DTC assessment (role names such as TCSI, SIGMAP and Left/Right pairs). The rules are general: use the assessed system's own role names and evidence, never these examples as facts.
+
 # Migration Discovery Analysis
 
 Terminology: name every component, service, dependency and interface with `australian-it-ot-terminology` (`.agents/skills/australian-it-ot-terminology/SKILL.md`), classify it as OT, supporting IT, shared, platform or external, and write in Australian English.

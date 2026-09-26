@@ -3,6 +3,8 @@ name: dns-name-resolution-analysis
 description: Establish and assess the current name-resolution state of an Operational Technology application -- configured resolvers, DNS type (AD-integrated vs standalone), zone and record behaviour, the services that depend on name resolution, and the isolation consequence. Use for the DNS / name-resolution domain of a CSA (legacy Section 5, template domain 3.5).
 ---
 
+> Examples in this skill come from the UTC DTC assessment (role names such as TCSI, SIGMAP and Left/Right pairs). The rules are general: use the assessed system's own role names and evidence, never these examples as facts.
+
 # DNS / Name-Resolution Analysis
 
 Terminology: name every component, service, dependency and interface with `australian-it-ot-terminology` (`.agents/skills/australian-it-ot-terminology/SKILL.md`), classify it as OT, supporting IT, shared, platform or external, and write in Australian English.

@@ -101,7 +101,7 @@ Every applied change carries a Word comment. The document owner, reviewers and a
 
 | Instead of | Write |
 | --- | --- |
-| S9-E3: The Findings sentence "No evidence of local NTP services…" is contradicted by E-082 (VERIFIED): 32_services_inventory.txt shows W32Time State=Running on ROKPRDAMP101/102 and 20_listening_ports.txt shows UDP 0.0.0.0:123 on all 8 captures… Initials: WJ | Corrected: the servers do run the Windows Time service, but they still take their time from the IT domain, so there is no independent local time source. |
+| S9-E3: The Findings sentence "No evidence of local NTP services…" is contradicted by E-082 (VERIFIED): 32_services_inventory.txt shows W32Time State=Running on APPSRV01/02 and 20_listening_ports.txt shows UDP 0.0.0.0:123 on all 8 captures… Initials: WJ | Corrected: the servers do run the Windows Time service, but they still take their time from the IT domain, so there is no independent local time source. |
 | Stray duplicated H2 "Security Controls" block contains refuted claims (para 2148: …) | Removed an older copy of the Security Controls section that had been left inside Time Synchronization. It said no security tools were found, which the evidence disproves. |
 | Editorial -- each fact once; sentences not fragments. The removed bullets restated… | Wording tightened: five bullets joined into one sentence. No facts changed. |
 
