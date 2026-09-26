@@ -38,6 +38,7 @@ If a section genuinely has no supportable gap, still write the file: an authored
 After completing one section:
 
 - write the change proposal file;
+- run `csa check-change <N>` and fix every ERROR it reports (read each WARN and fix it where the rules say so);
 - update the run-state file for that section;
 - record any reusable evidence-mapping or authoring lesson in the skill-notes file;
 - report what you found (or that nothing was found) to the user;
@@ -420,6 +421,7 @@ READ AGENT
 -> FOR EACH SUPPORTED GAP: lookupStableId -> DRAFT EDIT
 -> RECORD UNSUPPORTED/AMBIGUOUS ITEMS AS OPEN QUESTIONS
 -> WRITE CHANGE PROPOSAL FILE
+-> RUN csa check-change <N>, FIX EVERY ERROR
 -> UPDATE RUN-STATE
 -> UPDATE LEARNINGS FILE
 -> REPORT TO USER
