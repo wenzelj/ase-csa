@@ -493,6 +493,22 @@ def cmd_refresh(a):
     return _emit(fw_call("refresh_manifest", workspace=_ws(p)), a)
 
 
+def run_check_change(p: dict, cf: Path, a) -> int:
+    argv = [framework_python(), "-m", "csa_docx.check_change", str(cf), "--workspace", str(local_path(p["project_root"]))]
+    for flag, name in (("--no-anchors", "no_anchors"), ("--no-lint", "no_lint"), ("--json", "json")):
+        if getattr(a, name, False):
+            argv.append(flag)
+    return subprocess.call(argv, cwd=str(FRAMEWORK))
+
+
+def cmd_check_change(a):
+    p = project(a.project); banner(p)
+    st = section_state(p, a.section)
+    if not st["change_file"]:
+        die(f"section {a.section} has no change file.")
+    return run_check_change(p, Path(st["change_file"]), a)
+
+
 def cmd_approve(a):
     p = project(a.project); banner(p)
     st = section_state(p, a.section)
@@ -508,6 +524,8 @@ def cmd_approve(a):
     else:
         if not st["edits"]:
             die("the change file has no edits to approve (reviewed-and-clean).")
+        if run_check_change(p, cf, argparse.Namespace()) != 0 and not a.force:
+            die("csa check-change found errors (above). Fix them, or approve anyway with --force.")
         if st["approved"] and not a.yes:
             return print(f"Already approved: {st['status_line']}")
         who = a.by or settings().get("comment_author", os.environ.get("USER", "unknown"))
@@ -1218,7 +1236,7 @@ PASSTHROUGH = {
 HELP = """
 Project     csa projects | csa use <key> | csa agents | csa doctor
 State       csa status [N] [--json] | csa next
-Pipeline    csa author N | csa approve N | csa apply N [--until-done] | csa review N | csa cleanup N
+Pipeline    csa author N | csa check-change N | csa approve N | csa apply N [--until-done] | csa review N | csa cleanup N
             csa pipeline N            (walks one section, stops at every human gate)
 Parallel    csa fleet "author 6" "evidence 7" [-f tasks.txt] [--dry-run] [--print] [--timeout MIN]
             (one headless worker per slot in cli.yaml; DOCX steps never overlap)
@@ -1263,6 +1281,10 @@ def main(argv=None) -> int:
     s = sp("refresh", cmd_refresh); s.add_argument("--json", action="store_true")
     s = sp("approve", cmd_approve); s.add_argument("section"); s.add_argument("--by")
     s.add_argument("--yes", "-y", action="store_true"); s.add_argument("--revoke", action="store_true")
+    s.add_argument("--force", action="store_true", help="approve even if csa check-change reports errors")
+    s = sp("check-change", cmd_check_change, help="check a section's change file before approval")
+    s.add_argument("section"); s.add_argument("--no-anchors", action="store_true")
+    s.add_argument("--no-lint", action="store_true"); s.add_argument("--json", action="store_true")
     s = sp("apply", cmd_apply, help="framework-first apply; --agent for the LLM document agent")
     s.add_argument("section"); s.add_argument("--limit", type=int); s.add_argument("--edit", help="apply only this edit ID")
     s.add_argument("--until-done", action="store_true", help="keep running batches until complete, blocked or no progress")
