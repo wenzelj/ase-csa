@@ -84,17 +84,6 @@ def edit_record_hashes(text: str) -> dict[str, str]:
     return out
 
 
-def section_hash(text: str) -> str:
-    """SHA-256 of a section file's text with the front-matter 'status:' line removed,
-    so changing only the status never changes the hash (S56)."""
-    kept = [l for l in text.splitlines() if not l.strip().lower().startswith('status:')]
-    return hashlib.sha256("\n".join(kept).encode("utf-8")).hexdigest()
-
-
-def approval_file(cf: Path) -> Path:
-    return cf.with_name(cf.stem + ".approval.json")
-
-
 def approval_problems(cf: Path) -> list[str]:
     """Why an approved change file no longer matches what was approved ([] = fine)."""
     af = approval_file(cf)
@@ -584,76 +573,69 @@ def cmd_check_section(a):
     return rc
 
 
-def cmd_approve_section(a):
-    p = project(a.project); banner(p)
-    f = Path(a.file)
-    if not f.is_absolute():
-        f = local_path(p["work_dir"]) / "sections" / a.file
-    if not f.is_file():
-        die(f"no section file {a.file!r} under <work_dir>/sections/ (or pass a full path).")
-    text = f.read_text(encoding="utf-8")
-    if run_check_section(p, f, argparse.Namespace(no_lint=False, json=False)) != 0 and not a.force:
-        die("csa check-section found errors (above). Fix them, or approve anyway with --force.")
+def section_front_matter(text: str) -> dict[str, str]:
+    """Flat key: value lines between the first two '---' lines of a section file ({} if none)."""
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return {}
+    out: dict[str, str] = {}
+    for line in lines[1:]:
+        if line.strip() == "---":
+            return out
+        if ":" in line:
+            k, v = line.split(":", 1)
+            out[k.strip().lower()] = v.strip()
+    return {}
+
+
+def section_review(p: dict, f: Path) -> tuple[str | None, str | None]:
+    """(verdict, problem) for a section file's review in <work_dir>/reviews/section-<stem>-review.md.
+    There is no human approval of section files: the human gate is the tracked-change review in Word."""
     rev = local_path(p["work_dir"]) / "reviews" / f"section-{f.stem}-review.md"
-    ready = False
-    if rev.is_file():
-        for line in rev.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                ready = ("NOT READY" not in line.upper()) and ("READY" in line.upper())
-                break
-    if not ready and not a.force:
-        die(f"no READY review for {f.name} (expected <work_dir>/reviews/section-{f.stem}-review.md). Review it, or approve anyway with --force.")
-    who = a.by or settings().get("comment_author", os.environ.get("USER", "unknown"))
-    if not a.yes:
-        print(f"Section file: {f}")
-        if not sys.stdin.isatty() or input("Approve this section file for the build? [y/N] ").strip().lower() != "y":
-            die("not approved.")
-    lines_t = text.splitlines(keepends=True)
-    if not any(l.strip().startswith("status:") for l in lines_t):
-        die(f"no 'status:' line in {f.name}; add one to the front matter before approving.")
-    lines_t = [l if not l.strip().startswith("status:") else "status: approved\n" for l in lines_t]
-    f.write_text("".join(lines_t), encoding="utf-8")
-    af = f.with_name(f.stem + ".approval.json")
-    af.write_text(json.dumps({"approved_at": datetime.now().isoformat(timespec="seconds"), "by": who,
-                              "hash": section_hash(text)}, indent=2) + "\n", encoding="utf-8")
-    print(f"approved: {f.name} by {who}")
-    metric(p, "approve_section", f.name, by=who, hash=section_hash(text))
-    return 0
+    if not rev.is_file():
+        return None, "no review"
+    first = next((l.strip() for l in rev.read_text(encoding="utf-8").splitlines() if l.strip()), "")
+    up = first.upper()
+    verdict = ("NOT READY" if "NOT READY" in up else "READY WITH DECLARED GAPS" if "DECLARED GAPS" in up
+               else "READY" if "READY" in up else None)
+    if verdict is None:
+        return None, "review has no Verdict line"
+    if rev.stat().st_mtime < f.stat().st_mtime:
+        return verdict, "review older than file"
+    if verdict == "NOT READY":
+        return verdict, "not ready"
+    return verdict, None
+
+
+def section_rows(p: dict) -> list[dict]:
+    sd = local_path(p["work_dir"]) / "sections"
+    rows = []
+    for f in sorted(sd.glob("*.md")) if sd.is_dir() else []:
+        fm = section_front_matter(f.read_text(encoding="utf-8"))
+        status = fm.get("status") or ("draft" if fm else None)
+        verdict, problem = section_review(p, f)
+        if not fm:
+            problem = "no front matter"
+        elif status == "built":
+            problem = None
+        rows.append({"file": f.name, "block": fm.get("block"), "heading": fm.get("heading"),
+                     "status": status, "review": verdict, "problem": problem})
+    return rows
 
 
 def cmd_sections(a):
     p = project(a.project); banner(p)
-    sd = local_path(p["work_dir"]) / "sections"
-    rows = []
-    if sd.is_dir():
-        for f in sorted(sd.glob("*.md")):
-            text = f.read_text(encoding="utf-8")
-            block = heading = status = None
-            for l in text.splitlines():
-                s = l.strip()
-                if s.lower().startswith("block:"):
-                    block = s.split(":", 1)[1].strip()
-                elif s.lower().startswith("heading:"):
-                    heading = s.split(":", 1)[1].strip()
-                elif s.lower().startswith("status:"):
-                    status = s.split(":", 1)[1].strip()
-            problem = None
-            af = f.with_name(f.stem + ".approval.json")
-            if status == "approved":
-                if not af.is_file():
-                    problem = "no approval record"
-                else:
-                    rec = json.loads(af.read_text(encoding="utf-8"))
-                    if rec.get("hash") and rec["hash"] != section_hash(text):
-                        problem = "changed since approval"
-            rows.append({"file": f.name, "block": block, "heading": heading, "status": status, "problem": problem})
+    rows = section_rows(p)
     if a.json:
         print(json.dumps(rows, indent=2))
-    else:
-        for r in rows:
-            print(f"{r['file']:<42} block={r['block'] or '-':<18} heading={r['heading'] or '-':<32} status={r['status'] or '-':<10} {r['problem'] or ''}")
-        if not rows:
-            print(f"no section files under {sd}")
+        return 0
+    if not rows:
+        print(f"no section files under {local_path(p['work_dir']) / 'sections'}")
+        return 0
+    for r in rows:
+        print(f"{r['file']:<42} {r['status'] or '-':<9} review={r['review'] or '-':<26} {r['problem'] or 'ready to build'}")
+    ready = sum(1 for r in rows if not r["problem"] and r["status"] != "built")
+    print(f"\n{ready} of {len(rows)} ready to build. There is no approve step: you review the tracked changes in Word after `csa build`.")
     return 0
 
 
@@ -1409,7 +1391,7 @@ Project     csa projects | csa use <key> | csa agents | csa doctor
 State       csa status [N] [--json] | csa next
 Pipeline    csa author N | csa check-change N | csa approve N | csa apply N [--until-done] | csa review N | csa cleanup N
             csa pipeline N            (walks one section, stops at every human gate)
-Build lane  csa check-section <file>   (version-1 build lane; see `csa build`)
+Build lane  csa sections | csa check-section <file>   (version 1 of a template CSA; spec: docs/build-lane-spec.md)
 Parallel    csa fleet "author 6" "evidence 7" [-f tasks.txt] [--dry-run] [--print] [--timeout MIN]
             (one headless worker per slot in cli.yaml; DOCX steps never overlap)
 Analysis    csa ask <section> | evidence | gaps | analyse <skill> [SECTION=..] | write | summary | qa
@@ -1462,10 +1444,7 @@ def main(argv=None) -> int:
     s.add_argument("--no-lint", action="store_true"); s.add_argument("--json", action="store_true")
     s = sp("check-section", cmd_check_section, help="check a build-lane section file before approval")
     s.add_argument("file"); s.add_argument("--no-lint", action="store_true"); s.add_argument("--json", action="store_true")
-    s = sp("approve-section", cmd_approve_section, help="approve a section file for the build lane")
-    s.add_argument("file"); s.add_argument("--by"); s.add_argument("--yes", "-y", action="store_true")
-    s.add_argument("--force", action="store_true", help="approve even if check-section reports errors or no READY review")
-    s = sp("sections", cmd_sections, help="list section files, their block, heading, status and any approval problem")
+    s = sp("sections", cmd_sections, help="list build-lane section files, their review verdict, and whether they are ready to build")
     s.add_argument("--json", action="store_true")
     s = sp("apply", cmd_apply, help="framework-first apply; --agent for the LLM document agent")
     s.add_argument("section"); s.add_argument("--limit", type=int); s.add_argument("--edit", help="apply only this edit ID")
