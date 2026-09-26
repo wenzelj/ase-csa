@@ -17,6 +17,7 @@ skill scripts run in a separate interpreter chosen from cli.yaml (needs >= 3.11)
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -61,6 +62,27 @@ SCRIPTS = {
 EDIT_HEADING_RE = re.compile(r"^#{2,4}\s+(S\d+-[EA]\d+|E-\d+)\b", re.M)
 STATUS_LINE_RE = re.compile(r"^\*\*Status:\*\*\s*(.*)$", re.M)
 CHANGE_FILE_RE = re.compile(r"^ChangesCSA_.*_Section(?P<section>\d+)(?:_E\d+_E\d+(?:_.*)?)?\.md$")
+
+RECORD_HEADING_RE = re.compile(r"^#{2,4}\s+(S\d+-[EA]\d+|E-\d+)\b.*$", re.M)
+NEXT_HEADING_RE = re.compile(r"^#{1,3}\s", re.M)
+
+
+def edit_record_hashes(text: str) -> dict[str, str]:
+    """SHA-256 of each edit record: its heading line up to the next heading of level 1-3.
+    The Status line and appended reports sit outside every record, so they never change a hash."""
+    out: dict[str, str] = {}
+    for m in RECORD_HEADING_RE.finditer(text):
+        nxt = NEXT_HEADING_RE.search(text, m.end())
+        body = text[m.start(): nxt.start() if nxt else len(text)]
+        lines = [line.rstrip() for line in body.strip().splitlines()]
+        while lines and lines[-1] in ("", "---"):
+            lines.pop()
+        out[m[1]] = hashlib.sha256("\n".join(lines).encode("utf-8")).hexdigest()
+    return out
+
+
+def approval_file(cf: Path) -> Path:
+    return cf.with_name(cf.stem + ".approval.json")
 
 C = {"b": "\033[1m", "d": "\033[2m", "r": "\033[31m", "g": "\033[32m", "y": "\033[33m", "c": "\033[36m", "0": "\033[0m"}
 if not sys.stdout.isatty() or os.environ.get("NO_COLOR"):
@@ -467,6 +489,14 @@ def cmd_approve(a):
                 die("not approved.")
         new = f"**Status:** Approved for implementation {datetime.now():%Y-%m-%d %H:%M} by {who}. Edits: {edits}."
     cf.write_text(text[:m.start()] + new + text[m.end():], encoding="utf-8")
+    af = approval_file(cf)
+    if a.revoke:
+        if af.exists():
+            af.unlink()
+    else:
+        af.write_text(json.dumps({"approved_at": datetime.now().isoformat(timespec="seconds"), "by": who,
+                                  "hashes": edit_record_hashes(cf.read_text(encoding="utf-8"))}, indent=2) + "\n",
+                      encoding="utf-8")
     print(new)
 
 
