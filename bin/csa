@@ -557,6 +557,25 @@ def cmd_check_change(a):
     metric(p, "check_change", a.section, exit=rc)
     return rc
 
+def run_check_section(p: dict, cf: Path, a) -> int:
+    argv = [framework_python(), "-m", "csa_docx.check_section", str(cf), "--workspace", str(local_path(p["project_root"]))]
+    for flag, name in (("--no-lint", "no_lint"), ("--json", "json")):
+        if getattr(a, name, False):
+            argv.append(flag)
+    return subprocess.call(argv, cwd=str(FRAMEWORK))
+
+
+def cmd_check_section(a):
+    p = project(a.project); banner(p)
+    cf = Path(a.file)
+    if not cf.is_absolute():
+        cf = local_path(p["work_dir"]) / "sections" / a.file
+    if not cf.is_file():
+        die(f"no section file {a.file!r} under <work_dir>/sections/ (or pass a full path).")
+    rc = run_check_section(p, cf, a)
+    metric(p, "check_section", cf.name, exit=rc)
+    return rc
+
 
 def cmd_approve(a):
     p = project(a.project); banner(p)
@@ -1310,6 +1329,7 @@ Project     csa projects | csa use <key> | csa agents | csa doctor
 State       csa status [N] [--json] | csa next
 Pipeline    csa author N | csa check-change N | csa approve N | csa apply N [--until-done] | csa review N | csa cleanup N
             csa pipeline N            (walks one section, stops at every human gate)
+Build lane  csa check-section <file>   (version-1 build lane; see `csa build`)
 Parallel    csa fleet "author 6" "evidence 7" [-f tasks.txt] [--dry-run] [--print] [--timeout MIN]
             (one headless worker per slot in cli.yaml; DOCX steps never overlap)
 Analysis    csa ask <section> | evidence | gaps | analyse <skill> [SECTION=..] | write | summary | qa
@@ -1360,6 +1380,8 @@ def main(argv=None) -> int:
     s = sp("check-change", cmd_check_change, help="check a section's change file before approval")
     s.add_argument("section"); s.add_argument("--no-anchors", action="store_true")
     s.add_argument("--no-lint", action="store_true"); s.add_argument("--json", action="store_true")
+    s = sp("check-section", cmd_check_section, help="check a build-lane section file before approval")
+    s.add_argument("file"); s.add_argument("--no-lint", action="store_true"); s.add_argument("--json", action="store_true")
     s = sp("apply", cmd_apply, help="framework-first apply; --agent for the LLM document agent")
     s.add_argument("section"); s.add_argument("--limit", type=int); s.add_argument("--edit", help="apply only this edit ID")
     s.add_argument("--until-done", action="store_true", help="keep running batches until complete, blocked or no progress")
