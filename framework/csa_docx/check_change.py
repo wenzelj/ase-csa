@@ -73,8 +73,25 @@ def anchor_findings(records, workspace: str) -> list[dict]:
     return out
 
 
+EID_RE = re.compile(r"\bE-\d{2,}\b")
+MARKDOWN_RE = re.compile(r"\*\*|`|^\s*>|^\s*#", re.M)
+
+
 def hygiene_findings(records) -> list[dict]:
-    return []  # S19 fills this in
+    from csa_docx.comment_text import comment_warnings
+
+    out = []
+    for r in records:
+        t = r.text or ""
+        if EID_RE.search(t):
+            out.append(finding("ERROR", "EID_IN_TEXT", "evidence ID in Text; it belongs in Why only", r.edit_id))
+        if STABLE_ID_RE.search(t):
+            out.append(finding("ERROR", "STABLE_ID_IN_TEXT", "stable ID (@H...) in Text", r.edit_id))
+        elif MARKDOWN_RE.search(t):
+            out.append(finding("ERROR", "MARKDOWN_IN_TEXT", "Markdown (**, backticks, >, #) in Text; it would land in the document", r.edit_id))
+        for w in comment_warnings(r):
+            out.append(finding("WARN", "NOTE", w, r.edit_id))
+    return out
 
 
 def lint_findings(records) -> list[dict]:
