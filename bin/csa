@@ -626,6 +626,17 @@ def cmd_doctor(a):
                  "close Word before apply/review/cleanup" if locks else "")
     for cli in ("codex", "claude", "hermes"):
         line(True if shutil.which(cli) else None, f"{cli} CLI " + ("found" if shutil.which(cli) else "not on PATH"))
+    if getattr(a, "tests", True):
+        try:
+            r = subprocess.run([framework_python(), "-m", "pytest", "-q", "-p", "no:cacheprovider",
+                                str(FRAMEWORK / "csa_docx/tests")], cwd=str(FRAMEWORK),
+                               capture_output=True, text=True, timeout=900)
+            last = (r.stdout.strip().splitlines() or ["no output"])[-1]
+            line(r.returncode == 0, f"framework tests: {last}", "" if r.returncode == 0 else "run `csa test` for details")
+        except SystemExit:
+            pass
+        except Exception as e:
+            line(None, f"framework tests not run ({e.__class__.__name__})")
     act = active_key()
     line(True if act else None, f"active project: {act or 'none (csa use <key>)'}")
     return 0 if ok else 1
@@ -1177,7 +1188,7 @@ def main(argv=None) -> int:
     sp("projects", cmd_projects)
     s = sp("use", cmd_use); s.add_argument("key")
     sp("agents", cmd_agents)
-    sp("doctor", cmd_doctor)
+    s = sp("doctor", cmd_doctor); s.add_argument("--no-tests", dest="tests", action="store_false", help="skip the framework test run")
     s = sp("status", cmd_status); s.add_argument("section", nargs="?"); s.add_argument("--json", action="store_true")
     s = sp("next", cmd_next); s.add_argument("--json", action="store_true")
     s = sp("prepare", cmd_prepare); s.add_argument("--force", action="store_true"); s.add_argument("--section"); s.add_argument("--json", action="store_true")
