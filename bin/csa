@@ -48,6 +48,7 @@ CANON_AGENTS = CANON_ROOT / ".agents"
 
 SCRIPTS = {
     "ev": SKILLS / "csa-evidence-matrix/scripts/evidence_matrix.py",
+    "appendix": SKILLS / "csa-evidence-matrix/scripts/evidence_appendix.py",
     "graph": SKILLS / "csa-evidence-matrix/scripts/graph_store.py",
     "index": SKILLS / "csa-discovery-index/scripts/discovery_index.py",
     "lint": SKILLS / "csa-writing-style/scripts/prose_lint.py",
@@ -660,6 +661,11 @@ def cmd_apply(a):
 def cmd_ev(a):
     p = project(a.project); banner(p)
     return run_script("ev", ["--workspace", _ws(p), *a.rest])
+
+
+def cmd_appendix(a):
+    p = project(a.project); banner(p)
+    return run_script("appendix", ["--workspace", _ws(p), *a.rest])
 
 
 def cmd_index(a):
@@ -1293,7 +1299,7 @@ def cmd_fleet(a):
 
 # ---------------------------------------------------------------- main
 PASSTHROUGH = {
-    "ev": cmd_ev, "graph": cmd_graph, "index": cmd_index, "test": cmd_test,
+    "ev": cmd_ev, "appendix": cmd_appendix, "graph": cmd_graph, "index": cmd_index, "test": cmd_test,
     **{n: cmd_passthrough(n) for n in ("new", "scaffold", "table", "diagram", "dry-run")},
 }
 
