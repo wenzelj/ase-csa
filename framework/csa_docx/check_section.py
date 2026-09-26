@@ -24,13 +24,32 @@ BLOCKS_JSON = (Path(__file__).resolve().parents[2]
                / "skills" / "csa-document-template" / "references" / "template-blocks.json")
 
 
+QUOTES = str.maketrans({"\u201c": '"', "\u201d": '"', "\u2018": "'", "\u2019": "'"})
+
+
+def normalise_heading(text: str) -> str:
+    """Compare headings without caring about curly vs straight quotes or extra spaces.
+    build_plan (S57) uses this too, so a section file may type either kind of quote."""
+    return " ".join((text or "").translate(QUOTES).split())
+
+
+# The ## sections each block kind must have (Evidence always), and may have.
+REQUIRED_SECTIONS = {
+    "domain": ["Requirements", "Discovery Information", "Drawbridge Impact"],
+    "executive-summary": ["Summary"],
+    "migration": ["Findings"],
+    "glossary": ["Terms"],
+    "coverage": ["Hosts"],
+}
+
+
 def _load_blocks() -> dict:
     return json.loads(BLOCKS_JSON.read_text(encoding="utf-8"))
 
 
 def _domain_for(blocks: dict, heading: str):
     for d in blocks.get("domains", []):
-        if d.get("heading") == heading:
+        if normalise_heading(d.get("heading")) == normalise_heading(heading):
             return d
     return None
 
@@ -53,7 +72,7 @@ def _heading_for(blocks: dict, block: str) -> str | None:
 
 
 def _migration_headings(blocks: dict) -> set[str]:
-    return {m.get("heading") for m in blocks.get("migration", []) if m.get("heading")}
+    return {normalise_heading(m.get("heading")) for m in blocks.get("migration", []) if m.get("heading")}
 
 
 def _matrix_eids(workspace: str | None) -> set[str] | None:
@@ -99,7 +118,12 @@ def check(path: Path, workspace: str | None = None, lint: bool = True) -> dict:
             for rid in expected:
                 if rid not in got_set:
                     findings.append(finding("ERROR", "MISSING_REQ", f"domain {heading!r} is missing requirement {rid}"))
+            seen: set[str] = set()
             for rid in got:
+                if rid in seen:
+                    findings.append(finding("ERROR", "DUPLICATE_REQ", f"requirement {rid} appears more than once", rid))
+                seen.add(rid)
+            for rid in sorted(set(got)):
                 if rid not in exp_set:
                     findings.append(finding("ERROR", "EXTRA_REQ", f"requirement {rid} is not in domain {heading!r}"))
             for r in parsed["requirements"]:
@@ -112,10 +136,32 @@ def check(path: Path, workspace: str | None = None, lint: bool = True) -> dict:
         allowed = _heading_for(blocks, block)
         if block == "migration":
             allowed_set = _migration_headings(blocks)
-            if heading not in allowed_set:
+            if normalise_heading(heading) not in allowed_set:
                 findings.append(finding("ERROR", "UNKNOWN_HEADING", f"{heading!r} is not a 4.x subsection heading in the template"))
-        elif heading != allowed:
+        elif normalise_heading(heading) != normalise_heading(allowed):
             findings.append(finding("ERROR", "UNKNOWN_HEADING", f"{heading!r} is not the {block!r} heading {allowed!r}"))
+
+    # Sections: every required ## heading present, and no ## heading the build would not know where to put.
+    if block in REQUIRED_SECTIONS:
+        required = REQUIRED_SECTIONS[block] + ["Evidence"]
+        allowed_sections = set(required)
+        if block == "domain":
+            dom = _domain_for(blocks, heading)
+            if dom:
+                allowed_sections |= set(dom.get("tables", {}))
+        present = parsed.get("order", [])
+        for name in required:
+            if name not in present:
+                findings.append(finding("ERROR", "MISSING_SECTION", f"section '## {name}' is missing (a {block} file needs {', '.join(required)})"))
+        for name in present:
+            if name not in allowed_sections:
+                findings.append(finding("ERROR", "UNKNOWN_SECTION",
+                                        f"section '## {name}' is not part of a {block} block; expected {', '.join(sorted(allowed_sections))}"))
+        seen_sections: set[str] = set()
+        for name in present:
+            if name in seen_sections:
+                findings.append(finding("ERROR", "DUPLICATE_SECTION", f"section '## {name}' appears more than once"))
+            seen_sections.add(name)
 
     # Evidence traceability: every rendered statement needs a non-empty row.
     evidence = parsed.get("evidence", {})
@@ -124,10 +170,18 @@ def check(path: Path, workspace: str | None = None, lint: bool = True) -> dict:
         if not ids or not any(i.strip() for i in ids):
             findings.append(finding("ERROR", "MISSING_EVIDENCE", f"rendered statement {key!r} has no non-empty row in the Evidence table"))
 
+    rendered_keys = {k for k, _t in section_file.rendered_statements(parsed)}
+    for key in evidence:
+        if key not in rendered_keys:
+            findings.append(finding("WARN", "UNUSED_EVIDENCE_ROW", f"Evidence row {key!r} matches no statement in the file (renamed or deleted?)"))
+
     # Evidence IDs must exist in the matrix (skip coverage: its evidence is capture files).
     if workspace and block != "coverage":
         eids = _matrix_eids(workspace)
-        if eids is not None:
+        if eids is None:
+            findings.append(finding("WARN", "NO_MATRIX",
+                                    f"no evidence matrix at {Path(workspace) / 'csa-work' / 'evidence-matrix.csv'}; evidence IDs were not checked"))
+        else:
             for _key, ids in evidence.items():
                 for i in ids:
                     i = i.strip()
@@ -140,7 +194,7 @@ def check(path: Path, workspace: str | None = None, lint: bool = True) -> dict:
             findings.append(finding("ERROR", "EID_IN_TEXT", f"{key!r}: evidence ID in rendered text; it belongs in the Evidence table", key))
         if STABLE_ID_RE.search(text):
             findings.append(finding("ERROR", "STABLE_ID_IN_TEXT", f"{key!r}: stable ID (@H...) in rendered text", key))
-        elif MARKDOWN_RE.search(text):
+        if MARKDOWN_RE.search(text):
             findings.append(finding("ERROR", "MARKDOWN_IN_TEXT", f"{key!r}: Markdown (**, backticks, >, #) in rendered text", key))
 
     if lint:
