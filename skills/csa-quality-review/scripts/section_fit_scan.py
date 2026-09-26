@@ -426,7 +426,7 @@ def scan(units: list[Unit], domains: list[Domain], min_hits: int, margin: int) -
                                        "the domain's Recommendations (legacy) or roadmap (template)"))
                 elif re.search(r"migrat", u.text, re.I):
                     out.append(finding(u, ctx, "OUT_OF_SCOPE", "MINOR", f"migration-planning heading inside '{ctx.h1}'",
-                                       "4 Migration Discovery (template) or the roadmap"))
+                                       "5 Migration Discovery (template v1.2) or the roadmap"))
             # observation / interpretation heading under "Design and functionality expected"
             parent_roles = [role for lvl, t, _ in ctx.headings[:-1] if lvl > 1 for role, rx in ROLE_RES if rx.search(norm(t))]
             if parent_roles and parent_roles[-1] == "expected" and OBSERVATION_HEADING_RE.search(u.text) \

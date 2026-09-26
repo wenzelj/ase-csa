@@ -73,9 +73,10 @@ These sections are not requirement domains. Topic signals do not apply to them; 
 | Methodology | `METHOD` | Findings, facts about the system |
 | Discovery activity | `METHOD`: sources, captures, coverage, limitations of the evidence | Findings about the system (go to the domain) |
 | Architectural Review (legacy) | Design intent and the as-built overview: components, zones, asset list, drawings | Per-domain findings (go to the domain); migration planning (goes to Migration Discovery or out of scope) |
-| 4 Migration Discovery, 4.1 to 4.5 (template) | Section skill: `migration-discovery-analysis`. `FACT` inventories needed for migration planning, on the subsection's own topic: 4.1 installed applications, 4.2 failover and replication, 4.3 patch and update tooling, 4.4 Group Policy, 4.5 file transfer and local storage | `POSITION`, `FINDING` against a requirement (goes to the owning domain in section 3) |
+| 4 Governance Note and Next Steps (template v1.2) | The three standard OT 3.5 next steps, then system-specific actions with owner and target date | Findings, ratings or evidence (they belong in the domains) |
+| 5 Migration Discovery, 5.1 to 5.6 (template v1.2; 4, 4.1 to 4.5 in v1.1) | Section skill: `migration-discovery-analysis`. `FACT` inventories needed for migration planning, on the subsection's own topic: 5.1 discovery coverage (`METHOD`, host coverage), 5.2 installed applications, 5.3 failover and replication, 5.4 patch and update tooling, 5.5 Group Policy, 5.6 file transfer and local storage | `POSITION`, `FINDING` against a requirement (goes to the owning domain in section 3) |
 | Glossary and Acronyms | Term and definition | Anything else |
-| Appendix B Discovery Coverage / Evidence Appendix / Appendices | `METHOD`, `RAW`, host coverage | `FINDING` |
+| Discovery Coverage (5.1 in v1.2, Appendix B in v1.1) / Evidence Appendix / Appendices | `METHOD`, `RAW`, host coverage | `FINDING` |
 
 ## 4. Requirement domains
 

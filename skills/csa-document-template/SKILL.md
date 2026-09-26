@@ -54,11 +54,11 @@ Then run `check_csa.py` (section 3) once: on a fresh file it must report 0 error
 ## 2. Prepare and fill
 
 1. `prepareDocument()` (no `section`). Stop on `NOT_READY`.
-2. Read `references/template-structure.md`. Sections for change files are the Heading 1 ordinals: 1 Document Control, 2 Executive Overview, 3 Requirement Domain Assessments, 4 Migration Discovery, 5 Appendix A, 6 Appendix B. Filenames `ChangesCSA_<System>_Section<N>.md`, header `**Section:** 3 - Requirement Domain Assessments`.
+2. Read `references/template-structure.md`. Sections for change files are the Heading 1 ordinals: 1 Document Control, 2 Executive Overview, 3 Requirement Domain Assessments, 4 Governance Note and Next Steps, 5 Migration Discovery, 6 Appendix A (OT 3.5 Destination Boundary Reference Table), 7 Appendix B (Glossary and Acronyms). This is template v1.2; a document made from v1.1 has 4 Migration Discovery, 5 Appendix A Glossary, 6 Appendix B Discovery Coverage: check which template the document came from. Filenames `ChangesCSA_<System>_Section<N>.md`, header `**Section:** 3 - Requirement Domain Assessments`.
 3. **Scaffold before drafting.** Change records fill only what exists. Decide from the evidence how many hosts, accounts, glossary terms, coverage rows or bullets a block needs, then set the count. It is idempotent, backs up first, and only removes placeholder-only rows or bullets:
 
    ```bash
-   python3 .agents/skills/csa-document-template/scripts/scaffold_csa.py rows    --docx "<docx>" --heading "Workstation and Server Discovery Coverage" --set-count 26
+   python3 .agents/skills/csa-document-template/scripts/scaffold_csa.py rows    --docx "<docx>" --heading "Discovery Coverage" --set-count 26
    python3 .agents/skills/csa-document-template/scripts/scaffold_csa.py bullets --docx "<docx>" --heading "Discovery Information" --heading-occurrence 5 --set-count 4
    ```
 
@@ -69,7 +69,8 @@ Then run `check_csa.py` (section 3) once: on a fresh file it must report 0 error
    | --- | --- | --- |
    | Requirement Current State and Rating | the row, `@H..-T1-R<n>` | `Replace`; Text: `> Observed: <current state>` and `> Assessment: Met` (Observed = column 3, Assessment = column 4) |
    | A supporting-table row | the row | `Replace`; Text: one pipe row with every cell, `> \| host \| environment \| role \|` |
-   | A bullet (Discovery Information, Migration Discovery) | the placeholder bullet paragraph | `Replace`; Text: the bullet sentence, no leading `- `, one bullet per edit |
+   | A Discovery Information finding (v1.2) | the Aspect table row (`@H..-T1-R<n>`) | `Replace`; Text: one pipe row, `> \| aspect \| configuration observed \| coverage / source \|` |
+   | A bullet (optional Discovery Information bullet, Migration Discovery) | the placeholder bullet paragraph | `Replace`; Text: the bullet sentence, no leading `- `, one bullet per edit |
    | Any other paragraph (summary, Drawbridge Impact, caption, source) | the placeholder paragraph | `Replace`; Text: plain sentences |
 
    Do not use `Insert after` for bullets, multi-bullet Text blocks, or `Replace the table content` on template tables: they either lose the bullet formatting or cannot find the table (details in the reference). One edit per placeholder.

@@ -127,7 +127,7 @@ Test: could an engineer find this heading in a contents list when looking for th
 | Evidence Landscape | Usually belongs in Methodology; otherwise name what the evidence is about |
 | Key Observations (Derived from Table) | Name the subject: "Name Resolution", "Server Roles and Sites" |
 
-"Discovery" is the right word when the subject really is the discovery activity, for example Appendix B "Workstation and Server Discovery Coverage", which lists where the discovery script ran. It is the wrong word for describing the application.
+"Discovery" is the right word when the subject really is the discovery activity, for example 5.1 "Discovery Coverage" (Appendix B "Workstation and Server Discovery Coverage" in template v1.1), which lists where the discovery script ran. It is the wrong word for describing the application.
 
 ## 7. Australian English
 
