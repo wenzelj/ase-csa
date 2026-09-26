@@ -76,7 +76,11 @@ def _load_project_registry():
     This script's own location is .agents/skills/csa-evidence-matrix/scripts/
     -- three parents up is .agents/.
     """
-    registry_path = Path(__file__).resolve().parents[3] / "csa-context" / "PROJECTS.yaml"
+    registry_path = (
+        Path(os.environ["CSA_PROJECTS_FILE"])
+        if os.environ.get("CSA_PROJECTS_FILE")
+        else Path(__file__).resolve().parents[3] / "csa-context" / "PROJECTS.yaml"
+    )
     if not registry_path.is_file():
         return []
     projects = []

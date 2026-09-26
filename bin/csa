@@ -33,7 +33,8 @@ ROOT = AGENTS_DIR.parent                                    # .../CurrentStateAs
 FRAMEWORK = AGENTS_DIR / "framework"
 SKILLS = AGENTS_DIR / "skills"
 STATE_DIR = AGENTS_DIR / ".state"
-PROJECTS_FILE = AGENTS_DIR / "csa-context" / "PROJECTS.yaml"
+PROJECTS_FILE = (Path(os.environ["CSA_PROJECTS_FILE"]) if os.environ.get("CSA_PROJECTS_FILE")
+                 else AGENTS_DIR / "csa-context" / "PROJECTS.yaml")
 REGISTRY_FILE = AGENTS_DIR / "registry.yaml"
 CLI_FILE = AGENTS_DIR / "cli.yaml"
 REGISTERED_ROOT = "/Users/wenzel/Work/ASE/CurrentStateAssessments"

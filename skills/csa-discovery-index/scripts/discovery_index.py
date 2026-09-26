@@ -61,7 +61,8 @@ MAX_EXCERPT = 1200
 
 # --------------------------------------------------------------------------- project resolution
 def load_registry():
-    path = FRAMEWORK_DIR / "csa-context" / "PROJECTS.yaml"
+    path = (Path(os.environ["CSA_PROJECTS_FILE"]) if os.environ.get("CSA_PROJECTS_FILE")
+            else FRAMEWORK_DIR / "csa-context" / "PROJECTS.yaml")
     projects, cur = [], {}
     if not path.is_file():
         return []
