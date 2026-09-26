@@ -517,6 +517,23 @@ def cmd_append(args):
 
 
 # --------------------------------------------------------------------------- main
+def cmd_review(args):
+    _, matrix = resolve_paths(args)
+    header, body, *_ = load(matrix)
+    known = {r[0].strip().upper() for r in body if r}
+    ids = [i.strip().upper() for i in args.ids]
+    missing = [i for i in ids if i not in known]
+    if missing:
+        fail(f"unknown evidence_id(s): {', '.join(missing)}")
+    log = matrix.parent / "evidence-reviews.jsonl"
+    at = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+    with open(log, "a", encoding="utf-8") as fh:
+        for i in ids:
+            fh.write(json.dumps({"evidence_id": i, "state": args.state, "by": args.by, "at": at,
+                                 "note": args.note or ""}, ensure_ascii=False) + "\n")
+    emit({"status": "OK", "reviewed": ids, "state": args.state, "log": str(log)})
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--workspace", help="workspace root (default: derived from this script's location)")
@@ -537,6 +554,13 @@ def main():
 
     p = sub.add_parser("stats"); p.set_defaults(fn=cmd_stats)
     p = sub.add_parser("verify"); p.set_defaults(fn=cmd_verify)
+
+    p = sub.add_parser("review", help="record a human review of rows (appends to evidence-reviews.jsonl; the CSV is not changed)")
+    p.add_argument("ids", nargs="+")
+    p.add_argument("--by", required=True)
+    p.add_argument("--state", choices=["reviewed", "rejected"], default="reviewed")
+    p.add_argument("--note")
+    p.set_defaults(fn=cmd_review)
 
     p = sub.add_parser("append", help="append new evidence rows (append-only)")
     p.add_argument("--agent", required=True, help="who is writing, e.g. csa-change-authoring-agent")
