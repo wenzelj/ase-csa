@@ -56,7 +56,21 @@ def structure_findings(path: Path, text: str, records) -> list[dict]:
 
 
 def anchor_findings(records, workspace: str) -> list[dict]:
-    return []  # S18 fills this in
+    from csa_docx import tools
+
+    out, cache = [], {}
+    for r in records:
+        ids = sorted({i.rstrip(".-") for i in STABLE_ID_RE.findall(f"{r.where}\n{r.action}")})
+        for sid in ids:
+            if sid not in cache:
+                cache[sid] = tools.lookupStableId(sid, workspace=workspace)
+            res = cache[sid]
+            if res.get("status") == "ERROR":
+                return [finding("WARN", "ANCHOR_CHECK_UNAVAILABLE", f"anchors not checked: {str(res.get('message', ''))[:300]}")]
+            if not res.get("unique_id"):
+                out.append(finding("ERROR", "ANCHOR_UNRESOLVED",
+                                   f"{sid} does not resolve to exactly one place (match_count {res.get('match_count')})", r.edit_id))
+    return out
 
 
 def hygiene_findings(records) -> list[dict]:
