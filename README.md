@@ -1,5 +1,7 @@
 # CSA Agents (shared framework)
 
+Shared rules for every agent: [csa-core-rules.md](csa-core-rules.md). Improvement plan and progress: ../improvements/REGISTER.md.
+
 This folder contains the agent definitions, skills, and helper code for the Current State Assessment (CSA) workflow, shared across every CSA project under `/Users/wenzel/Work/ASE/CurrentStateAssessments/`. It moved here from inside the IAMPS project folder specifically so IAMPS and UTC DTC (and any future CSA project placed alongside them) use the exact same agents, skills, and framework code instead of drifting copies.
 
 Project-specific facts live in each project's own file under `csa-context/` (`IAMPS_PROJECT_CONTEXT.yaml`, `UTC_DTC_PROJECT_CONTEXT.yaml`) -- always pass the right one via `PROJECT_CONTEXT` (see the orchestrator section below). Per-run working state (`csa-work/`, run-state, reviews, backups of the working DOCX) stays inside each project's own folder, not here, so runs for different projects never collide.
@@ -42,7 +44,7 @@ Agent options: `--cli codex|claude|hermes` (default in `cli.yaml`), `--headless`
 
 ## Agent Definitions
 
-Three agents form the pipeline, run in this order:
+Four agents form the pipeline, run in this order (the fourth, cleanup, accepts the reviewed tracked changes after you have read them in Word):
 
 ```text
 prepareDocument()  ->  csa-change-authoring.md  ->  [human approves]  ->  current-state-assessment-document.md  ->  csa-change-review.md
@@ -125,7 +127,7 @@ Routing rules:
 - `csa-writing-style` is the single style guide for any prose landing in a CSA document (human-sounding, not AI-sounding). The CSA Writer Agent owns it. The C-S-A-Change-Authoring Agent (the separate change-file pipeline, see below) also loads and follows it when drafting an edit's replacement/insertion text -- it borrows the Writer Agent's voice rather than defining its own, so document prose reads consistently regardless of which pipeline produced a given sentence.
 - `australian-it-ot-terminology` is a foundational skill: every agent that analyses, writes, edits or reviews CSA text loads it (evidence investigator, technical analyst, writer, change authoring, quality reviewer). It sets the technical term for each thing, IT/OT classification, heading choice, evidence phrasing and Australian English; `references/terminology.md` is the controlled terminology table and `scripts/term_lint.py` flags wording for review without changing it.
 - `csa-quality-review` reports findings and does not silently rewrite approved content for style. Its check 12 (Section fit) tests whether each paragraph sits in the right section and subsection, against `skills/csa-quality-review/references/section-scope.md`; `csa-section-writer` and `csa-change-authoring` read the same map so new text lands in the right place. Deterministic starting point: `skills/csa-quality-review/scripts/section_fit_scan.py <docx> --heading "<title>"`.
-- `technical-explainer` output is a labelled `Technical explanation`, kept separate from project evidence. General technical knowledge is never presented as verified IAMPS or AZNOPS evidence.
+- `technical-explainer` output is a labelled `Technical explanation`, kept separate from project evidence. General technical knowledge is never presented as verified project evidence.
 - `executive-summary` is used only after the detailed assessment is stable and the reviewer verdict is `READY` or `READY WITH DECLARED GAPS`.
 - Skills and agent definitions stay generic. Project facts live in each project's own `csa-context/<PROJECT>_PROJECT_CONTEXT.yaml` and in that project's assessment evidence -- never in the shared agent/skill files.
 
