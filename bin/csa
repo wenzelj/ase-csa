@@ -884,8 +884,9 @@ def cmd_pipeline(a):
                 return 2
             continue
         if nxt.startswith("csa cleanup"):
-            launch(p, agent("cleanup"), [n], a)
-            continue
+            print(f"Human gate: open the working DOCX in Word and read the tracked changes for section {n}.")
+            print(f"When you are satisfied, run: csa cleanup {n}")
+            return 0
         print(f"Next step needs a human: {nxt}")
         return 2
     return 0
