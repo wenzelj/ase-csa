@@ -226,7 +226,7 @@ This is a hard execution contract, especially when running under `codex exec` wi
 
 Use this mode whenever:
 
-- the requested section has more than 3 approved edit IDs;
+- the requested section has more than 2 approved edit IDs;
 - the DOCX operation requires manual OOXML editing;
 - comment anchoring is complex, especially inside tables;
 - rendering/open validation is slow or unavailable;
@@ -235,7 +235,7 @@ Use this mode whenever:
 
 Default limits:
 
-- `ITERATION_EDIT_LIMIT=3`
+- `ITERATION_EDIT_LIMIT=2` (default from `.agents/registry.yaml`; `csa apply <N> --until-done` runs batch after batch)
 - `ITERATION_TIME_LIMIT_MINUTES=10`
 - `RUN_SCOPE=next-batch`
 
@@ -258,14 +258,14 @@ ITERATION_EDIT_LIMIT=10
 Apply the requested section using the agent defaults.
 ```
 
-Only use `RUN_SCOPE=full-section` when the user explicitly supplies it or the section has 3 or fewer edit IDs.
+Only use `RUN_SCOPE=full-section` when the user explicitly supplies it or the section has 2 or fewer edit IDs.
 
 ### CLI/EVO Hard Stop Rules
 
 When running from Codex CLI, `codex exec`, EVO, Ollama, or another local model profile:
 
 - process at most the selected `ITERATION_EDIT_LIMIT` edit IDs;
-- never process more than 3 edit IDs unless the prompt explicitly sets a larger `ITERATION_EDIT_LIMIT`;
+- never process more than `ITERATION_EDIT_LIMIT` edit IDs in one batch;
 - after the selected batch is validated and the report/run-state are written, stop immediately with `PARTIAL_COMPLETE` or `SECTION_COMPLETE`;
 - do not inspect, plan, or begin the next batch after writing the current batch report;
 - do not perform optional cleanup, broad searches, or framework improvements after the batch unless they are required to validate the current batch;

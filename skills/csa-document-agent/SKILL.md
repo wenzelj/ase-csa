@@ -22,7 +22,7 @@ Treat this skill as a wrapper around the project agent. If the user supplies `SE
 Default to:
 
 ```text
-ITERATION_EDIT_LIMIT=3
+ITERATION_EDIT_LIMIT=2
 RUN_SCOPE=next-batch
 ```
 

@@ -237,7 +237,7 @@ Use this mode whenever:
 
 Default limits:
 
-- `AUTHOR_ITEM_LIMIT=10` (claims evaluated against evidence per iteration)
+- `AUTHOR_ITEM_LIMIT=6` (claims evaluated against evidence per iteration; default from `.agents/registry.yaml`)
 - `AUTHOR_TIME_LIMIT_MINUTES=20`
 - `RUN_SCOPE=next-authoring-batch`
 
