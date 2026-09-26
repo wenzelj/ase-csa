@@ -1148,6 +1148,11 @@ def cmd_fleet(a):
     if len(set(slots)) != len(slots):
         die(f"duplicate slot names: {', '.join(slots)}")
     tasks = _fleet_tasks(p, a)
+    local = {s.strip() for s in cfg.get("local_slots", "").split(",") if s.strip()}
+    heavy = [t for t in tasks if agent(t["verb"]).get("tier") == "frontier"] if local & set(slots) else []
+    if heavy:
+        print(f"{C['y']}warning: frontier-tier task(s) {', '.join(t['text'] for t in heavy)} will run on local slot(s) "
+              f"{', '.join(s for s in slots if s in local)}. Expect weaker results; check them closely.{C['0']}")
 
     print(f"{C['b']}{len(tasks)} task(s) on {len(slots)} slot(s): {', '.join(slots)}  (cli: {cli}){C['0']}")
     for t in tasks:
