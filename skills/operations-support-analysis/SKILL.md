@@ -5,6 +5,8 @@ description: Describe the current operating and support model for an Operational
 
 # Operations and Support Analysis
 
+Terminology: name every component, service, dependency and interface with `australian-it-ot-terminology` (`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/australian-it-ot-terminology/SKILL.md`), classify it as OT, supporting IT, shared, platform or external, and write in Australian English.
+
 Establish who performs each operational responsibility and what process or tool supports it:
 
 - business, service, application, infrastructure, network, security, and vendor ownership;

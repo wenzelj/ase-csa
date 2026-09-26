@@ -5,6 +5,8 @@ description: Establish the current purpose, users, functions, ownership, critica
 
 # Application Discovery
 
+Terminology: name every component, service, dependency and interface with `australian-it-ot-terminology` (`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/australian-it-ot-terminology/SKILL.md`), classify it as OT, supporting IT, shared, platform or external, and write in Australian English.
+
 Use approved evidence to build an application profile covering:
 
 - business and operational purpose;

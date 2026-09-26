@@ -5,6 +5,8 @@ description: Establish and assess the current name-resolution state of an Operat
 
 # DNS / Name-Resolution Analysis
 
+Terminology: name every component, service, dependency and interface with `australian-it-ot-terminology` (`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/australian-it-ot-terminology/SKILL.md`), classify it as OT, supporting IT, shared, platform or external, and write in Australian English.
+
 Write this domain as a statement about **how the application environment resolves names today**, and what that means when the OT boundary is isolated. Follow the shared rules in `csa-section-writer/references/current-state-reasoning.md` (subject rule, fact/evidence/gap classes, "not observed" vs "does not exist", correlation, scope, terminology) and the prose rules in `csa-writing-style` before drafting.
 
 ## Purpose
@@ -46,7 +48,12 @@ State as gaps, scoped to what was searched: DNS zone backup, DNSSEC, conditional
 
 ## Expected IT/OT terminology
 
-Use: Active Directory-integrated DNS, standalone DNS, configured resolvers, name resolution, forward lookup zone, A record, SRV record (Kerberos / domain-controller discovery), conditional forwarder, split-horizon, OT-resident name resolution, forest root, site, domain-joined. Avoid describing the evidence as the subject ("the discovery table shows..."); the subject is the application environment and its name-resolution dependency.
+Follow `australian-it-ot-terminology` (`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/australian-it-ot-terminology/SKILL.md`); its table is in `references/terminology.md`. For name resolution in particular:
+
+- **Terms:** name resolution, DNS server, configured DNS servers (resolvers) on a named network interface, Active Directory-integrated DNS, standalone DNS, forward lookup zone, A record, SRV record (Kerberos and domain controller location), conditional forwarder, split-horizon DNS, domain joined, forest root, site. "OT-resident name resolution" is the program's target-state term: use it for the target, not for what exists today unless it does.
+- **Say what the DNS servers are.** When the resolvers are domain controllers of the enterprise domain, say so: "the INTERNAL domain controllers ROTPRDSRV122 and MOTPRDSRV122, which also provide DNS". Do not call them "OT DNS servers" because OT hosts use them or because they sit at an operational site. State location and ownership as separate facts when both are known ("located at the Rockhampton and Mackay sites, on addresses in the OT-side range, but part of the enterprise INTERNAL domain").
+- **The subject is the name-resolution dependency**, not the resolver file or the test output: "The application hosts resolve names through ...", "Name resolution is provided by ...". Keep "observed", "the current configuration shows" for the places where the strength of the evidence matters, such as the forest-root question.
+- **Dependent services** are named as services, not as records: Windows authentication (Kerberos), time synchronisation, patching through Configuration Manager, email alerts through Exchange, certificate revocation checking.
 
 ## Expected section structure
 
@@ -68,7 +75,7 @@ Use: Active Directory-integrated DNS, standalone DNS, configured resolvers, name
 
 Each finding is one short paragraph: the current condition (how names are resolved today), the design or reference expectation it is measured against, and the isolation consequence. Lead with the system statement, not the data. Example:
 
-> The application environment resolves names through two Active Directory-integrated DNS servers, one at each site. Because the zone data lives in the Active Directory database, the name-resolution, authentication and time-synchronisation dependencies fail together when the OT boundary is isolated; the hosts keep resolving their last cached names for a short period, then lose both.
+> The application hosts resolve names through the two INTERNAL domain controllers, one at each site, which provide Active Directory-integrated DNS. Because the zone data lives in the Active Directory database, the name-resolution, authentication and time-synchronisation dependencies fail together when the OT boundary is isolated; the hosts keep resolving their last cached names for a short period, then lose both.
 
 ## What belongs and what does not
 
@@ -85,7 +92,7 @@ Run `csa-writing-style/scripts/prose_lint.py` on the section. Then confirm:
 4. The dependent-services list is present and each service is tied to what it needs from name resolution.
 5. The isolation consequence is stated once, with immediate vs gradual behaviour distinguished.
 6. Gaps (zone backup, DNSSEC, forwarders, forest root) are scoped, not asserted as absences.
-7. Terminology is IT/OT name-resolution language, not evidence-catalogue language.
+7. Terminology follows `australian-it-ot-terminology`: `term_lint.py` has been run and every flag resolved; the DNS servers are named for what they are (enterprise domain controllers, or dedicated DNS servers), not labelled OT because OT hosts use them.
 8. The section agrees with the Identity & Authentication and Time Synchronisation sections on the AD dependency.
 
 ## Common failure patterns
@@ -95,7 +102,9 @@ Run `csa-writing-style/scripts/prose_lint.py` on the section. Then confirm:
 - Conflating configured resolvers with resolution behaviour, or stating one where the other is meant.
 - Asserting the forest root location (IT or OT side) when the evidence only shows records spanning both ranges.
 - Duplicating the dependent-services list in the Identity and Time sections instead of pointing to them.
+- Calling the enterprise domain controllers "OT DNS servers", or describing the INTERNAL domain as part of the OT application, when it is an enterprise IT service the application depends on.
+- Letting the evidence become the subject: "The raw Get-DnsClient output confirms ...", "The discovery scripts included DNS resolution tests", "All 39 sampled hosts ...". State the configuration and the dependency; name the hosts examined in plain words.
 
 ## Completion criteria
 
-The section describes the current name-resolution state of the application environment and its supporting AD, states the isolation consequence, lists the dependent services, declares the name-resolution gaps, and passes `prose_lint.py` with no evidence-as-subject, evidence-ID, or connector warnings. A reader who has not seen the evidence can state, from the section alone, how the application resolves names today and what happens to that when isolated.
+The section describes the current name-resolution state of the application environment and its supporting AD, states the isolation consequence, lists the dependent services, declares the name-resolution gaps, and passes `prose_lint.py` with no evidence-as-subject, evidence-ID, or connector warnings, with every `term_lint.py` flag resolved. A reader who has not seen the evidence can state, from the section alone, how the application resolves names today and what happens to that when isolated.

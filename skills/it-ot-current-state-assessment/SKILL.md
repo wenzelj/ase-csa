@@ -5,7 +5,9 @@ description: Use when planning, structuring, or writing up a current state asses
 
 # IT/OT Current State Assessment
 
-A current state assessment (CSA) establishes a factual, evidence-based baseline of an organization's technology environment — what exists, how it's architected, how mature its practices are, and where it stands against a reference framework — before recommending any future-state changes. Use this skill whenever asked to plan, run, or document a CSA covering IT infrastructure, OT/ICS environments, applications, or security posture, including IT/OT converged environments.
+Terminology: name every component, service, dependency and interface with `australian-it-ot-terminology` (`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/australian-it-ot-terminology/SKILL.md`), classify it as OT, supporting IT, shared, platform or external, and write in Australian English.
+
+A current state assessment (CSA) establishes a factual, evidence-based baseline of an organisation's technology environment — what exists, how it's architected, how mature its practices are, and where it stands against a reference framework — before recommending any future-state changes. Use this skill whenever asked to plan, run, or document a CSA covering IT infrastructure, OT/ICS environments, applications, or security posture, including IT/OT converged environments.
 
 Do not skip straight to recommendations. A CSA's value comes from being an honest, verifiable snapshot of *what is*, separated from *what should be*. Findings must be traceable to evidence (an inventory record, an interview, an observed config, a scan result) — never inferred or assumed.
 
@@ -78,7 +80,7 @@ Pick frameworks that match scope and stakeholder expectations; combining a matur
 
 CISA/FBI/NCSC joint guidance (2025) recommends aligning OT security programs to both IEC 62443 and ISO/IEC 27001 rather than treating them as alternatives — use them together when the environment has significant IT/OT overlap.
 
-## 5. Gap analysis and prioritization
+## 5. Gap analysis and prioritisation
 
 - For each framework category/control, rate current state (evidenced) vs. target/expected state, and record the delta as the gap — with the specific evidence behind the rating, not a subjective impression.
 - Rank findings by **consequence of failure to the business/operation**, not by raw technical severity alone — a medium-severity vulnerability on a safety-critical Level 1 asset outranks a critical vulnerability on an isolated Level 4 reporting server.

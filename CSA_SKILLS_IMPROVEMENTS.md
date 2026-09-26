@@ -283,3 +283,143 @@ These are the real examples used in `current-state-reasoning.md` §2:
 | `csa-technical-analyst-agent.md` | Modified — added 2 analysis-skill table rows |
 | `csa-orchestrator-agent.md` | Modified — added 2 routing-table rows |
 | `CSA_SKILLS_IMPROVEMENTS.md` | **Created** (this file) |
+
+---
+
+## Australian IT/OT Terminology and Writing Standard
+
+**Date:** 2026-09-25
+
+Australian IT/OT terminology is now a shared foundational capability of the framework: the skill `australian-it-ot-terminology` is loaded on every run by each agent that analyses, writes, edits or reviews CSA text, so it no longer has to be asked for section by section. It is a decision method, not a word-substitution list.
+
+Two principles head the skill:
+
+> The CSA writer is describing an application and the IT/OT system in which it currently operates. Evidence is used to establish, verify and qualify that current-state description. The CSA is not a report about the evidence itself.
+
+> Use the terminology that an Australian IT/OT engineer would naturally use to describe the component, service, dependency, interface or operational relationship being assessed.
+
+### Sources researched
+
+Full list, links and what each contributed: `skills/australian-it-ot-terminology/references/sources.md`.
+
+| Source | Used for |
+| --- | --- |
+| ASD ISM, Cyber security terminology (glossary) | Definitions of system, system owner, operational technology, OT equipment, server, workstation, network device, gateway, security domain, virtualisation, privileged and service accounts, jump server, remote access |
+| ASD ISM guideline titles | Management vocabulary: system hardening, system management, system monitoring, networking, gateways, data transfers |
+| ASD/ACSC *Principles of operational technology cyber security* (2024) | OT environment, OT systems, physical processes, vital systems; the six principles |
+| ASD/ACSC *Creating and maintaining a definitive view of your OT architecture* | Asset inventory, criticality, connectivity, data flows, protocols and ports, dependencies, zones and conduits, third parties, site details: the closest match to what a CSA describes |
+| ASD/ACSC *Remote access to OT environments* | Jump host in a DMZ plus a second jump host inside the OT environment, corporate environment, MFA per jump |
+| AEMO AESCSF glossary and 2025 overview | Asset, IT, OT, SCADA, critical infrastructure asset; domain names that treat IT and OT together; OT security depends on IT-run processes |
+| Australian Government Style Manual | Australian dictionaries allow both spellings but prefer the British form (-ise, -our) |
+| SOCI Act material (Home Affairs) | Legal terms, used only in their legal sense |
+
+Some cyber.gov.au pages refused automated fetching on 25 September 2026; where so, the source file says which mirror or search result confirmed the terms.
+
+### Terminology decisions
+
+- **Choose the term from the object.** Six questions before naming anything: what object, what kind, what role, part of the application or a dependency, OT / supporting IT / shared / platform / external, and the most specific term the evidence supports.
+- **IT and OT are classified by what a thing is, not by who uses it.** Active Directory, DNS, NTP, Configuration Manager, PKI, backup, virtualisation and Windows infrastructure are normally enterprise IT services or supporting infrastructure that the OT application depends on. Location and ownership are stated separately ("located at the Rockhampton site, part of the enterprise INTERNAL domain").
+- **Most specific term supported**: domain controller, not authentication asset; virtual machine, not infrastructure item; network share, not storage resource.
+- **Headings name the subject.** A heading is chosen from its content; "Discovery" is kept only where the subject really is the discovery activity (template Appendix B).
+- **Evidence wording only where the qualification matters.** Repeated "the evidence shows / the data shows / the table shows" openers are flagged.
+- **Australian English** (-ise, -our, -re, licence noun / license verb, "program", "signalling", day/month/year dates, "cyber security" in prose), without changing product, protocol, command, configuration or quoted names.
+- **Established technical terms are kept** (server, VLAN, domain controller, SCADA, PLC, historian, failover and so on). No invented local alternatives.
+- **Source hierarchy**: organisation/program terms; Australian legislation; ASD/ACSC/ISM; Australian industry framework (AESCSF); IEC/ISO; vendor; established industry usage. Cyber security terms are not forced onto architecture and application sections.
+- **Supersedes** the earlier recommendation in this file to write "discovery capture set", "declared estate vs discovery population" and "platform tooling". The document now says "hosts in the asset list", "hosts with discovery captures", "hosts captured in May 2026" and "management and security agents"; "estate" is not used.
+
+### New skill and files
+
+| File | Purpose |
+| --- | --- |
+| `skills/australian-it-ot-terminology/SKILL.md` | The standard: principles, decision method, IT/OT classification table, specificity, current-state phrasing, evidence language, headings, Australian English, established terms, source hierarchy, terminology review procedure and severity, examples |
+| `skills/australian-it-ot-terminology/references/terminology.md` | Controlled terminology table (Preferred term, Meaning/context, Avoid/use carefully, Example) in 11 groups: application and parts, environment and classification, servers and virtualisation, networks and zones, interfaces and dependencies, supporting services, identity and access, backup/availability/resilience, monitoring/patching/system management, OT equipment and industrial control, operational support and ownership. Plus the lint's three source tables: terms that need review, evidence-centric phrases, Australian spelling |
+| `skills/australian-it-ot-terminology/references/sources.md` | Sources, what each contributed, source hierarchy, decisions |
+| `skills/australian-it-ot-terminology/scripts/term_lint.py` | Terminology lint (below) |
+| `skills/australian-it-ot-terminology/validation/` | Sections 5 and 6 validation: `before.md`, `after.md`, `2026-09-25-sections-5-6.md` |
+
+### Agents using the skill (always loaded)
+
+| Agent | How it uses it |
+| --- | --- |
+| `csa-evidence-investigator-agent.md` | Names components and services in matrix claims with the controlled terms |
+| `csa-technical-analyst-agent.md` | Names and classifies (OT / IT / shared / platform / external) every component and dependency in its analysis |
+| `csa-writer-agent.md` | Every mode, alongside `csa-writing-style` |
+| `csa-change-authoring.md` | Every replacement, insertion and Word comment `Note` |
+| `csa-quality-reviewer-agent.md` | Runs `term_lint.py` and applies the terminology review in check 4 |
+| `csa-orchestrator-agent.md` | Treats it as foundational (never routed as a task); every section still goes through the reviewer |
+
+### Existing skills and files changed
+
+| File | Change |
+| --- | --- |
+| `skills/csa-quality-review/SKILL.md` | Check 4 is now "Terminology and Australian English": the seven-part terminology review, `term_lint.py` as the starting point. Check 5 names the three host groups in plain words |
+| `skills/csa-writing-style/SKILL.md` | Spelling and terms always follow the terminology skill, even when the surrounding text does not; `term_lint.py` added to "Check before returning" |
+| `skills/csa-section-writer/SKILL.md` | Loads the terminology skill before drafting |
+| `skills/csa-section-writer/references/current-state-reasoning.md` | Section 6 points to the terminology skill instead of keeping its own list; populations described in plain words; "estate" removed |
+| `skills/migration-discovery-analysis/SKILL.md` (Section 6) | Three host groups renamed in plain words; "Discovery coverage" becomes "Application hosts and discovery scope" with guidance to choose the heading from content; "platform tooling" becomes "management and security agents"; new terminology section with IT/OT classification for Configuration Manager, INTERNAL Group Policy and IT file shares; template headings kept; new check 11 and failure pattern for data-collection language |
+| `skills/dns-name-resolution-analysis/SKILL.md` (Section 5) | New terminology section: name the DNS servers for what they are (enterprise domain controllers, not "OT DNS"), location versus ownership, "OT-resident" only for the target state, dependent services named as services; example finding and check 7 updated; two new failure patterns |
+| 16 other analysis and section skills | One pointer line to the terminology skill (application-discovery, infrastructure, OT architecture, dependency, network, identity-access, resilience, operations-support, security-posture, evidence-investigator, csa-gap-analysis, executive-summary, technical-explainer, csa-orchestrator, it-ot-current-state-assessment, csa-evidence-matrix) |
+| `csa-quality-reviewer-agent.md`, `csa-orchestrator-agent.md`, `skills/csa-quality-review/references/section-scope.md`, `README.md` | Stale check numbers corrected after the 12-check restructure (concision is check 10, section fit is check 12) |
+| US spellings in framework prose | authorisation (identity-access skill, orchestrator, both SECTION_COVERAGE copies), organisation and prioritisation (it-ot skill). Left as written: vendor skills (docxengine, mistune, rapidfuzz), the function name `analyze_public_egress`, and the scope map's US-spelled signal terms, which exist to match US-spelled documents |
+
+Backups of every changed file: `backups/au-terminology-20260925/`.
+
+### Terminology lint rules (`term_lint.py`)
+
+```text
+python3 .agents/skills/australian-it-ot-terminology/scripts/term_lint.py <file.docx | draft.md> [--heading "<Heading 1>"] [--json] [--strict]
+```
+
+| Code | Raised when | Required response |
+| --- | --- | --- |
+| `TERM_REVIEW_REQUIRED` | A phrase from terminology.md part 12 appears (estate and discovery coverage, discovery coverage, discovery footprint, evidence landscape, technology estate/footprint, estate, landscape, ecosystem, dataset, data/evidence coverage, application sample, evidence sample, sampled, discovery/declared population, capture campaign, solution, as-is, to-be) | Decide what technical concept is meant and name it. Not an automatic replacement: an appendix about discovery may keep "discovery coverage" |
+| `SPECIFICITY_REVIEW` | A vague term from part 12 marked "Vague" (technology asset, compute asset, infrastructure item, authentication asset, network service asset, storage resource, platform tooling) | Use the most specific term the evidence supports |
+| `EVIDENCE_CENTRIC` | A part 13 phrase opens a sentence (the evidence shows, the data shows, the table shows, information provided, documentation shows, the raw ... output, the discovery scripts, the table below records ...), or evidence phrases occur three or more times in a section | Make the system the subject; keep evidence wording only where the qualification matters |
+| `IT_OT_REVIEW` | "OT" attached to an enterprise service (OT DNS, OT Active Directory, OT NTP ...) or an enterprise service described as part of the OT application | Target-state wording is fine (the lint says when it sees it nearby); otherwise state the service as a dependency and where it sits |
+| `AU_SPELLING` | A US spelling from part 14, outside code spans, quotes, paths, file names, identifiers and an allow-list of product names (System Center, Local Administrator Password Solution, Organizational Unit ...) | Use the Australian form |
+
+The lint reads its phrase lists from `references/terminology.md`, so the table and the lint cannot drift apart. It never edits a file.
+
+### Terminology corrections (examples)
+
+| Before | After |
+| --- | --- |
+| Estate and Discovery Coverage | Application Hosts and Discovery Scope (for a table of the application's hosts and which were examined); otherwise Server Environment, Hosting Environment, Infrastructure Overview or Application Components, depending on content |
+| technology asset / compute asset / infrastructure item | Windows server, application server, virtual machine |
+| authentication asset | domain controller |
+| storage resource | network share, SAN, local storage (whichever it is) |
+| platform tooling | management and security agents (CrowdStrike Falcon, Configuration Manager client, Nessus agent, Splunk universal forwarder, LAPS) |
+| OT DNS servers (for the enterprise domain controllers) | the INTERNAL domain controllers, which also provide DNS |
+| Active Directory is part of the OT application stack | The application depends on the INTERNAL Active Directory domain for Windows authentication |
+| May 2026 application sample | hosts captured in May 2026 |
+| not a full-estate absence claim | does not establish that the other hosts have none |
+| DNS-Adjacent Service Dependencies | Services That Depend on Name Resolution |
+| Time Synchronization, authorization, centralized | Time Synchronisation, authorisation, centralised |
+
+### Before and after writing examples (validation)
+
+Run against Section 6 of the UTC DTC (Brendan) document and the Section 5 DNS draft. Full comparison of 14 items: `skills/australian-it-ot-terminology/validation/2026-09-25-sections-5-6.md`.
+
+| Before | After |
+| --- | --- |
+| This section consolidates migration-relevant discovery while keeping the declared asset inventory separate from the evidence actually collected. ... The discovery set is a sample of the estate ... | The UTC/DTC application runs on Central Engine, Message Redirector, Telemetry Processor and TCSI server pairs, SIGMAP servers, maintenance consoles, and UTC and DTC operator workstations at the Rockhampton and Mackay sites. Discovery captures exist for 42 of these hosts ... |
+| The table below records software and processes found in the May 2026 application sample ... | The 11 hosts captured in May 2026 run the application components, management and security agents, drivers and tools listed below ... |
+| The TCS Backup Script scheduled task was confirmed on every host in the May application/update sample. | Every host captured in May 2026 runs the TCS Backup Script scheduled task ... This log copy therefore depends on a file share in the INTERNAL domain namespace and an INTERNAL domain account. |
+| The raw `Get-DnsClient` output from CONTROLLER36 confirms that DNS servers are configured only on Ethernet 3 ... | On CONTROLLER36, DNS servers are configured on Ethernet 3 only; no other interface has a DNS server. |
+| All 39 sampled UTC/DTC hosts use the identical pair of DNS resolvers ... | All [count to be confirmed] UTC/DTC hosts examined use the same two DNS servers ... Both are INTERNAL domain controllers, one at each site. |
+
+Result: `term_lint.py` 10 flags before, none after; `prose_lint.py` connector, evidence-ID and evidence-as-subject warnings cleared. Every host name, address and count was carried over or deliberately held back; no unsupported claim was added. The validation also found a count mismatch ("39 sampled UTC/DTC hosts" in the DNS draft against 32 UTC/DTC hosts among the 42 captured in Section 6) and a missing evidence matrix row for the domain-controller role of ROTPRDSRV122 and MOTPRDSRV122.
+
+### How future CSA agents use the capability
+
+1. It loads automatically: evidence investigator, technical analyst, writer, change authoring and quality reviewer all list it as always-loaded. Section skills carry a pointer line; do not copy the table into them.
+2. Before naming anything, apply the six-question decision method (SKILL.md part 1) and the IT/OT classification (part 2).
+3. Before returning a draft or a change file, run `term_lint.py` with `prose_lint.py` and resolve every flag by deciding what the passage describes.
+4. Reviewers apply check 4 in `csa-quality-review` and report terminology findings with location, problem and corrected wording. Corrections reach the document through `csa-change-authoring` (an editorial edit with a plain `Note`, or inside an evidence edit already touching the text).
+5. To add or change a term, edit `references/terminology.md`. New review phrases, evidence phrases and spellings take effect in the lint immediately. Record the source in `sources.md`.
+
+### Remaining limits
+
+- The lint is pattern-based. It cannot judge whether "discovery coverage" is legitimate in a given place or whether a classification is right; the reviewer decides.
+- `prose_lint.py` reads configuration file names (`.ps1`, `.csv`) as evidence file names; accept them where they name what the system runs.
+- The terminology table reflects rail (UTC/DTC, IAMPS) and energy sources most strongly. Extend it with the owner's terms for mining, water or other sectors when those CSAs start.

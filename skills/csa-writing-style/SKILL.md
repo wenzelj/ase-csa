@@ -15,7 +15,7 @@ Write the way a competent, slightly busy human assessor writes when they know th
 
 Before applying anything below, read a paragraph or two of the section's surrounding, already-approved text. If this document has an established register (more formal, more clipped, more table-heavy), match it. These rules describe how to avoid AI-sounding prose within that register, not a house style to impose over it.
 
-Match the register (formality, terminology, spelling), not the structural habits. If the surrounding text breaks the "Say it once, say it first" rules below (bullet fragments, restated facts, announcing lead-ins), do not copy those habits into new text.
+Match the register (formality, level of detail), not the structural habits. Spelling and technical terms always follow `australian-it-ot-terminology` (`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/australian-it-ot-terminology/SKILL.md`): Australian English and the terminology table, even where the surrounding text uses US spelling or looser terms. If the surrounding text breaks the "Say it once, say it first" rules below (bullet fragments, restated facts, announcing lead-ins), do not copy those habits into new text.
 
 ## Say it once, say it first
 
@@ -108,6 +108,8 @@ Every applied change carries a Word comment. The document owner, reviewers and a
 The resulting comment reads: `Corrected: the servers do run … no independent local time source. (Ref S9-E3; evidence E-082)`. Preview every comment in a change file with `python3 -m csa_docx.comment_text <change file>` (run from `.agents/framework`); it flags a missing Note, a Note over 40 words and a file name.
 
 ## Check before returning
+
+Run the terminology lint as well as the prose lint, and resolve every flag by deciding what the passage describes: `python3 /Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/australian-it-ot-terminology/scripts/term_lint.py <draft.md | working.docx> [--heading "<title>"]`.
 
 Run the prose lint on the draft (Markdown) or, for review, on the working DOCX section:
 

@@ -5,6 +5,8 @@ description: Explain and assess the evidenced current architecture of an Operati
 
 # OT Architecture Analysis
 
+Terminology: name every component, service, dependency and interface with `australian-it-ot-terminology` (`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/australian-it-ot-terminology/SKILL.md`), classify it as OT, supporting IT, shared, platform or external, and write in Australian English.
+
 Create a current-state architecture view from verified components and relationships.
 
 Identify:

@@ -1,0 +1,41 @@
+# Terminology sources
+
+Researched 25 September 2026 for `australian-it-ot-terminology`. Some cyber.gov.au pages refused automated fetching on that date; where a page could not be read directly, the entry says which search result or mirror the terms were confirmed from. Re-check definitions against the current edition before quoting them in a CSA.
+
+## Source hierarchy
+
+1. Organisation or program terminology where formally defined: OT 3.5 program documents (zone model Z0 to Z6, treatments, "vital OT systems", "drawbridge", "OT-resident", "BASE_INFRA"), the application vendor's own module names, the organisation's asset register.
+2. Australian legislation and regulation where it applies: *Security of Critical Infrastructure Act 2018* (SOCI) and its risk management program rules ("critical infrastructure asset", "responsible entity", "critical infrastructure risk management program").
+3. ASD / ACSC terminology: ISM glossary, OT guidance.
+4. Relevant Australian industry framework: AESCSF (energy).
+5. IEC / ISO standards: IEC 62443 (zones and conduits, IACS, security levels), ISO/IEC 27000 series.
+6. Established vendor and product terminology (Microsoft, VMware, Cisco, CrowdStrike, the application vendor).
+7. Established industry technical terminology.
+
+Cyber security terms go where they help the reader. Architecture, hosting, interface and application sections use normal infrastructure and application terms.
+
+## Sources and what each contributed
+
+| Source | Publisher | Used for | Link |
+| --- | --- | --- | --- |
+| ISM, Cyber security terminology (glossary) | ASD | Definitions used in the table: system ("the cyber supply chain, infrastructure, operating systems and applications supporting the processing, storage or communication of data"), system owner, operational technology ("systems that detect or cause a direct change to the physical environment through the monitoring or control of devices, processes and events"), OT equipment ("any device that can process, store or communicate data or signals within OT environments, such as programmable logic controllers and remote terminal units"), server, workstation, network device, gateway, security domain, virtualisation, privileged user accounts, service accounts, jump server, remote access. The glossary does not define SCADA, DCS, PLC, RTU, HMI, historian, hypervisor, domain controller or backup; those come from sources 5 to 7. | https://www.cyber.gov.au/business-government/asds-cyber-security-frameworks/ism/cyber-security-terminology |
+| ISM guideline chapter titles | ASD | Vocabulary for management topics: system hardening, system management, system monitoring, networking, gateways, data transfers, communications infrastructure, ICT/IT equipment. Titles confirmed from a secondary summary because the ASD pages refused fetching. | https://www.cyber.gov.au/business-government/asds-cyber-security-frameworks/ism (secondary: https://www.stickmancyber.com/blog/ism-cybersecurity-guidelines) |
+| Principles of operational technology cyber security | ASD's ACSC with international partners (October 2024) | The six principles and their vocabulary: safety is paramount; knowledge of the business is crucial ("know and defend vital systems"); OT data is extremely valuable; segment and segregate OT networks; the supply chain must be secure; people are essential. Terms: OT environment, OT systems, physical processes, vital systems, network architecture, vendors, devices, protocols. Read from the quick reference guide mirror. | https://www.cyber.gov.au/business-government/secure-design/operational-technology-environments/principles-of-operational-technology-cyber-security (quick reference guide mirror: https://www.ic3.gov/CSA/2024/241001-quick_reference_guide.pdf) |
+| Creating and maintaining a definitive view of your OT architecture | ASD's ACSC and partners | Closest match to a CSA's job. Terms: asset inventory ("an organised, regularly updated list of an organisation's systems, hardware, and software"), criticality (business, safety, security), connectivity, data flow diagrams, protocols and TCP/UDP ports, dependencies ("which assets it depends on to function, and those assets that depend on it"), zones and conduits (IEC 62443-3-2), network segmentation (VLANs, DMZs, dedicated subnets), third parties (manufacturers, integrators, MSPs), site-specific details. | https://www.cyber.gov.au/business-government/secure-design/operational-technology-environments/creating-and-maintaining-a-definitive-view-of-your-operational-technology-architecture |
+| Remote access to operational technology environments | ASD's ACSC | Remote access vocabulary: OT environment (OTE), corporate environment, jump host in a demilitarised zone outside the OTE and a second jump host inside it, limited privileged account, MFA for each jump. | https://www.cyber.gov.au/business-government/secure-design/operational-technology-environments/remote-access-to-operational-technology-environments |
+| Secure connectivity principles for OT | NCSC-UK with ASD (published on cyber.gov.au, 2026) | Noted for connectivity vocabulary; not read in full. | https://www.cyber.gov.au/business-government/secure-design/operational-technology-environments/secure-connectivity-principles-for-operational-technology |
+| AESCSF glossary | AEMO | Definitions: asset ("something of value to the organisation ... technology, information, roles performed by personnel, and facilities"), information technology, operations technology ("programmable systems or devices that interact with the physical environment"), SCADA ("an industrial computer system for process control and gathering of data in real time from remote locations"), critical infrastructure asset (SOCI), function, dependency risk. Note AESCSF writes "Operations Technology"; the CSA uses ASD's "operational technology". | https://www.aemo.com.au/-/media/files/initiatives/cyber-security/aescsf/aescsf-glossary.pdf |
+| AESCSF 2025 overview | AEMO | Domain names show how Australian energy writes about IT and OT together: Asset, Change, and Configuration Management; Identity and Access Management; Cyber Security Architecture; Threat and Vulnerability Management; Situational Awareness; Event and Incident Response, Continuity of Operations; Supply Chain and External Dependencies Management. Framework note that securing OT assets "will often depend on processes maintained by personnel within IT functions" supports stating IT dependencies explicitly. | https://www.aemo.com.au/-/media/files/initiatives/cyber-security/aescsf/guidance-materials/aescsf-2025-overview.pdf |
+| Australian Government Style Manual (dictionaries) | Australian Government | Spelling: Australian dictionaries often allow both forms, but the British form (-ise, -our) is preferred. Use an Australian dictionary (Macquarie). | https://www.stylemanual.gov.au/blog/dictionaries-indispensable-guide-writing-and-style |
+| SOCI Act material | Department of Home Affairs | Legal terms, used only in their legal sense. | https://www.homeaffairs.gov.au/reports-and-pubs/files/rmp-guidance-for-stakeholders.PDF |
+
+Industry usage (rail, energy, mining) in the table, such as "signalling", "wayside equipment", "duty/standby", "control centre", "telemetry" and "protection relay", is established Australian practice rather than a defined term from the sources above. Use the owner's and vendor's own names where they exist.
+
+## Decisions taken from the research
+
+- **"Operational technology"** follows the ISM definition. "OT equipment" is used for devices (ISM term); "OT assets" is kept for asset-register contexts.
+- **Classification by relationship**: the AESCSF note that OT security depends on IT-run processes, and ASD's architecture guidance on documenting dependencies, support stating enterprise IT services as dependencies of the OT system rather than labelling them OT.
+- **Jump host, DMZ, corporate environment** follow the ASD remote access guidance.
+- **Zones and conduits** are used when the program uses the IEC 62443 zone model (the OT 3.5 program does).
+- **"Cyber security"** two words in prose, as in ACSC publication titles; ASD's own documents have used both forms over time, so proper names keep their published form.
+- **Spelling** follows the Style Manual and Macquarie: -ise, -our, -re, licence (noun) / license (verb).

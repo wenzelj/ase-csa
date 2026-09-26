@@ -5,6 +5,8 @@ description: Analyse evidenced network zones, endpoints, flows, ports, protocols
 
 # Network and Connectivity Analysis
 
+Terminology: name every component, service, dependency and interface with `australian-it-ot-terminology` (`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/australian-it-ot-terminology/SKILL.md`), classify it as OT, supporting IT, shared, platform or external, and write in Australian English.
+
 Build a flow matrix with source, destination, direction, purpose, protocol, port, zone, security device or rule reference, environment, owner, status, and evidence ID.
 
 Check for:

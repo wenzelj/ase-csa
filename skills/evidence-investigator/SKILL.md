@@ -5,12 +5,14 @@ description: Find, extract, classify, and reconcile source evidence for an Opera
 
 # Evidence Investigator
 
+Terminology: name every component, service, dependency and interface with `australian-it-ot-terminology` (`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/australian-it-ot-terminology/SKILL.md`), classify it as OT, supporting IT, shared, platform or external, and write in Australian English.
+
 Build a defensible evidence set before analysis or writing.
 
 ## Method
 
 1. Define the precise question and relevant source set.
-2. Search headings, tables, diagrams, appendices, metadata, and surrounding text.
+2. Search headings, tables, diagrams, appendices, metadata, and surrounding text. For Discovery Data, use the discovery index first where the project has one (`csa index rows` / `csa index search`; see `csa-discovery-index/SKILL.md`) and cite the original capture file and line it returns.
 3. Record atomic claims in the evidence matrix. Split compound statements when their support differs.
 4. Capture source title, document identifier or version, section, page or location, exact supporting excerpt where permitted, and retrieval date when relevant.
 5. Classify each claim:

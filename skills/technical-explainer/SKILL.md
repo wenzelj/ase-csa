@@ -5,6 +5,8 @@ description: Explain Operational Technology, infrastructure, networking, identit
 
 # Technical Explainer
 
+Terminology: name every component, service, dependency and interface with `australian-it-ot-terminology` (`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/australian-it-ot-terminology/SKILL.md`), classify it as OT, supporting IT, shared, platform or external, and write in Australian English.
+
 Explain only concepts that materially help the user understand the assessment, a finding, or a decision. Load `csa-writing-style` (`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-writing-style/SKILL.md`) before writing the explanation note.
 
 - Give the full term followed by its abbreviation on first use, such as Programmable Logic Controller (PLC), Domain Name System (DNS), and High Availability (HA).

@@ -5,6 +5,8 @@ description: Review current availability, redundancy, failover, backup, restore,
 
 # Availability and Resilience Analysis
 
+Terminology: name every component, service, dependency and interface with `australian-it-ot-terminology` (`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/australian-it-ot-terminology/SKILL.md`), classify it as OT, supporting IT, shared, platform or external, and write in Australian English.
+
 Assess each important service path, not merely whether a backup product or cluster is mentioned.
 
 Record:

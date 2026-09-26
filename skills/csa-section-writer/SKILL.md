@@ -7,7 +7,7 @@ description: Write or revise a Current State Assessment section from an approved
 
 Write for technical and operational readers using the existing document's structure and style unless the user requests a redesign.
 
-Before drafting, load both shared references -- they govern what the section is about and how it reads: `csa-writing-style` (`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-writing-style/SKILL.md`) for how the sentences read, and `references/current-state-reasoning.md` (relative to this skill) for what the section is about: the subject rule (system, not evidence), the three statement classes (fact / evidence / gap), "not observed" vs "does not exist", evidence correlation, scope of a statement, and IT/OT terminology. Write to both; the rules below govern what the sentences are allowed to claim.
+Before drafting, load `australian-it-ot-terminology` (`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/australian-it-ot-terminology/SKILL.md`) for the words (technical terms, IT/OT classification, headings, Australian English), and both shared references -- they govern what the section is about and how it reads: `csa-writing-style` (`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-writing-style/SKILL.md`) for how the sentences read, and `references/current-state-reasoning.md` (relative to this skill) for what the section is about: the subject rule (system, not evidence), the three statement classes (fact / evidence / gap), "not observed" vs "does not exist", evidence correlation, scope of a statement, and IT/OT terminology. Write to both; the rules below govern what the sentences are allowed to claim.
 
 ## What a section must expose
 

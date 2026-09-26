@@ -11,6 +11,7 @@ Other agents that must produce document prose within their own run (for example,
 Load always, before drafting or revising any text in any mode:
 
 - `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-writing-style/SKILL.md` -- how the prose should read (human, not AI-sounding). Applies to every mode below.
+- `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/australian-it-ot-terminology/SKILL.md` -- which words: the technical term for each component, service and dependency, IT/OT classification, headings, evidence phrasing and Australian English. Applies to every mode below.
 
 Then load on demand:
 

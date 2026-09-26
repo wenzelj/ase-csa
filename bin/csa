@@ -47,6 +47,7 @@ CANON_AGENTS = CANON_ROOT / ".agents"
 SCRIPTS = {
     "ev": SKILLS / "csa-evidence-matrix/scripts/evidence_matrix.py",
     "graph": SKILLS / "csa-evidence-matrix/scripts/graph_store.py",
+    "index": SKILLS / "csa-discovery-index/scripts/discovery_index.py",
     "lint": SKILLS / "csa-writing-style/scripts/prose_lint.py",
     "new": SKILLS / "csa-document-template/scripts/new_csa.py",
     "scaffold": SKILLS / "csa-document-template/scripts/scaffold_csa.py",
@@ -519,6 +520,11 @@ def cmd_ev(a):
     return run_script("ev", ["--workspace", _ws(p), *a.rest])
 
 
+def cmd_index(a):
+    p = project(a.project); banner(p)
+    return run_script("index", ["--project", p["key"], *a.rest])
+
+
 def cmd_graph(a):
     p = project(a.project); banner(p)
     return run_script("graph", ["--workspace", _ws(p), *a.rest])
@@ -726,7 +732,8 @@ prints (it resolves the active project from `csa use`), or ask the user which pr
 
 - `csa status [N]` / `csa next` - where each section is in the pipeline
 - `csa lookup "<text>"` - stable `@H...` ID for a Where: anchor
-- `csa ev lookup "<question>"` - evidence matrix first, Discovery Data second
+- `csa ev lookup "<question>"` - evidence matrix first
+- `csa index rows <table> --where "Col~text"` / `csa index search "<terms>"` - Discovery Data index second (cross-host tables and full text, with file/line citations); raw files only for what `csa index status` lists as not indexed
 - `csa lint N` - prose check on a section
 """
 
@@ -1126,7 +1133,7 @@ def cmd_fleet(a):
 
 # ---------------------------------------------------------------- main
 PASSTHROUGH = {
-    "ev": cmd_ev, "graph": cmd_graph, "test": cmd_test,
+    "ev": cmd_ev, "graph": cmd_graph, "index": cmd_index, "test": cmd_test,
     **{n: cmd_passthrough(n) for n in ("new", "scaffold", "table", "diagram", "dry-run")},
 }
 
@@ -1140,7 +1147,7 @@ Parallel    csa fleet "author 6" "evidence 7" [-f tasks.txt] [--dry-run] [--prin
 Analysis    csa ask <section> | evidence | gaps | analyse <skill> [SECTION=..] | write | summary | qa
 Framework   csa prepare | csa lookup "<text>" | csa validate N | csa refresh | csa test | csa mcp
 Integrate   csa sync [--codex-prompts]   (wrapper skills, /csa-* slash commands, AGENTS.md from registry.yaml)
-Scripts     csa ev lookup "<q>" | csa graph ... | csa lint [N] | csa check [--final] | csa new ... | csa scaffold ...
+Scripts     csa ev lookup "<q>" | csa index rows|search|hosts|tables|build ... | csa graph ... | csa lint [N] | csa check [--final] | csa new ... | csa scaffold ...
             csa table ... | csa diagram ... | csa dry-run ...   (arguments pass straight through;
             put -p <key> before the command: csa -p utcdtc ev stats)
 Agent opts  KEY=VALUE overrides (EDIT_MODE=editorial, ITERATION_EDIT_LIMIT=4), --cli codex|claude|hermes,

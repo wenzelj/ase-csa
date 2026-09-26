@@ -5,6 +5,8 @@ description: Matrix-first evidence lookup and append-only recording for the Curr
 
 # CSA Evidence Matrix (read + write skill)
 
+Terminology: name every component, service, dependency and interface with `australian-it-ot-terminology` (`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/australian-it-ot-terminology/SKILL.md`), classify it as OT, supporting IT, shared, platform or external, and write in Australian English.
+
 The evidence matrix is the shared memory of what has already been established about the assessed system. It lives at `<work_dir>/evidence-matrix.csv`, where `<work_dir>` is the active project's `work_dir` from `csa-context/PROJECTS.yaml` (or the `WORK_DIR` supplied directly) -- never assume IAMPS. For example, IAMPS's matrix is at:
 
 ```text
@@ -42,6 +44,8 @@ The matrix is not the structure or subject of the CSA. The CSA body never takes 
 ```
 
 Never skip step 1 for a technical fact about hosts, services, ports, addresses, software, configuration, ownership or dates. Never write a claim into a proposed edit, comment or report that you have not either found in the matrix or verified in Discovery Data.
+
+**Step 3 (SEARCH) - use the discovery index first where the project has one.** If `<work_dir>/discovery-index.sqlite` exists, query it with the `csa-discovery-index` skill (`discovery_index.py rows` / `search`) before opening raw Discovery Data files. It covers every current host capture in one query and returns the source file, capture and line numbers to put in the new row. Search raw files only for what the index reports as not indexed. (Trial on UTC DTC, 25/09/2026.)
 
 ## Script
 

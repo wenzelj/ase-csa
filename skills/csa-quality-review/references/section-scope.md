@@ -2,7 +2,7 @@
 
 The single reference for **what belongs where** in a Current State Assessment (CSA). It is read by:
 
-- `csa-quality-review` check 9 (Section fit), to judge whether text sits in the right section and subsection;
+- `csa-quality-review` check 12 (Section fit), to judge whether text sits in the right section and subsection;
 - `csa-section-writer` and `csa-change-authoring`, so new text is written in the right place in the first place.
 
 `scripts/section_fit_scan.py` parses this file: the `### ` domain headings, and the `Legacy headings:` and `Signal terms:` lines under each. Keep those three shapes when you edit it.
@@ -252,7 +252,7 @@ Pre-template CSAs (for example UTC DTC v0.4 and IAMPS) have fewer domain section
 | `WRONG_SECTION` | Topic belongs to another domain or document-level section | `MAJOR` if it is the only statement of that fact, so a reader of the owning section would miss it; `MINOR` if it is a shared topic resolved by part 5, or the owner already states it (then prefer `DUPLICATE`) |
 | `WRONG_SUBSECTION` | Right domain, wrong job | `MAJOR` for `FINDING`, `POSITION` or `REQUIREMENT` inside Discovery Information / Observed, `FACT` or `FINDING` inside Expected, or a rating outside the Rating cell / Assessment; `MINOR` otherwise |
 | `SPLIT` | One unit does two jobs, or belongs to two sections | the severity of the misplaced part |
-| `DUPLICATE` | Stated in full here and in its owning section | as check 7 rates it; name the owner |
+| `DUPLICATE` | Stated in full here and in its owning section | as check 10 rates it; name the owner |
 | `OUT_OF_SCOPE` | No home in a CSA: a recommendation in a template CSA, general technology explanation, future-state design, copied prior-assessment text | `MAJOR` for a `RECOMMENDATION` inside a `FACT` or `POSITION` subsection; `MINOR` otherwise |
 | `MISPLACED_HEADING` | A heading and everything under it sits under the wrong parent | `MAJOR` |
 

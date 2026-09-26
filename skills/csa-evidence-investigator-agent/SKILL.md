@@ -26,5 +26,6 @@ prints (it resolves the active project from `csa use`), or ask the user which pr
 
 - `csa status [N]` / `csa next` - where each section is in the pipeline
 - `csa lookup "<text>"` - stable `@H...` ID for a Where: anchor
-- `csa ev lookup "<question>"` - evidence matrix first, Discovery Data second
+- `csa ev lookup "<question>"` - evidence matrix first
+- `csa index rows <table> --where "Col~text"` / `csa index search "<terms>"` - Discovery Data index second (cross-host tables and full text, with file/line citations); raw files only for what `csa index status` lists as not indexed
 - `csa lint N` - prose check on a section
