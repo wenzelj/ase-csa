@@ -723,15 +723,11 @@ Do not reformat the entire document.
 
 ## Tracked Changes
 
-Do not enable Track Changes unless the user explicitly requests it.
+The framework applies every approved edit as a Word tracked change (`w:ins`/`w:del`). This is intended: the review agent checks each change against the original wording still in the document, and Wenzel can accept or reject each change in Word.
 
-The primary audit mechanism is:
-
-- the approved `.md` change record;
-- Word comments containing Edit IDs and reasons;
-- the section completion report.
-
-If Track Changes is already enabled in the source document, preserve the existing document state unless instructed otherwise.
+- Do not pass `--no-track-changes` unless Wenzel asks for it in this run.
+- Do not accept or reject tracked changes. Accepting them is the cleanup step (`csa cleanup <N>`), which runs only after the review has signed off and Wenzel has read the changes in Word.
+- When you apply an edit by hand (the framework reported `BLOCKED`), make it as a tracked change too, so it can be reviewed and rejected like the others.
 
 ## Table Of Contents And Fields
 
