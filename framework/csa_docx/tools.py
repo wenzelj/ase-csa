@@ -50,7 +50,11 @@ def _load_project_registry() -> list[dict]:
     cross-project safety check is unavailable" rather than blocking every
     operation on a framework installation issue.
     """
-    registry_path = Path(__file__).resolve().parents[2] / "csa-context" / "PROJECTS.yaml"
+    registry_path = (
+        Path(os.environ["CSA_PROJECTS_FILE"])
+        if os.environ.get("CSA_PROJECTS_FILE")
+        else Path(__file__).resolve().parents[2] / "csa-context" / "PROJECTS.yaml"
+    )
     if not registry_path.is_file():
         return []
     projects: list[dict] = []
