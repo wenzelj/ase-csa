@@ -577,12 +577,10 @@ Attach comments to:
 
 If a deletion makes it impossible to anchor the comment cleanly, attach the comment to the nearest surviving heading or paragraph associated with that approved edit.
 
-The comment must include the Edit ID, and the evidence E-id(s) from the change file's `Why` when it cites any.
-
-Example:
+The framework writes the comment from the record's `Note` and ends it with the edit ID and the E-id(s) from `Why`, for example:
 
 ```text
-S10-E12 (E-076) - Replaced absolute security-loss wording because the approved review found the original conclusion exceeded the available evidence.
+Corrected: the earlier wording said all security monitoring stops, which the evidence does not support. (Ref S10-E12; evidence E-076)
 ```
 
 ## Word Comment OOXML Safety
