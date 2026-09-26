@@ -516,6 +516,14 @@ def cmd_approve(a):
         die(f"section {a.section} has no change file yet. Run `csa author {a.section}` first.")
     cf = Path(st["change_file"])
     text = cf.read_text(encoding="utf-8")
+    rejected = [e.strip().upper() for e in (getattr(a, "reject", None) or [])]
+    if rejected and not a.revoke:
+        for eid in rejected:
+            text, n = re.subn(rf"^(#{{2,4}}\s+)({re.escape(eid)}\s+-\s)", r"\1REJECTED \2", text, count=1, flags=re.M)
+            if not n:
+                die(f"{eid} is not an edit heading in {cf.name}")
+        cf.write_text(text, encoding="utf-8")
+        st = section_state(p, a.section)
     m = STATUS_LINE_RE.search(text)
     if not m:
         die(f"no '**Status:**' line in {cf}; add one before approving.")
@@ -534,14 +542,15 @@ def cmd_approve(a):
             print(f"Change file: {cf}\nEdits: {edits}")
             if not sys.stdin.isatty() or input("Approve these edits for implementation? [y/N] ").strip().lower() != "y":
                 die("not approved.")
-        new = f"**Status:** Approved for implementation {datetime.now():%Y-%m-%d %H:%M} by {who}. Edits: {edits}."
+        new = (f"**Status:** Approved for implementation {datetime.now():%Y-%m-%d %H:%M} by {who}. Edits: {edits}."
+               + (f" Rejected: {', '.join(rejected)}." if rejected else ""))
     cf.write_text(text[:m.start()] + new + text[m.end():], encoding="utf-8")
     af = approval_file(cf)
     if a.revoke:
         if af.exists():
             af.unlink()
     else:
-        af.write_text(json.dumps({"approved_at": datetime.now().isoformat(timespec="seconds"), "by": who,
+        af.write_text(json.dumps({"approved_at": datetime.now().isoformat(timespec="seconds"), "by": who, "rejected": rejected,
                                   "hashes": edit_record_hashes(cf.read_text(encoding="utf-8"))}, indent=2) + "\n",
                       encoding="utf-8")
     print(new)
@@ -1282,6 +1291,7 @@ def main(argv=None) -> int:
     s = sp("approve", cmd_approve); s.add_argument("section"); s.add_argument("--by")
     s.add_argument("--yes", "-y", action="store_true"); s.add_argument("--revoke", action="store_true")
     s.add_argument("--force", action="store_true", help="approve even if csa check-change reports errors")
+    s.add_argument("--reject", nargs="+", default=[], metavar="EDIT_ID", help="mark these edits REJECTED; they are never applied")
     s = sp("check-change", cmd_check_change, help="check a section's change file before approval")
     s.add_argument("section"); s.add_argument("--no-anchors", action="store_true")
     s.add_argument("--no-lint", action="store_true"); s.add_argument("--json", action="store_true")
