@@ -99,27 +99,11 @@ If you notice another issue, ignore it. You are an implementation agent, not a r
 
 ## Versioning
 
-Before making the first approved change:
+There is one working DOCX per project, found by `prepareDocument()` (and shown by `csa status`). Edit that file in place.
 
-- identify the current document version;
-- create a copy of the original `.docx`;
-- determine the next sequential version;
-- save the working copy using the next version number.
-
-Example:
-
-- Current: `Current State Assessment - IAMPS.docx`
-- Create: `Current State Assessment - IAMPS - v2.docx`
-
-If the filename uses another version convention such as `V01`, `v1.0`, or `Version 1`, preserve the existing convention and increment it logically.
-
-If the filename does not contain a version number but the document metadata contains one, use the document's versioning convention when naming the copy.
-
-Do not overwrite the original.
-
-The only internal version metadata you may change without a `.md` instruction is the document version field necessary to represent the newly created version.
-
-Do not change dates, owners, reviewers, project names, or other metadata unless explicitly authorised by a change record.
+- Do not create a new versioned copy (`- v2.docx` and so on) unless Wenzel asks for a new version in this run.
+- Never edit an original or archived DOCX.
+- Do not change the document's version, dates, owners, reviewers or project names unless a change record says so.
 
 ## Simple Invocation Defaults
 
@@ -162,41 +146,13 @@ Only ask the user for missing information when the current working DOCX or reque
 
 ## Backup And Working Copy Rule
 
-The original source document is immutable.
-
-Before editing:
-
-```text
-SOURCE DOCUMENT
-    -> COPY
-    -> NEXT VERSION DOCUMENT
-    -> ALL CHANGES ARE MADE TO THIS COPY
-```
-
-Never edit the source file. Never save over it.
-
-Before any DOCX changes in any run, create a timestamped backup copy of the exact DOCX file that will be edited.
-
-This applies to:
-
-- the first run, after creating the next-version working copy and before applying edits;
-- resumed runs, before changing the existing working DOCX;
-- repair runs, before changing the working DOCX;
-- any run that will add, update or repair Word comments.
-
-Use a backup filename that is easy to trace to the run, for example:
+The framework backs up the working DOCX before every batch and records the backup path in the `## Changes Report`. When you change the DOCX by hand, first make a timestamped copy yourself:
 
 ```text
 <working-docx-name>.before_section_<section-number>_<YYYYMMDD-HHMMSS>.bak
 ```
 
-Do not continue with edits if the backup cannot be created and verified.
-
-After creating the backup:
-
-- confirm the backup file exists;
-- confirm it has a non-zero file size;
-- record the full backup path in the `## Changes Report`.
+Confirm the copy exists and is not empty, and record its path in the `## Changes Report`. Do not edit the DOCX if the backup cannot be made.
 
 ## Section-By-Section Execution
 
@@ -748,25 +704,7 @@ This is intended to prevent a failed Section 9 edit, for example, from contamina
 
 ## Save Behaviour
 
-After finishing the section, save the working document.
-
-Do not create a new version number for every section.
-
-For example:
-
-- Original: `Current State Assessment - IAMPS.docx`
-- Working document: `Current State Assessment - IAMPS - v2.docx`
-- Section 1 edits: save `v2`
-- Section 2 edits: save the same `v2`
-- Section 3 edits: save the same `v2`
-
-Continue updating `v2` until all approved sections are applied.
-
-Only create another version when explicitly instructed by the user.
-
-If a previous section has already produced a working document, continue from that working document for the next section. Do not copy the original again and do not create `v2`, `v3`, or another duplicate working document unless the user explicitly asks for a new version.
-
-When more than one candidate working DOCX exists, choose the most recent valid working version only if it can be identified unambiguously from the file name, change reports, comments, or user instruction. If ambiguity remains, stop and ask for the correct working DOCX path.
+Save the same working DOCX after every batch. Do not create a new version per section or per batch. If `prepareDocument()` reports more than one candidate working DOCX, stop and ask which one to use.
 
 ## Mandatory Per-Run DOCX Backup
 
@@ -1023,15 +961,7 @@ The implementation phase and final publication phase are separate controlled act
 
 ## First Action When Starting The Project
 
-When first given the source document and approved `.md` files:
-
-- inspect the source document only enough to determine filename, version, document integrity, and section structure;
-- create the next-version working copy;
-- inventory the available `.md` files by section and Edit ID range;
-- do not apply all changes;
-- process only the first section explicitly requested by the user;
-- save;
-- stop.
+Run `prepareDocument()` first. If it returns `NOT_READY` or `ERROR`, stop and report its message. Then process only the section you were asked to apply.
 
 ## Core Behaviour Summary
 
@@ -1040,8 +970,7 @@ You are not a reviewer. You are not an architect. You are not a technical assess
 Your job is:
 
 ```text
-COPY
--> VERSION
+PREPARE DOCUMENT (one working DOCX, edited in place)
 -> READ APPROVED CHANGE FILE
 -> PLAN SECTION EDIT INVENTORY
 -> APPLY NEXT BOUNDED ITERATION OR COMPLETE SMALL SECTION
