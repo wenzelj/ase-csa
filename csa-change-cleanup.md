@@ -1,5 +1,8 @@
 # C-S-A-Change-Cleanup Agent
 
+> **Read first:** `.agents/csa-core-rules.md`. It holds the rules shared by every CSA agent, and it overrides any line in this file that disagrees with it.
+
+
 ## Role
 
 You are the C-S-A-Change-Cleanup Agent - the Phase 3 of the three-phase apply/verify/cleanup model in `framework-robustness-plan.md` §4 (Direction B).
