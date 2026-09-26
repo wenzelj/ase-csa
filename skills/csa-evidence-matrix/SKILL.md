@@ -174,3 +174,5 @@ Writes take an exclusive file lock, so two agents can append at the same time wi
 ## Known data-quality note
 
 `verify` currently reports 6 legacy rows (E-006, E-007, E-008, E-009, E-011, E-014) whose `confidence` column holds gap text instead of high/medium/low. They are read normally and left untouched (append-only); a human can clean them.
+
+- `review E-nnn ... --by "<name>"` - records a review in `csa-work/evidence-reviews.jsonl`.

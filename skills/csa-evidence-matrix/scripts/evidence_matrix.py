@@ -292,6 +292,8 @@ def cmd_get(args):
     header, body, *_ = load(matrix)
     ids = {i.strip().upper() for i in args.ids}
     rows = [as_dict(header, r) for r in body if r and r[0].upper() in ids]
+    reviews = latest_reviews(matrix)
+    rows = [with_review(r, reviews) for r in rows]
     found = {r["evidence_id"].upper() for r in rows}
     emit({"status": "OK", "rows": rows, "not_found": sorted(ids - found)})
 
@@ -517,6 +519,25 @@ def cmd_append(args):
 
 
 # --------------------------------------------------------------------------- main
+def latest_reviews(matrix) -> dict:
+    """evidence_id -> latest review record from evidence-reviews.jsonl (empty if none)."""
+    log = matrix.parent / "evidence-reviews.jsonl"
+    out = {}
+    if log.is_file():
+        for line in log.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                rec = json.loads(line)
+                out[rec["evidence_id"].upper()] = rec
+    return out
+
+
+def with_review(row: dict, reviews: dict) -> dict:
+    rec = reviews.get(row.get("evidence_id", "").upper())
+    if rec:
+        row = dict(row, review_state=rec["state"], reviewed_by=rec["by"], reviewed_at=rec["at"])
+    return row
+
+
 def cmd_review(args):
     _, matrix = resolve_paths(args)
     header, body, *_ = load(matrix)
