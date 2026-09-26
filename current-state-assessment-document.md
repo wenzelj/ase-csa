@@ -381,7 +381,7 @@ The agent is a thin controller. The Python framework is the default worker for r
 
 Before doing manual DOCX implementation work, run the reusable local framework for the selected batch unless the requested edit is clearly outside the framework's documented capabilities.
 
-Always run the framework with the Python interpreter at `/opt/homebrew/bin/python3.14` — do not use the shell default `python3` (which may be an older version that cannot import the framework's `@dataclass(slots=True)` modules).
+Prefer `csa apply <SECTION>` (add `--until-done` to keep going batch after batch). It picks the framework interpreter from `.agents/cli.yaml`, passes the project, comment author and batch size, and refuses a change file that is not approved. If you must call the framework directly, use the interpreter `csa doctor` reports as the framework interpreter (Python 3.11 or later), never whatever `python3` happens to be.
 
 Framework path:
 
@@ -392,21 +392,7 @@ Framework path:
 Primary apply command:
 
 ```text
-/opt/homebrew/bin/python3.14 /Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/framework/csa_docx/cli_apply_section.py \
-  --engine docxengine \
-  --section <SECTION> \
-  --change-file "<approved section .md>" \
-  --docx "<active working .docx>" \
-  --workspace "<workspace root>" \
-  --limit <ITERATION_EDIT_LIMIT> \
-  --comment-author "Wenzel Joubert" \
-  --comment-initials "WJ"
-```
-
-Framework command defaults to DocxEngine. Keep the explicit engine flag in examples so CLI/EVO runs are unambiguous:
-
-```text
-/opt/homebrew/bin/python3.14 /Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/framework/csa_docx/cli_apply_section.py \
+<framework python> /Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/framework/csa_docx/cli_apply_section.py \
   --engine docxengine \
   --section <SECTION> \
   --change-file "<approved section .md>" \
