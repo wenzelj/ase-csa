@@ -84,6 +84,13 @@ def edit_record_hashes(text: str) -> dict[str, str]:
     return out
 
 
+def section_hash(text: str) -> str:
+    """SHA-256 of a section file's text with the front-matter 'status:' line removed,
+    so changing only the status never changes the hash (S56)."""
+    kept = [l for l in text.splitlines() if not l.strip().lower().startswith('status:')]
+    return hashlib.sha256("\n".join(kept).encode("utf-8")).hexdigest()
+
+
 def approval_file(cf: Path) -> Path:
     return cf.with_name(cf.stem + ".approval.json")
 
@@ -575,6 +582,79 @@ def cmd_check_section(a):
     rc = run_check_section(p, cf, a)
     metric(p, "check_section", cf.name, exit=rc)
     return rc
+
+
+def cmd_approve_section(a):
+    p = project(a.project); banner(p)
+    f = Path(a.file)
+    if not f.is_absolute():
+        f = local_path(p["work_dir"]) / "sections" / a.file
+    if not f.is_file():
+        die(f"no section file {a.file!r} under <work_dir>/sections/ (or pass a full path).")
+    text = f.read_text(encoding="utf-8")
+    if run_check_section(p, f, argparse.Namespace(no_lint=False, json=False)) != 0 and not a.force:
+        die("csa check-section found errors (above). Fix them, or approve anyway with --force.")
+    rev = local_path(p["work_dir"]) / "reviews" / f"section-{f.stem}-review.md"
+    ready = False
+    if rev.is_file():
+        for line in rev.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                ready = ("NOT READY" not in line.upper()) and ("READY" in line.upper())
+                break
+    if not ready and not a.force:
+        die(f"no READY review for {f.name} (expected <work_dir>/reviews/section-{f.stem}-review.md). Review it, or approve anyway with --force.")
+    who = a.by or settings().get("comment_author", os.environ.get("USER", "unknown"))
+    if not a.yes:
+        print(f"Section file: {f}")
+        if not sys.stdin.isatty() or input("Approve this section file for the build? [y/N] ").strip().lower() != "y":
+            die("not approved.")
+    lines_t = text.splitlines(keepends=True)
+    if not any(l.strip().startswith("status:") for l in lines_t):
+        die(f"no 'status:' line in {f.name}; add one to the front matter before approving.")
+    lines_t = [l if not l.strip().startswith("status:") else "status: approved\n" for l in lines_t]
+    f.write_text("".join(lines_t), encoding="utf-8")
+    af = f.with_name(f.stem + ".approval.json")
+    af.write_text(json.dumps({"approved_at": datetime.now().isoformat(timespec="seconds"), "by": who,
+                              "hash": section_hash(text)}, indent=2) + "\n", encoding="utf-8")
+    print(f"approved: {f.name} by {who}")
+    metric(p, "approve_section", f.name, by=who, hash=section_hash(text))
+    return 0
+
+
+def cmd_sections(a):
+    p = project(a.project); banner(p)
+    sd = local_path(p["work_dir"]) / "sections"
+    rows = []
+    if sd.is_dir():
+        for f in sorted(sd.glob("*.md")):
+            text = f.read_text(encoding="utf-8")
+            block = heading = status = None
+            for l in text.splitlines():
+                s = l.strip()
+                if s.lower().startswith("block:"):
+                    block = s.split(":", 1)[1].strip()
+                elif s.lower().startswith("heading:"):
+                    heading = s.split(":", 1)[1].strip()
+                elif s.lower().startswith("status:"):
+                    status = s.split(":", 1)[1].strip()
+            problem = None
+            af = f.with_name(f.stem + ".approval.json")
+            if status == "approved":
+                if not af.is_file():
+                    problem = "no approval record"
+                else:
+                    rec = json.loads(af.read_text(encoding="utf-8"))
+                    if rec.get("hash") and rec["hash"] != section_hash(text):
+                        problem = "changed since approval"
+            rows.append({"file": f.name, "block": block, "heading": heading, "status": status, "problem": problem})
+    if a.json:
+        print(json.dumps(rows, indent=2))
+    else:
+        for r in rows:
+            print(f"{r['file']:<42} block={r['block'] or '-':<18} heading={r['heading'] or '-':<32} status={r['status'] or '-':<10} {r['problem'] or ''}")
+        if not rows:
+            print(f"no section files under {sd}")
+    return 0
 
 
 def cmd_approve(a):
@@ -1382,6 +1462,11 @@ def main(argv=None) -> int:
     s.add_argument("--no-lint", action="store_true"); s.add_argument("--json", action="store_true")
     s = sp("check-section", cmd_check_section, help="check a build-lane section file before approval")
     s.add_argument("file"); s.add_argument("--no-lint", action="store_true"); s.add_argument("--json", action="store_true")
+    s = sp("approve-section", cmd_approve_section, help="approve a section file for the build lane")
+    s.add_argument("file"); s.add_argument("--by"); s.add_argument("--yes", "-y", action="store_true")
+    s.add_argument("--force", action="store_true", help="approve even if check-section reports errors or no READY review")
+    s = sp("sections", cmd_sections, help="list section files, their block, heading, status and any approval problem")
+    s.add_argument("--json", action="store_true")
     s = sp("apply", cmd_apply, help="framework-first apply; --agent for the LLM document agent")
     s.add_argument("section"); s.add_argument("--limit", type=int); s.add_argument("--edit", help="apply only this edit ID")
     s.add_argument("--until-done", action="store_true", help="keep running batches until complete, blocked or no progress")
