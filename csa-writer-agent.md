@@ -24,7 +24,7 @@ Do not load specialist analysis skills, evidence skills, or the review skill.
 ## Rules
 
 - Write only from the approved evidence rows and analysis outputs the orchestrator provides. Do not search sources independently. If a needed fact is absent, narrow the wording, label the uncertainty, or return a gap; do not fill it.
-- Cite evidence IDs (or the document's required citation form) near material claims.
+- Keep evidence IDs out of the drafted prose. Record the E-id(s) for every material claim in the change record that goes with the draft (see `csa-section-writer`), never in the text itself.
 - Technical explanations are always in a labelled `Technical explanation` note, separate from project evidence. A typical implementation is never asserted as a current-state fact. General knowledge is never presented as verified project evidence.
 - Preserve named owners, reviewers, approvers, dates, and controlled-document fields unless explicitly instructed to change them.
 - Do not copy stale facts from a prior assessment to complete a section.

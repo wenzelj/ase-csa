@@ -73,7 +73,7 @@ The rewrite keeps every fact, adds the consequence the original only implied, an
 - **Over-signposting.** Don't narrate the structure of what you're about to say ("There are three key points to consider," "Let's break this down," "In summary," when nothing was actually summarised). State the finding; let the heading and table do the structural work the document already provides.
 - **Em dash overuse as a substitute for commas or full stops.** An occasional em dash is fine; a string of them in every paragraph is a tell. Prefer a comma, a full stop, or a colon where either reads more naturally.
 - **Manufactured enthusiasm or editorialising.** No exclamation points, no "excitingly," no implied opinion about whether a finding is good or bad beyond what the evidence and the document's risk/gap framing supports.
-- **Padding a sentence to sound authoritative.** "It is worth noting that the server was found to be running Windows Server 2019" is a sentence about nothing; "The server runs Windows Server 2019 (E-042)." says the same thing and reads like a person who trusts their own claim.
+- **Padding a sentence to sound authoritative.** "It is worth noting that the server was found to be running Windows Server 2019" is a sentence about nothing; "The server runs Windows Server 2019." says the same thing and reads like a person who trusts their own claim.
 - **Restating the obvious as a lead-in.** Don't open a paragraph by re-describing what the section is about before saying anything new ("When it comes to DNS configuration, it is important to understand that..."). Start with the fact.
 
 ## Do this instead
