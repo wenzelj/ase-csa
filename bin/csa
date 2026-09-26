@@ -101,6 +101,19 @@ def approval_problems(cf: Path) -> list[str]:
         out.append("edits added since approval: " + ", ".join(added))
     return out
 
+
+def metric(p: dict, event: str, section=None, **data) -> None:
+    """Append one event to <work_dir>/metrics.jsonl. Never fails the command."""
+    try:
+        wd = local_path(p["work_dir"])
+        wd.mkdir(parents=True, exist_ok=True)
+        rec = {"ts": datetime.now().isoformat(timespec="seconds"), "project": p["key"], "event": event,
+               "section": None if section is None else str(section), **data}
+        with open(wd / "metrics.jsonl", "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(rec) + "\n")
+    except OSError:
+        pass
+
 C = {"b": "\033[1m", "d": "\033[2m", "r": "\033[31m", "g": "\033[32m", "y": "\033[33m", "c": "\033[36m", "0": "\033[0m"}
 if not sys.stdout.isatty() or os.environ.get("NO_COLOR"):
     C = {k: "" for k in C}
@@ -506,7 +519,9 @@ def cmd_check_change(a):
     st = section_state(p, a.section)
     if not st["change_file"]:
         die(f"section {a.section} has no change file.")
-    return run_check_change(p, Path(st["change_file"]), a)
+    rc = run_check_change(p, Path(st["change_file"]), a)
+    metric(p, "check_change", a.section, exit=rc)
+    return rc
 
 
 def cmd_approve(a):
@@ -554,6 +569,8 @@ def cmd_approve(a):
                                   "hashes": edit_record_hashes(cf.read_text(encoding="utf-8"))}, indent=2) + "\n",
                       encoding="utf-8")
     print(new)
+    metric(p, "revoke" if a.revoke else "approve", a.section,
+           approved=[] if a.revoke else section_state(p, a.section)["edits"], rejected=rejected)
 
 
 def _apply_once(p, a, limit):
@@ -588,6 +605,7 @@ def cmd_apply(a):
         status = res.get("status")
         applied = (res.get("applied") or []) + (res.get("already_applied") or [])
         print(f"batch {rounds}: {status}  applied={applied}  next={res.get('next_edit_id')}")
+        metric(p, "apply", a.section, batch=rounds, status=status, applied=applied, blocked=res.get("blocked") or [])
         if a.json:
             print(json.dumps(res, indent=2))
         if status == "BLOCKED" and a.agent_on_block:
@@ -971,6 +989,7 @@ def cmd_pipeline(a):
         if nxt.startswith("csa review"):
             launch(p, agent("review"), [n], a)
             st = section_state(p, n)
+            metric(p, "review", n, result=st["review_result"], signoff=st["signoff"])
             if st["signoff"] != "YES":
                 print(f"Review not signed off ({st['review_result']}). Stopping for a human look.")
                 return 2
