@@ -10,7 +10,7 @@ description: Step 4 - accept the reviewed tracked changes once the review has si
 The agent definition is authoritative. Read it in full and follow it; do not work from memory:
 
 ```text
-.agents/csa-change-cleanup.md
+/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-change-cleanup.md
 ```
 
 Inputs: `SECTION*` (`*` = required, `NAME=value` = default).
@@ -18,9 +18,9 @@ Inputs: `SECTION*` (`*` = required, `NAME=value` = default).
 ## Project
 
 Never guess the project. If the prompt does not already give `PROJECT_CONTEXT`, `WORK_DIR` and `WORKSPACE`,
-run `.agents/bin/csa cleanup <section> --print` and follow the prompt it
+run `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/bin/csa cleanup <section> --print` and follow the prompt it
 prints (it resolves the active project from `csa use`), or ask the user which project from
-`.agents/csa-context/PROJECTS.yaml`.
+`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-context/PROJECTS.yaml`.
 
 ## Useful deterministic commands (no LLM needed)
 
