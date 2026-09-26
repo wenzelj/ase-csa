@@ -1,36 +1,49 @@
-"""Build-lane planner: from approved section files to change records.
+"""Build-lane planner: from approved section files to scaffolding and change
+records.
 
 Given a document created from the CSA template (whose stable-ID manifest
 ``tools.prepareDocument`` has already written), map every rendered statement
-in the section files to the stable ID of the template placeholder it
-replaces. See ``.agents/docs/build-lane-spec.md`` section 5, steps 2 and 4.
+in the section files to the template placeholder it replaces. See
+``.agents/docs/build-lane-spec.md`` section 5, steps 2, 3 and 4.
 
 The mapping is structural, never by guessed numbers: the manifest entry for
 the heading whose text equals the section file's ``heading:`` is found by
-text, and every placeholder is located relative to that heading in the
-manifest's document order.
+normalised text, and every placeholder is located relative to that heading in
+the manifest's document order.
 
-``plan_records`` returns ``{framework_section: [record, ...]}`` in document
-order; ``plan_scaffold`` returns the list of bullets the document is still
-missing (empty when every count fits the template -- S58 fills in the rest
-and ``run_scaffold`` stays out of this story's scope).
+- ``plan_records`` -> ``{framework_section: [record, ...]}`` in document
+  order, each record carrying ``edit_id``, ``title``, ``where``, ``do``,
+  ``text``, ``why``, ``note`` (the fields a change file needs).
+- ``plan_scaffold`` -> one entry per table or bullet list whose count in the
+  section file differs from the placeholders in the document;
+  ``run_scaffold`` runs ``scaffold_csa.py`` once per entry, and the caller
+  runs ``prepareDocument(force_regenerate=True)`` afterwards so the stable
+  IDs are rebuilt.
+
+``plan_records`` raises :class:`ValueError` naming a statement when that
+statement has no placeholder in the document; run the scaffold step first.
 """
 
 from __future__ import annotations
 
-import json
+import subprocess
+import sys
 from pathlib import Path
 
 from . import tools
-from .section_file import parse_section_file, rendered_statements
+from .check_section import normalise_heading
+from .section_file import parse_section_file
 
-#: ``##`` headings inside a domain block and where their content lands.
+#: ``##`` headings inside section blocks.
 _DISCOVERY_HEADING = "Discovery Information"
 _DRAWBRIDGE_HEADING = "Drawbridge Impact"
 _SUMMARY_HEADING = "Summary"
 _FINDINGS_HEADING = "Findings"
 _GLOSSARY_HEADING = "Terms"
 _COVERAGE_HEADING = "Hosts"
+
+#: Glossary rows are appended after the template's standard rows.
+_GLOSSARY_STANDARD_ROWS = 10
 
 
 def _manifest_entries(workspace: Path) -> tuple[Path, list[dict]]:
@@ -45,8 +58,7 @@ def _manifest_entries(workspace: Path) -> tuple[Path, list[dict]]:
         raise ValueError(
             f"No prepared manifest for {target.docx}; run tools.prepareDocument(workspace) first."
         )
-    entries = payload.get("entries") or []
-    return target.docx, entries
+    return target.docx, payload.get("entries") or []
 
 
 def _framework_section(section_path: str) -> str:
@@ -55,158 +67,294 @@ def _framework_section(section_path: str) -> str:
     return str(int(section_path.split(".")[0]) - 1)
 
 
+def _norm(text: str) -> str:
+    return normalise_heading(text)
+
+
 def _find_heading(entries: list[dict], text: str, *, level: int | None = None) -> dict | None:
+    """The first heading entry whose normalised text matches ``text``."""
     for entry in entries:
         if entry.get("kind") != "heading":
             continue
         if level is not None and entry.get("level") != level:
             continue
-        if (entry.get("text") or "").strip() == text.strip():
+        if _norm(entry.get("text") or "") == _norm(text):
             return entry
     return None
 
 
-def _entry_at(entries: list[dict], entry_id: str) -> dict | None:
-    for entry in entries:
-        if entry.get("id") == entry_id:
-            return entry
-    return None
-
-
-def _paragraphs_after(entries: list[dict], entry_id: str, *, section_path: str,
-                      stop_at_heading: bool = False) -> list[dict]:
-    """Body paragraphs after ``entry_id``, in document order, while the
-    section path stays under the given heading (stops at a deeper or equal
-    heading when ``stop_at_heading``)."""
-    start = next((i for i, e in enumerate(entries) if e.get("id") == entry_id), None)
+def _body_under(entries: list[dict], start_id: str, section_path: str) -> list[dict]:
+    """Entries between the heading ``start_id`` and the next heading of any
+    level, kept to those in the heading's section, in document order."""
+    start = next((i for i, e in enumerate(entries) if e.get("id") == start_id), None)
     if start is None:
         return []
     out: list[dict] = []
     for e in entries[start + 1:]:
         if e.get("kind") == "heading":
-            if stop_at_heading:
-                break
-            if not (e.get("section_path") or "").startswith(section_path + "."):
-                break
-            continue
-        if e.get("kind") == "paragraph" and (e.get("section_path") or "").startswith(section_path):
+            break
+        if (e.get("section_path") or "").startswith(section_path):
             out.append(e)
     return out
 
 
-def _table_rows_after(entries: list[dict], entry_id: str, *, section_path: str) -> list[dict]:
-    """Table rows after ``entry_id`` belonging to the table that follows it:
-    stops at the first non-table-row entry, so it never bleeds past the table."""
-    start = next((i for i, e in enumerate(entries) if e.get("id") == entry_id), None)
-    if start is None:
-        return []
-    out: list[dict] = []
-    for e in entries[start + 1:]:
-        if e.get("kind") != "table_row":
-            break
-        if not (e.get("section_path") or "").startswith(section_path):
-            break
-        out.append(e)
-    return out
-
-
-def _domain_table_records(entries: list[dict], section_path: str, heading: dict,
-                          table_heading: str) -> list[tuple[dict, str, str]]:
-    """Find the label paragraph (the table heading) under the domain and the
-    data rows of the table that follows it. Returns
-    ``(row_entry, statement_key, cell_text)`` per row after the header row."""
+def _subheading(entries: list[dict], section_path: str, level: int, text: str) -> dict | None:
+    """The level-``level`` heading named ``text`` under ``section_path``."""
     for e in entries:
-        if (e.get("kind") != "paragraph"
-                or not (e.get("section_path") or "").startswith(section_path + ".")
-                or (e.get("text") or "").strip() != table_heading):
-            continue
-        rows = _table_rows_after(entries, e["id"], section_path=section_path)
-        data = [r for r in rows[1:]]  # first row is the header row
-        out = []
-        for n, r in enumerate(data, start=1):
-            out.append((r, f"{table_heading} {n}", " | ".join((r.get("text") or "").split(" | "))))
-        return out
-    return []
-
-
-def _domain_subheading(entries: list[dict], text: str, section_path: str, domain_id: str) -> dict | None:
-    """The Heading 3 under the given domain whose text equals ``text`` (every
-    domain repeats the same subheading names, so the global first match would
-    land in the wrong domain)."""
-    for e in entries:
-        if (e.get("kind") == "heading" and e.get("level") == 3
+        if (e.get("kind") == "heading" and e.get("level") == level
                 and (e.get("section_path") or "").startswith(section_path + ".")
-                and (e.get("text") or "").strip() == text.strip()):
+                and _norm(e.get("text") or "") == _norm(text)):
             return e
     return None
 
 
-def _domain_records(entries: list[dict], parsed: dict, heading_entry: dict) -> list[tuple[dict, str, str]]:
-    """``(manifest_entry, statement_key, record_text)`` for one domain block
-    in document order: requirement rows, then the Discovery Information
-    bullets, then the Drawbridge Impact paragraph, then any 3.1/3.2 tables."""
-    section_path = heading_entry["section_path"]
-    out: list[tuple[dict, str, str]] = []
+def _scaffold_entry(entries: list[dict], kind: str, heading_text: str, count: int,
+                    ref_entry: dict, table: int = 1) -> dict:
+    """One ``plan_scaffold`` entry: the 1-based occurrence of ``ref_entry``
+    among same-level same-text headings plus the needed count. ``table`` is
+    included only when it is not the first table under the heading."""
+    entry = {
+        "kind": kind,
+        "heading": heading_text,
+        "occurrence": _occurrence(entries, ref_entry),
+        "count": count,
+    }
+    if kind == "rows" and table != 1:
+        entry["table"] = table
+    return entry
 
-    # Requirement rows: the table_row entries whose text starts with "<Req ID> |".
-    rows = [e for e in entries if e.get("kind") == "table_row"
-            and (e.get("section_path") or "") == section_path]
-    for req in parsed.get("requirements", []):
-        req_id = req["req_id"].strip()
-        row = next((r for r in rows if (r.get("text") or "").startswith(req_id + " |")), None)
-        if row is None:
+
+
+def _occurrence(entries: list[dict], heading_entry: dict) -> int:
+    """1-based occurrence of ``heading_entry`` among all headings with the
+    same normalised text (any level), in document order. Mirrors
+    scaffold_csa.py, which counts matching headings and returns the
+    ordinal of the target among them."""
+    norm = _norm(heading_entry.get("text") or "")
+    count = 0
+    for e in entries:
+        if e.get("kind") == "heading" and _norm(e.get("text") or "") == norm:
+            count += 1
+            if e.get("id") == heading_entry.get("id"):
+                return count
+    raise ValueError(f"heading {heading_entry.get('id')!r} not found in manifest")
+
+
+def _placeholder_entries(entries: list[dict], items: list[tuple], text: str,
+                         scaffold: dict | None, have: int, needed: int,
+                         kind: str) -> None:
+    """Append ``needed`` statement items to ``items``: the first ``have`` map
+    onto the existing placeholders in order, any remainder maps to the
+    synthetic ``(+1)`` placeholder the scaffold step will create, each carrying
+    the shared ``scaffold`` entry when there is one."""
+    if needed > have:
+        assert scaffold is not None
+    for n in range(1, needed + 1):
+        if n <= have:
+            entry = entries[n - 1]
+        else:
+            entry = {"id": f"{entries[-1]['id']}(+1)",
+                     "section_path": entries[-1]["section_path"]}
+        items.append((entry, f"{text} {n}", None, scaffold if n > have else None))
+
+
+def _resolve_section_file(workspace: Path, path: Path) -> dict:
+    """Resolve one section file against the manifest.
+
+    Returns ``{"block", "heading", "heading_entry", "items", "scaffold"}``
+    where ``items`` is a list of ``(manifest_entry, statement_key, text,
+    scaffold_entry|None)`` in document order. ``text`` is filled in by
+    ``plan_records``; a trailing placeholder with no statement (``text is
+    None`` with no scaffold) is deleted. Raises :class:`ValueError` naming the
+    statement when the document has no placeholder that could carry it.
+    """
+    parsed = parse_section_file(path)
+    _, entries = _manifest_entries(workspace)
+    heading_text = parsed["heading"].strip()
+    block = parsed["block"]
+    scaffold: dict | None = None
+    items: list[tuple[dict, str, str | None, dict | None]] = []
+
+    if block == "domain":
+        heading_entry = _find_heading(entries, heading_text, level=2)
+        if heading_entry is None:
+            raise ValueError(f"no Heading 2 {heading_text!r} in the document")
+        section_path = heading_entry["section_path"]
+
+        # Requirement rows: the table_row entries of the domain's first table,
+        # whose text starts with "<Req ID> |".
+        req_rows = [e for e in entries if e.get("kind") == "table_row"
+                    and (e.get("section_path") or "") == section_path]
+        for req in parsed.get("requirements", []):
+            req_id = req["req_id"].strip()
+            row = next((r for r in req_rows if (r.get("text") or "").startswith(req_id + " |")), None)
+            if row is None:
+                raise ValueError(
+                    f"no placeholder row for requirement {req_id} under "
+                    f"{heading_entry['id']} ({heading_entry.get('text')!r})"
+                )
+            text = f"Observed: {req['current_state']}\nAssessment: {req['rating']}"
+            items.append((row, req_id, text, None))
+
+        # Discovery Information: the bullets under the domain's Heading 3.
+        bullets = parsed.get("bullets", {}).get(_DISCOVERY_HEADING, [])
+        if bullets:
+            di = _subheading(entries, section_path, 3, _DISCOVERY_HEADING)
+            if di is None:
+                raise ValueError(f"no Heading 3 {_DISCOVERY_HEADING!r} under {heading_entry['id']}")
+            para_entries = [e for e in _body_under(entries, di["id"], di["section_path"])
+                            if e.get("kind") == "paragraph"]
+            if len(bullets) > len(para_entries):
+                scaffold = _scaffold_entry(entries, "bullets", _DISCOVERY_HEADING, len(bullets), di)
+            for n, text in enumerate(bullets, start=1):
+                if n <= len(para_entries):
+                    entry = para_entries[n - 1]
+                else:
+                    entry = {"id": f"{para_entries[-1]['id']}(+1)",
+                             "section_path": para_entries[-1]["section_path"]}
+                items.append((entry, f"{_DISCOVERY_HEADING} {n}", text,
+                              scaffold if n > len(para_entries) else None))
+
+        # Drawbridge Impact: the first paragraph under the domain's Heading 3.
+        draw = parsed.get("paragraphs", {}).get(_DRAWBRIDGE_HEADING) or []
+        if draw:
+            dib = _subheading(entries, section_path, 3, _DRAWBRIDGE_HEADING)
+            if dib is None:
+                raise ValueError(f"no Heading 3 {_DRAWBRIDGE_HEADING!r} under {heading_entry['id']}")
+            paras = [e for e in _body_under(entries, dib["id"], dib["section_path"])
+                     if e.get("kind") == "paragraph"]
+            if not paras:
+                raise ValueError(
+                    f"statement {_DRAWBRIDGE_HEADING!r} has no placeholder under {dib['id']}"
+                )
+            items.append((paras[0], _DRAWBRIDGE_HEADING, draw[0], None))
+
+        # 3.1 / 3.2 tables: the rows of the table that follows the matching
+        # label paragraph (a template placeholder paragraph whose text is the
+        # table heading).
+        for table_heading, cells_lists in parsed.get("tables", {}).items():
+            label = next((e for e in _body_under(entries, heading_entry["id"], section_path)
+                          if e.get("kind") == "paragraph"
+                          and _norm(e.get("text") or "") == _norm(table_heading)), None)
+            if label is None:
+                raise ValueError(f"no table label {table_heading!r} under {heading_entry['id']}")
+            idx = entries.index(label)
+            rows: list[dict] = []
+            for e in entries[idx + 1:]:
+                if e.get("kind") == "heading":
+                    break
+                if e.get("kind") == "table_row":
+                    rows.append(e)
+                elif rows:
+                    break
+            data = rows[1:]  # first row is the header row
+            if len(cells_lists) > len(data):
+                scaffold = _scaffold_entry(entries, "rows", table_heading, len(cells_lists), label)
+            for n, cells in enumerate(cells_lists, start=1):
+                if n <= len(data):
+                    row = data[n - 1]
+                else:
+                    row = {"id": f"{data[-1]['id']}(+1)", "section_path": data[-1]["section_path"]}
+                items.append((row, f"{table_heading} {n}", " | ".join(cells),
+                              scaffold if n > len(data) else None))
+
+    elif block == "executive-summary":
+        heading_entry = _find_heading(entries, heading_text, level=2)
+        if heading_entry is None:
+            raise ValueError(f"no Heading 2 {heading_text!r} in the document")
+        paras = [e for e in _body_under(entries, heading_entry["id"], heading_entry["section_path"])
+                 if e.get("kind") == "paragraph"]
+        summary = parsed.get("paragraphs", {}).get(_SUMMARY_HEADING, [])
+        if len(summary) > len(paras):
             raise ValueError(
-                f"no placeholder row for requirement {req_id} under "
-                f"{heading_entry['id']} ({heading_entry.get('text')!r})"
+                f"statement {_SUMMARY_HEADING!r} paragraph {len(summary)} has no placeholder left "
+                f"under {heading_entry['id']} (the document has {len(paras)})"
             )
-        text = f"Observed: {req['current_state']}\nAssessment: {req['rating']}"
-        out.append((row, req_id, text))
+        for n, text in enumerate(summary, start=1):
+            items.append((paras[n - 1], f"{_SUMMARY_HEADING} {n}", text, None))
+        # Unused placeholders are deleted.
+        for n in range(len(summary), len(paras)):
+            items.append((paras[n], f"{_SUMMARY_HEADING} {n + 1}", None, None))
 
-    # Discovery Information bullets: the paragraphs under the domain's
-    # Heading 3 "Discovery Information", in order.
-    bullets = parsed.get("bullets", {}).get(_DISCOVERY_HEADING, [])
-    di = _domain_subheading(entries, _DISCOVERY_HEADING, section_path, heading_entry["id"])
-    if bullets and di is None:
-        raise ValueError(f"no Heading 3 {_DISCOVERY_HEADING!r} under {heading_entry['id']}")
-    if bullets:
-        paras = _paragraphs_after(entries, di["id"], section_path=di["section_path"],
-                                  stop_at_heading=True)
-        if len(paras) < len(bullets):
-            raise ValueError(
-                f"statement {_DISCOVERY_HEADING!r} has {len(bullets)} bullet(s) but the document "
-                f"under {di['id']} only has {len(paras)} placeholder bullet(s)"
-            )
-        for n, (para, text) in enumerate(zip(paras, bullets), start=1):
-            out.append((para, f"{_DISCOVERY_HEADING} {n}", text))
+    elif block == "migration":
+        heading_entry = _find_heading(entries, heading_text, level=2)
+        if heading_entry is None:
+            raise ValueError(f"no Heading 2 {heading_text!r} in the document")
+        findings = parsed.get("bullets", {}).get(_FINDINGS_HEADING, [])
+        paras = [e for e in _body_under(entries, heading_entry["id"], heading_entry["section_path"])
+                 if e.get("kind") == "paragraph"]
+        if len(findings) > len(paras):
+            scaffold = _scaffold_entry(entries, "bullets", heading_text, len(findings), heading_entry)
+        for n, text in enumerate(findings, start=1):
+            if n <= len(paras):
+                entry = paras[n - 1]
+            else:
+                entry = {"id": f"{paras[-1]['id']}(+1)", "section_path": paras[-1]["section_path"]}
+            items.append((entry, f"{_FINDINGS_HEADING} {n}", text,
+                          scaffold if n > len(paras) else None))
 
-    # Drawbridge Impact: the paragraph under the domain's Heading 3.
-    db = parsed.get("paragraphs", {}).get(_DRAWBRIDGE_HEADING) or []
-    if db:
-        di3 = _domain_subheading(entries, _DRAWBRIDGE_HEADING, section_path, heading_entry["id"])
-        if di3 is None:
-            raise ValueError(f"no Heading 3 {_DRAWBRIDGE_HEADING!r} under {heading_entry['id']}")
-        paras = _paragraphs_after(entries, di3["id"], section_path=di3["section_path"],
-                                  stop_at_heading=True)
-        if not paras:
-            raise ValueError(
-                f"no paragraph under {di3['id']} for statement {_DRAWBRIDGE_HEADING!r}"
-            )
-        out.append((paras[0], _DRAWBRIDGE_HEADING, db[0]))
+    elif block in ("glossary", "coverage"):
+        heading_entry = _find_heading(entries, heading_text, level=1)
+        if heading_entry is None:
+            raise ValueError(f"no Heading 1 {heading_text!r} in the document")
+        rows = [e for e in entries if e.get("kind") == "table_row"
+                and (e.get("section_path") or "") == heading_entry["section_path"]]
+        data_rows = rows[1:]  # first row is the header row
+        if block == "glossary":
+            terms = parsed.get("tables", {}).get(_GLOSSARY_HEADING, [])
+            free = max(0, len(data_rows) - _GLOSSARY_STANDARD_ROWS)
+            if len(terms) > free:
+                scaffold = _scaffold_entry(
+                    entries, "rows", heading_text,
+                    len(terms) + _GLOSSARY_STANDARD_ROWS, heading_entry)
+            for n, cells in enumerate(terms, start=1):
+                idx = _GLOSSARY_STANDARD_ROWS + n - 1
+                if idx < len(data_rows):
+                    row = data_rows[idx]
+                else:
+                    row = {"id": f"{data_rows[-1]['id']}(+1)",
+                           "section_path": data_rows[-1]["section_path"]}
+                items.append((row, f"{_GLOSSARY_HEADING} {n}", " | ".join(cells),
+                              scaffold if idx >= len(data_rows) else None))
+        else:
+            hosts = parsed.get("tables", {}).get(_COVERAGE_HEADING, [])
+            if len(hosts) > len(data_rows):
+                scaffold = _scaffold_entry(entries, "rows", heading_text, len(hosts), heading_entry)
+            for n, cells in enumerate(hosts, start=1):
+                if n <= len(data_rows):
+                    row = data_rows[n - 1]
+                else:
+                    row = {"id": f"{data_rows[-1]['id']}(+1)",
+                           "section_path": data_rows[-1]["section_path"]}
+                items.append((row, f"{_COVERAGE_HEADING} {n}", " | ".join(cells),
+                              scaffold if n > len(data_rows) else None))
+    else:
+        raise ValueError(f"unknown block kind {block!r}")
 
-    # 3.1 / 3.2 tables: the table rows after the header row of the table
-    # that follows the matching label paragraph.
-    for table_heading in parsed.get("tables", {}):
-        out.extend(_domain_table_records(entries, section_path, heading_entry, table_heading))
-    return out
+    return {
+        "block": block,
+        "heading": heading_text,
+        "heading_entry": heading_entry,
+        "items": items,
+        "scaffold": scaffold,
+        "evidence": parsed.get("evidence", {}),
+    }
 
 
-def _number_edit_ids(out: dict[str, list[dict]]) -> dict[str, list[dict]]:
-    """Edit IDs ``S<N>-E<n>``, numbered in document order within each
-    framework section (the records arrive in document order)."""
-    for section_no, records in out.items():
-        for n, record in enumerate(records, start=1):
-            record["edit_id"] = f"S{section_no}-E{n}"
-    return out
+def _record(resolved: dict, entry: dict, key: str, text: str | None, file_name: str) -> dict:
+    if text is None:
+        do, record_text = "Delete", ""
+    else:
+        do, record_text = "Replace", text
+    return {
+        "edit_id": "",  # numbered in document order per framework section
+        "title": f"{resolved['heading']}: {key}",
+        "where": entry["id"],
+        "do": do,
+        "text": record_text,
+        "why": ", ".join(resolved["evidence"].get(key, [])),
+        "note": f"Built from approved section file {file_name}.",
+    }
 
 
 def plan_records(workspace, section_paths) -> dict[str, list[dict]]:
@@ -215,115 +363,77 @@ def plan_records(workspace, section_paths) -> dict[str, list[dict]]:
 
     Returns ``{framework_section: [record, ...]}`` in document order, where a
     record carries ``edit_id``, ``title``, ``where``, ``do``, ``text``,
-    ``why``, ``note`` (the fields a change file needs). Statements whose
-    placeholder does not exist raise :class:`ValueError` naming the statement.
+    ``why``, ``note``. Statements whose placeholder does not exist raise
+    :class:`ValueError` naming the statement; run the scaffold step first.
     """
     workspace = Path(workspace).resolve()
-    _, entries = _manifest_entries(workspace)
-
-    statements_by_key: dict[str, tuple[dict, str, str]] = {}
     grouped: dict[str, list[dict]] = {}
-    ordered_items: list[tuple[dict, str, str, dict]] = []
     for path in section_paths:
         path = Path(path)
-        parsed = parse_section_file(path)
-        file_name = path.name
-        heading_text = parsed["heading"].strip()
-        block = parsed["block"]
-
-        if block == "domain":
-            heading_entry = _find_heading(entries, heading_text, level=2)
-            if heading_entry is None:
-                raise ValueError(f"no Heading 2 {heading_text!r} in the document")
-            items = _domain_records(entries, parsed, heading_entry)
-        elif block == "executive-summary":
-            heading_entry = _find_heading(entries, heading_text, level=2)
-            if heading_entry is None:
-                raise ValueError(f"no Heading 2 {heading_text!r} in the document")
-            paras = _paragraphs_after(entries, heading_entry["id"],
-                                      section_path=heading_entry["section_path"],
-                                      stop_at_heading=True)
-            summary = parsed.get("paragraphs", {}).get(_SUMMARY_HEADING, [])
-            items = []
-            for n, text in enumerate(summary, start=1):
-                if n > len(paras):
-                    raise ValueError(
-                        f"statement {_SUMMARY_HEADING!r} has no placeholder left "
-                        f"(paragraph {n} beyond the document's {len(paras)})"
-                    )
-                items.append((paras[n - 1], f"{_SUMMARY_HEADING} {n}", text))
-            for n, para in enumerate(paras[len(summary):], start=len(summary) + 1):
-                items.append((para, f"{_SUMMARY_HEADING} {n}", None))
-        elif block == "migration":
-            heading_entry = _find_heading(entries, heading_text, level=2)
-            if heading_entry is None:
-                raise ValueError(f"no Heading 2 {heading_text!r} in the document")
-            findings = parsed.get("bullets", {}).get(_FINDINGS_HEADING, [])
-            paras = _paragraphs_after(entries, heading_entry["id"],
-                                      section_path=heading_entry["section_path"],
-                                      stop_at_heading=True)
-            items = []
-            for n, text in enumerate(findings, start=1):
-                if n > len(paras):
-                    raise ValueError(
-                        f"statement {_FINDINGS_HEADING!r} bullet {n} has no placeholder left "
-                        f"(the document under {heading_entry['id']} only has {len(paras)})"
-                    )
-                items.append((paras[n - 1], f"{_FINDINGS_HEADING} {n}", text))
-        elif block in ("glossary", "coverage"):
-            heading_entry = _find_heading(entries, heading_text, level=1)
-            if heading_entry is None:
-                raise ValueError(f"no Heading 1 {heading_text!r} in the document")
-            table_heading = _GLOSSARY_HEADING if block == "glossary" else _COVERAGE_HEADING
-            rows = [e for e in entries if e.get("kind") == "table_row"
-                    and (e.get("section_path") or "") == heading_entry["section_path"]]
-            data_rows = rows[1:]
-            items = []
-            if block == "glossary":
-                standard = 10
-                terms = parsed.get("tables", {}).get(table_heading, [])
-                if len(terms) + standard > len(data_rows):
-                    raise ValueError(
-                        f"statement {table_heading!r} needs {len(terms)} row(s) after the "
-                        f"{standard} standard rows but only {len(data_rows) - standard} are free"
-                    )
-                for n, cells in enumerate(terms, start=1):
-                    items.append((data_rows[standard + n - 1], f"{table_heading} {n}",
-                                  " | ".join(cells)))
-            else:
-                hosts = parsed.get("tables", {}).get(table_heading, [])
-                if len(hosts) > len(data_rows):
-                    raise ValueError(
-                        f"statement {table_heading!r} needs {len(hosts)} row(s) but the "
-                        f"document only has {len(data_rows)} placeholder row(s)"
-                    )
-                for n, cells in enumerate(hosts, start=1):
-                    items.append((data_rows[n - 1], f"{table_heading} {n}",
-                                  " | ".join(cells)))
-        else:
-            raise ValueError(f"unknown block kind {block!r}")
-
-        for entry, key, text in items:
+        resolved = _resolve_section_file(workspace, path)
+        for entry, key, text, _scaffold in resolved["items"]:
             section_no = _framework_section(entry["section_path"])
-            do = "Delete" if text is None else "Replace"
-            grouped.setdefault(section_no, []).append({
-                "entry": entry,
-                "title": f"{heading_text}: {key}",
-                "where": entry["id"],
-                "do": do,
-                "text": "" if text is None else text,
-                "why": ", ".join(parsed.get("evidence", {}).get(key, [])),
-                "note": f"Built from approved section file {file_name}.",
-            })
-
-    return _number_edit_ids(grouped)
+            grouped.setdefault(section_no, []).append(
+                _record(resolved, entry, key, text, path.name)
+            )
+    for section_no, records in grouped.items():
+        for n, record in enumerate(records, start=1):
+            record["edit_id"] = f"S{section_no}-E{n}"
+    return grouped
 
 
 def plan_scaffold(workspace, section_paths) -> list[dict]:
-    """S58 hook: the scaffolding the document still needs so that every
-    statement has a placeholder to replace.
+    """One entry per table or bullet list whose count in the section files
+    differs from the placeholders in the document:
+    ``{"kind": "bullets" | "rows", "heading", "occurrence", "count"}``, plus
+    ``"table"`` when it is not the first table under the heading.
 
-    In this story it returns ``[]`` when every count fits the template's
-    placeholders; S58 fills in the rest.
+    Empty when every count fits the template's placeholders.
     """
-    return []
+    workspace = Path(workspace).resolve()
+    out: list[dict] = []
+    seen: set[tuple] = set()
+    for path in section_paths:
+        resolved = _resolve_section_file(workspace, Path(path))
+        entry = resolved["scaffold"]
+        if not entry:
+            continue
+        key = (entry["kind"], entry["heading"], entry["occurrence"], entry.get("table", 1))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(entry)
+    return out
+
+
+def run_scaffold(workspace, docx, plan) -> list[dict]:
+    """Run ``scaffold_csa.py`` once per ``plan`` entry, in order.
+
+    Each call sets that block's placeholder count (absolute, idempotent); the
+    caller runs ``tools.prepareDocument(force_regenerate=True)`` afterwards so
+    the stable IDs are rebuilt. Raises :class:`RuntimeError` with the script's
+    output on any non-zero exit.
+    """
+    script = (Path(__file__).resolve().parents[2]
+              / "skills" / "csa-document-template" / "scripts" / "scaffold_csa.py")
+    if not script.is_file():
+        raise RuntimeError(f"scaffold script not found: {script}")
+    results: list[dict] = []
+    for entry in plan:
+        cmd = [
+            sys.executable, str(script), entry["kind"],
+            "--docx", str(docx),
+            "--heading", entry["heading"],
+            "--heading-occurrence", str(entry["occurrence"]),
+            "--set-count", str(entry["count"]),
+        ]
+        if entry["kind"] == "rows" and entry.get("table", 1) != 1:
+            cmd += ["--table", str(entry["table"])]
+        proc = subprocess.run(cmd, capture_output=True, text=True)
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"scaffold_csa.py failed ({' '.join(cmd)}): "
+                f"{proc.stdout.strip()}\n{proc.stderr.strip()}"
+            )
+        results.append({"entry": entry, "output": proc.stdout.strip()})
+    return results
