@@ -61,7 +61,7 @@ SCRIPTS = {
 
 EDIT_HEADING_RE = re.compile(r"^#{2,4}\s+(S\d+-[EA]\d+|E-\d+)\b", re.M)
 STATUS_LINE_RE = re.compile(r"^\*\*Status:\*\*\s*(.*)$", re.M)
-CHANGE_FILE_RE = re.compile(r"^ChangesCSA_.*_Section(?P<section>\d+)(?:_E\d+_E\d+(?:_.*)?)?\.md$")
+CHANGE_FILE_RE = re.compile(r"^ChangesCSA_.*?_Section(?P<section>\d+)(?:_(?P<label>[^.]+))?\.md$")
 
 RECORD_HEADING_RE = re.compile(r"^#{2,4}\s+(S\d+-[EA]\d+|E-\d+)\b.*$", re.M)
 NEXT_HEADING_RE = re.compile(r"^#{1,3}\s", re.M)
@@ -257,14 +257,21 @@ def _archived(path: Path, root: Path) -> bool:
     return any("archive" in x.lower() or x.lower().lstrip().startswith("old") or x == "_to_delete" for x in parts)
 
 
-def change_files(p: dict) -> dict[str, Path]:
+def all_change_files(p: dict) -> dict[str, list[Path]]:
+    """Every change file per section, the unlabelled ChangesCSA_<App>_Section<N>.md first."""
     root = local_path(p["project_root"])
-    out: dict[str, Path] = {}
-    for f in root.rglob("reviews/*.md"):
+    found: dict[str, list[Path]] = {}
+    for f in sorted(root.rglob("reviews/*.md")):
         m = CHANGE_FILE_RE.match(f.name)
         if m and not _archived(f, root):
-            out.setdefault(str(int(m["section"])), f)
-    return out
+            found.setdefault(str(int(m["section"])), []).append(f)
+    for files in found.values():
+        files.sort(key=lambda f: (CHANGE_FILE_RE.match(f.name)["label"] is not None, f.name))
+    return found
+
+
+def change_files(p: dict) -> dict[str, Path]:
+    return {s: files[0] for s, files in all_change_files(p).items()}
 
 
 def final_version_dirs(p: dict) -> list[Path]:
@@ -305,6 +312,7 @@ def section_state(p: dict, section: str) -> dict:
           "authored": bool(cf), "edits": [], "approved": False, "status_line": None,
           "apply_status": "NOT_STARTED", "completed": [], "blocked": [], "next_edit": None,
           "review_result": None, "signoff": None, "cleaned": False}
+    st["other_change_files"] = [str(x) for x in all_change_files(p).get(section, [])[1:]]
     if not cf:
         st["stage"], st["next"] = "not authored", f"csa author {section}"
         return st
@@ -396,6 +404,7 @@ def cmd_status(a):
         banner(p)
         for k in ("section", "title", "stage", "change_file", "status_line", "apply_status"):
             print(f"{k:>13}: {st.get(k)}")
+        print(f"{'other files':>13}: {', '.join(Path(x).name for x in st['other_change_files']) or '-'}")
         print(f"{'edits':>13}: {len(st['edits'])}  {', '.join(st['edits'])}")
         print(f"{'completed':>13}: {', '.join(st['completed']) or '-'}")
         print(f"{'blocked':>13}: {', '.join(st['blocked']) or '-'}")
@@ -412,6 +421,9 @@ def cmd_status(a):
     for s in states:
         colour = C["g"] if s["stage"] in ("done", "authored, no edits (clean)") else C["r"] if "BLOCK" in s["stage"] or "FAIL" in s["stage"] else C["y"]
         print(f"{s['section']:>3}  {s['title'][:34]:<34} {len(s['edits']):>5}  {colour}{s['stage'][:40]:<40}{C['0']} {C['d']}{s['next'] or ''}{C['0']}")
+        if s.get("other_change_files"):
+            print(f"     {C['d']}+ {len(s['other_change_files'])} other change file(s): "
+                  f"{', '.join(Path(x).name for x in s['other_change_files'])}{C['0']}")
     print(f"{C['d']}Only sections with a change file are listed; `csa author <N>` starts another.{C['0']}")
 
 
