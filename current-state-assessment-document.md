@@ -468,53 +468,20 @@ When that occurs:
 
 ## Locating Edits
 
-Change records normally include an exact locator such as:
+Every `Where:` in a current change file is a stable ID (`@H<path>-P<n>` for a paragraph, `@H<path>-T<n>-R<n>` for a table row), resolved through the manifest that `prepareDocument()` builds. The framework resolves it for you. When you work by hand:
 
-```text
-Where:
-Section 7.2.1, sentence beginning exactly:
-"This confirms that authentication..."
-```
-
-Use this anchor to locate the correct text.
-
-Use:
-
-- section heading;
-- exact opening text;
-- table row;
-- paragraph;
-- surrounding context
-
-to ensure the correct location is being edited.
-
-Never use an approximate match if there are multiple possible locations.
+- resolve the ID with `lookupStableId("@H...")` (or `csa lookup "@H..."`) and edit the paragraph or row it returns;
+- never search the document for similar wording instead of resolving the ID;
+- an older change file with a text anchor ("sentence beginning exactly ...") is resolved with `lookupStableId("<snippet>")`, and only a unique match (`match_count == 1`) may be edited.
 
 ## Anchor Mismatch Rule
 
-If the exact text specified in the `.md` file cannot be found:
+If a stable ID does not resolve, resolves to text that no longer matches the record's quoted "currently" text, or a text anchor matches zero or several places:
 
-- do not guess;
-- do not apply the change somewhere that merely looks similar;
-- search within the specified section for a safe and unambiguous equivalent;
-- determine whether a previous authorised edit changed the anchor;
-- if the location remains unambiguous, apply the edit;
-- if ambiguity remains, do not apply that edit.
-
-Record it as:
-
-```text
-UNRESOLVED CHANGE
-```
-
-Include:
-
-- Edit ID
-- Expected anchor
-- Section
-- Reason it could not safely be applied
-
-Continue with other edits in the same section only when they can be safely applied. At the end of the section, report the unresolved change.
+- do not guess, and do not edit a paragraph that merely looks similar;
+- check whether an earlier approved edit in the same change file already replaced that text, and report the edit as `ALREADY APPLIED` or `NOT APPLICABLE`, whichever is true;
+- run `prepareDocument()` again only if the manifest is older than the DOCX;
+- otherwise record `UNRESOLVED CHANGE` with the edit ID, the expected anchor and why it could not be applied safely, and continue only with edits that do not depend on it.
 
 ## Word Comments And Side Notes
 
