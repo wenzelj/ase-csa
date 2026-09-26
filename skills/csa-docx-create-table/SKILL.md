@@ -55,7 +55,7 @@ assert result["status"] == "OK", result
 ### CLI
 
 ```bash
-/opt/homebrew/bin/python3.14 /Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/framework/csa_docx/cli_create_table.py \
+/opt/homebrew/bin/python3.14 .agents/framework/csa_docx/cli_create_table.py \
     --docx "01 Current State AS Built/01 Final Version/Current State Assessment - IAMPS.docx" \
     --after @H16 \
     --cols 2 \
@@ -132,12 +132,12 @@ found). The JSON result is printed on stdout.
 
 ## Files
 
-- Implementation: ``/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/framework/csa_docx/tables.py`` (public entry
+- Implementation: ``.agents/framework/csa_docx/tables.py`` (public entry
   :func:`csa_docx.tables.create_table`).
-- Re-export: ``/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/framework/csa_docx/tools.py``
+- Re-export: ``.agents/framework/csa_docx/tools.py``
   (:func:`csa_docx.tools.create_table`).
-- CLI: ``/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/framework/csa_docx/cli_create_table.py``.
-- Validator: ``/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/framework/csa_docx/validator.py``
+- CLI: ``.agents/framework/csa_docx/cli_create_table.py``.
+- Validator: ``.agents/framework/csa_docx/validator.py``
   (:func:`csa_docx.validator.validate_docx`).
 
 ## Test
@@ -145,7 +145,7 @@ found). The JSON result is printed on stdout.
 ```bash
 # Smoke test on a throwaway copy (never the live working DOCX):
 cp "01 Current State AS Built/01 Final Version/Current State Assessment - IAMPS.docx" /tmp/t.docx
-/opt/homebrew/bin/python3.14 /Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/framework/csa_docx/cli_create_table.py \
+/opt/homebrew/bin/python3.14 .agents/framework/csa_docx/cli_create_table.py \
     --docx /tmp/t.docx --after @H16 --cols 2 \
     --header "Term,Definition" --row "OT,Operational Technology"
 # Expect: status OK, all validation Pass, table_count_after = (live count + 1).

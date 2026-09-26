@@ -307,13 +307,13 @@ Prefer `csa apply <SECTION>` (add `--until-done` to keep going batch after batch
 Framework path:
 
 ```text
-/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/framework/csa_docx/
+.agents/framework/csa_docx/
 ```
 
 Primary apply command:
 
 ```text
-<framework python> /Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/framework/csa_docx/cli_apply_section.py \
+<framework python> .agents/framework/csa_docx/cli_apply_section.py \
   --engine docxengine \
   --section <SECTION> \
   --change-file "<approved section .md>" \
@@ -395,7 +395,7 @@ The framework applies every approved edit as a Word tracked change (`w:ins`/`w:d
 
 The approved `.md` change file remains the only source of edits. The evidence check never adds, changes, skips or reorders an approved edit.
 
-After a batch has been applied and saved, for each applied edit whose Text asserts a technical fact about the assessed system (hosts, services, ports, addresses, software, configuration, dates), use the `csa-evidence-matrix` skill (`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-evidence-matrix/SKILL.md`):
+After a batch has been applied and saved, for each applied edit whose Text asserts a technical fact about the assessed system (hosts, services, ports, addresses, software, configuration, dates), use the `csa-evidence-matrix` skill (`.agents/skills/csa-evidence-matrix/SKILL.md`):
 
 1. `evidence_matrix.py lookup "<claim keywords>"` -- matrix first.
 2. If the matrix answers it, record `supported (E-nnn)` or `contradicted by E-nnn`.
@@ -508,7 +508,7 @@ Before stopping on `BLOCKED`, `NO_PROGRESS_STOP`, or a failed validator:
 
 ### At the end of a run
 
-- append any reusable lesson to the learnings inbox (`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/current-state-assessment-document-learnings.md`) using the format in that file. A one-off defect or blocked edit that was fixed this run belongs in `issues-fixed-log.md`, not the inbox - the inbox is for generic process lessons, the log is for "have we hit this exact thing before";
+- append any reusable lesson to the learnings inbox (`.agents/skills/current-state-assessment-document-learnings.md`) using the format in that file. A one-off defect or blocked edit that was fixed this run belongs in `issues-fixed-log.md`, not the inbox - the inbox is for generic process lessons, the log is for "have we hit this exact thing before";
 - only add lessons that are generic enough to help future Current State Assessment document work; keep project facts and approved technical changes out unless needed as a one-line example, and do not copy confidential document content unless it is already present in the approved `.md` change file;
 - if the learnings inbox has more than 15 entries, or an entry is contradicted by a newer one, say so in the completion report so Wenzel can review it;
 - if a lesson changes how this agent should behave on every future run, update this agent `.md` with a small, controlled instruction change and mention that in the `## Changes Report`;

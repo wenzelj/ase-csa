@@ -129,7 +129,7 @@ The change report is evidence to be checked. It is not the source of truth.
 
 ## Framework Tools (`csa-mcp`)
 
-The `csa_docx` framework (`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/framework/csa_docx/`, exposed as MCP tools via `csa-mcp` -- see `framework/csa_docx/README.md`) gives this agent two deterministic tools. Prefer them over manual text search or hand-parsing DOCX XML wherever they apply; they never guess and fail loud (`{"status": "ERROR"/"NOT_READY", ...}`) instead of picking a wrong location silently.
+The `csa_docx` framework (`.agents/framework/csa_docx/`, exposed as MCP tools via `csa-mcp` -- see `framework/csa_docx/README.md`) gives this agent two deterministic tools. Prefer them over manual text search or hand-parsing DOCX XML wherever they apply; they never guess and fail loud (`{"status": "ERROR"/"NOT_READY", ...}`) instead of picking a wrong location silently.
 
 - **`prepareDocument()`** -- call once at the start of every review, no `section` argument (see First Actions above). It confirms the working DOCX is safe to inspect and that the stable structural ID manifest (`@H<path>-P<n>` / `@H<path>-T<n>-R<n>`, one entry per heading/paragraph/table-row in the whole document) is current. `status: NOT_READY` means stop; do not review a locked or corrupt document.
 - **`lookupStableId(query)`** -- use this instead of manually re-deriving where an edit's `Where:` anchor lands in the reviewed DOCX:
@@ -343,7 +343,7 @@ For other projects, use the author and initials specified by the user or the rel
 
 ## Evidence Check (csa-evidence-matrix skill)
 
-Verifying that the DOCX matches the approved change file is unchanged. This check adds one question: is the technical fact the edit states supported by evidence? Use the `csa-evidence-matrix` skill (`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-evidence-matrix/SKILL.md`; helper `scripts/evidence_matrix.py`):
+Verifying that the DOCX matches the approved change file is unchanged. This check adds one question: is the technical fact the edit states supported by evidence? Use the `csa-evidence-matrix` skill (`.agents/skills/csa-evidence-matrix/SKILL.md`; helper `scripts/evidence_matrix.py`):
 
 1. For each edit in the review batch whose Text asserts a technical fact, run `evidence_matrix.py lookup "<claim keywords>"` -- matrix first. Prefer the E-ids cited in the edit's `Why` (`evidence_matrix.py get E-nnn`).
 2. If the matrix answers it, compare. A matrix row is a lead, not proof: when a factual finding depends on it, open the cited source file and confirm before relying on it.
@@ -519,7 +519,7 @@ After every completed review, capture what was learned so the next review is str
 Use this local skill-notes path for this agent:
 
 ```text
-/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-change-review-learnings.md
+.agents/skills/csa-change-review-learnings.md
 ```
 
 At the end of each run:

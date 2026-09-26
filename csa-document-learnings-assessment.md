@@ -1,6 +1,6 @@
 # Assessment: `current-state-assessment-document-learnings.md`
 
-Assessed 2026-09-21. File: `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/current-state-assessment-document-learnings.md` (775 lines, ~93 KB, ~13,000 words, 45 entries written over 4 days: 14 Sep x2, 15 Sep x9, 16 Sep x10, 17 Sep x24). I read the whole file, then checked it against the agent definition, the `csa-document-agent` skill wrapper, the framework README, git history and the current state of the project folder.
+Assessed 2026-09-21. File: `.agents/skills/current-state-assessment-document-learnings.md` (775 lines, ~93 KB, ~13,000 words, 45 entries written over 4 days: 14 Sep x2, 15 Sep x9, 16 Sep x10, 17 Sep x24). I read the whole file, then checked it against the agent definition, the `csa-document-agent` skill wrapper, the framework README, git history and the current state of the project folder.
 
 ## Verdict
 
@@ -22,7 +22,7 @@ The agent definition (`current-state-assessment-document.md`, "Continuous Skill 
 The agent definition says lessons must be "generic enough to help future Current State Assessment document work" and to "keep project facts and approved technical changes out". The file contains 71 distinct E-numbers, 14 paragraph references (P520, P801...), ~10 named-person mentions, comment IDs, test-pass counts (7, 12, 14, 16, 17, 18, 20, 21, 24), and a few quotes of assessment wording. Those belong in an archive, not in reusable guidance.
 
 ### 3. About half the entries are framework changelog, not lessons
-Roughly 22 of 45 entries read "framework now handles X / added Y to ooxml.py / N tests pass" (range wording variants, pipe-format rows, DocxEngine adoption, table cell writes, spelling normalisation, `_result_anchor`, bookmark coverage, vendor import order). Those are release notes for `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/framework/`. They go stale the moment the code moves on, and the real lesson is usually one line ("classify edits by structure, not exact phrase").
+Roughly 22 of 45 entries read "framework now handles X / added Y to ooxml.py / N tests pass" (range wording variants, pipe-format rows, DocxEngine adoption, table cell writes, spelling normalisation, `_result_anchor`, bookmark coverage, vendor import order). Those are release notes for `.agents/framework/`. They go stale the moment the code moves on, and the real lesson is usually one line ("classify edits by structure, not exact phrase").
 
 ### 4. Contradictions and superseded guidance, with nothing marking them
 - 15 Sep "Framework must block complex range and table operations" is reversed by 16-17 Sep ("move table and range edits into the framework", "stop letting legacy classifier drive normal runs").
@@ -31,7 +31,7 @@ Roughly 22 of 45 entries read "framework now handles X / added Y to ooxml.py / N
 - Heading style varies (` - `, `: `, ` — `, a bare date, `(cont.)`), and field names drift ("Improved approach" / "Corrected approach" / "Validate next time"; plain, bold and bullet layouts).
 
 ### 5. Environment and path drift since 17 Sep
-- `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/run-state/` is cited 5 times, but that directory no longer exists. The 18 Sep "move files" commit deleted it; run-state now lives at `run-state/` in the project root.
+- `.agents/run-state/` is cited 5 times, but that directory no longer exists. The 18 Sep "move files" commit deleted it; run-state now lives at `run-state/` in the project root.
 - `csa-document-agent/SKILL.md` still points at `01 Current State AS Built/7 IAMPS/01 Final Version/run-state/`, and that folder is gone. The document is now at `01 Current State AS Built/01 Final Version/`.
 - The "true remaining work is Sections 10-16 (78 edits, 77% apply rate)" baseline, and the statement that Sections 1-9 are SECTION_COMPLETE, no longer match the folder. Only `run-state/current-state-assessment-document-section-1.md` exists (Status BLOCKED on E-4, "Could not extract a unique anchor from Where"), against a fresh change file set (`ChangesCSA_IAMPS_Section1.md` only). It looks like the project restarted on a new document generation with stable IDs (`prepareDocument` / `lookupStableId`, `@H1-P3`-style anchors). I inferred this from folder state and git; worth confirming.
 - Consequently, a large share of the anchor-text failure history (Where-sentence matching, repeated headings) is about a workflow that stable IDs are meant to retire. Still valuable as background, but not as current instructions.
@@ -45,7 +45,7 @@ The most damaging defect class in the file was silent (literal `>` leaking into 
 
 ## Recommendations (in priority order)
 
-1. **Add a read step.** Put "read `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/learnings/csa-document-playbook.md` before the first batch" into the agent definition and the SKILL.md wrapper, mirroring what the authoring agent already does.
+1. **Add a read step.** Put "read `.agents/learnings/csa-document-playbook.md` before the first batch" into the agent definition and the SKILL.md wrapper, mirroring what the authoring agent already does.
 2. **Split the file into three, keeping every word.**
    - *Playbook* (new, target 150-200 lines / under ~12 KB): current rules only, grouped by phase (pre-flight, anchoring, blocked triage, tables, comments, validation, environments). This is the only file read at run start.
    - *Archive* (the existing file, renamed `...-archive.md`, moved out of `skills/`): untouched history, each superseded entry tagged `Status: superseded by <entry>`.
@@ -64,7 +64,7 @@ The most damaging defect class in the file was silent (literal `>` leaking into 
 | Framework fails only writing run-state | Permission error on the write path | Stop retrying; apply the batch manually and write state with the permitted tool. |
 
 4. **Promote lessons into code, then delete the prose.** Add a post-apply lint (validator no. 8) that flags stray `>`, `**`, or backticks in applied paragraph text, and a check that each new comment sits on an inserted or changed paragraph. Fold the run-state completeness gate and partial-completion skip (already in the dry-run harness) into `cli_apply_section.py`. Add `/sessions/...` to real-path normalisation inside the framework. Each promoted lesson becomes a one-line pointer to the code and test.
-5. **Fix path and environment drift now.** Update `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/run-state` references, the `7 IAMPS` path in SKILL.md, and the hardcoded interpreter. Replace the Python instructions with a small environment matrix (Mac Terminal vs Cowork device bridge: interpreter, `datetime.UTC` shim, path normalisation, no sudo, no outbound network).
+5. **Fix path and environment drift now.** Update `.agents/run-state` references, the `7 IAMPS` path in SKILL.md, and the hardcoded interpreter. Replace the Python instructions with a small environment matrix (Mac Terminal vs Cowork device bridge: interpreter, `datetime.UTC` shim, path normalisation, no sudo, no outbound network).
 6. **Move open issues to one tracked place** (e.g. a table in `framework-robustness-plan.md`) with owner and status, and mark each as still-relevant or moot after the stable-ID restart.
 7. **Standardise the entry schema** for whatever remains: `Date | Scope (document / framework / environment) | Status (active / superseded / historical) | Trigger symptom | Action | Validation`. Drop test counts and E-numbers from active entries; keep them in the archive.
 8. **Add a curation trigger** to the agent definition: when the playbook passes ~200 lines or ~12 KB, or an entry is contradicted, consolidate before appending. This resolves the tension with "append-only unless the user asks for cleanup" by having the user grant that permission once, explicitly, for the playbook only.

@@ -13,14 +13,14 @@ Other agents that must produce document prose within their own run (for example,
 
 Load always, before drafting or revising any text in any mode:
 
-- `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-writing-style/SKILL.md` -- how the prose should read (human, not AI-sounding). Applies to every mode below.
-- `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/australian-it-ot-terminology/SKILL.md` -- which words: the technical term for each component, service and dependency, IT/OT classification, headings, evidence phrasing and Australian English. Applies to every mode below.
+- `.agents/skills/csa-writing-style/SKILL.md` -- how the prose should read (human, not AI-sounding). Applies to every mode below.
+- `.agents/skills/australian-it-ot-terminology/SKILL.md` -- which words: the technical term for each component, service and dependency, IT/OT classification, headings, evidence phrasing and Australian English. Applies to every mode below.
 
 Then load on demand:
 
-- SECTION mode (default): `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-section-writer/SKILL.md`
-- Explanation support (only when a plain-language explanation is requested or clearly needed): `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/technical-explainer/SKILL.md`
-- EXECUTIVE_SUMMARY mode (only when the orchestrator states the detailed assessment is stable and the reviewer verdict is `READY` or `READY WITH DECLARED GAPS`): `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/executive-summary/SKILL.md`
+- SECTION mode (default): `.agents/skills/csa-section-writer/SKILL.md`
+- Explanation support (only when a plain-language explanation is requested or clearly needed): `.agents/skills/technical-explainer/SKILL.md`
+- EXECUTIVE_SUMMARY mode (only when the orchestrator states the detailed assessment is stable and the reviewer verdict is `READY` or `READY WITH DECLARED GAPS`): `.agents/skills/executive-summary/SKILL.md`
 
 Do not load specialist analysis skills, evidence skills, or the review skill.
 

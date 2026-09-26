@@ -15,7 +15,7 @@ Write the way a competent, slightly busy human assessor writes when they know th
 
 Before applying anything below, read a paragraph or two of the section's surrounding, already-approved text. If this document has an established register (more formal, more clipped, more table-heavy), match it. These rules describe how to avoid AI-sounding prose within that register, not a house style to impose over it.
 
-Match the register (formality, level of detail), not the structural habits. Spelling and technical terms always follow `australian-it-ot-terminology` (`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/australian-it-ot-terminology/SKILL.md`): Australian English and the terminology table, even where the surrounding text uses US spelling or looser terms. If the surrounding text breaks the "Say it once, say it first" rules below (bullet fragments, restated facts, announcing lead-ins), do not copy those habits into new text.
+Match the register (formality, level of detail), not the structural habits. Spelling and technical terms always follow `australian-it-ot-terminology` (`.agents/skills/australian-it-ot-terminology/SKILL.md`): Australian English and the terminology table, even where the surrounding text uses US spelling or looser terms. If the surrounding text breaks the "Say it once, say it first" rules below (bullet fragments, restated facts, announcing lead-ins), do not copy those habits into new text.
 
 ## Say it once, say it first
 
@@ -109,12 +109,12 @@ The resulting comment reads: `Corrected: the servers do run … no independent l
 
 ## Check before returning
 
-Run the terminology lint as well as the prose lint, and resolve every flag by deciding what the passage describes: `python3 /Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/australian-it-ot-terminology/scripts/term_lint.py <draft.md | working.docx> [--heading "<title>"]`.
+Run the terminology lint as well as the prose lint, and resolve every flag by deciding what the passage describes: `python3 .agents/skills/australian-it-ot-terminology/scripts/term_lint.py <draft.md | working.docx> [--heading "<title>"]`.
 
 Run the prose lint on the draft (Markdown) or, for review, on the working DOCX section:
 
 ```text
-python3 /Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-writing-style/scripts/prose_lint.py <draft.md | working.docx> [--section N]
+python3 .agents/skills/csa-writing-style/scripts/prose_lint.py <draft.md | working.docx> [--section N]
 ```
 
 It measures the rules above: bullet share, nested bullets, fragments and lead-ins, announcing connectors, identifiers repeated in prose, repeated sentences, evidence IDs or file names in prose, and heading label noise. New or rewritten text should produce no connector, nested-bullet, evidence-ID or heading-noise warnings, and no identifier stated in more than three prose paragraphs of one section. The lint is a guide, not a substitute for reading the paragraph back.

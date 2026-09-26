@@ -27,7 +27,7 @@ It does no evidence interpretation of its own. It reads rows a technical-analyst
 ## Script
 
 ```text
-S="/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-diagram-generator/scripts/build_diagram_model.py"
+S=".agents/skills/csa-diagram-generator/scripts/build_diagram_model.py"
 python3 "$S" list-domains --project iamps
 python3 "$S" build --project iamps --domain "3.6 Network / Segmentation" [--dry-run]
 ```

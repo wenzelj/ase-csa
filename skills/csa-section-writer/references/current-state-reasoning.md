@@ -103,7 +103,7 @@ Hosts in the asset list, hosts with discovery captures, and the hosts captured i
 
 ## 6. Terminology: IT/OT system language
 
-Terminology has its own shared skill: `australian-it-ot-terminology` (`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/australian-it-ot-terminology/SKILL.md`), with the controlled table in its `references/terminology.md`. It sets how to choose the term from what is being described (not a word list), IT versus OT classification, the most specific term the evidence supports, heading choice, when evidence wording is warranted, and Australian English. This file keeps only the rules about populations and counts, below.
+Terminology has its own shared skill: `australian-it-ot-terminology` (`.agents/skills/australian-it-ot-terminology/SKILL.md`), with the controlled table in its `references/terminology.md`. It sets how to choose the term from what is being described (not a word list), IT versus OT classification, the most specific term the evidence supports, heading choice, when evidence wording is warranted, and Australian English. This file keeps only the rules about populations and counts, below.
 
 Populations, in plain words: "hosts in the asset list" (the full recorded population), "hosts with discovery captures" (the hosts examined), and each discovery run by date. Do not use "estate".
 

@@ -13,19 +13,19 @@ The orchestrator names the analysis skill for the task (`ANALYSIS_SKILL=<name>`)
 
 | Task area | Skill file(s) |
 | --- | --- |
-| Application profile | `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/application-discovery/SKILL.md` |
-| Infrastructure and hosting | `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/infrastructure-analysis/SKILL.md` |
-| OT architecture | `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/ot-architecture-analysis/SKILL.md` and `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/dependency-analysis/SKILL.md` |
-| Dependencies only | `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/dependency-analysis/SKILL.md` |
-| Network and connectivity | `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/network-connectivity-analysis/SKILL.md` |
-| Identity and access | `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/identity-access-analysis/SKILL.md` |
-| Availability, backup, recovery | `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/resilience-analysis/SKILL.md` |
-| Operations and support | `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/operations-support-analysis/SKILL.md` |
-| Security posture | `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/security-posture-analysis/SKILL.md` |
-| DNS / name resolution (legacy Section 5, template 3.5) | `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/dns-name-resolution-analysis/SKILL.md` |
-| Migration discovery -- application hosts and discovery scope, installed applications, failover, patching, Group Policy, file transfer (legacy Section 6, template 4) | `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/migration-discovery-analysis/SKILL.md` |
+| Application profile | `.agents/skills/application-discovery/SKILL.md` |
+| Infrastructure and hosting | `.agents/skills/infrastructure-analysis/SKILL.md` |
+| OT architecture | `.agents/skills/ot-architecture-analysis/SKILL.md` and `.agents/skills/dependency-analysis/SKILL.md` |
+| Dependencies only | `.agents/skills/dependency-analysis/SKILL.md` |
+| Network and connectivity | `.agents/skills/network-connectivity-analysis/SKILL.md` |
+| Identity and access | `.agents/skills/identity-access-analysis/SKILL.md` |
+| Availability, backup, recovery | `.agents/skills/resilience-analysis/SKILL.md` |
+| Operations and support | `.agents/skills/operations-support-analysis/SKILL.md` |
+| Security posture | `.agents/skills/security-posture-analysis/SKILL.md` |
+| DNS / name resolution (legacy Section 5, template 3.5) | `.agents/skills/dns-name-resolution-analysis/SKILL.md` |
+| Migration discovery -- application hosts and discovery scope, installed applications, failover, patching, Group Policy, file transfer (legacy Section 6, template 4) | `.agents/skills/migration-discovery-analysis/SKILL.md` |
 
-Always load, alongside the named skill: `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/australian-it-ot-terminology/SKILL.md`. Name components, services, dependencies and interfaces in the analysis with the terms it sets, and classify each as OT, supporting IT, shared, platform or external. The writer takes its wording from your analysis, so a vague or misclassified term here reaches the document.
+Always load, alongside the named skill: `.agents/skills/australian-it-ot-terminology/SKILL.md`. Name components, services, dependencies and interfaces in the analysis with the terms it sets, and classify each as OT, supporting IT, shared, platform or external. The writer takes its wording from your analysis, so a vague or misclassified term here reaches the document.
 
 Never load the whole list. If no `ANALYSIS_SKILL` is given, infer the single best match from the task; if it is genuinely ambiguous, return to the orchestrator for a routing decision. Each skill hands off adjacent topics to its sibling skills; note the hand-off in your output instead of loading the sibling.
 

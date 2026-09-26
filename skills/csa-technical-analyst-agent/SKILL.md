@@ -10,7 +10,7 @@ description: One analysis skill at a time (infrastructure-analysis, network-conn
 The agent definition is authoritative. Read it in full and follow it; do not work from memory:
 
 ```text
-/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-technical-analyst-agent.md
+.agents/csa-technical-analyst-agent.md
 ```
 
 Inputs: `ANALYSIS_SKILL*`, `SECTION` (`*` = required, `NAME=value` = default).
@@ -18,9 +18,9 @@ Inputs: `ANALYSIS_SKILL*`, `SECTION` (`*` = required, `NAME=value` = default).
 ## Project
 
 Never guess the project. If the prompt does not already give `PROJECT_CONTEXT`, `WORK_DIR` and `WORKSPACE`,
-run `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/bin/csa analyse <analysis_skill> --print` and follow the prompt it
+run `.agents/bin/csa analyse <analysis_skill> --print` and follow the prompt it
 prints (it resolves the active project from `csa use`), or ask the user which project from
-`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-context/PROJECTS.yaml`.
+`.agents/csa-context/PROJECTS.yaml`.
 
 ## Useful deterministic commands (no LLM needed)
 

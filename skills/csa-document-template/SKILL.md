@@ -12,8 +12,8 @@ Every Current State Assessment must look and be laid out the same: cover, header
 Shared across every project (fixed paths):
 
 ```text
-Scripts (Python 3.8+, stdlib):     /Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-document-template/scripts/
-Structure and framework notes:     /Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-document-template/references/template-structure.md  (read it before drafting)
+Scripts (Python 3.8+, stdlib):     .agents/skills/csa-document-template/scripts/
+Structure and framework notes:     .agents/skills/csa-document-template/references/template-structure.md  (read it before drafting)
 ```
 
 Per-project (resolve `<project_root>` from the active project's entry in `csa-context/PROJECTS.yaml`, or from a `WORK_DIR`/workspace path supplied directly -- never assume IAMPS):
@@ -41,7 +41,7 @@ The scripts pick the highest `CSA_Template_v*.dotx` in `CSA Template/` unless `-
 ## 1. Create a new CSA
 
 ```bash
-python3 /Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-document-template/scripts/new_csa.py \
+python3 .agents/skills/csa-document-template/scripts/new_csa.py \
   --system-name "<System>" \
   --out "<folder>/Current State Assessment - <System>.docx" \
   [--date dd/mm/yyyy] [--doc-version 0.1] [--status "..."] [--prepared-by "..."] [--author "Wenzel Joubert"]
@@ -58,8 +58,8 @@ Then run `check_csa.py` (section 3) once: on a fresh file it must report 0 error
 3. **Scaffold before drafting.** Change records fill only what exists. Decide from the evidence how many hosts, accounts, glossary terms, coverage rows or bullets a block needs, then set the count. It is idempotent, backs up first, and only removes placeholder-only rows or bullets:
 
    ```bash
-   python3 /Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-document-template/scripts/scaffold_csa.py rows    --docx "<docx>" --heading "Workstation and Server Discovery Coverage" --set-count 26
-   python3 /Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-document-template/scripts/scaffold_csa.py bullets --docx "<docx>" --heading "Discovery Information" --heading-occurrence 5 --set-count 4
+   python3 .agents/skills/csa-document-template/scripts/scaffold_csa.py rows    --docx "<docx>" --heading "Workstation and Server Discovery Coverage" --set-count 26
+   python3 .agents/skills/csa-document-template/scripts/scaffold_csa.py bullets --docx "<docx>" --heading "Discovery Information" --heading-occurrence 5 --set-count 4
    ```
 
    `--heading` is the exact heading text without its number; `--heading-occurrence N` picks the Nth heading with that text (Discovery Information repeats once per domain: 3.1 is occurrence 1, 3.2 is 2, and so on). `rows` also takes `--table N`. Afterwards call `prepareDocument(force_regenerate=True)`: the manifest only rebuilds by itself when headings change, and IDs have moved.
@@ -81,7 +81,7 @@ Things a change record cannot do (report them, do not work around them): add or 
 ## 3. Check
 
 ```bash
-python3 /Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-document-template/scripts/check_csa.py "<docx>" [--final]
+python3 .agents/skills/csa-document-template/scripts/check_csa.py "<docx>" [--final]
 ```
 
 Read-only, JSON output, exit 1 on errors. Run it after `new_csa.py`, after every applied batch, and with `--final` as the pre-issue gate. Errors: unknown styles, typed heading numbers, missing template headings or requirements, default or missing properties, stale field text, non-CSA tables, invalid Rating. Warnings: unfilled placeholders (by section), guidance comments, direct formatting, empty paragraphs, manual page breaks, missing header-row repeat. Info: extra headings you added, other comments, pending tracked changes. With `--final`, placeholders, unset ratings, guidance comments and pending tracked changes become errors.
@@ -97,4 +97,4 @@ Report the `status` and `counts` in the completion report, and list every ERROR.
 
 ## Learnings
 
-Append short, reusable lessons (a pattern that failed, a check that misfired, a template change needed) to `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/current-state-assessment-document-learnings.md`. Template layout changes are made in the template and versioned, never in a single CSA.
+Append short, reusable lessons (a pattern that failed, a check that misfired, a template change needed) to `.agents/skills/current-state-assessment-document-learnings.md`. Template layout changes are made in the template and versioned, never in a single CSA.

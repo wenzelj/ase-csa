@@ -5,7 +5,7 @@ description: Use when planning, structuring, or writing up a current state asses
 
 # IT/OT Current State Assessment
 
-Terminology: name every component, service, dependency and interface with `australian-it-ot-terminology` (`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/australian-it-ot-terminology/SKILL.md`), classify it as OT, supporting IT, shared, platform or external, and write in Australian English.
+Terminology: name every component, service, dependency and interface with `australian-it-ot-terminology` (`.agents/skills/australian-it-ot-terminology/SKILL.md`), classify it as OT, supporting IT, shared, platform or external, and write in Australian English.
 
 A current state assessment (CSA) establishes a factual, evidence-based baseline of an organisation's technology environment — what exists, how it's architected, how mature its practices are, and where it stands against a reference framework — before recommending any future-state changes. Use this skill whenever asked to plan, run, or document a CSA covering IT infrastructure, OT/ICS environments, applications, or security posture, including IT/OT converged environments.
 

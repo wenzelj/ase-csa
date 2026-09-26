@@ -5,7 +5,7 @@ description: Analyse evidenced network zones, endpoints, flows, ports, protocols
 
 # Network and Connectivity Analysis
 
-Terminology: name every component, service, dependency and interface with `australian-it-ot-terminology` (`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/australian-it-ot-terminology/SKILL.md`), classify it as OT, supporting IT, shared, platform or external, and write in Australian English.
+Terminology: name every component, service, dependency and interface with `australian-it-ot-terminology` (`.agents/skills/australian-it-ot-terminology/SKILL.md`), classify it as OT, supporting IT, shared, platform or external, and write in Australian English.
 
 Build a flow matrix with source, destination, direction, purpose, protocol, port, zone, security device or rule reference, environment, owner, status, and evidence ID.
 
@@ -28,7 +28,7 @@ Where a project has network-monitoring export files (Vantage/Nozomi-style: `expo
 **Required input:** `PROJECT` -- resolved via `csa-context/PROJECTS.yaml`, same isolation rule as `graph_store.py` / `build_diagram_model.py`. Never inferred from cwd.
 
 ```text
-S="/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/network-connectivity-analysis/scripts/analyze_public_egress.py"
+S=".agents/skills/network-connectivity-analysis/scripts/analyze_public_egress.py"
 python3 "$S" --project utcdtc --write-evidence-row /tmp/new-egress-row.json
 ```
 
@@ -40,7 +40,7 @@ What it does, in order:
 4. Diffs the combined set against a running baseline at `<work_dir>/analysis/public-egress-baseline.json`, so a re-run after new export files land only reports genuinely new destinations, not the whole list again.
 5. With `--write-evidence-row <path|->`, if new IPs were found, writes an `evidence_matrix.py --rows-file` JSON to that path (or stdout) -- **it never calls `evidence_matrix.py append` itself.** Committing evidence is a separate, deliberate step so a human or agent reviews the row first:
    ```text
-   python3 "/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-evidence-matrix/scripts/evidence_matrix.py" \
+   python3 ".agents/skills/csa-evidence-matrix/scripts/evidence_matrix.py" \
      --workspace "<that project's project_root>" append --agent analyze_public_egress --rows-file /tmp/new-egress-row.json
    ```
 6. With `--commit-baseline`, updates the baseline file to the current total. Without it, nothing on disk changes except `--write-evidence-row`'s output.

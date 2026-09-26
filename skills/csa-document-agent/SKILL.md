@@ -10,7 +10,7 @@ Use this skill when a session (Hermes, Codex, or another agent profile) acts as 
 The project-local agent definition is authoritative:
 
 ```text
-/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/current-state-assessment-document.md
+.agents/current-state-assessment-document.md
 ```
 
 Before acting, read that full agent definition and follow it. Do not copy its instructions from memory.
@@ -64,7 +64,7 @@ You can also pass an `@H...` ID itself as `query` to confirm it's still current 
 The framework is the default worker. This `.agents` folder is shared by every CSA project, so `--workspace` and every path inside the command must point at the active project's own root -- never assume IAMPS. Run one bounded batch from that project's workspace root:
 
 ```text
-/opt/homebrew/bin/python3.14 /Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/framework/csa_docx/cli_apply_section.py \
+/opt/homebrew/bin/python3.14 .agents/framework/csa_docx/cli_apply_section.py \
   --section <SECTION> \
   --change-file "<change-file for this project and section, from run-state or the reviews/ folder>" \
   --docx "<this project's working DOCX, from run-state or the change report -- never assume a filename>" \
@@ -77,7 +77,7 @@ The framework is the default worker. This `.agents` folder is shared by every CS
 Example for IAMPS specifically (do not reuse these literal paths for another project):
 
 ```text
-/opt/homebrew/bin/python3.14 /Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/framework/csa_docx/cli_apply_section.py \
+/opt/homebrew/bin/python3.14 .agents/framework/csa_docx/cli_apply_section.py \
   --section <SECTION> \
   --change-file "01 Current State AS Built/01 Final Version/reviews/ChangesCSA_IAMPS_Section<N>.md" \
   --docx "01 Current State AS Built/01 Final Version/Current State Assessment - IAMPS.docx" \
@@ -106,16 +106,16 @@ Example for IAMPS specifically (do not reuse these literal paths for another pro
 - Validate DOCX archive/XML/comment safety and render affected pages where available.
 - On `BLOCKED`, `NO_PROGRESS_STOP` or a validator failure, check this project's `<work_dir>/issues-fixed-log.md` for a similar symptom first (for IAMPS example: `/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS/csa-work/issues-fixed-log.md`), then describe the symptom and evidence (naming any likely match found), and if there is a choice to make, give the options and a recommended default, directly in the response, so Wenzel can decide with full context. See Issue Escalation in the agent definition. Once resolved, append one entry to this project's `issues-fixed-log.md`.
 - Include the `Escalations` block in the completion report and the `## Changes Report`.
-- After applying a batch, run the Evidence Check from the agent definition using the `csa-evidence-matrix` skill (`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-evidence-matrix/SKILL.md`): look up `csa-work/evidence-matrix.csv` first for each applied fact-bearing edit, search Discovery Data only if the matrix has no answer, append new findings back to the matrix, and report the result under `Evidence check`. It never changes an approved edit. Disabled by `EVIDENCE_CHECK=off`; in `EXECUTION_MODE=framework-first` it runs only with `EVIDENCE_CHECK=on`.
+- After applying a batch, run the Evidence Check from the agent definition using the `csa-evidence-matrix` skill (`.agents/skills/csa-evidence-matrix/SKILL.md`): look up `csa-work/evidence-matrix.csv` first for each applied fact-bearing edit, search Discovery Data only if the matrix has no answer, append new findings back to the matrix, and report the result under `Evidence check`. It never changes an approved edit. Disabled by `EVIDENCE_CHECK=off`; in `EXECUTION_MODE=framework-first` it runs only with `EVIDENCE_CHECK=on`.
 - Stop immediately after reporting `PARTIAL_COMPLETE`, `SECTION_COMPLETE`, `BLOCKED`, `NOT_READY`, or `NO_PROGRESS_STOP`.
 
 ## Local Resources
 
 This skill is shared by every CSA project under `/Users/wenzel/Work/ASE/CurrentStateAssessments/`. Only the agent/skill definitions, the reusable framework, and the learnings inbox are shared -- everything that holds run state (run-state files, the fixed issues log, the evidence matrix) is per-project and must never be pointed at another project's `work_dir`:
 
-- Agent definitions and project docs (shared): `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/`
-- Reusable framework (shared): `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/framework/csa_docx/`
+- Agent definitions and project docs (shared): `.agents/`
+- Reusable framework (shared): `.agents/framework/csa_docx/`
 - Run-state files (per project, inside that project's own working-document folder; for IAMPS example: `/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS/01 Current State AS Built/01 Final Version/run-state/`)
-- Learnings inbox (shared): `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/current-state-assessment-document-learnings.md` -- entries are dated and name their project; check which project an entry is about before applying it to another.
+- Learnings inbox (shared): `.agents/skills/current-state-assessment-document-learnings.md` -- entries are dated and name their project; check which project an entry is about before applying it to another.
 - Fixed issues log (per-project, not shared -- lives in `<work_dir>/issues-fixed-log.md`; for IAMPS example: `/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS/csa-work/issues-fixed-log.md`)
 - Evidence matrix (per project, inside that project's own `WORK_DIR`; for IAMPS example: `/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS/csa-work/evidence-matrix.csv`) (access only via the `csa-evidence-matrix` skill)

@@ -28,7 +28,7 @@ Add `csa_docx/manifest.py`:
 
 - `build_manifest(workspace: Path) -> dict[str, SectionEntry]` — globs for `**/reviews/ChangesCSA_*_Section*_*.md` under the workspace, regex-extracts the section number and edit-ID range from each filename, and pairs each with the one `.docx` that sits in the same `01 Final Version` folder (today: `Current State Assessment - IAMPS.docx`; the function resolves this by listing `*.docx` in that folder rather than hardcoding the name, so a rename doesn't silently break it — if more than one `.docx` is found it returns an explicit `AMBIGUOUS_DOCX` error rather than guessing).
 - `SectionEntry`: `{section, change_file, docx, edit_id_range}`.
-- Cached to `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/framework/csa_docx/section_manifest.json` and rebuilt on demand (`refresh_manifest()`), so repeated calls are cheap and a human can eyeball the resolved paths.
+- Cached to `.agents/framework/csa_docx/section_manifest.json` and rebuilt on demand (`refresh_manifest()`), so repeated calls are cheap and a human can eyeball the resolved paths.
 
 This one file is what turns "the model has to know the folder-naming convention" into "the model passes `section=7`."
 
@@ -82,7 +82,7 @@ Codex CLI's MCP servers are registered in `~/.codex/config.toml` under `[mcp_ser
 ```toml
 [mcp_servers.csa]
 command = "/opt/homebrew/bin/python3.14"
-args = ["/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/framework/csa_docx/bin/csa-mcp"]
+args = [".agents/framework/csa_docx/bin/csa-mcp"]
 ```
 
 Once that's in place, `list_sections` / `apply_next_batch` / etc. show up as ordinary callable tools in Codex CLI's tool list for any model you point at it, qwen3-4b included — no different from how it already sees `get_goal` / `create_goal`.

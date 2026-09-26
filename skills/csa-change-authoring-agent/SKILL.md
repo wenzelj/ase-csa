@@ -10,7 +10,7 @@ Use this skill when the user wants Codex to act as the C-S-A-Change-Authoring Ag
 The project-local authoring agent definition is authoritative:
 
 ```text
-/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-change-authoring.md
+.agents/csa-change-authoring.md
 ```
 
 Before acting, read that full agent definition and follow it. Do not copy its instructions from memory.
@@ -46,22 +46,22 @@ Before reading the DOCX or searching Discovery Data, call `prepareDocument()` (t
 
 - Call `prepareDocument()` first; stop on `NOT_READY`.
 - Every proposed edit's `Where:` field is an `@H...` ID resolved via `lookupStableId`, never a hand-typed or quoted-text anchor.
-- Evidence is matrix-first: for every technical fact, use the `csa-evidence-matrix` skill (`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-evidence-matrix/SKILL.md`) to look up `csa-work/evidence-matrix.csv` before searching Discovery Data; search Discovery Data only for what the matrix does not answer; append every new finding (and NOT_FOUND with its scope) back to the matrix; cite E-ids in each edit's `Why`.
+- Evidence is matrix-first: for every technical fact, use the `csa-evidence-matrix` skill (`.agents/skills/csa-evidence-matrix/SKILL.md`) to look up `csa-work/evidence-matrix.csv` before searching Discovery Data; search Discovery Data only for what the matrix does not answer; append every new finding (and NOT_FOUND with its scope) back to the matrix; cite E-ids in each edit's `Why`.
 - Only propose an edit backed by specific cited Discovery Data evidence (file + host) or the document's own control page -- never a stylistic opinion.
 - Never propose changes to Document Owner, Reviewer(s), Approver(s), signatures, or distribution-list placeholders unless explicitly authorised.
 - Record ambiguous or unsupported findings under `## Open questions`, never as a guessed edit.
 - Write the change file in the required structure (see the full agent definition's Output Format) -- including the `**Status:** Proposed changes for approval. This file is an approval record only.` line, which is the approval gate; nothing downstream applies a change file automatically.
 - Never open the working DOCX for writing, and never touch Word comments -- that is `csa-document-agent`'s job after a human approves.
 - Update the section run-state file (`run-state/csa-change-authoring-section-<SECTION>.md`).
-- Record evidence-to-topic mapping lessons (required, every run) and any other reusable lesson in `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-change-authoring-learnings.md`.
+- Record evidence-to-topic mapping lessons (required, every run) and any other reusable lesson in `.agents/skills/csa-change-authoring-learnings.md`.
 - Stop immediately after reporting `PARTIAL_DRAFT_COMPLETE`, `DRAFT_COMPLETE`, `BLOCKED`, or `NO_PROGRESS_STOP`.
 
 ## Local Resources
 
 This skill is shared by every CSA project under `/Users/wenzel/Work/ASE/CurrentStateAssessments/`. Everything below the framework itself is per-project -- resolve it from the active run's `PROJECT_CONTEXT` / workspace, never assume it is IAMPS:
 
-- Agent definitions and project docs (shared, same for every project): `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/`
+- Agent definitions and project docs (shared, same for every project): `.agents/`
 - Discovery Data evidence (per project -- see that project's `authoritative_sources` in its `csa-context/<PROJECT>_PROJECT_CONTEXT.yaml`; for IAMPS example: `/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS/01 Current State AS Built/IAMPS Discovery Data/`)
 - Run-state files (per project, inside that project's own working-document folder; for IAMPS example: `/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS/01 Current State AS Built/01 Final Version/run-state/`)
 - Evidence matrix (per project, inside that project's own `WORK_DIR`; for IAMPS example: `/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS/csa-work/evidence-matrix.csv`) (access only via the `csa-evidence-matrix` skill)
-- Authoring learning log (shared): `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-change-authoring-learnings.md` -- entries are dated and name their project; a lesson written against one project's data is not automatically true of another's, so check which project an entry is about before applying it.
+- Authoring learning log (shared): `.agents/skills/csa-change-authoring-learnings.md` -- entries are dated and name their project; a lesson written against one project's data is not automatically true of another's, so check which project an entry is about before applying it.

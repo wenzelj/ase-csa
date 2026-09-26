@@ -5,7 +5,7 @@ description: Establish the migration-relevant current state of an Operational Te
 
 # Migration Discovery Analysis
 
-Terminology: name every component, service, dependency and interface with `australian-it-ot-terminology` (`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/australian-it-ot-terminology/SKILL.md`), classify it as OT, supporting IT, shared, platform or external, and write in Australian English.
+Terminology: name every component, service, dependency and interface with `australian-it-ot-terminology` (`.agents/skills/australian-it-ot-terminology/SKILL.md`), classify it as OT, supporting IT, shared, platform or external, and write in Australian English.
 
 Write this section as a description of **the application and the systems it runs on, and how they are currently configured**, not as a catalogue of what the discovery data contains. Follow the shared rules in `csa-section-writer/references/current-state-reasoning.md` (subject rule, fact/evidence/gap classes, "not observed" vs "does not exist", correlation, scope, terminology) and the prose rules in `csa-writing-style` before drafting.
 
@@ -62,7 +62,7 @@ State as gaps, scoped to the hosts examined: patch state of hosts in the asset l
 
 ## Expected IT/OT terminology
 
-Follow `australian-it-ot-terminology` (`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/australian-it-ot-terminology/SKILL.md`); its table is in `references/terminology.md`. For this section in particular:
+Follow `australian-it-ot-terminology` (`.agents/skills/australian-it-ot-terminology/SKILL.md`); its table is in `references/terminology.md`. For this section in particular:
 
 - **Hosts and roles:** name each host's role as the application names it (Central Engine, Message Redirector, Telemetry Processor, TCSI, SIGMAP server, operator workstation, engineering workstation), with a plain description on first use.
 - **Redundancy:** Left/Right pair (vendor term), duty/standby or hot standby, production and disaster-recovery channels, failover. Say what provides the redundancy (the application, not Windows Failover Clustering).

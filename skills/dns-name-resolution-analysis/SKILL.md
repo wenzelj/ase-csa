@@ -5,7 +5,7 @@ description: Establish and assess the current name-resolution state of an Operat
 
 # DNS / Name-Resolution Analysis
 
-Terminology: name every component, service, dependency and interface with `australian-it-ot-terminology` (`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/australian-it-ot-terminology/SKILL.md`), classify it as OT, supporting IT, shared, platform or external, and write in Australian English.
+Terminology: name every component, service, dependency and interface with `australian-it-ot-terminology` (`.agents/skills/australian-it-ot-terminology/SKILL.md`), classify it as OT, supporting IT, shared, platform or external, and write in Australian English.
 
 Write this domain as a statement about **how the application environment resolves names today**, and what that means when the OT boundary is isolated. Follow the shared rules in `csa-section-writer/references/current-state-reasoning.md` (subject rule, fact/evidence/gap classes, "not observed" vs "does not exist", correlation, scope, terminology) and the prose rules in `csa-writing-style` before drafting.
 
@@ -48,7 +48,7 @@ State as gaps, scoped to what was searched: DNS zone backup, DNSSEC, conditional
 
 ## Expected IT/OT terminology
 
-Follow `australian-it-ot-terminology` (`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/australian-it-ot-terminology/SKILL.md`); its table is in `references/terminology.md`. For name resolution in particular:
+Follow `australian-it-ot-terminology` (`.agents/skills/australian-it-ot-terminology/SKILL.md`); its table is in `references/terminology.md`. For name resolution in particular:
 
 - **Terms:** name resolution, DNS server, configured DNS servers (resolvers) on a named network interface, Active Directory-integrated DNS, standalone DNS, forward lookup zone, A record, SRV record (Kerberos and domain controller location), conditional forwarder, split-horizon DNS, domain joined, forest root, site. "OT-resident name resolution" is the program's target-state term: use it for the target, not for what exists today unless it does.
 - **Say what the DNS servers are.** When the resolvers are domain controllers of the enterprise domain, say so: "the INTERNAL domain controllers ROTPRDSRV122 and MOTPRDSRV122, which also provide DNS". Do not call them "OT DNS servers" because OT hosts use them or because they sit at an operational site. State location and ownership as separate facts when both are known ("located at the Rockhampton and Mackay sites, on addresses in the OT-side range, but part of the enterprise INTERNAL domain").

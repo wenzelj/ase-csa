@@ -11,7 +11,7 @@ Evidence mode deliberately never touches wording that is factually correct, so a
 **Baseline:** before drafting, run the prose lint on the working DOCX for this section and record the result in the change file's `## Review position`:
 
 ```text
-python3 /Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-writing-style/scripts/prose_lint.py "<working DOCX>" --section <N>
+python3 .agents/skills/csa-writing-style/scripts/prose_lint.py "<working DOCX>" --section <N>
 ```
 
 **Editorial edits may:**
