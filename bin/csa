@@ -49,6 +49,8 @@ CANON_AGENTS = CANON_ROOT / ".agents"
 SCRIPTS = {
     "ev": SKILLS / "csa-evidence-matrix/scripts/evidence_matrix.py",
     "appendix": SKILLS / "csa-evidence-matrix/scripts/evidence_appendix.py",
+    "cross-check": SKILLS / "csa-quality-review/scripts/cross_check.py",
+    "findings": SKILLS / "csa-quality-review/scripts/findings_register.py",
     "graph": SKILLS / "csa-evidence-matrix/scripts/graph_store.py",
     "index": SKILLS / "csa-discovery-index/scripts/discovery_index.py",
     "lint": SKILLS / "csa-writing-style/scripts/prose_lint.py",
@@ -1300,7 +1302,7 @@ def cmd_fleet(a):
 # ---------------------------------------------------------------- main
 PASSTHROUGH = {
     "ev": cmd_ev, "appendix": cmd_appendix, "graph": cmd_graph, "index": cmd_index, "test": cmd_test,
-    **{n: cmd_passthrough(n) for n in ("new", "scaffold", "table", "diagram", "dry-run")},
+    **{n: cmd_passthrough(n) for n in ("new", "scaffold", "table", "diagram", "dry-run", "cross-check", "findings")},
 }
 
 HELP = """
@@ -1314,7 +1316,8 @@ Analysis    csa ask <section> | evidence | gaps | analyse <skill> [SECTION=..] |
 Framework   csa prepare | csa lookup "<text>" | csa validate N | csa refresh | csa test | csa mcp
 Integrate   csa sync [--codex-prompts]   (wrapper skills, /csa-* slash commands, AGENTS.md from registry.yaml)
 Scripts     csa ev lookup "<q>" | csa index rows|search|hosts|tables|build ... | csa graph ... | csa lint [N] | csa check [--final] | csa new ... | csa scaffold ...
-            csa table ... | csa diagram ... | csa dry-run ...   (arguments pass straight through;
+            csa table ... | csa diagram ... | csa dry-run ... | csa appendix [--out f.md]
+            csa cross-check <docx|md> [--hosts-file f] | csa findings <docx|md>   (arguments pass straight through;
             put -p <key> before the command: csa -p utcdtc ev stats)
 Agent opts  KEY=VALUE overrides (EDIT_MODE=editorial, ITERATION_EDIT_LIMIT=4), --cli codex|claude|hermes,
             --headless, --print (just show the prompt), --project <key>
