@@ -84,6 +84,23 @@ def edit_record_hashes(text: str) -> dict[str, str]:
 def approval_file(cf: Path) -> Path:
     return cf.with_name(cf.stem + ".approval.json")
 
+
+def approval_problems(cf: Path) -> list[str]:
+    """Why an approved change file no longer matches what was approved ([] = fine)."""
+    af = approval_file(cf)
+    if not af.is_file():
+        return ["no approval record (.approval.json); it was approved before hashes were recorded"]
+    approved = json.loads(af.read_text(encoding="utf-8")).get("hashes", {})
+    current = edit_record_hashes(cf.read_text(encoding="utf-8"))
+    changed = [k for k in approved if k in current and current[k] != approved[k]]
+    added = [k for k in current if k not in approved]
+    out = []
+    if changed:
+        out.append("edits changed since approval: " + ", ".join(changed))
+    if added:
+        out.append("edits added since approval: " + ", ".join(added))
+    return out
+
 C = {"b": "\033[1m", "d": "\033[2m", "r": "\033[31m", "g": "\033[32m", "y": "\033[33m", "c": "\033[36m", "0": "\033[0m"}
 if not sys.stdout.isatty() or os.environ.get("NO_COLOR"):
     C = {k: "" for k in C}
@@ -516,6 +533,12 @@ def cmd_apply(a):
     if not st["approved"] and not a.allow_unapproved:
         die(f"section {a.section}'s change file is not approved ({st['status_line']}).\n"
             f"  Read {st['change_file']}\n  then `csa approve {a.section}` (or pass --allow-unapproved).")
+    if st["approved"] and not a.allow_unapproved:
+        problems = approval_problems(Path(st["change_file"]))
+        if problems:
+            die(f"section {a.section}: " + "; ".join(problems)
+                + f"\n  Read the change file again, then `csa approve {a.section} -y` to approve what it says now"
+                + " (or pass --allow-unapproved).")
     if a.agent:
         return launch(p, agent("apply"), [str(a.section)] + (a.set or []), a)
     limit = a.limit or 2
