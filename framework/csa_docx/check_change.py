@@ -11,7 +11,9 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from csa_docx.change_parser import parse_change_records
@@ -94,8 +96,33 @@ def hygiene_findings(records) -> list[dict]:
     return out
 
 
+SKILLS = Path(__file__).resolve().parents[2] / "skills"
+LINTS = (
+    ("PROSE_LINT", SKILLS / "csa-writing-style" / "scripts" / "prose_lint.py"),
+    ("TERM_LINT", SKILLS / "australian-it-ot-terminology" / "scripts" / "term_lint.py"),
+)
+
+
 def lint_findings(records) -> list[dict]:
-    return []  # S20 fills this in
+    texts = [(r.edit_id, r.text) for r in records if (r.text or "").strip()]
+    if not texts:
+        return []
+    with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as fh:
+        fh.write("\n\n".join(f"# {eid}\n\n{t}" for eid, t in texts) + "\n")
+        md = Path(fh.name)
+    out = []
+    try:
+        for code, script in LINTS:
+            if not script.is_file():
+                out.append(finding("WARN", code, f"lint script missing: {script}"))
+                continue
+            r = subprocess.run([sys.executable, str(script), str(md), "--strict"], capture_output=True, text=True)
+            if r.returncode != 0:
+                detail = "\n".join(line for line in r.stdout.splitlines() if line.strip())
+                out.append(finding("WARN", code, detail[-1500:]))
+    finally:
+        md.unlink(missing_ok=True)
+    return out
 
 
 def check(path: Path, workspace: str | None = None, anchors: bool = True, lint: bool = True) -> dict:
