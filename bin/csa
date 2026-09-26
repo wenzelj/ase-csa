@@ -440,6 +440,37 @@ def cmd_status(a):
     print(f"{C['d']}Only sections with a change file are listed; `csa author <N>` starts another.{C['0']}")
 
 
+def cmd_report(a):
+    p = project(a.project)
+    mf = local_path(p["work_dir"]) / "metrics.jsonl"
+    if not mf.is_file():
+        return print("No metrics yet (csa-work/metrics.jsonl).")
+    secs = {}
+    for line in mf.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        e = json.loads(line); s = str(e.get("section"))
+        d = secs.setdefault(s, {"section": s, "approvals": 0, "edits_approved": 0, "edits_rejected": 0,
+                                "apply_batches": 0, "blocked_batches": 0, "last_review": "-"})
+        if e["event"] == "approve":
+            d["approvals"] += 1; d["edits_approved"] = len(e.get("approved") or []); d["edits_rejected"] = len(e.get("rejected") or [])
+        elif e["event"] == "apply":
+            d["apply_batches"] += 1; d["blocked_batches"] += e.get("status") == "BLOCKED"
+        elif e["event"] == "review":
+            d["last_review"] = e.get("result") or "-"
+    rows = sorted(secs.values(), key=lambda d: (not d["section"].isdigit(), int(d["section"]) if d["section"].isdigit() else 0))
+    def acc(d):
+        t = d["edits_approved"] + d["edits_rejected"]
+        return f"{round(100 * d['edits_approved'] / t)}%" if t else "-"
+    total = {k: sum(d[k] for d in rows) for k in ("approvals", "edits_approved", "edits_rejected", "apply_batches", "blocked_batches")}
+    if a.json:
+        return print(json.dumps({"sections": [dict(d, acceptance=acc(d)) for d in rows], "total": dict(total, acceptance=acc(total))}, indent=2))
+    banner(p)
+    print("Sec  Approvals  Approved  Rejected  Acceptance  Batches  Blocked  Last review")
+    for d in rows + [dict(total, section="all", last_review="")]:
+        print(f"{d['section']:>3}  {d['approvals']:>9}  {d['edits_approved']:>8}  {d['edits_rejected']:>8}  {acc(d):>10}  {d['apply_batches']:>7}  {d['blocked_batches']:>7}  {d['last_review']}")
+
+
 def cmd_next(a):
     p = project(a.project)
     states = all_states(p)
@@ -1303,6 +1334,7 @@ def main(argv=None) -> int:
     s = sp("doctor", cmd_doctor); s.add_argument("--no-tests", dest="tests", action="store_false", help="skip the framework test run")
     s = sp("status", cmd_status); s.add_argument("section", nargs="?"); s.add_argument("--json", action="store_true")
     s = sp("next", cmd_next); s.add_argument("--json", action="store_true")
+    s = sp("report", cmd_report); s.add_argument("--json", action="store_true")
     s = sp("prepare", cmd_prepare); s.add_argument("--force", action="store_true"); s.add_argument("--section"); s.add_argument("--json", action="store_true")
     s = sp("lookup", cmd_lookup); s.add_argument("query"); s.add_argument("--kind", choices=["paragraph", "table_row", "heading"]); s.add_argument("--json", action="store_true")
     s = sp("validate", cmd_validate); s.add_argument("section"); s.add_argument("--json", action="store_true")
