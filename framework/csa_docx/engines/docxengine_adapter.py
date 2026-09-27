@@ -1033,7 +1033,10 @@ class DocxEngineEditor:
     def _stable_id_map(self) -> dict[str, int]:
         if not hasattr(self, "_stable_id_map_cache"):
             from csa_docx.stable_ids import build_id_map
-            self._stable_id_map_cache = build_id_map(self.paragraphs_with_table_rows())
+            # Keep the entries the map indexes into: the map is built once per batch, and
+            # a later paragraph deletion would shift a freshly built list under it.
+            self._stable_id_entries_cache = self.paragraphs_with_table_rows()
+            self._stable_id_map_cache = build_id_map(self._stable_id_entries_cache)
         return self._stable_id_map_cache
 
     def _resolve_stable_table_row(self, stable_id) -> "TableRowRef | None":
@@ -1049,8 +1052,9 @@ class DocxEngineEditor:
         index = id_map.get(id_str)
         if index is None:
             return None
-        paragraphs = self.paragraphs_with_table_rows()
-        entry = paragraphs[index]
+        # Index into the same snapshot the map was built from. Table ordinals and row
+        # ordinals do not change during a batch (edits never add or remove tables or rows).
+        entry = self._stable_id_entries_cache[index]
         table_anchor = getattr(entry, "table_anchor", None)
         if not table_anchor:
             return None

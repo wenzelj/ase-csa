@@ -164,8 +164,11 @@ def _fill_items(entries: list[dict], items: list, have: list[dict], text: str,
             entry = {"id": f"{have[-1]['id']}(+1)",
                      "section_path": have[-1]["section_path"]}
         text_n = " | ".join(cells) if isinstance(cells, list) else cells
-        items.append((entry, f"{text} {n}", text_n,
-                      scaffold if n > len(have) else None))
+        # The scaffold step rides on the first overflowing item, or on the first item when
+        # the file has fewer rows/bullets than the document (scaffold_csa.py then removes the
+        # unused placeholders).
+        attach = n > len(have) or (n == 1 and len(cells_lists) < len(have))
+        items.append((entry, f"{text} {n}", text_n, scaffold if attach else None))
 
 
 def _load_template_blocks() -> dict:
@@ -242,7 +245,7 @@ def _resolve_section_file(workspace: Path, path: Path) -> dict:
                     if e.get("kind") == "table_row"
                     and (e.get("section_path") or "") == di_sp]
             data = rows[1:]  # first row is the header row
-            sc = _scaffold_entry(entries, "rows", _DISCOVERY_HEADING, len(cells_lists), di) if len(cells_lists) > len(data) else None
+            sc = _scaffold_entry(entries, "rows", _DISCOVERY_HEADING, len(cells_lists), di) if len(cells_lists) != len(data) else None
             _fill_items(entries, items, data, _DISCOVERY_HEADING, cells_lists, sc)
         elif bullets:
             # v1.1: Discovery Information is a bullet list under the Heading 3.
@@ -252,7 +255,7 @@ def _resolve_section_file(workspace: Path, path: Path) -> dict:
             di_sp = di["section_path"]
             para_entries = [e for e in _body_under(entries, di["id"], di_sp)
                             if e.get("kind") == "paragraph"]
-            sc = _scaffold_entry(entries, "bullets", _DISCOVERY_HEADING, len(bullets), di) if len(bullets) > len(para_entries) else None
+            sc = _scaffold_entry(entries, "bullets", _DISCOVERY_HEADING, len(bullets), di) if len(bullets) != len(para_entries) else None
             _fill_items(entries, items, para_entries, _DISCOVERY_HEADING, bullets, sc)
 
         # Discovery Notes: the optional bullet(s) after the Discovery table
@@ -300,9 +303,12 @@ def _resolve_section_file(workspace: Path, path: Path) -> dict:
         for table_heading, cells_lists in parsed.get("tables", {}).items():
             if table_heading in (_DISCOVERY_HEADING, "Requirements"):
                 continue  # handled above
-            label = next((e for e in _body_under(entries, heading_entry["id"], section_path)
-                          if e.get("kind") == "paragraph"
-                          and _norm(e.get("text") or "") == _norm(table_heading)), None)
+            # The label paragraph reads e.g. "Hosts and roles found (current state):" and sits
+            # under the domain's Discovery Information heading, after the Discovery table.
+            want = _norm(table_heading)
+            scope = [e for e in entries if (e.get("section_path") or "").startswith(section_path)]
+            label = next((e for e in scope if e.get("kind") == "paragraph"
+                          and _norm((e.get("text") or "").split("(")[0].rstrip(": ")) == want), None)
             if label is None:
                 raise ValueError(f"no table label {table_heading!r} under {heading_entry['id']}")
             idx = entries.index(label)
@@ -315,15 +321,34 @@ def _resolve_section_file(workspace: Path, path: Path) -> dict:
                 elif rows:
                     break
             data = rows[1:]  # first row is the header row
-            sc = _scaffold_entry(entries, "rows", table_heading, len(cells_lists), label) if len(cells_lists) > len(data) else None
+            sc = None
+            if len(cells_lists) != len(data):
+                # scaffold_csa.py finds tables by the heading above them: Discovery Information,
+                # with --table giving this table's position under that heading.
+                di_head = _subheading(entries, section_path, 3, _DISCOVERY_HEADING)
+                ref = di_head or label
+                tables_before = 0
+                if di_head is not None:
+                    seen_ids = set()
+                    for e in _body_under(entries, di_head["id"], di_head["section_path"]):
+                        if e is label:
+                            break
+                        if e.get("kind") == "table_row":
+                            seen_ids.add(e["id"].rsplit("-R", 1)[0])
+                    tables_before = len(seen_ids)
+                sc = _scaffold_entry(entries, "rows", ref.get("text") or _DISCOVERY_HEADING, len(cells_lists),
+                                     ref, table=tables_before + 1)
             _fill_items(entries, items, data, table_heading, cells_lists, sc)
 
     elif block == "executive-summary":
         heading_entry = _find_heading(entries, heading_text, level=2)
         if heading_entry is None:
             raise ValueError(f"no Heading 2 {heading_text!r} in the document")
+        # Only the template's summary placeholders (3); the figure, caption and source line
+        # that follow them are left for a person (spec section 3).
+        n_summary = _load_template_blocks().get("executive_summary", {}).get("paragraphs", 3)
         paras = [e for e in _body_under(entries, heading_entry["id"], heading_entry["section_path"])
-                 if e.get("kind") == "paragraph"]
+                 if e.get("kind") == "paragraph"][:n_summary]
         summary = parsed.get("paragraphs", {}).get(_SUMMARY_HEADING, [])
         if len(summary) > len(paras):
             raise ValueError(
@@ -394,7 +419,7 @@ def _resolve_section_file(workspace: Path, path: Path) -> dict:
         data = rows[1:] if rows else []
         if cells_lists:
             sc = (_scaffold_entry(entries, "rows", heading_text, len(cells_lists), heading_entry)
-                  if len(cells_lists) > len(data) else None)
+                  if len(cells_lists) != len(data) else None)
             _fill_items(entries, items, data, "Table", cells_lists, sc)
 
         # Group Policy header row: Replace with the file's header cells.
@@ -410,7 +435,7 @@ def _resolve_section_file(workspace: Path, path: Path) -> dict:
         bullet_paras = post_paras if all_rows else intro_paras
         if findings:
             sc = (_scaffold_entry(entries, "bullets", heading_text, len(findings), heading_entry)
-                  if len(findings) > len(bullet_paras) else None)
+                  if len(findings) != len(bullet_paras) else None)
             _fill_items(entries, items, bullet_paras, _FINDINGS_HEADING, findings, sc)
 
         # Notes (template v1.3, 5.4): one optional plain paragraph under the table.
@@ -491,7 +516,7 @@ def _resolve_section_file(workspace: Path, path: Path) -> dict:
                 items.append((paras[0], _SUMMARY_HEADING, summary[0], None))
             # Hosts table rows.
             hosts = parsed.get("tables", {}).get(_COVERAGE_HEADING, [])
-            sc = _scaffold_entry(entries, "rows", heading_text, len(hosts), heading_entry) if len(hosts) > len(data_rows) else None
+            sc = _scaffold_entry(entries, "rows", heading_text, len(hosts), heading_entry) if len(hosts) != len(data_rows) else None
             _fill_items(entries, items, data_rows, _COVERAGE_HEADING, hosts, sc)
     else:
         raise ValueError(f"unknown block kind {block!r}")

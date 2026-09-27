@@ -189,8 +189,9 @@ def apply_build_records(workspace, sections, *, app: str, track_changes: bool, b
                                    f"{res.get('message')}")
             if status in ("BLOCKED", "ERROR"):
                 edit_id = (res.get("blocked") or [None])[0] or res.get("next_edit_id") or "?"
-                raise RuntimeError(f"section {section} edit {edit_id}: {status}: "
-                                   f"{res.get('message') or res.get('reasons')}")
+                detail = res.get("message") or res.get("reasons") or {
+                    k: v for k, v in res.items() if k not in ("status", "applied", "docx") and v}
+                raise RuntimeError(f"section {section} edit {edit_id}: {status}: {detail}")
             # PARTIAL_COMPLETE: count and continue with the next batch.
             applied += len(res.get("applied") or [])
             docx = Path(res.get("docx") or docx)
