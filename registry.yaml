@@ -128,7 +128,7 @@ agents:
     group: analysis
     tier: frontier
     arg: SECTION
-    inputs: SECTION*, MODE=SECTION
+    inputs: SECTION*, MODE=SECTION, OUTPUT=section-file
     locks: section
     instruction: Draft or revise the requested section from approved evidence.
     skill: csa-writer-agent

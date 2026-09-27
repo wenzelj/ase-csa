@@ -36,6 +36,10 @@ Do not load specialist analysis skills, evidence skills, or the review skill.
 - Write to the "Say it once, say it first" rules in `csa-writing-style`: conclusion first, each fact stated once, full sentences rather than bullet fragments, no general technology explanation, host-level detail in tables. Run `csa-writing-style/scripts/prose_lint.py` on every draft before returning it and fix its warnings.
 - In EXECUTIVE_SUMMARY mode, add no new findings; keep every statement aligned with the approved detailed content and its as-of date.
 
+## Section files (build lane)
+
+When `OUTPUT=section-file` (the default until the project has a working DOCX), write the section as a section file: `WORK_DIR/sections/<order>-<slug>.md`, in the format in `.agents/references/section-file-format.md`, with `status: draft`. Discovery Information is a table (Aspect / Configuration Observed / Coverage / Source); findings that do not fit a row go under `## Discovery Notes` as bullets. Put every E-id in the `## Evidence` table, keyed exactly as `csa check-section` expects, and never in the text. Run `csa check-section <file>` and fix every ERROR before returning. Never set the status to anything but `draft`: the review and the build set the rest. When the project already has a working DOCX, write a normal draft and leave changes to the DOCX to the change pipeline.
+
 ## Output
 
 The drafted section (or executive summary) written to `WORK_DIR/drafts/`, plus the brief change record required by the skill. Stop after reporting.

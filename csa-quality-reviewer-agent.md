@@ -31,6 +31,10 @@ Do not load writer, analysis, evidence, or executive-summary skills.
 - Keep explanations from `technical-explainer` separate from findings about evidence.
 - Do not modify source documents or the working DOCX.
 
+## Section files
+
+When the content under review is a section file (`WORK_DIR/sections/*.md`), run `csa check-section <file>` as well as the lints, and write the review to `WORK_DIR/reviews/section-<file stem>-review.md`. Its first line is `Verdict: READY`, `Verdict: READY WITH DECLARED GAPS` or `Verdict: NOT READY`; `csa sections` and `csa build` read that line.
+
 ## Output
 
 Findings classified `BLOCKER`, `MAJOR`, `MINOR`, or `EDITORIAL`, and one verdict: `READY`, `READY WITH DECLARED GAPS`, or `NOT READY`, with the minimum actions to advance. Write the review to `WORK_DIR/reviews/` and stop.
