@@ -23,6 +23,10 @@ from pathlib import Path
 from . import build_apply, build_plan, tools
 
 
+# The build writes the first draft. Peer reviews move it through 0.x (revise lane) until it is issued as 1.0.
+FIRST_DRAFT_VERSION = "0.1"
+
+
 def _skills_dir() -> Path:
     """The .agents/skills directory (parents: csa_docx -> framework -> .agents)."""
     return Path(__file__).resolve().parents[2] / "skills"
@@ -47,7 +51,7 @@ def new_document(workspace: Path, out: Path, *, system_name: str,
     argv = [sys.executable, str(script), "--workspace", str(workspace),
             "--out", str(out), "--system-name", system_name]
     for flag, value in (("--prepared-for", prepared_for), ("--prepared-by", prepared_by),
-                        ("--doc-version", doc_version), ("--status", status)):
+                        ("--doc-version", doc_version or FIRST_DRAFT_VERSION), ("--status", status)):
         if value:
             argv += [flag, value]
     proc = subprocess.run(argv, capture_output=True, text=True)

@@ -1560,11 +1560,11 @@ def cmd_build(a):
         existing = working_docx(p)
         if existing:
             die(f"this project already has a working DOCX ({existing.name}); "
-                f"the build lane only creates version 1. Use the revise lane.")
+                f"the build lane only creates the first draft (0.1); later rounds use the revise lane. Use the revise lane.")
         existing_cfs = change_files(p)
         if existing_cfs:
             die("this project already has reviews/ChangesCSA_* files; "
-                f"the build lane only creates version 1. ({', '.join(sorted(str(c) for c in existing_cfs))})")
+                f"the build lane only creates the first draft (0.1); later rounds use the revise lane. ({', '.join(sorted(str(c) for c in existing_cfs))})")
         for r in rows:
             if r["problem"]:
                 die(f"cannot build {r['file']}: {r['problem']}. "
@@ -1657,7 +1657,7 @@ Project     csa projects | csa use <key> | csa agents | csa doctor
 State       csa status [N] [--json] | csa next
 Pipeline    csa author N | csa check-change N | csa approve N | csa apply N [--until-done] | csa review N | csa cleanup N
             csa pipeline N            (walks one section, stops at every human gate)
-Build lane  csa sections | csa check-section <file> | csa build [--preview] [--sections ..]   (version 1 of a template CSA; spec: docs/build-lane-spec.md)
+Build lane  csa sections | csa check-section <file> | csa build [--preview] [--sections ..]   (first draft, version 0.1, of a template CSA; spec: docs/build-lane-spec.md)
 Parallel    csa fleet "author 6" "evidence 7" [-f tasks.txt] [--dry-run] [--print] [--timeout MIN]
             (one headless worker per slot in cli.yaml; DOCX steps never overlap)
 Analysis    csa ask <section> | evidence | gaps | analyse <skill> [SECTION=..] | write | summary | qa
@@ -1712,12 +1712,12 @@ def main(argv=None) -> int:
     s.add_argument("file"); s.add_argument("--no-lint", action="store_true"); s.add_argument("--json", action="store_true")
     s = sp("sections", cmd_sections, help="list build-lane section files, their review verdict, and whether they are ready to build")
     s.add_argument("--json", action="store_true")
-    s = sp("build", cmd_build, help="build version 1 of a template CSA from reviewed section files (tracked changes)")
+    s = sp("build", cmd_build, help="build the first draft (version 0.1) of a template CSA from reviewed section files (tracked changes)")
     s.add_argument("--sections", help="comma-separated section file names or order prefixes (default: all)")
     s.add_argument("--preview", action="store_true", help="build in a throwaway workspace; accepts drafts")
     s.add_argument("--system-name", help="name on the title page (default: project label)")
     s.add_argument("--prepared-for"); s.add_argument("--prepared-by")
-    s.add_argument("--doc-version"); s.add_argument("--status")
+    s.add_argument("--doc-version", help="default 0.1"); s.add_argument("--status")
     s = sp("apply", cmd_apply, help="framework-first apply; --agent for the LLM document agent")
     s.add_argument("section"); s.add_argument("--limit", type=int); s.add_argument("--edit", help="apply only this edit ID")
     s.add_argument("--until-done", action="store_true", help="keep running batches until complete, blocked or no progress")

@@ -1,18 +1,22 @@
-# Build lane: writing version 1 of a CSA from reviewed section files, as tracked changes
+# Build lane: writing the first draft (version 0.1) of a CSA from reviewed section files, as tracked changes
 
-Status: design, 26 Sep 2026 (story S52; revised the same day: no separate section approval, version 1 is built as tracked changes). Implementation stories: S53–S64 with S55B, S56B, S58B and S58C in `improvements/stories/`. Template: CSA_Template_v1.3 (27 Sep 2026).
+Status: design, 26 Sep 2026 (story S52; revised the same day: no separate section approval, the first draft is built as tracked changes). Implementation stories: S53–S64 with S55B, S56B, S58B and S58C in `improvements/stories/`. Template: CSA_Template_v1.3 (27 Sep 2026).
+
+## Versions
+
+The build writes version **0.1** ("Initial draft"). Each peer-review round is made through the revise lane and moves the document to the next 0.x version, with a new revision-history row. It becomes **1.0** only when it is issued after the last review. `--doc-version` overrides the 0.1 default.
 
 ## 1. Why
 
-The framework is built to *correct* a CSA. Its main path edits an existing DOCX one anchored paragraph at a time, through change records that each need authoring, approval, apply, review and cleanup. That is the right control for revising an issued baseline. It is the wrong unit for producing version 1, where every paragraph is new: the ceremony is multiplied by the number of paragraphs, and the writer agent's drafts have nowhere to go.
+The framework is built to *correct* a CSA. Its main path edits an existing DOCX one anchored paragraph at a time, through change records that each need authoring, approval, apply, review and cleanup. That is the right control for revising an issued baseline. It is the wrong unit for producing the first draft, where every paragraph is new: the ceremony is multiplied by the number of paragraphs, and the writer agent's drafts have nowhere to go.
 
-The build lane adds one direct path for version 1:
+The build lane adds one direct path for the first draft:
 
 ```text
-BUILD LANE (version 1, template CSAs)                  REVISE LANE (after the baseline, unchanged)
+BUILD LANE (first draft 0.1, template CSAs)                  REVISE LANE (after the baseline, unchanged)
 evidence -> analysis -> section files                  csa author N -> csa check-change N
 csa check-section + csa qa (no human step)             csa approve N -> csa apply N
-csa build -> working DOCX v1 as TRACKED CHANGES        csa review N -> read in Word -> csa cleanup N
+csa build -> working DOCX 0.1 as TRACKED CHANGES        csa review N -> read in Word -> csa cleanup N
 Wenzel accepts / rejects / edits in Word
 csa cleanup N  -> clean baseline v1
 ```
@@ -135,7 +139,7 @@ csa build [--sections all | 3.04,3.05,...] [--preview] [--system-name ...] [--pr
 
 Preconditions (refuse with a clear message otherwise):
 1. The project uses the CSA template. Projects whose working document is on its own template (UTC DTC today, per `known_constraints` in its context file) use the revise lane only.
-2. Without `--preview`: the project has no working DOCX yet, and no `reviews/ChangesCSA_*` files. The build creates version 1 once. With `--preview`, output goes to `csa-work/build/archive/preview-<timestamp>/`. The `archive` folder name keeps it out of `prepareDocument()`'s search.
+2. Without `--preview`: the project has no working DOCX yet, and no `reviews/ChangesCSA_*` files. The build creates the first draft once. With `--preview`, output goes to `csa-work/build/archive/preview-<timestamp>/`. The `archive` folder name keeps it out of `prepareDocument()`'s search.
 3. Every selected section file passes `csa check-section` with no errors and has a READY review newer than the file, unless `--preview` (which accepts drafts and says so in the file name). A preview is a clean read-only copy: no tracked changes, no comments.
 
 Steps:
@@ -145,7 +149,7 @@ Steps:
 4. **Records:** the planner writes canonical change files, `reviews/ChangesCSA_<App>_Section<N>.md`, one per framework section. Edit IDs are `S<N>-E<n>`, `Why:` holds the E-ids from the section's Evidence table, and `Note:` reads "Built from reviewed section file <name>". Each is approved by the build itself (`by`: "csa build <build-id>"), with the usual per-edit hashes, so `csa status`, `csa review` and `csa cleanup` treat it like any other approved change file.
 5. **Apply:** `apply_next_batch(section, limit=500, track_changes=True)` per section, until SECTION_COMPLETE; a BLOCKED edit stops the build and is reported with its section file and statement. The Word comment on each edit (its evidence) stays. A preview uses `track_changes=False`, strips the comments and archives its records.
 6. **Check:** `check_csa.py`, then `prose_lint.py`, `term_lint.py` and `csa cross-check` over the whole document (with changes treated as accepted, which is how the checks read a document).
-7. **Report:** `csa-work/build/<build-id>.md` lists the sections built, the counts, the check results, any placeholders left, and the next steps: open in Word, refresh fields (Ctrl+A then F9), accept, reject or edit each tracked change, then `csa review N` and `csa cleanup N` for each section; add figures; issue v1. Each section file's status is set to `built`, and a `build` event goes to `metrics.jsonl`.
+7. **Report:** `csa-work/build/<build-id>.md` lists the sections built, the counts, the check results, any placeholders left, and the next steps: open in Word, refresh fields (Ctrl+A then F9), accept, reject or edit each tracked change, then `csa review N` and `csa cleanup N` for each section; add figures; send version 0.1 for peer review. Each section file's status is set to `built`, and a `build` event goes to `metrics.jsonl`.
 
 A failed build leaves no working DOCX and no change files behind: the document is created under a temporary name and renamed only when step 6 passes.
 
@@ -161,12 +165,12 @@ Rejecting a tracked change in Word brings back the template placeholder (for exa
 
 ## 7. What stays the same
 
-The revise lane, `csa check-change`, the approval hashes, tracked changes and the cleanup gate are unchanged; the build lane uses the last three itself. The build lane only ever creates version 1. Existing IAMPS and UTC DTC documents are not rebuilt.
+The revise lane, `csa check-change`, the approval hashes, tracked changes and the cleanup gate are unchanged; the build lane uses the last three itself. The build lane only ever creates the first draft. Existing IAMPS and UTC DTC documents are not rebuilt.
 
 ## 8. Out of scope for now
 
 - Figures and diagrams: the executive summary's figure placeholder stays for a person, or for a later story using `csa-diagram-generator`.
-- Rebuilding after issue: once version 1 is issued, changes go through the revise lane, never a rebuild.
+- Rebuilding after issue: once version 0.1 exists, changes go through the revise lane, never a rebuild.
 - Non-template documents: use the revise lane.
 - Field refresh: the table of contents and fields are refreshed in Word (`new_csa.py` already asks Word to do this on first open).
 
