@@ -9,6 +9,7 @@ back to the original file and line, in the same shape as evidence-matrix.csv row
 
 Commands (all output JSON):
   build   [--budget SECONDS] [--rebuild] [--stage-dir DIR]   build or refresh the index
+          (default sources: default_source_set plus index_extra_sources from PROJECTS.yaml)
   status                                                     what is indexed / skipped
   hosts                                                      captures per host, current vs superseded
   tables  [pattern]                                          structured tables and their columns
@@ -62,7 +63,9 @@ def _host_from_summary(folder):
     return host
 ARCHIVE_PARTS = {"archive", "z_archive", "_to_delete", "old", "superseded"}
 DERIVED_PARTS = {"discovery_consolidated"}
-SKIP_DIRS = {".git", "__MACOSX", ".pytest_cache", "__pycache__", "csa-work", "csa-authoring-active"}
+# "01 Final Version" holds the CSA itself (working DOCX, reviews/, run-state/, backups): never evidence.
+SKIP_DIRS = {".git", "__MACOSX", ".pytest_cache", "__pycache__", "csa-work", "csa-authoring-active",
+             "01 Final Version"}
 SKIP_FILES = {".DS_Store", "Thumbs.db"}
 BINARY_EXT = {".dll", ".exe", ".dat", ".w001", ".zip", ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico",
               ".svg", ".msi", ".cab", ".pdb", ".sys", ".bin", ".iso", ".7z", ".gz", ".tar", ".lnk",
@@ -493,8 +496,14 @@ def cmd_build(args, project, root):
         db_path = final_db
     if args.rebuild and db_path.exists():
         db_path.unlink()
-    sources = [Path(s).expanduser() for s in args.source] if args.source else \
-        [remap(project["default_source_set"], project).parent]
+    # Default: the project's discovery data (default_source_set) plus any extra evidence folders
+    # listed in PROJECTS.yaml as index_extra_sources ("path; path"). Not the whole parent folder,
+    # which also holds CSA documents that must not be indexed as evidence.
+    if args.source:
+        sources = [Path(s).expanduser() for s in args.source]
+    else:
+        sources = [remap(project["default_source_set"], project)]
+        sources += [remap(x.strip(), project) for x in project.get("index_extra_sources", "").split(";") if x.strip()]
     con = sqlite3.connect(str(db_path))
     con.execute("PRAGMA journal_mode=OFF" if args.stage_dir else "PRAGMA journal_mode=DELETE")
     con.execute("PRAGMA synchronous=OFF")
@@ -508,7 +517,10 @@ def cmd_build(args, project, root):
                 if fname in SKIP_FILES or fname.startswith("~$"):
                     continue
                 path = Path(dirpath) / fname
-                rel = path.relative_to(root).as_posix() if root in path.parents else path.as_posix()
+                # Relative to the project root, also for sources outside it ("../06 IAMPS/..."),
+                # so citations stay valid on any machine.
+                rel = path.relative_to(root).as_posix() if root in path.parents else \
+                    Path(os.path.relpath(path, root)).as_posix()
                 seen.add(rel)
                 if time.time() - t0 > args.budget:
                     done = False
