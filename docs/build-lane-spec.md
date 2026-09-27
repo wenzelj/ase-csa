@@ -19,7 +19,7 @@ csa cleanup N  -> clean baseline v1
 
 There is one human approval, and it happens in Word: `csa build` writes every statement as a tracked insertion with a Word comment listing its evidence IDs, and Wenzel accepts, rejects or edits each one, as in the revise lane. `csa cleanup` then refuses while tracked changes remain, removes the comments, and the result is the baseline. After that, every change goes through the revise lane. The build lane only runs on a project that has no working DOCX yet.
 
-**Known limitation (tested 27 Sep 2026):** the apply engine tracks paragraph edits, but applies table-cell edits (requirement rows, Discovery Information rows and the other tables) as plain text. Each still carries its evidence comment, so Wenzel reviews table content by its comments until S64 makes those edits tracked too.
+Table-cell edits (requirement rows, including the Rating dropdown, Discovery Information rows and the other tables) are tracked too since S64 (27 Sep 2026), so every built statement can be accepted or rejected in Word.
 
 ## 2. Principle: build reuses the apply engine
 
