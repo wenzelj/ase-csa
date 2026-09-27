@@ -104,8 +104,10 @@ def prepare(root: Path, section_paths: list, *, system_name: str, build_id: str,
     try:
         new_document(ws, docx, system_name=system_name, prepared_for=prepared_for,
                      prepared_by=prepared_by, doc_version=doc_version, status=status)
-        if tools.prepareDocument(workspace=ws).get("status") != "READY":
-            raise RuntimeError("prepareDocument did not return READY on the new document")
+        prep = tools.prepareDocument(workspace=ws)
+        if prep.get("status") != "READY":
+            detail = {k: prep.get(k) for k in ("status", "reasons", "message", "code") if prep.get(k)}
+            raise RuntimeError(f"prepareDocument did not return READY on the new document: {detail}")
         scaffolded = scaffold(ws, docx, section_paths)
         records = build_plan.plan_records(ws, section_paths)
         if not records:

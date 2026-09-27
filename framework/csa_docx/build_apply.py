@@ -86,6 +86,11 @@ def write_build_records(workspace, records: dict, app: str, build_id: str) -> li
     ``csa check-change`` (structure + hygiene, anchors and lint off).
     """
     workspace = Path(workspace).resolve()
+    unresolved = [r["edit_id"] for recs in records.values() for r in recs if "(+" in (r.get("where") or "")]
+    if unresolved:
+        # A "(+1)" stand-in means the scaffold step did not make room for the statement.
+        # The apply engine would read "@H..-P1(+1)" as "@H..-P1" and overwrite it.
+        raise RuntimeError(f"records still point at a placeholder that does not exist yet: {', '.join(unresolved)}")
     reviews = workspace / "01 Current State AS Built" / "01 Final Version" / "reviews"
     reviews.mkdir(parents=True, exist_ok=True)
     paths: list[Path] = []

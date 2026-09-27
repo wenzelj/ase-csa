@@ -1461,13 +1461,20 @@ def _run_checks(p: dict, docx: Path) -> list[dict]:
     proc = subprocess.run(check, capture_output=True, text=True, cwd=str(FRAMEWORK))
     data = {}
     try:
-        data = json.loads(proc.stdout.strip().splitlines()[-1])
-    except (json.JSONDecodeError, IndexError):
+        data = json.loads(proc.stdout)  # check_csa prints one indented JSON object
+    except json.JSONDecodeError:
         pass
-    errors = (data.get("counts") or {}).get("errors", 0) if isinstance(data, dict) else 0
+    counts = (data.get("counts") or {}) if isinstance(data, dict) else {}
+    if not counts:
+        # Unreadable output must never pass the gate silently.
+        counts = {"errors": 1 if proc.returncode not in (0,) else 0, "warnings": 0}
     results.append({"check": "check_csa", "exit": proc.returncode,
-                    "status": data.get("status") if isinstance(data, dict) else None,
-                    "errors": errors, "warnings": (data.get("counts") or {}).get("warnings", 0)})
+                    "status": data.get("status") if isinstance(data, dict) else "UNREADABLE",
+                    "errors": counts.get("errors", 0), "warnings": counts.get("warnings", 0),
+                    "placeholders": counts.get("placeholders"),
+                    "findings": [f"{f.get('level')} {f.get('code')}: {f.get('message')}"
+                                 for f in (data.get("findings") or []) if f.get("level") in ("ERROR", "WARN")][:12]
+                                if isinstance(data, dict) else []})
     for name, script in (
         ("prose_lint", SKILLS / "csa-writing-style" / "scripts" / "prose_lint.py"),
         ("term_lint", SKILLS / "australian-it-ot-terminology" / "scripts" / "term_lint.py"),
@@ -1501,15 +1508,18 @@ def _write_build_report(p: dict, build_id: str, *, preview: bool, system_name: s
     lines += ["", "## Scaffold steps", ""]
     if result["scaffold"]:
         for e in result["scaffold"]:
-            lines.append(f"- {e['kind']} x{e['count']} under {e['heading']!r} "
-                         f"(occurrence {e['occurrence']})")
+            e = e.get("entry", e)  # run_scaffold returns {"entry": plan entry, "output": ...}
+            lines.append(f"- {e.get('kind')} x{e.get('count')} under {e.get('heading')!r} "
+                         f"(occurrence {e.get('occurrence')})")
     else:
         lines.append("- none (every count fit the template)")
     lines += ["", "## Checks", ""]
     for c in checks:
         if c["check"] == "check_csa":
             lines.append(f"- check_csa: {c.get('status')} "
-                         f"({c.get('errors')} errors, {c.get('warnings')} warnings)")
+                         f"({c.get('errors')} errors, {c.get('warnings')} warnings"
+                         + (f", {c.get('placeholders')} placeholders left" if c.get('placeholders') is not None else "") + ")")
+            lines += [f"  - {f}" for f in c.get("findings") or []]
         else:
             lines.append(f"- {c['check']}: exit={c.get('exit')} "
                          f"({c.get('warnings')} warnings)")

@@ -72,8 +72,10 @@ def main(argv=None) -> int:
         env = _env(c["folder"])
         if env:
             notes.append(f"{env} environment folder")
-        for old in replaced.get(c["capture_id"], []):
-            notes.append(f"replaces the {_date(old['capture_utc'])} capture")
+        older = [_date(o["capture_utc"]) for o in sorted(replaced.get(c["capture_id"], []), key=lambda o: o["capture_utc"])]
+        if older:
+            notes.append(f"replaces the {older[0]} capture" if len(older) == 1
+                         else f"replaces the {', '.join(older[:-1])} and {older[-1]} captures")
         script = f"{c['collector']} discovery script, {_date(c['capture_utc'])}" if c["collector"] else f"Discovery script, {_date(c['capture_utc'])}"
         rows.append([_cell(c["host"]), "To confirm", _cell(script), _cell("; ".join(notes))])
         evidence.append((f"Hosts {n}", f"discovery index capture {Path(c['folder']).name}"))
@@ -81,9 +83,13 @@ def main(argv=None) -> int:
     dates = sorted({c["capture_utc"] for c in current})
     collectors = sorted({c["collector"] for c in current if c["collector"]})
     when = f"on {_date(dates[0])}" if _date(dates[0]) == _date(dates[-1]) else f"between {_date(dates[0])} and {_date(dates[-1])}"
-    by = f"the {' and '.join(collectors)} discovery script" if collectors else "the discovery scripts"
+    by = (f"the {collectors[0]} discovery script" if len(collectors) == 1
+          else f"the {', '.join(collectors[:-1])} and {collectors[-1]} discovery scripts" if collectors
+          else "the discovery scripts")
     hosts_word = "host was" if len(current) == 1 else "hosts were"
-    summary = f"{len(current)} {hosts_word} captured with {by} {when}; each row below is the host's latest capture."
+    words = ["No", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten"]
+    count = words[len(current)] if len(current) < len(words) else str(len(current))
+    summary = f"{count} {hosts_word} captured with {by} {when}; each row below is the host's latest capture."
 
     out = Path(a.out)
     if not out.is_absolute():

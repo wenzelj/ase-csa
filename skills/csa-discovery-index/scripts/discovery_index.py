@@ -40,6 +40,26 @@ BASE_DIR = FRAMEWORK_DIR.parent
 INDEX_NAME = "discovery-index.sqlite"
 
 CAPTURE_RE = re.compile(r"^(?P<collector>[A-Za-z0-9]+)_discovery_(?P<host>.+)_(?P<ts>\d{8}T\d{6}Z)$")
+# Captures whose folder carries no host name (e.g. tg_discovery_20260317T002415Z): the host is
+# read from the capture's own 00_host_summary.txt ("Host: <name>").
+HOSTLESS_CAPTURE_RE = re.compile(r"^(?P<collector>[A-Za-z0-9]+)_discovery_(?P<ts>\d{8}T\d{6}Z)$")
+_HOST_LINE_RE = re.compile(r"^\s*(?:Host|HostName|Computer ?Name)\s*:\s*(\S+)", re.I | re.M)
+_summary_host_cache = {}
+
+
+def _host_from_summary(folder):
+    """Host name from <capture folder>/00_host_summary.txt, or None."""
+    if folder in _summary_host_cache:
+        return _summary_host_cache[folder]
+    host = None
+    for name in ("00_host_summary.txt",):
+        f = Path(folder) / name
+        if f.is_file():
+            m = _HOST_LINE_RE.search(decode(f.read_bytes()[:4096]))
+            if m:
+                host = m.group(1).strip().upper()
+    _summary_host_cache[folder] = host
+    return host
 ARCHIVE_PARTS = {"archive", "z_archive", "_to_delete", "old", "superseded"}
 DERIVED_PARTS = {"discovery_consolidated"}
 SKIP_DIRS = {".git", "__MACOSX", ".pytest_cache", "__pycache__", "csa-work", "csa-authoring-active"}
@@ -340,15 +360,24 @@ def init_db(con):
 
 
 # --------------------------------------------------------------------------- build
-def classify(rel_parts):
+def classify(rel_parts, root=None):
     low = [p.lower() for p in rel_parts]
     archived = int(any(p in ARCHIVE_PARTS or p.startswith("z_") for p in low[:-1]))
     derived = any(p in DERIVED_PARTS for p in low[:-1])
     capture = None
-    for p in rel_parts[:-1]:
+    for i, p in enumerate(rel_parts[:-1]):
         m = CAPTURE_RE.match(p)
         if m:
             capture = (p, m.group("host").upper(), m.group("collector"), m.group("ts"))
+            continue
+        m = HOSTLESS_CAPTURE_RE.match(p)
+        if m:
+            folder = Path(*rel_parts[: i + 1])
+            if root is not None and not folder.is_absolute():
+                folder = Path(root) / folder
+            host = _host_from_summary(folder)
+            if host:
+                capture = (p, host, m.group("collector"), m.group("ts"))
     return archived, derived, capture
 
 
@@ -489,7 +518,7 @@ def cmd_build(args, project, root):
                 except OSError:
                     continue
                 ext = path.suffix.lower()
-                archived, derived, cap = classify(Path(rel).parts)
+                archived, derived, cap = classify(Path(rel).parts, root)
                 cap_id = None
                 if cap:
                     folder = str(Path(rel).parent) if Path(rel).parent.name == cap[0] else \

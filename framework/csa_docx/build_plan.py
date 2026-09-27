@@ -262,14 +262,14 @@ def _resolve_section_file(workspace: Path, path: Path) -> dict:
         di_h = _subheading(entries, section_path, 3, _DISCOVERY_HEADING)
         if di_h is not None:
             di_sp = di_h["section_path"]
-            notes_para = None
+            note_paras = []  # every paragraph after the table rows (placeholder bullet(s))
             seen_row = False
             for e in _body_under(entries, di_h["id"], di_sp):
                 if e.get("kind") == "table_row":
                     seen_row = True
                 elif e.get("kind") == "paragraph" and seen_row:
-                    notes_para = e
-                    break
+                    note_paras.append(e)
+            notes_para = note_paras[0] if note_paras else None
             notes = parsed.get("bullets", {}).get(_NOTES_HEADING, [])
             if notes:
                 if notes_para is None:
@@ -277,15 +277,17 @@ def _resolve_section_file(workspace: Path, path: Path) -> dict:
                         f"statement {_NOTES_HEADING!r} has no placeholder under {di_h['id']}"
                     )
                 sc = None
-                if len(notes) > 1:
-                    sc = _scaffold_entry(entries, "bullets", _NOTES_HEADING, len(notes), di_h)
+                if len(notes) > len(note_paras):
+                    # The notes bullets sit under the document's "Discovery Information"
+                    # heading (after the table); "Discovery Notes" exists only in the file.
+                    sc = _scaffold_entry(entries, "bullets", di_h.get("text") or "Discovery Information",
+                                         len(notes), di_h)
                 for n, text in enumerate(notes, start=1):
-                    entry = notes_para if n == 1 else {
-                        "id": f"{notes_para['id']}(+1)",
-                        "section_path": notes_para["section_path"],
-                    }
-                    items.append((entry, f"{_NOTES_HEADING} {n}", text,
-                                  sc if n > 1 else None))
+                    if n <= len(note_paras):
+                        entry = note_paras[n - 1]
+                    else:  # only before scaffolding; plan_records after run_scaffold finds the bullet
+                        entry = {"id": f"{note_paras[-1]['id']}(+1)", "section_path": note_paras[-1]["section_path"]}
+                    items.append((entry, f"{_NOTES_HEADING} {n}", text, sc if n > len(note_paras) else None))
             elif notes_para is not None:
                 # No notes in the file: delete the placeholder bullet.
                 items.append((notes_para, _NOTES_HEADING, None, None))
@@ -454,9 +456,12 @@ def _resolve_section_file(workspace: Path, path: Path) -> dict:
                               sc if n > len(placeholders) else None))
 
     elif block in ("glossary", "coverage"):
-        heading_entry = _find_heading(entries, heading_text, level=1)
+        # Template v1.2: the glossary is an appendix (Heading 1); Discovery Coverage is
+        # 5.1, a Heading 2 under Migration Discovery.
+        level = 1 if block == "glossary" else 2
+        heading_entry = _find_heading(entries, heading_text, level=level)
         if heading_entry is None:
-            raise ValueError(f"no Heading 1 {heading_text!r} in the document")
+            raise ValueError(f"no Heading {level} {heading_text!r} in the document")
         rows = [e for e in entries if e.get("kind") == "table_row"
                 and (e.get("section_path") or "") == heading_entry["section_path"]]
         data_rows = rows[1:]  # first row is the header row
