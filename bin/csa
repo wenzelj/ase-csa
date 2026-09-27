@@ -84,6 +84,11 @@ def edit_record_hashes(text: str) -> dict[str, str]:
     return out
 
 
+def approval_file(cf: Path) -> Path:
+    """The per-change-file approval record holding its per-edit hashes."""
+    return cf.parent / (cf.stem + ".approval.json")
+
+
 def approval_problems(cf: Path) -> list[str]:
     """Why an approved change file no longer matches what was approved ([] = fine)."""
     af = approval_file(cf)
@@ -1380,6 +1385,257 @@ def cmd_fleet(a):
     return 0 if all(t["status"] == "done" for t in tasks) else 1
 
 
+# ---------------------------------------------------------------- build lane
+def _fw_module_call(module: str, func: str, *args, **kwargs) -> dict:
+    """Call csa_docx.<module>.<func> in the framework interpreter; JSON back."""
+    code = (
+        "import sys,json;sys.path.insert(0,sys.argv[1]);"
+        f"from csa_docx import {module} as m;"
+        "a=json.loads(sys.argv[3]);r=getattr(m,sys.argv[2])(*a['args'],**a['kwargs']);"
+        "print(json.dumps(r,default=str))"
+    )
+    proc = subprocess.run([framework_python(), "-c", code, str(FRAMEWORK), func,
+                           json.dumps({"args": list(args), "kwargs": kwargs})],
+                          capture_output=True, text=True)
+    if proc.returncode != 0:
+        return {"status": "ERROR", "message": (proc.stderr or proc.stdout).strip()[-2000:]}
+    try:
+        return json.loads(proc.stdout.strip().splitlines()[-1])
+    except (json.JSONDecodeError, IndexError):
+        return {"status": "ERROR", "message": proc.stdout[-2000:]}
+
+
+def _select_section_files(p: dict, spec: str | None) -> list[dict]:
+    """Resolve ``--sections`` (file names / order prefixes / 'all') to rows."""
+    rows = section_rows(p)
+    if not rows:
+        die(f"no section files under {local_path(p['work_dir']) / 'sections'}; nothing to build.")
+    if not spec or spec.strip().lower() in ("all", "*"):
+        return rows
+    names = [x.strip() for x in spec.split(",") if x.strip()]
+    wanted: dict[str, str] = {}
+    for n in names:
+        for r in rows:
+            if r["file"] == n or r["file"].split("-")[0] == n:
+                wanted[r["file"]] = n
+    if not wanted:
+        die("no section file matches --sections " + spec + ".")
+    missing = [n for n in names if n not in set(wanted.values())]
+    matched = [r for r in rows if r["file"] in wanted]
+    if missing:
+        die("these --sections items match no section file: " + ", ".join(missing))
+    return matched
+
+
+def _approve_build_record(p: dict, cf: Path, build_id: str, section: str) -> None:
+    """Approve one build change file exactly as
+    ``csa approve N -y --by "csa build <id>"`` would: set the Status line and
+    write the .approval.json with per-edit hashes."""
+    text = cf.read_text(encoding="utf-8")
+    m = STATUS_LINE_RE.search(text)
+    if not m:
+        die(f"no '**Status:**' line in {cf.name}; cannot approve the build record.")
+    st_edits = list(dict.fromkeys(EDIT_HEADING_RE.findall(text)))
+    if not st_edits:
+        die(f"{cf.name} has no edits to approve.")
+    who = f"csa build {build_id}"
+    edits = ", ".join(st_edits)
+    new = (f"**Status:** Approved for implementation {datetime.now():%Y-%m-%d %H:%M} "
+           f"by {who}. Edits: {edits}.")
+    cf.write_text(text[:m.start()] + new + text[m.end():], encoding="utf-8")
+    af = approval_file(cf)
+    af.write_text(json.dumps({"approved_at": datetime.now().isoformat(timespec="seconds"),
+                              "by": who, "rejected": [],
+                              "hashes": edit_record_hashes(cf.read_text(encoding="utf-8"))},
+                             indent=2) + "\n", encoding="utf-8")
+    metric(p, "approve", section, approved=st_edits, rejected=[], source="csa build")
+
+
+def _run_checks(p: dict, docx: Path) -> list[dict]:
+    """check_csa (errors fail the build), then prose/term/cross lints (warnings)."""
+    results = []
+    base = [framework_python()]
+    root = local_path(p["project_root"])
+    check = base + [str(SKILLS / "csa-document-template" / "scripts" / "check_csa.py"),
+                    str(docx), "--workspace", str(root)]
+    proc = subprocess.run(check, capture_output=True, text=True, cwd=str(FRAMEWORK))
+    data = {}
+    try:
+        data = json.loads(proc.stdout.strip().splitlines()[-1])
+    except (json.JSONDecodeError, IndexError):
+        pass
+    errors = (data.get("counts") or {}).get("errors", 0) if isinstance(data, dict) else 0
+    results.append({"check": "check_csa", "exit": proc.returncode,
+                    "status": data.get("status") if isinstance(data, dict) else None,
+                    "errors": errors, "warnings": (data.get("counts") or {}).get("warnings", 0)})
+    for name, script in (
+        ("prose_lint", SKILLS / "csa-writing-style" / "scripts" / "prose_lint.py"),
+        ("term_lint", SKILLS / "australian-it-ot-terminology" / "scripts" / "term_lint.py"),
+        ("cross_check", SKILLS / "csa-quality-review" / "scripts" / "cross_check.py"),
+    ):
+        if not script.is_file():
+            results.append({"check": name, "exit": None, "warnings": 0})
+            continue
+        proc = subprocess.run([framework_python(), str(script), str(docx)],
+                              capture_output=True, text=True, cwd=str(FRAMEWORK))
+        warns = len([l for l in (proc.stdout + proc.stderr).splitlines()
+                     if "WARN" in l.upper()])
+        results.append({"check": name, "exit": proc.returncode, "warnings": warns})
+    return results
+
+
+def _write_build_report(p: dict, build_id: str, *, preview: bool, system_name: str,
+                        rows: list[dict], result: dict, checks: list[dict]) -> Path:
+    wd = local_path(p["work_dir"]) / "build"
+    wd.mkdir(parents=True, exist_ok=True)
+    out = wd / f"{build_id}.md"
+    lines = [f"# Build report - {build_id}", "",
+             f"- Mode: {'PREVIEW' if preview else 'real build'}",
+             f"- System: {system_name}",
+             f"- Built sections: " + (", ".join(str(x) for x in result["sections"]) or "none"),
+             f"- Records: " + ", ".join(f"S{k}: {v}" for k, v in sorted(result["records"].items())),
+             f"- Output: {result.get('preview_docx' if preview else 'docx')}", ""]
+    lines += ["## Sections built", ""]
+    for r in rows:
+        lines.append(f"- {r['file']}  (block={r['block']}, heading={r['heading']})")
+    lines += ["", "## Scaffold steps", ""]
+    if result["scaffold"]:
+        for e in result["scaffold"]:
+            lines.append(f"- {e['kind']} x{e['count']} under {e['heading']!r} "
+                         f"(occurrence {e['occurrence']})")
+    else:
+        lines.append("- none (every count fit the template)")
+    lines += ["", "## Checks", ""]
+    for c in checks:
+        if c["check"] == "check_csa":
+            lines.append(f"- check_csa: {c.get('status')} "
+                         f"({c.get('errors')} errors, {c.get('warnings')} warnings)")
+        else:
+            lines.append(f"- {c['check']}: exit={c.get('exit')} "
+                         f"({c.get('warnings')} warnings)")
+    lines += ["", "## Next steps", ""]
+    if preview:
+        lines += [
+            "- Open the PREVIEW copy in Word and read it top to bottom.",
+            "- To build for real: re-run `csa build --system-name "
+            + system_name + "` once every selected section has a current READY review.",
+            "",
+        ]
+    else:
+        lines += [
+            "- Open the working document in Word, press Ctrl+A then F9 to refresh fields and the TOC.",
+            "- Accept, reject or edit each tracked change. Every one carries a Word "
+            "comment listing its evidence IDs.",
+        ]
+        for s in result["sections"]:
+            lines.append(f"- `csa review {s}` and `csa cleanup {s}` when you are done with section {s}.")
+        lines += [
+            "- Add the figures where the template left placeholders.",
+            "- Issue v1.",
+            "",
+        ]
+    out.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    return out
+
+
+def cmd_build(a):
+    p = project(a.project); banner(p)
+    build_id = datetime.now().strftime("%Y%m%d-%H%M%S")
+    system_name = a.system_name or p.get("label") or p["key"]
+    rows = _select_section_files(p, a.sections)
+    root = local_path(p["project_root"])
+
+    # --- Preconditions -------------------------------------------------------
+    if not a.preview:
+        existing = working_docx(p)
+        if existing:
+            die(f"this project already has a working DOCX ({existing.name}); "
+                f"the build lane only creates version 1. Use the revise lane.")
+        existing_cfs = change_files(p)
+        if existing_cfs:
+            die("this project already has reviews/ChangesCSA_* files; "
+                f"the build lane only creates version 1. ({', '.join(sorted(str(c) for c in existing_cfs))})")
+        for r in rows:
+            if r["problem"]:
+                die(f"cannot build {r['file']}: {r['problem']}. "
+                    f"(Run `csa check-section {r['file']}` and get a current READY review.)")
+            rc = run_check_section(p, local_path(p["work_dir"]) / "sections" / r["file"],
+                                   argparse.Namespace(no_lint=False, json=False))
+            if rc != 0:
+                die(f"cannot build {r['file']}: csa check-section reported errors (exit {rc}).")
+
+    # --- Document work: prepare -> approve (real build) -> apply --------------
+    fv = root / "01 Current State AS Built" / "01 Final Version"
+
+    def rollback():
+        """A failed real build leaves no working DOCX and no change files behind."""
+        if a.preview:
+            return
+        for pattern in ("*.docx", "reviews/ChangesCSA_*", "run-state/*"):
+            for f in fv.glob(pattern):
+                if f.is_file():
+                    f.unlink(missing_ok=True)
+
+    section_paths = [str(local_path(p["work_dir"]) / "sections" / r["file"]) for r in rows]
+    result = _fw_module_call("build", "prepare", str(root), section_paths,
+                             system_name=system_name, build_id=build_id, preview=a.preview,
+                             prepared_for=a.prepared_for, prepared_by=a.prepared_by,
+                             doc_version=a.doc_version, status=a.status)
+    if result.get("status") == "ERROR":
+        rollback()
+        die(f"build failed while preparing the document: {result.get('message')}")
+    if not a.preview:
+        try:
+            for cf, s in zip(result["change_files"], result["sections"]):
+                _approve_build_record(p, Path(cf), build_id, str(s))
+        except SystemExit:
+            rollback()
+            raise
+    applied = _fw_module_call("build", "apply", result["workspace"], result["sections"],
+                              system_name=system_name, build_id=build_id, preview=a.preview,
+                              root=str(root))
+    if applied.get("status") == "ERROR":
+        rollback()
+        die(f"build failed while applying the records: {applied.get('message')}")
+    result.update(applied)
+
+    # --- Checks (real build) / light check (preview) ------------------------
+    docx_path = Path(result.get("preview_docx" if a.preview else "docx") or result["docx"])
+    checks = _run_checks(p, docx_path)  # a preview reports them; only a real build fails on check_csa errors
+    if not a.preview:
+        csa_err = next((c for c in checks if c["check"] == "check_csa"), {})
+        if (csa_err.get("errors") or 0) > 0:
+            # fail: remove partial DOCX and change files
+            rollback()
+            die(f"check_csa found {csa_err.get('errors')} errors; the build was rolled back.")
+
+    report = _write_build_report(p, build_id, preview=a.preview, system_name=system_name,
+                                 rows=rows, result=result, checks=checks)
+
+    # --- Post real build: mark sections built + metric ----------------------
+    if not a.preview:
+        sd = local_path(p["work_dir"]) / "sections"
+        for r in rows:
+            f = sd / r["file"]
+            text = f.read_text(encoding="utf-8")
+            fm = section_front_matter(text)
+            if "status" in fm and fm["status"] == "draft":
+                text = text.replace("status: draft", "status: built", 1)
+                text = text.replace("---", f"---\nbuild_id: {build_id}", 1)
+            else:
+                text = text.replace("---", f"---\nstatus: built\nbuild_id: {build_id}", 1)
+            f.write_text(text, encoding="utf-8")
+        metric(p, "build", section=None, build_id=build_id,
+               sections=result["sections"], records=sum(result["records"].values()),
+               preview=False)
+
+    print(f"{C['g']}{'PREVIEW BUILT' if a.preview else 'BUILT'}{C['0']} "
+          f"sections={result['sections']} records={sum(result['records'].values())}")
+    print(f"  output: {docx_path}")
+    print(f"  report: {report}")
+    return 0
+
+
 # ---------------------------------------------------------------- main
 PASSTHROUGH = {
     "ev": cmd_ev, "appendix": cmd_appendix, "graph": cmd_graph, "index": cmd_index, "test": cmd_test,
@@ -1391,7 +1647,7 @@ Project     csa projects | csa use <key> | csa agents | csa doctor
 State       csa status [N] [--json] | csa next
 Pipeline    csa author N | csa check-change N | csa approve N | csa apply N [--until-done] | csa review N | csa cleanup N
             csa pipeline N            (walks one section, stops at every human gate)
-Build lane  csa sections | csa check-section <file>   (version 1 of a template CSA; spec: docs/build-lane-spec.md)
+Build lane  csa sections | csa check-section <file> | csa build [--preview] [--sections ..]   (version 1 of a template CSA; spec: docs/build-lane-spec.md)
 Parallel    csa fleet "author 6" "evidence 7" [-f tasks.txt] [--dry-run] [--print] [--timeout MIN]
             (one headless worker per slot in cli.yaml; DOCX steps never overlap)
 Analysis    csa ask <section> | evidence | gaps | analyse <skill> [SECTION=..] | write | summary | qa
@@ -1446,6 +1702,12 @@ def main(argv=None) -> int:
     s.add_argument("file"); s.add_argument("--no-lint", action="store_true"); s.add_argument("--json", action="store_true")
     s = sp("sections", cmd_sections, help="list build-lane section files, their review verdict, and whether they are ready to build")
     s.add_argument("--json", action="store_true")
+    s = sp("build", cmd_build, help="build version 1 of a template CSA from reviewed section files (tracked changes)")
+    s.add_argument("--sections", help="comma-separated section file names or order prefixes (default: all)")
+    s.add_argument("--preview", action="store_true", help="build in a throwaway workspace; accepts drafts")
+    s.add_argument("--system-name", help="name on the title page (default: project label)")
+    s.add_argument("--prepared-for"); s.add_argument("--prepared-by")
+    s.add_argument("--doc-version"); s.add_argument("--status")
     s = sp("apply", cmd_apply, help="framework-first apply; --agent for the LLM document agent")
     s.add_argument("section"); s.add_argument("--limit", type=int); s.add_argument("--edit", help="apply only this edit ID")
     s.add_argument("--until-done", action="store_true", help="keep running batches until complete, blocked or no progress")

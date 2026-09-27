@@ -14,8 +14,9 @@ Word comments and the change files stay where ``csa review`` and
 comments are stripped from the DOCX - the same regexes
 ``new_csa.strip_comments`` uses - ``word/comments.xml`` is emptied, and the
 change files with their run-state files are moved to
-``reviews/archive/preview-<build_id>/``. See
-``.agents/docs/build-lane-spec.md`` section 5, steps 4 and 5.
+``csa-work/build/archive/preview-<build_id>/`` (the project's
+``reviews/`` is left alone). See ``.agents/docs/build-lane-spec.md``
+section 5, steps 4 and 5.
 """
 
 from __future__ import annotations
@@ -36,8 +37,10 @@ from .run_state import read_completed_ids, state_path
 #: from the new_csa.py script so this module stays importable without it.
 _COMMENT_REF_RUN_RE = re.compile(
     r'<w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr>'
-    r'<w:commentReference w:id="\d+"/></w:r>')
-_COMMENT_RANGE_RE = re.compile(r'<w:commentRange(?:Start|End) w:id="\d+"/>')
+    r'<w:commentReference w:id="\d+"\s*/></w:r>')
+_COMMENT_REF_SIMPLE_RE = re.compile(
+    r'<w:r><w:commentReference w:id="\d+"\s*/></w:r>')
+_COMMENT_RANGE_RE = re.compile(r'<w:commentRange(?:Start|End) w:id="\d+"\s*/>')
 
 
 def _framework_dir() -> Path:
@@ -116,6 +119,7 @@ def _strip_comments(docx: Path) -> None:
         parts = {n: z.read(n) for n in names}
     xml = parts["word/document.xml"].decode("utf-8")
     xml = _COMMENT_REF_RUN_RE.sub("", xml)
+    xml = _COMMENT_REF_SIMPLE_RE.sub("", xml)
     xml = _COMMENT_RANGE_RE.sub("", xml)
     parts["word/document.xml"] = xml.encode("utf-8")
     if "word/comments.xml" in names:
@@ -133,8 +137,11 @@ def _strip_comments(docx: Path) -> None:
         raise
 
 
-def apply_build_records(workspace, sections, *, track_changes: bool, build_id: str) -> dict:
+def apply_build_records(workspace, sections, *, app: str, track_changes: bool, build_id: str) -> dict:
     """Apply the written change files for each framework section.
+
+    ``app`` is the system name used by :func:`write_build_records` to name
+    the change files and the working DOCX.
 
     Calls ``tools.apply_next_batch(section, 500, ...)`` until the status is
     ``SECTION_COMPLETE``; a ``BLOCKED`` or ``ERROR`` status raises
@@ -148,13 +155,27 @@ def apply_build_records(workspace, sections, *, track_changes: bool, build_id: s
     total}``.
     """
     workspace = Path(workspace).resolve()
-    docx, applied_by_section = None, {}
+    fv = workspace / "01 Current State AS Built" / "01 Final Version"
+    # The DOCX always sits in the workspace's own "01 Final Version". A preview
+    # runs in its own throw-away workspace (build.prepare), so this never
+    # touches the project's real folders.
+    docx_dir = fv
+    applied_by_section = {}
     for section in sections:
+        # Pass the change file and DOCX explicitly (layout fixed by build.prepare).
+        matches = sorted((fv / "reviews").glob(f"ChangesCSA_*_Section{section}.md"))
+        if not matches:
+            raise RuntimeError(
+                f"section {section}: no change file in {fv / 'reviews'} "
+                f"(expected ChangesCSA_*_Section{section}.md)")
+        change_file = matches[0]
+        docx = docx_dir / f"Current State Assessment - {app}.docx"
         applied = 0
         while True:
             res = tools.apply_next_batch(str(section), 500,
                                          workspace=workspace,
-                                         track_changes=track_changes)
+                                         track_changes=track_changes,
+                                         change_file=change_file, docx=docx)
             status = res.get("status")
             if status == "SECTION_COMPLETE":
                 break
@@ -177,18 +198,19 @@ def apply_build_records(workspace, sections, *, track_changes: bool, build_id: s
         if docx is None:
             raise RuntimeError("no working DOCX recorded by the apply step")
         _strip_comments(docx)
-        archive = docx.parent / "reviews" / "archive" / f"preview-{build_id}"
+        # Preview: archive the records + run-state inside the preview workspace.
+        archive = fv / "reviews" / "archive" / f"preview-{build_id}"
         archive.mkdir(parents=True, exist_ok=True)
         for section in sections:
             for name in (f"ChangesCSA_*_Section{section}.md",
                          f"ChangesCSA_*_Section{section}_*.md"):
-                for change_file in sorted((docx.parent / "reviews").glob(name)):
-                    shutil.move(str(change_file), str(archive / change_file.name))
+                for path in sorted((fv / "reviews").glob(name)):
+                    shutil.move(str(path), str(archive / path.name))
                 for sidecar in (f"ChangesCSA_*_Section{section}.md.approval.json",
                                 f"ChangesCSA_*_Section{section}_*.md.approval.json"):
-                    for approval_file in sorted((docx.parent / "reviews").glob(sidecar)):
-                        shutil.move(str(approval_file), str(archive / approval_file.name))
-            state = state_path(docx.parent, str(section))
+                    for path in sorted((fv / "reviews").glob(sidecar)):
+                        shutil.move(str(path), str(archive / path.name))
+            state = state_path(docx_dir, str(section))
             if state.exists():
                 shutil.move(str(state), str(archive / state.name))
 
