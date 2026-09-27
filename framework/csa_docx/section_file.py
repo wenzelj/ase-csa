@@ -134,6 +134,7 @@ def parse_section_file(path) -> dict:
         "bullets": {},
         "paragraphs": {},
         "tables": {},
+        "table_headers": {},
         "evidence": {},
         "order": [],
     }
@@ -144,6 +145,7 @@ def parse_section_file(path) -> dict:
 
         if name == "Requirements" and kind == "table":
             seen_header = False
+            header: list[str] | None = None
             for line in content:
                 s = line.strip()
                 if not s.startswith("|"):
@@ -155,16 +157,20 @@ def parse_section_file(path) -> dict:
                     continue
                 if not seen_header:
                     seen_header = True
+                    header = cells
                     continue
                 result["requirements"].append({
                     "req_id": cells[0],
                     "current_state": cells[1],
                     "rating": cells[2],
                 })
+            if header:
+                result["table_headers"]["Requirements"] = header
             continue
 
         if name == "Evidence" and kind == "table":
             seen_header = False
+            header: list[str] | None = None
             for line in content:
                 s = line.strip()
                 if not s.startswith("|"):
@@ -176,11 +182,14 @@ def parse_section_file(path) -> dict:
                     continue
                 if not seen_header:
                     seen_header = True
+                    header = cells
                     continue
                 statement = cells[0].strip()
                 ids = [part.strip() for part in cells[1].split(",") if part.strip()]
                 if statement:
                     result["evidence"][statement] = ids
+            if header:
+                result["table_headers"]["Evidence"] = header
             continue
 
         if name in _NON_TABLE_HEADINGS:
@@ -195,6 +204,7 @@ def parse_section_file(path) -> dict:
         elif kind == "table":
             rows = []
             seen_header = False
+            header: list[str] | None = None
             for line in content:
                 s = line.strip()
                 if not s.startswith("|"):
@@ -204,9 +214,12 @@ def parse_section_file(path) -> dict:
                     continue
                 if not seen_header:
                     seen_header = True
+                    header = cells
                     continue
                 rows.append(cells)
             result["tables"][name] = rows
+            if header:
+                result["table_headers"][name] = header
         else:
             paragraphs: list[str] = []
             current: list[str] = []

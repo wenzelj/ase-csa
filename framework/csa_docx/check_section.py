@@ -19,7 +19,7 @@ from pathlib import Path
 from csa_docx import section_file
 from csa_docx.check_change import EID_RE, MARKDOWN_RE, STABLE_ID_RE, finding, lint_findings
 
-BLOCKS = ("domain", "executive-summary", "migration", "glossary", "coverage")
+BLOCKS = ("domain", "executive-summary", "governance", "migration", "glossary", "coverage")
 BLOCKS_JSON = (Path(__file__).resolve().parents[2]
                / "skills" / "csa-document-template" / "references" / "template-blocks.json")
 
@@ -33,13 +33,26 @@ def normalise_heading(text: str) -> str:
     return " ".join((text or "").translate(QUOTES).split())
 
 
-# The ## sections each block kind must have (Evidence always), and may have.
+# The ## sections each block kind must have (Evidence always). Domain files
+# may add that domain's tables from template-blocks.json; migration files
+# allow whatever their subsection entry provides; everything a kind allows is
+# optional except the entries listed here.
 REQUIRED_SECTIONS = {
     "domain": ["Requirements", "Discovery Information", "Drawbridge Impact"],
     "executive-summary": ["Summary"],
-    "migration": ["Findings"],
+    "governance": ["Actions"],
     "glossary": ["Terms"],
     "coverage": ["Hosts"],
+    "migration": [],  # every subsection section is optional; Table/Findings shape below
+}
+
+# ## sections that must hold pipe-table rows (a bullets or prose section in
+# their place is BAD_TABLE); the others hold bullets or prose.
+TABLE_SECTIONS = {
+    "domain": {"Requirements", "Discovery Information"},
+    "migration": {"Table"},
+    "coverage": {"Hosts"},
+    "glossary": {"Terms"},
 }
 
 
@@ -59,6 +72,8 @@ def _heading_for(blocks: dict, block: str) -> str | None:
         return None  # many possible headings; validated per-domain below
     if block == "executive-summary":
         return blocks.get("executive_summary", {}).get("heading")
+    if block == "governance":
+        return blocks.get("governance", {}).get("heading")
     if block == "glossary":
         return blocks.get("glossary", {}).get("heading")
     if block == "coverage":
@@ -72,7 +87,43 @@ def _heading_for(blocks: dict, block: str) -> str | None:
 
 
 def _migration_headings(blocks: dict) -> set[str]:
-    return {normalise_heading(m.get("heading")) for m in blocks.get("migration", []) if m.get("heading")}
+    heads = {normalise_heading(m.get("heading")) for m in blocks.get("migration", []) if m.get("heading")}
+    intro = blocks.get("migration_intro", {})
+    if intro.get("heading"):
+        heads.add(normalise_heading(intro["heading"]))
+    return heads
+
+
+def _migration_entry(blocks: dict, heading: str):
+    for m in blocks.get("migration", []):
+        if normalise_heading(m.get("heading")) == normalise_heading(heading):
+            return m
+    return None
+
+
+def _expected_columns(blocks: dict, block: str, heading: str, name: str) -> int | None:
+    """Template column count for a table ## section, or None if it is not one."""
+    if block == "domain":
+        dom = _domain_for(blocks, heading)
+        if dom is None:
+            return None
+        if name == "Requirements":
+            return 3
+        if name == "Discovery Information":
+            dt = dom.get("discovery_table") or {}
+            return len(dt.get("columns") or []) or None
+        entry = (dom.get("tables") or {}).get(name) or {}
+        return len(entry.get("columns") or []) or None
+    if block == "migration" and name == "Table":
+        entry = _migration_entry(blocks, heading) or {}
+        table = entry.get("table") or {}
+        return len(table.get("columns") or []) or None
+    if block == "coverage" and name == "Hosts":
+        cov = blocks.get("coverage", {})
+        return len(cov.get("columns") or []) or None
+    if block == "glossary" and name == "Terms":
+        return len((blocks.get("glossary", {}).get("columns") or []) or None)
+    return None
 
 
 def _matrix_eids(workspace: str | None) -> set[str] | None:
@@ -107,7 +158,9 @@ def check(path: Path, workspace: str | None = None, lint: bool = True) -> dict:
 
     if block not in BLOCKS:
         findings.append(finding("ERROR", "UNKNOWN_BLOCK", f"block {block!r} is not one of {', '.join(BLOCKS)}"))
-    elif block == "domain":
+    dom = None
+    mig = None
+    if block == "domain":
         dom = _domain_for(blocks, heading)
         if dom is None:
             findings.append(finding("ERROR", "UNKNOWN_HEADING", f"{heading!r} is not a domain heading in the template"))
@@ -132,23 +185,38 @@ def check(path: Path, workspace: str | None = None, lint: bool = True) -> dict:
                 if len(r["current_state"].split()) > max_words:
                     findings.append(finding("WARN", "LONG_CURRENT_STATE",
                                             f"{r['req_id']}: Current State is {len(r['current_state'].split())} words (max {max_words})", r["req_id"]))
+    elif block == "migration":
+        mig = _migration_entry(blocks, heading)
+        intro = blocks.get("migration_intro", {})
+        if mig is None and normalise_heading(heading) != normalise_heading(intro.get("heading") or ""):
+            findings.append(finding("ERROR", "UNKNOWN_HEADING", f"{heading!r} is not a 4.x subsection heading in the template"))
     else:
         allowed = _heading_for(blocks, block)
-        if block == "migration":
-            allowed_set = _migration_headings(blocks)
-            if normalise_heading(heading) not in allowed_set:
-                findings.append(finding("ERROR", "UNKNOWN_HEADING", f"{heading!r} is not a 4.x subsection heading in the template"))
-        elif normalise_heading(heading) != normalise_heading(allowed):
+        if normalise_heading(heading) != normalise_heading(allowed):
             findings.append(finding("ERROR", "UNKNOWN_HEADING", f"{heading!r} is not the {block!r} heading {allowed!r}"))
 
     # Sections: every required ## heading present, and no ## heading the build would not know where to put.
     if block in REQUIRED_SECTIONS:
         required = REQUIRED_SECTIONS[block] + ["Evidence"]
         allowed_sections = set(required)
+        table_sections: set[str] = set()
+        if block == "domain" and dom is not None:
+            allowed_sections |= set(dom.get("tables", {}))
+            table_sections |= set(TABLE_SECTIONS["domain"])
+            table_sections |= set(dom.get("tables", {}))
+        elif block == "migration":
+            allowed_sections.add("Summary")
+            if mig is not None:
+                if mig.get("table"):
+                    allowed_sections.add("Table")
+                    table_sections.add("Table")
+                if (mig.get("bullets") or 0) > 0:
+                    allowed_sections.add("Findings")
+        else:
+            allowed_sections.add("Summary")
+            table_sections |= set(TABLE_SECTIONS.get(block, ()))
         if block == "domain":
-            dom = _domain_for(blocks, heading)
-            if dom:
-                allowed_sections |= set(dom.get("tables", {}))
+            allowed_sections.add("Discovery Notes")
         present = parsed.get("order", [])
         for name in required:
             if name not in present:
@@ -157,11 +225,38 @@ def check(path: Path, workspace: str | None = None, lint: bool = True) -> dict:
             if name not in allowed_sections:
                 findings.append(finding("ERROR", "UNKNOWN_SECTION",
                                         f"section '## {name}' is not part of a {block} block; expected {', '.join(sorted(allowed_sections))}"))
+        if block == "migration" and mig is not None and "Summary" in present and mig.get("intro_paragraphs") is None:
+            findings.append(finding("ERROR", "UNKNOWN_SECTION",
+                                    f"section '## Summary' is not part of a {block} block; expected {', '.join(sorted(allowed_sections))}"))
         seen_sections: set[str] = set()
         for name in present:
             if name in seen_sections:
                 findings.append(finding("ERROR", "DUPLICATE_SECTION", f"section '## {name}' appears more than once"))
             seen_sections.add(name)
+
+        # Table shape: every section that must be a table holds table rows, and
+        # every table row (and its header) has exactly the template's columns.
+        for name in present:
+            if name == "Evidence":
+                continue
+            if name in table_sections and name not in parsed.get("tables", {}):
+                if name != "Requirements" or not parsed.get("requirements"):
+                    findings.append(finding("ERROR", "BAD_TABLE",
+                                            f"section '## {name}' must be a table (bullets or prose there are not)"))
+            for name_t, rows in parsed.get("tables", {}).items():
+                if name_t == "Evidence" or name_t not in present:
+                    continue
+                expected = _expected_columns(blocks, block, heading, name_t)
+                if expected is None:
+                    continue
+                header = parsed.get("table_headers", {}).get(name_t)
+                if header is not None and len(header) != expected:
+                    findings.append(finding("ERROR", "BAD_COLUMNS",
+                                            f"section '## {name_t}' header has {len(header)} columns; the template has {expected} ({', '.join(header)})"))
+                for n, cells in enumerate(rows, start=1):
+                    if len(cells) != expected:
+                        findings.append(finding("ERROR", "BAD_COLUMNS",
+                                                f"section '## {name_t}' row {n} has {len(cells)} columns; the template has {expected} ({', '.join(cells)})"))
 
     # Evidence traceability: every rendered statement needs a non-empty row.
     evidence = parsed.get("evidence", {})
