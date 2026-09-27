@@ -83,7 +83,15 @@ def add_bookmark_at_anchor(editor, anchor: str, edit_id: str) -> str:
     span = entry.span
     # Splice end tag first so the earlier inner_start offset stays valid.
     new_data = data[: span.inner_end] + end_tag + data[span.inner_end :]
-    new_data = new_data[: span.inner_start] + start_tag + new_data[span.inner_start :]
+    # The bookmark must follow the paragraph properties: w:pPr has to be the first child of w:p.
+    start_at = span.inner_start
+    head = new_data[start_at:start_at + 7]
+    if head.startswith(b"<w:pPr") and head[6:7] in (b">", b" ", b"/"):
+        close = new_data.find(b">", start_at)
+        if new_data[close - 1:close] != b"/":  # not a self-closing <w:pPr/>
+            close = new_data.find(b"</w:pPr>", start_at) + len(b"</w:pPr>") - 1
+        start_at = close + 1
+    new_data = new_data[:start_at] + start_tag + new_data[start_at:]
 
     package.set_part(part_name, new_data)
     editor.doc._doc.mark_dirty()

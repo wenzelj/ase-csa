@@ -69,8 +69,9 @@ Then run `check_csa.py` (section 3) once: on a fresh file it must report 0 error
    | --- | --- | --- |
    | Requirement Current State and Rating | the row, `@H..-T1-R<n>` | `Replace`; Text: `> Observed: <current state>` and `> Assessment: Met` (Observed = column 3, Assessment = column 4) |
    | A supporting-table row | the row | `Replace`; Text: one pipe row with every cell, `> \| host \| environment \| role \|` |
-   | A Discovery Information finding (v1.2) | the Aspect table row (`@H..-T1-R<n>`) | `Replace`; Text: one pipe row, `> \| aspect \| configuration observed \| coverage / source \|` |
-   | A bullet (optional Discovery Information bullet, Migration Discovery) | the placeholder bullet paragraph | `Replace`; Text: the bullet sentence, no leading `- `, one bullet per edit |
+   | A Discovery Information finding (v1.2+) | the Aspect table row (`@H..-T1-R<n>`) | `Replace`; Text: one pipe row, `> \| aspect \| configuration observed \| coverage / source \|` |
+   | The optional note under a Discovery table or the 5.4 table (v1.3) | the note paragraph | `Replace`; Text: one or two plain sentences (or `Delete` when there is no note) |
+   | A bullet (Governance actions, 5.3 and 5.6 findings) | the placeholder bullet paragraph | `Replace`; Text: the bullet sentence, no leading `- `, one bullet per edit |
    | Any other paragraph (summary, Drawbridge Impact, caption, source) | the placeholder paragraph | `Replace`; Text: plain sentences |
 
    Do not use `Insert after` for bullets, multi-bullet Text blocks, or `Replace the table content` on template tables: they either lose the bullet formatting or cannot find the table (details in the reference). One edit per placeholder.

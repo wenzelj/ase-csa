@@ -212,6 +212,8 @@ def check(path: Path, workspace: str | None = None, lint: bool = True) -> dict:
                     table_sections.add("Table")
                 if (mig.get("bullets") or 0) > 0:
                     allowed_sections.add("Findings")
+                if (mig.get("note_paragraphs") or 0) > 0:
+                    allowed_sections.add("Notes")
         else:
             allowed_sections.add("Summary")
             table_sections |= set(TABLE_SECTIONS.get(block, ()))
@@ -257,6 +259,16 @@ def check(path: Path, workspace: str | None = None, lint: bool = True) -> dict:
                     if len(cells) != expected:
                         findings.append(finding("ERROR", "BAD_COLUMNS",
                                                 f"section '## {name_t}' row {n} has {len(cells)} columns; the template has {expected} ({', '.join(cells)})"))
+
+        # Notes under a table (template v1.3): one optional plain paragraph, never bullets.
+        for name in ("Discovery Notes", "Notes"):
+            if name not in present:
+                continue
+            paras = parsed.get("paragraphs", {}).get(name, [])
+            if name in parsed.get("bullets", {}) or name in parsed.get("tables", {}) or len(paras) != 1:
+                findings.append(finding("ERROR", "NOT_ONE_PARAGRAPH",
+                                        f"section '## {name}' must be one short paragraph (no bullets, tables or several paragraphs); "
+                                        "it fills the optional note under the table"))
 
     # Evidence traceability: every rendered statement needs a non-empty row.
     evidence = parsed.get("evidence", {})

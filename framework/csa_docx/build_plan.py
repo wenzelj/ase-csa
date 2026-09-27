@@ -42,6 +42,7 @@ _FINDINGS_HEADING = "Findings"
 _GLOSSARY_HEADING = "Terms"
 _COVERAGE_HEADING = "Hosts"
 _NOTES_HEADING = "Discovery Notes"
+_NOTE_HEADING = "Notes"  # migration: the note under the 5.4 table
 
 #: Glossary rows are appended after the template's standard rows.
 _GLOSSARY_STANDARD_ROWS = 10
@@ -262,34 +263,21 @@ def _resolve_section_file(workspace: Path, path: Path) -> dict:
         di_h = _subheading(entries, section_path, 3, _DISCOVERY_HEADING)
         if di_h is not None:
             di_sp = di_h["section_path"]
-            note_paras = []  # every paragraph after the table rows (placeholder bullet(s))
+            notes_para = None  # template v1.3: the optional note paragraph after the table
             seen_row = False
             for e in _body_under(entries, di_h["id"], di_sp):
                 if e.get("kind") == "table_row":
                     seen_row = True
                 elif e.get("kind") == "paragraph" and seen_row:
-                    note_paras.append(e)
-            notes_para = note_paras[0] if note_paras else None
-            notes = parsed.get("bullets", {}).get(_NOTES_HEADING, [])
-            if notes:
+                    notes_para = e
+                    break
+            note = parsed.get("paragraphs", {}).get(_NOTES_HEADING, [])
+            if note:
                 if notes_para is None:
-                    raise ValueError(
-                        f"statement {_NOTES_HEADING!r} has no placeholder under {di_h['id']}"
-                    )
-                sc = None
-                if len(notes) > len(note_paras):
-                    # The notes bullets sit under the document's "Discovery Information"
-                    # heading (after the table); "Discovery Notes" exists only in the file.
-                    sc = _scaffold_entry(entries, "bullets", di_h.get("text") or "Discovery Information",
-                                         len(notes), di_h)
-                for n, text in enumerate(notes, start=1):
-                    if n <= len(note_paras):
-                        entry = note_paras[n - 1]
-                    else:  # only before scaffolding; plan_records after run_scaffold finds the bullet
-                        entry = {"id": f"{note_paras[-1]['id']}(+1)", "section_path": note_paras[-1]["section_path"]}
-                    items.append((entry, f"{_NOTES_HEADING} {n}", text, sc if n > len(note_paras) else None))
+                    raise ValueError(f"statement {_NOTES_HEADING!r} has no placeholder under {di_h['id']}")
+                items.append((notes_para, _NOTES_HEADING, note[0], None))
             elif notes_para is not None:
-                # No notes in the file: delete the placeholder bullet.
+                # No note in the file: delete the optional note paragraph.
                 items.append((notes_para, _NOTES_HEADING, None, None))
 
         # Drawbridge Impact: the first paragraph under the domain's Heading 3.
@@ -416,12 +404,22 @@ def _resolve_section_file(workspace: Path, path: Path) -> dict:
             if hdr_cells:
                 items.append((rows[0], "Table 0", " | ".join(hdr_cells), None))
 
-        # Findings bullets (post-table paragraphs).
+        # Findings bullets: after the table, or (5.3, 5.6: no table) the subsection's own
+        # paragraphs, which are its placeholder bullets.
         findings = parsed.get("bullets", {}).get(_FINDINGS_HEADING, [])
+        bullet_paras = post_paras if all_rows else intro_paras
         if findings:
             sc = (_scaffold_entry(entries, "bullets", heading_text, len(findings), heading_entry)
-                  if len(findings) > len(post_paras) else None)
-            _fill_items(entries, items, post_paras, _FINDINGS_HEADING, findings, sc)
+                  if len(findings) > len(bullet_paras) else None)
+            _fill_items(entries, items, bullet_paras, _FINDINGS_HEADING, findings, sc)
+
+        # Notes (template v1.3, 5.4): one optional plain paragraph under the table.
+        if all_rows and (mig_entry or {}).get("note_paragraphs"):
+            note = parsed.get("paragraphs", {}).get(_NOTE_HEADING, [])
+            if post_paras:
+                items.append((post_paras[0], _NOTE_HEADING, note[0] if note else None, None))
+            elif note:
+                raise ValueError(f"statement {_NOTE_HEADING!r} has no placeholder under {heading_entry['id']}")
 
     elif block == "governance":
         # Governance: fill only the placeholder bullets after the standard 3.

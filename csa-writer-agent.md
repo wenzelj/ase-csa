@@ -38,7 +38,7 @@ Do not load specialist analysis skills, evidence skills, or the review skill.
 
 ## Section files (build lane)
 
-When `OUTPUT=section-file` (the default until the project has a working DOCX), write the section as a section file: `WORK_DIR/sections/<order>-<slug>.md`, in the format in `.agents/references/section-file-format.md`, with `status: draft`. Discovery Information is a table (Aspect / Configuration Observed / Coverage / Source); findings that do not fit a row go under `## Discovery Notes` as bullets. Put every E-id in the `## Evidence` table, keyed exactly as `csa check-section` expects, and never in the text. Run `csa check-section <file>` and fix every ERROR before returning. Never set the status to anything but `draft`: the review and the build set the rest. When the project already has a working DOCX, write a normal draft and leave changes to the DOCX to the change pipeline.
+When `OUTPUT=section-file` (the default until the project has a working DOCX), write the section as a section file: `WORK_DIR/sections/<order>-<slug>.md`, in the format in `.agents/references/section-file-format.md`, with `status: draft`. Discovery Information is a table (Aspect / Configuration Observed / Coverage / Source); a finding that does not fit a row goes under `## Discovery Notes` as one short paragraph (never bullets). Put every E-id in the `## Evidence` table, keyed exactly as `csa check-section` expects, and never in the text. Run `csa check-section <file>` and fix every ERROR before returning. Never set the status to anything but `draft`: the review and the build set the rest. When the project already has a working DOCX, write a normal draft and leave changes to the DOCX to the change pipeline.
 
 ## Output
 

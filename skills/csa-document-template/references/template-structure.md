@@ -1,6 +1,6 @@
 # CSA template structure reference
 
-Template: `CSA Template/CSA_Template_v<highest>.dotx` (v1.2 at time of writing; section structure from the UTC/DTC OT35 v0.1 document). Its own `README.md` is the human guide; this file is the agent-facing map. Stable-ID prefixes below are illustrative: the framework numbers headings by ordinal position **with a +1 offset at every level** (Document Control is `@H2`, not `@H1`), so always resolve IDs with `lookupStableId`, never from these numbers.
+Template: `CSA Template/CSA_Template_v<highest>.dotx` (v1.3 at time of writing; section structure from the UTC/DTC OT35 v0.1 document since v1.2). Its own `README.md` is the human guide; this file is the agent-facing map. Stable-ID prefixes below are illustrative: the framework numbers headings by ordinal position **with a +1 offset at every level** (Document Control is `@H2`, not `@H1`), so always resolve IDs with `lookupStableId`, never from these numbers.
 
 ## Section skeleton (every H1 is a framework "Section N" and starts a new page)
 
@@ -12,7 +12,7 @@ Template: `CSA Template/CSA_Template_v<highest>.dotx` (v1.2 at time of writing; 
 | 2 | Executive Overview | 2.1 Executive Summary: three placeholder paragraphs, then figure placeholder, caption (`Figure n:`), source line. |
 | 3 | Requirement Domain Assessments | 17 domain blocks (3.1 to 3.17), see below. |
 | 4 | Governance Note and Next Steps | Four bullets: three standard OT 3.5 actions (pre-filled, keep them) and one placeholder for system-specific actions with owner and target date. |
-| 5 | Migration Discovery | Intro placeholder paragraph, then 5.1 Discovery Coverage (intro paragraph + Host / Role / Discovery Script Run / Notes table, 3 placeholder rows), 5.2 Installed Applications (intro + Application / component / Category / Observed host(s) / evidence scope table), 5.3 Failover and Replication Behaviour (one bullet), 5.4 Patch and Update Tooling (intro + Host(s) / scope / Update collection / Deployment / Settings / Maintenance window table, then one bullet), 5.5 Group Policy Observations (intro + GPO Name / Category / [Host group 1] / [Host group 2] table; the host-group headers are placeholders to rename or add), 5.6 File Transfer and Local Storage (one bullet). Tables have 2 placeholder rows unless stated. |
+| 5 | Migration Discovery | Intro placeholder paragraph, then 5.1 Discovery Coverage (intro paragraph + Host / Role / Discovery Script Run / Notes table, 3 placeholder rows), 5.2 Installed Applications (intro + Application / component / Category / Observed host(s) / evidence scope table), 5.3 Failover and Replication Behaviour (one bullet), 5.4 Patch and Update Tooling (intro + Host(s) / scope / Update collection / Deployment / Settings / Maintenance window table, then one optional note paragraph; a bullet in v1.2), 5.5 Group Policy Observations (intro + GPO Name / Category / [Host group 1] / [Host group 2] table; the host-group headers are placeholders to rename or add), 5.6 File Transfer and Local Storage (one bullet). Tables have 2 placeholder rows unless stated. |
 | 6 | Appendix A: OT 3.5 Destination Boundary Reference Table | Intro sentence, then Infrastructure Service / Target Destination IP / Parameter / Native Configuration File Layer table with the 4 OT 3.5 destinations pre-filled (Syslog, Monitoring, DNS resolvers, NTP sources). |
 | 7 | Appendix B: Glossary and Acronyms | Term / Definition table, 10 standard terms pre-filled. |
 
@@ -22,7 +22,7 @@ Appendices are Heading 1 paragraphs using the "Appendix A:" list (numId 3), so t
 
 1. Heading 2 = domain name.
 2. Requirement table (CSA Table, 4 columns: Req ID | Requirement | Current State | Rating). Req ID and Requirement are the OT35 checklist text; only Current State and Rating are written. Row IDs are `@H..-T1-R2` and up (R1 is the header).
-3. Heading 3 "Discovery Information": a 3-column table (Aspect | Configuration Observed | Coverage / Source, 2 placeholder rows; IDs `@H..-T1-R2` and up under the Discovery Information heading), then one optional placeholder bullet (style List Bullet) for a finding that does not fit the table (delete it if unused). 3.1 adds a "Hosts and roles found" label and a 3-column table (Host(s), Environment, Role); 3.2 adds an "Accounts, groups and service accounts found" label and a 4-column table (Account / Group, Type, Host(s), Purpose / Role). Both tables have two placeholder rows.
+3. Heading 3 "Discovery Information": a 3-column table (Aspect | Configuration Observed | Coverage / Source, 2 placeholder rows; IDs `@H..-T1-R2` and up under the Discovery Information heading), then one optional note paragraph (style Normal, `[Optional note: …]`) for a finding that does not fit the table (delete it if unused; a bullet in v1.2). 3.1 adds a "Hosts and roles found" label and a 3-column table (Host(s), Environment, Role); 3.2 adds an "Accounts, groups and service accounts found" label and a 4-column table (Account / Group, Type, Host(s), Purpose / Role). Both tables have two placeholder rows.
 4. Heading 3 "Drawbridge Impact": one placeholder paragraph.
 
 | Domain | Name | Requirements (Req ID) |

@@ -1,6 +1,6 @@
 {
-  "template": "CSA_Template_v1.2",
-  "_note": "Template v1.2 (27 Sep 2026): section structure from the UTC/DTC OT35 v0.1 document. Headings must match the template exactly (check_section ignores curly vs straight quotes).",
+  "template": "CSA_Template_v1.3",
+  "_note": "Template v1.3 (27 Sep 2026): v1.2 structure; the optional note under each Discovery Information table and under the 5.4 table is a plain paragraph, not a bullet. Headings must match the template exactly (check_section ignores curly vs straight quotes).",
   "domains": [
     {
       "number": "3.1",
@@ -9,7 +9,6 @@
         "SEP-GEN-01",
         "SEP-GEN-03"
       ],
-      "discovery_bullets": 1,
       "tables": {
         "Hosts and roles found": {
           "columns": [
@@ -28,7 +27,8 @@
         ],
         "placeholder_rows": 2
       },
-      "drawbridge_paragraphs": 1
+      "drawbridge_paragraphs": 1,
+      "discovery_note_paragraphs": 1
     },
     {
       "number": "3.2",
@@ -38,7 +38,6 @@
         "SEP-ID-02",
         "SEP-ID-03"
       ],
-      "discovery_bullets": 1,
       "tables": {
         "Accounts, groups and service accounts found": {
           "columns": [
@@ -58,7 +57,8 @@
         ],
         "placeholder_rows": 2
       },
-      "drawbridge_paragraphs": 1
+      "drawbridge_paragraphs": 1,
+      "discovery_note_paragraphs": 1
     },
     {
       "number": "3.3",
@@ -67,7 +67,6 @@
         "SEP-PKI-01",
         "SEP-PKI-02"
       ],
-      "discovery_bullets": 1,
       "tables": {},
       "discovery_table": {
         "columns": [
@@ -77,7 +76,8 @@
         ],
         "placeholder_rows": 2
       },
-      "drawbridge_paragraphs": 1
+      "drawbridge_paragraphs": 1,
+      "discovery_note_paragraphs": 1
     },
     {
       "number": "3.4",
@@ -85,7 +85,6 @@
       "req_ids": [
         "SEP-TIME-01"
       ],
-      "discovery_bullets": 1,
       "tables": {},
       "discovery_table": {
         "columns": [
@@ -95,7 +94,8 @@
         ],
         "placeholder_rows": 2
       },
-      "drawbridge_paragraphs": 1
+      "drawbridge_paragraphs": 1,
+      "discovery_note_paragraphs": 1
     },
     {
       "number": "3.5",
@@ -103,7 +103,6 @@
       "req_ids": [
         "SEP-DNS-01"
       ],
-      "discovery_bullets": 1,
       "tables": {},
       "discovery_table": {
         "columns": [
@@ -113,7 +112,8 @@
         ],
         "placeholder_rows": 2
       },
-      "drawbridge_paragraphs": 1
+      "drawbridge_paragraphs": 1,
+      "discovery_note_paragraphs": 1
     },
     {
       "number": "3.6",
@@ -123,7 +123,6 @@
         "SEP-NET-02",
         "SEP-NET-03"
       ],
-      "discovery_bullets": 1,
       "tables": {},
       "discovery_table": {
         "columns": [
@@ -133,7 +132,8 @@
         ],
         "placeholder_rows": 2
       },
-      "drawbridge_paragraphs": 1
+      "drawbridge_paragraphs": 1,
+      "discovery_note_paragraphs": 1
     },
     {
       "number": "3.7",
@@ -143,7 +143,6 @@
         "SEP-STOR-02",
         "SEP-STOR-03"
       ],
-      "discovery_bullets": 1,
       "tables": {},
       "discovery_table": {
         "columns": [
@@ -153,7 +152,8 @@
         ],
         "placeholder_rows": 2
       },
-      "drawbridge_paragraphs": 1
+      "drawbridge_paragraphs": 1,
+      "discovery_note_paragraphs": 1
     },
     {
       "number": "3.8",
@@ -162,7 +162,6 @@
         "SEP-MGT-01",
         "SEP-MGT-02"
       ],
-      "discovery_bullets": 1,
       "tables": {},
       "discovery_table": {
         "columns": [
@@ -172,7 +171,8 @@
         ],
         "placeholder_rows": 2
       },
-      "drawbridge_paragraphs": 1
+      "drawbridge_paragraphs": 1,
+      "discovery_note_paragraphs": 1
     },
     {
       "number": "3.9",
@@ -182,7 +182,6 @@
         "SEP-MON-02",
         "SEP-MON-03"
       ],
-      "discovery_bullets": 1,
       "tables": {},
       "discovery_table": {
         "columns": [
@@ -192,7 +191,8 @@
         ],
         "placeholder_rows": 2
       },
-      "drawbridge_paragraphs": 1
+      "drawbridge_paragraphs": 1,
+      "discovery_note_paragraphs": 1
     },
     {
       "number": "3.10",
@@ -201,7 +201,6 @@
         "SEP-PATCH-01",
         "SEP-PATCH-02"
       ],
-      "discovery_bullets": 1,
       "tables": {},
       "discovery_table": {
         "columns": [
@@ -211,7 +210,8 @@
         ],
         "placeholder_rows": 2
       },
-      "drawbridge_paragraphs": 1
+      "drawbridge_paragraphs": 1,
+      "discovery_note_paragraphs": 1
     },
     {
       "number": "3.11",
@@ -220,7 +220,6 @@
         "SEP-BAK-01",
         "SEP-BAK-02"
       ],
-      "discovery_bullets": 1,
       "tables": {},
       "discovery_table": {
         "columns": [
@@ -230,7 +229,8 @@
         ],
         "placeholder_rows": 2
       },
-      "drawbridge_paragraphs": 1
+      "drawbridge_paragraphs": 1,
+      "discovery_note_paragraphs": 1
     },
     {
       "number": "3.12",
@@ -239,7 +239,6 @@
         "SEP-ISO-01",
         "SEP-ISO-02"
       ],
-      "discovery_bullets": 1,
       "tables": {},
       "discovery_table": {
         "columns": [
@@ -249,7 +248,8 @@
         ],
         "placeholder_rows": 2
       },
-      "drawbridge_paragraphs": 1
+      "drawbridge_paragraphs": 1,
+      "discovery_note_paragraphs": 1
     },
     {
       "number": "3.13",
@@ -259,7 +259,6 @@
         "SEP-PERIM-02",
         "SEP-PERIM-03"
       ],
-      "discovery_bullets": 1,
       "tables": {},
       "discovery_table": {
         "columns": [
@@ -269,7 +268,8 @@
         ],
         "placeholder_rows": 2
       },
-      "drawbridge_paragraphs": 1
+      "drawbridge_paragraphs": 1,
+      "discovery_note_paragraphs": 1
     },
     {
       "number": "3.14",
@@ -278,7 +278,6 @@
         "SEP-VULN-01",
         "SEP-VULN-02"
       ],
-      "discovery_bullets": 1,
       "tables": {},
       "discovery_table": {
         "columns": [
@@ -288,7 +287,8 @@
         ],
         "placeholder_rows": 2
       },
-      "drawbridge_paragraphs": 1
+      "drawbridge_paragraphs": 1,
+      "discovery_note_paragraphs": 1
     },
     {
       "number": "3.15",
@@ -296,7 +296,6 @@
       "req_ids": [
         "SEP-INFRA-01"
       ],
-      "discovery_bullets": 1,
       "tables": {},
       "discovery_table": {
         "columns": [
@@ -306,7 +305,8 @@
         ],
         "placeholder_rows": 2
       },
-      "drawbridge_paragraphs": 1
+      "drawbridge_paragraphs": 1,
+      "discovery_note_paragraphs": 1
     },
     {
       "number": "3.16",
@@ -314,7 +314,6 @@
       "req_ids": [
         "SEP-SUPPLY-01"
       ],
-      "discovery_bullets": 1,
       "tables": {},
       "discovery_table": {
         "columns": [
@@ -324,7 +323,8 @@
         ],
         "placeholder_rows": 2
       },
-      "drawbridge_paragraphs": 1
+      "drawbridge_paragraphs": 1,
+      "discovery_note_paragraphs": 1
     },
     {
       "number": "3.17",
@@ -333,7 +333,6 @@
         "SEP-INET-01",
         "SEP-INET-02"
       ],
-      "discovery_bullets": 1,
       "tables": {},
       "discovery_table": {
         "columns": [
@@ -343,7 +342,8 @@
         ],
         "placeholder_rows": 2
       },
-      "drawbridge_paragraphs": 1
+      "drawbridge_paragraphs": 1,
+      "discovery_note_paragraphs": 1
     }
   ],
   "executive_summary": {
@@ -384,7 +384,8 @@
         ],
         "placeholder_rows": 2
       },
-      "bullets": 1
+      "bullets": 0,
+      "note_paragraphs": 1
     },
     {
       "number": "5.5",

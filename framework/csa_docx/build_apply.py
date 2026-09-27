@@ -35,12 +35,12 @@ from .run_state import read_completed_ids, state_path
 
 #: Comment markup the build's apply step removes for a preview (S60), copied
 #: from the new_csa.py script so this module stays importable without it.
+# Any run holding a comment reference, whatever its run properties or attribute spacing
+# (ElementTree writes '<w:rStyle w:val="CommentReference" />' with a space).
 _COMMENT_REF_RUN_RE = re.compile(
-    r'<w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr>'
-    r'<w:commentReference w:id="\d+"\s*/></w:r>')
-_COMMENT_REF_SIMPLE_RE = re.compile(
-    r'<w:r><w:commentReference w:id="\d+"\s*/></w:r>')
-_COMMENT_RANGE_RE = re.compile(r'<w:commentRange(?:Start|End) w:id="\d+"\s*/>')
+    r'<w:r(?:\s[^>]*)?>(?:(?!</w:r>).)*?<w:commentReference\b[^>]*/>\s*</w:r>', re.S)
+_COMMENT_REF_SIMPLE_RE = re.compile(r'<w:commentReference\b[^>]*/>')
+_COMMENT_RANGE_RE = re.compile(r'<w:commentRange(?:Start|End)\b[^>]*/>')
 
 
 def _framework_dir() -> Path:
