@@ -175,6 +175,8 @@ def hygiene_findings(records) -> list[dict]:
             out.append(finding("ERROR", "STABLE_ID_IN_TEXT", "stable ID (@H...) in Text", r.edit_id))
         elif MARKDOWN_RE.search(t):
             out.append(finding("ERROR", "MARKDOWN_IN_TEXT", "Markdown (**, backticks, >, #) in Text; it would land in the document", r.edit_id))
+        if r.action.lower().startswith(("replace", "delete")) and not re.search(r"currently:\s*[\"\u201c]", r.where or "") and "-T" not in (r.where or ""):
+            out.append(finding("WARN", "NO_CURRENTLY", "Where has no 'currently: \"...\"' quote; apply uses it to confirm the stable ID still points at the right paragraph", r.edit_id))
         if IP_RE.search(t) and not _is_table_text(t):
             out.append(finding("ERROR", "IP_IN_TEXT", "IP address or subnet in prose Text; put it in the discovery table or appendix and name the component by role", r.edit_id))
         if t.strip() and r.action.lower().startswith(("replace", "insert")) and not (r.facts or "").strip() and not _is_table_text(t):

@@ -169,6 +169,48 @@ def _serialize_part_preserving(root: ET.Element, original: bytes) -> bytes:
         old = old[:-2] + b">"
     return out[: new_tag.start()] + old + out[new_tag.end():]
 
+
+_CURRENTLY_RE = re.compile(r"currently:\s*[\"\u201c](.+?)[\"\u201d]\s*$", re.S)
+
+
+def _norm_text(t: str) -> str:
+    t = t.replace("\u2019", "'").replace("\u2018", "'").replace("\u201c", '"').replace("\u201d", '"')
+    return re.sub(r"\s+", " ", t).strip().lower()
+
+
+def _currently_segments(where: str) -> list[str]:
+    """The text a record quotes as the target's current wording ('currently: "... ..."'),
+    split at ellipses into segments long enough to identify the paragraph."""
+    m = _CURRENTLY_RE.search(where or "")
+    if not m:
+        return []
+    return [_norm_text(seg) for seg in re.split(r"\s*(?:\.\.\.|\u2026)\s*", m.group(1)) if len(seg.strip()) >= 12]
+
+
+def verified_stable_index(where: str, paragraphs, id_str: str, id_map: dict) -> tuple[int | None, str | None]:
+    """Resolve a stable ID, then check the paragraph against the record's 'currently' quote.
+
+    Stable IDs are positional, so an earlier edit that adds or removes a paragraph shifts
+    every later ID. When the quoted text is not in the paragraph the ID now points at, use
+    the one paragraph that does contain it; if none or several do, block rather than guess.
+    Records without a quote keep the old, ID-only behaviour."""
+    idx = id_map.get(id_str)
+    segs = _currently_segments(where)
+    if not segs:
+        return (idx, None) if idx is not None else (None, f"Stable ID {id_str} not found in document")
+
+    def fits(i: int) -> bool:
+        text = _norm_text(getattr(paragraphs[i], "text", "") or "")
+        return bool(text) and all(seg in text for seg in segs)
+
+    if idx is not None and fits(idx):
+        return idx, None
+    found = [i for i in range(len(paragraphs)) if fits(i)]
+    if len(found) == 1:
+        return found[0], None
+    return None, (f"Stable ID {id_str} now points at text that does not match the record's 'currently' quote, "
+                  f"and {len(found)} paragraphs contain that quote; run csa prepare and re-anchor the record")
+
 class DocxEngineEditor:
     """CSA adapter over the open-source DocxEngine library.
 
@@ -280,12 +322,13 @@ class DocxEngineEditor:
             if stable_id:
                 id_map = build_id_map(paragraphs)
                 id_str = str(stable_id)
-                if id_str in id_map:
-                    paragraph = paragraphs[id_map[id_str]]
+                idx, why = verified_stable_index(record.where, paragraphs, id_str, id_map)
+                if idx is not None:
+                    paragraph = paragraphs[idx]
                     matches = [paragraph]
                     anchor_text = anchor_text or id_str
                 else:
-                    return EditResult(record.edit_id, "BLOCKED", f"Stable ID {id_str} not found in document", id_str)
+                    return EditResult(record.edit_id, "BLOCKED", why, id_str)
             else:
                 if not anchor_text:
                     return EditResult(record.edit_id, "BLOCKED", "Could not extract a unique anchor from Where")
@@ -392,9 +435,10 @@ class DocxEngineEditor:
         if stable_id:
             id_map = build_id_map(paragraphs)
             id_str = str(stable_id)
-            if id_str in id_map:
-                return id_map[id_str], None
-            return None, EditResult(record.edit_id, "BLOCKED", f"Stable ID {id_str} not found in document", id_str)
+            idx, why = verified_stable_index(record.where, paragraphs, id_str, id_map)
+            if idx is not None:
+                return idx, None
+            return None, EditResult(record.edit_id, "BLOCKED", why, id_str)
         matches = self._matching_paragraphs(anchor_text, record.where, paragraphs)
         if len(matches) != 1:
             return None, EditResult(record.edit_id, "BLOCKED", f"{mismatch_label} was {len(matches)}; expected 1", anchor_text)
@@ -504,11 +548,12 @@ class DocxEngineEditor:
             if stable_id:
                 id_map = build_id_map(paragraphs)
                 id_str = str(stable_id)
-                if id_str in id_map:
-                    paragraph = paragraphs[id_map[id_str]]
+                idx, why = verified_stable_index(record.where, paragraphs, id_str, id_map)
+                if idx is not None:
+                    paragraph = paragraphs[idx]
                     matches = [paragraph]
                 else:
-                    return EditResult(record.edit_id, "BLOCKED", f"Stable ID {id_str} not found in document", anchor_text)
+                    return EditResult(record.edit_id, "BLOCKED", why, anchor_text)
             else:
                 if not anchor_text:
                     return EditResult(record.edit_id, "BLOCKED", "Could not extract a unique anchor from Where", None)
@@ -631,10 +676,9 @@ class DocxEngineEditor:
         if stable_id:
             id_str = str(stable_id)
             id_map = build_id_map(paragraphs)
-            if id_str in id_map:
-                anchor_index = id_map[id_str]
-            else:
-                return EditResult(record.edit_id, "BLOCKED", f"Stable ID {id_str} not found in document", id_str)
+            anchor_index, why = verified_stable_index(record.where, paragraphs, id_str, id_map)
+            if anchor_index is None:
+                return EditResult(record.edit_id, "BLOCKED", why, id_str)
         else:
             anchor_text = find_anchor(record.where)
             if not anchor_text:
