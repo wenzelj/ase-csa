@@ -705,6 +705,28 @@ def cmd_approve(a):
            approved=[] if a.revoke else section_state(p, a.section)["edits"], rejected=rejected)
 
 
+def close_in_word(docx: Path, wait: float = 20.0) -> bool:
+    """Save and close ``docx`` in Microsoft Word (macOS only), then wait for Word's lock file to go.
+    Returns True when the document is no longer open. Other open documents are left alone."""
+    lock = docx.parent / ("~$" + docx.name[2:])
+    if not lock.exists():
+        return True
+    if sys.platform != "darwin" or not shutil.which("osascript"):
+        return False
+    script = ('tell application "Microsoft Word"\n'
+              '  repeat with d in (documents)\n'
+              f'    if (full name of d) is "{docx}" or (name of d) is "{docx.name}" then close d saving yes\n'
+              '  end repeat\n'
+              'end tell')
+    subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=60)
+    end = time.time() + wait
+    while time.time() < end:
+        if not lock.exists():
+            return True
+        time.sleep(0.5)
+    return not lock.exists()
+
+
 def _apply_once(p, a, limit):
     kw = {"workspace": _ws(p), "comment_author": settings().get("comment_author", "Wenzel Joubert"),
           "comment_initials": settings().get("comment_initials", "WJ")}
@@ -737,6 +759,15 @@ def cmd_apply(a):
         rounds += 1
         res = _apply_once(p, a, limit)
         status = res.get("status")
+        if status == "NOT_READY" and "locked_by_word" in (res.get("reasons") or []) and not a.keep_open:
+            docx = Path(res.get("docx") or "")
+            print(f"{docx.name} is open in Word; saving and closing it ...")
+            if close_in_word(docx):
+                print("closed; retrying")
+                res = _apply_once(p, a, limit)
+                status = res.get("status")
+            else:
+                print("could not close it automatically (only possible on the Mac, with Word's permission)")
         applied = (res.get("applied") or []) + (res.get("already_applied") or [])
         print(f"batch {rounds}: {status}  applied={applied}  next={res.get('next_edit_id')}")
         metric(p, "apply", a.section, batch=rounds, status=status, applied=applied, blocked=res.get("blocked") or [])
@@ -1740,6 +1771,7 @@ def main(argv=None) -> int:
     s.add_argument("--agent", action="store_true", help="run the document agent (LLM) instead of the framework")
     s.add_argument("--agent-on-block", action="store_true", help="hand over to the document agent if a batch is BLOCKED")
     s.add_argument("--allow-unapproved", action="store_true"); s.add_argument("--json", action="store_true")
+    s.add_argument("--keep-open", action="store_true", help="do not save and close the document in Word when it is open")
     s.add_argument("--file", help="a labelled change file for this section, e.g. story for ChangesCSA_<App>_Section<N>_story.md")
     s.add_argument("--set", nargs="*", help="KEY=VALUE overrides for --agent"); agent_opts(s)
     s = sp("pipeline", cmd_pipeline); s.add_argument("section"); s.add_argument("--limit", type=int)
