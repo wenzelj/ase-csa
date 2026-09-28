@@ -507,7 +507,7 @@ def cmd_next(a):
 
 # ---------------------------------------------------------------- commands: framework
 def _ws(p: dict) -> str:
-    return p["project_root"]
+    return str(local_path(p["project_root"]))   # mapped when the checkout is mounted elsewhere (VM)
 
 
 def _emit(res: dict, a) -> int:

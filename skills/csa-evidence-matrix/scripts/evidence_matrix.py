@@ -98,13 +98,25 @@ def _load_project_registry():
     return projects
 
 
+def _local_root(root):
+    """Registered roots are Mac paths. When this checkout is mounted elsewhere (for example a VM),
+    map a missing registered root onto the checkout by the checkout folder's name."""
+    if root.exists():
+        return root
+    checkout = Path(__file__).resolve().parents[4]
+    parts = root.parts
+    if checkout.name in parts:
+        return checkout.joinpath(*parts[parts.index(checkout.name) + 1:])
+    return root
+
+
 def _resolve_registered_project(workspace):
     for project in _load_project_registry():
         root = project.get("project_root")
         if not root:
             continue
         try:
-            root_path = Path(root).expanduser().resolve()
+            root_path = _local_root(Path(root).expanduser()).resolve()
         except OSError:
             continue
         if workspace == root_path or root_path in workspace.parents:
