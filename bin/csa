@@ -555,6 +555,10 @@ def cmd_refresh(a):
 
 def run_check_change(p: dict, cf: Path, a) -> int:
     argv = [framework_python(), "-m", "csa_docx.check_change", str(cf), "--workspace", str(local_path(p["project_root"]))]
+    if p.get("work_dir"):
+        argv += ["--evidence", str(local_path(p["work_dir"]) / "evidence-matrix.csv")]
+    if p.get("sites"):
+        argv += ["--sites", p["sites"]]
     for flag, name in (("--no-anchors", "no_anchors"), ("--no-lint", "no_lint"), ("--json", "json")):
         if getattr(a, name, False):
             argv.append(flag)

@@ -384,7 +384,10 @@ Return `FAIL` when any of these are true:
 - a material approved edit lacks a required comment;
 - Word comments corrupt OOXML structure;
 - unauthorised document content changes are found;
-- the change report falsely claims success for failed or unverified work.
+- the change report falsely claims success for failed or unverified work;
+- an applied sentence states something its evidence does not: a claim with no quote in the `## Fact audit` table, a frequency, host, path, port or quantity the cited rows do not hold, or a scope wider than the evidence (for example "the TCSI machines" when only Rockhampton was captured). Check each sentence against the matrix row, not against the Facts line.
+
+List every cited evidence row still `pending` in the report (it does not fail the review).
 
 Return `PASS WITH NOTES` when all approved changes are correct but there are non-blocking issues, such as:
 

@@ -1,7 +1,11 @@
 """Check a ChangesCSA_*.md change file before approval.
 
     python -m csa_docx.check_change <change file> [--workspace <project root>] [--json]
-                                    [--no-anchors] [--no-lint]
+                                    [--no-anchors] [--no-lint] [--evidence CSV] [--sites ROK=Rockhampton,...]
+
+Fact gates (csa_docx.fact_checks): every fact cites evidence, states its basis
+(observed / documented / stated, never inferred), carries only terms the evidence
+holds, and the Text keeps the evidence's scope.
 
 Run from .agents/framework. Exit code 1 when there is at least one ERROR;
 warnings never fail the check. `csa check-change <N>` wraps this.
@@ -215,7 +219,8 @@ def lint_findings(records) -> list[dict]:
     return out
 
 
-def check(path: Path, workspace: str | None = None, anchors: bool = True, lint: bool = True) -> dict:
+def check(path: Path, workspace: str | None = None, anchors: bool = True, lint: bool = True,
+          evidence: str | None = None, sites: str | None = None) -> dict:
     text = path.read_text(encoding="utf-8")
     records = parse_change_records(text)
     findings = structure_findings(path, text, records)
@@ -227,6 +232,9 @@ def check(path: Path, workspace: str | None = None, anchors: bool = True, lint: 
     findings += hygiene_findings(records)
     findings += brief_findings(text, records)
     findings += section_fit_findings(text, records)
+    from csa_docx.fact_checks import fact_findings, load_matrix, parse_sites
+    ev = Path(evidence) if evidence else (Path(workspace) / "csa-work" / "evidence-matrix.csv" if workspace else None)
+    findings += fact_findings(records, load_matrix(ev), parse_sites(sites), finding)
     if lint:
         findings += lint_findings(records)
     return {
@@ -245,8 +253,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--no-anchors", action="store_true")
     ap.add_argument("--no-lint", action="store_true")
+    ap.add_argument("--evidence", help="evidence-matrix.csv (default: <workspace>/csa-work/evidence-matrix.csv)")
+    ap.add_argument("--sites", help="site prefixes for scope checks, e.g. ROK=Rockhampton,MKY=Mackay")
     a = ap.parse_args(argv)
-    res = check(Path(a.path), a.workspace, anchors=not a.no_anchors, lint=not a.no_lint)
+    res = check(Path(a.path), a.workspace, anchors=not a.no_anchors, lint=not a.no_lint, evidence=a.evidence, sites=a.sites)
     if a.json:
         print(json.dumps(res, indent=2))
     else:

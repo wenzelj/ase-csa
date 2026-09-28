@@ -134,6 +134,17 @@ Then drive the evidence search from the questions, not from the existing sentenc
 
 Every line of an edit's `**Facts:**` list starts with the brief item it answers, for example `- [B3] IAMPS opens the connection from the IT side (E-003)`. `Table detail:` and `Unknown:` lines are exempt. `csa check-change` warns on an untagged fact and on a brief item that no fact, open question or "left unchanged" note mentions.
 
+### Never infer
+
+Every fact is something the evidence shows, a document states, or a person said. Nothing is concluded from it.
+
+- Each fact line cites its rows and ends with its basis and scope: `- [B5] OIA records a replay file on the TCSI machines. (E-011) {basis: observed; scope: ROKTCSILEFT, ROKCERIGHT}`.
+- **basis** is `observed` (seen in a capture, config or log), `documented` (a document says so) or `stated` (interview or review comment). There is no `inferred`: a conclusion you would have to reason your way to becomes an `Unknown:` line and an open question, never a fact.
+- **scope** names the hosts or sites the evidence covers, from the matrix row. Where the evidence covers part of the estate, the Text says so ("found on the Rockhampton machines; Mackay is still to be confirmed"). Never widen to "all", "every", "both" or "the system".
+- Use only the evidence's own terms for frequency, timing, direction, content and quantity. "Copies yesterday's file" is not "daily"; "a replay file" is not "a replay of what it sends". If you need the stronger word, find evidence for it or leave it out.
+- `csa check-change` enforces this against the evidence matrix: FACT_NO_EVIDENCE, FACT_EVIDENCE_MISSING, FACT_INFERRED, FACT_NOT_IN_EVIDENCE (a host, path, port or frequency the cited rows do not hold), UNSUPPORTED_QUALIFIER and SCOPE_WIDENED are errors; FACT_NO_BASIS, FACT_NO_SCOPE, SCOPE_QUANTIFIER and PROSE_UNSUPPORTED are warnings you resolve before hand-over.
+- Before hand-over, write a `## Fact audit` table in the change file, one row per Text sentence: `| Record | Sentence | Evidence quote | Basis | Scope |`. The quote is copied from the matrix row (`claim` or `evidence_excerpt`). A sentence you cannot quote for is deleted or turned into the unknown.
+
 The Text then tells the subsection's story in brief order: open with the Purpose, walk the questions, end with the consequence for the section's requirements and the one unknown.
 
 ## Section Identification
@@ -301,7 +312,7 @@ The main issues identified were:
 **Do:** Replace / Insert before / Insert after / Delete
 
 **Facts:**
-- [B1] <one fact the text must carry> (E-nnn)
+- [B1] <one fact the text must carry, in the evidence's own terms> (E-nnn) {basis: observed|documented|stated; scope: <hosts or sites>}
 - Table detail: <addresses, ports, host names that belong in a table, not the paragraph> (E-nnn)
 - Unknown: <the one open point, if any, and who can confirm it>
 
@@ -396,6 +407,7 @@ READ AGENT
 -> FOR EACH SUPPORTED GAP: lookupStableId -> DRAFT EDIT
 -> RECORD UNSUPPORTED/AMBIGUOUS ITEMS AS OPEN QUESTIONS
 -> WRITE CHANGE PROPOSAL FILE
+-> WRITE ## Fact audit (sentence | evidence quote | basis | scope); DELETE ANY SENTENCE WITHOUT A QUOTE
 -> RUN csa check-change <N>, FIX EVERY ERROR
 -> HAND OVER: csa write SECTION=<N> MODE=records (Writer rewrites prose Text from Facts)
 -> UPDATE RUN-STATE

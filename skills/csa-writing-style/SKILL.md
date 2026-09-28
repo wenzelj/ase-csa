@@ -117,6 +117,10 @@ The rewrite keeps every fact, adds the consequence the original only implied, an
 - When two adjacent items in a list or table row are similar, it's fine for their phrasing to differ slightly rather than following an identical template every time, the way two different people describing the same ten hosts would naturally vary their phrasing slightly from row to row.
 - Read the paragraph back once before finalising it and ask: would a technical writer on this team actually have typed this sentence, or does it read like a summary of what a sentence like this should contain? Rewrite anything that fails that check.
 
+## Never infer
+
+State what the evidence shows at the strength it shows it. No conclusions the evidence does not state ("which means", "likely", "therefore", "typically"), no stronger words than the source ("daily" for "yesterday's file"), and no wider scope than the capture ("the TCSI machines" when only Rockhampton was seen). A gap stated plainly is good writing: "The task was found on the Rockhampton machines; whether Mackay does the same is still to be confirmed." `prose_lint` flags inference wording; `csa check-change` checks every fact against the evidence matrix.
+
 ## Evidence IDs never appear in the body text
 
 Traceability (E-id citations) belongs in the change record's `Why` field and, from there, the Word comment attached to the edit -- never in the drafted prose itself. Do not write "`[E-042]`" or similar inline into a sentence or table cell that will land in the document. If a claim is `INFERRED`, `UNCONFIRMED`, or `CONFLICTING`, say so in plain words in the sentence ("has not been directly observed," "reported inconsistently across hosts") rather than a bracketed status tag -- the citation marker and the uncertainty label are both metadata, and metadata stays out of the reader-facing text.

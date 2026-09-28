@@ -88,6 +88,10 @@ SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 IP_RE = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}(?:/\d{1,2})?\b|\b\d{1,3}(?:\.\d{1,3}){2}\.x\b|\.\d{1,3}/\.\d{1,3}\b")
 PORT_RE = re.compile(r"\b(?:tcp|udp)\s*/\s*\d{2,5}\b|\bports?\s+\d{2,5}\b", re.IGNORECASE)
 HEDGE_RE = re.compile(r"\b(?:not (?:been )?(?:established|observed|confirmed|verified)|has not been|could not be|unclear|appears? to|may be|possibly)\b", re.IGNORECASE)
+# Inference (never infer): wording that turns an observation into a conclusion the evidence does not state.
+INFERENCE_RE = re.compile(r"\b(?:which means|this means|this suggests|suggests? that|implies|implying|presumably|probably|likely|"
+                          r"we assume|assumed|is expected to|in practice|typically|usually|generally|normally|"
+                          r"therefore|it follows|would be)\b", re.IGNORECASE)
 MAX_SENTENCE_WORDS = 35
 MAX_AVG_SENTENCE_WORDS = 24
 MAX_IDENTIFIERS_PER_PARA = 3
@@ -259,6 +263,7 @@ def analyse(sec: Section, max_words: int) -> dict:
     long_sents = [s for s in sentences if words(s) > MAX_SENTENCE_WORDS]
     avg_sent = (sum(words(s) for s in sentences) / len(sentences)) if sentences else 0.0
     dense_paras, porty_paras, hedgy_paras = [], [], []
+    inferred: list[str] = []
     for p in prose:
         ids = set()
         for rx in IDENT_RES:
@@ -271,9 +276,13 @@ def analyse(sec: Section, max_words: int) -> dict:
             porty_paras.append(p.text[:60])
         if len(HEDGE_RE.findall(p.text)) > MAX_HEDGES_PER_PARA:
             hedgy_paras.append(p.text[:60])
+        for m in INFERENCE_RE.finditer(p.text):
+            inferred.append(m.group(0).lower())
 
     share = (len(bullets) / len(prose)) if prose else 0.0
     warns = []
+    if inferred:
+        warns.append(f"inference wording ({', '.join(sorted(set(inferred)))}); state what the evidence shows, or move the conclusion to an open question")
     if ips:
         warns.append(f"{len(ips)} IP addresses or subnets in prose; move them to the discovery table or appendix")
     if dense_paras:
