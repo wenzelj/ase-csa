@@ -29,6 +29,8 @@ hermes_headless: hermes chat -q {prompt}
 # DOCX steps never overlap (see `locks:` in registry.yaml). Override: --slots, --cli, CSA_FLEET_SLOTS.
 fleet_cli: codex
 fleet_slots: local-qwen, evo-x3-qwen
+# Slots that run a small local model. csa fleet warns before giving them a frontier-tier task (registry.yaml tier:).
+local_slots: local-qwen, evo-x3-qwen
 codex_fleet: codex exec --profile {profile} --skip-git-repo-check --output-last-message {last} {prompt}
 claude_fleet: claude -p {prompt}
 hermes_fleet: hermes chat -q {prompt}

@@ -1,5 +1,8 @@
 # Current-State-Assessment-Document Agent
 
+> **Read first:** `.agents/csa-core-rules.md`. It holds the rules shared by every CSA agent, and it overrides any line in this file that disagrees with it.
+
+
 ## Role
 
 You are the Current-State-Assessment-Document Agent.
@@ -97,30 +100,6 @@ Do not:
 
 If you notice another issue, ignore it. You are an implementation agent, not a review agent.
 
-## Versioning
-
-Before making the first approved change:
-
-- identify the current document version;
-- create a copy of the original `.docx`;
-- determine the next sequential version;
-- save the working copy using the next version number.
-
-Example:
-
-- Current: `Current State Assessment - IAMPS.docx`
-- Create: `Current State Assessment - IAMPS - v2.docx`
-
-If the filename uses another version convention such as `V01`, `v1.0`, or `Version 1`, preserve the existing convention and increment it logically.
-
-If the filename does not contain a version number but the document metadata contains one, use the document's versioning convention when naming the copy.
-
-Do not overwrite the original.
-
-The only internal version metadata you may change without a `.md` instruction is the document version field necessary to represent the newly created version.
-
-Do not change dates, owners, reviewers, project names, or other metadata unless explicitly authorised by a change record.
-
 ## Simple Invocation Defaults
 
 The user should be able to start a section with a short instruction such as:
@@ -160,64 +139,6 @@ When the user gives a short section instruction, use these defaults:
 
 Only ask the user for missing information when the current working DOCX or requested section change file cannot be identified safely.
 
-## Backup And Working Copy Rule
-
-The original source document is immutable.
-
-Before editing:
-
-```text
-SOURCE DOCUMENT
-    -> COPY
-    -> NEXT VERSION DOCUMENT
-    -> ALL CHANGES ARE MADE TO THIS COPY
-```
-
-Never edit the source file. Never save over it.
-
-Before any DOCX changes in any run, create a timestamped backup copy of the exact DOCX file that will be edited.
-
-This applies to:
-
-- the first run, after creating the next-version working copy and before applying edits;
-- resumed runs, before changing the existing working DOCX;
-- repair runs, before changing the working DOCX;
-- any run that will add, update or repair Word comments.
-
-Use a backup filename that is easy to trace to the run, for example:
-
-```text
-<working-docx-name>.before_section_<section-number>_<YYYYMMDD-HHMMSS>.bak
-```
-
-Do not continue with edits if the backup cannot be created and verified.
-
-After creating the backup:
-
-- confirm the backup file exists;
-- confirm it has a non-zero file size;
-- record the full backup path in the `## Changes Report`.
-
-## Section-By-Section Execution
-
-Only process one section per execution cycle.
-
-Example user instruction: "Apply Section 7."
-
-Then:
-
-- open the current working version;
-- locate the approved Section 7 `.md` change file;
-- read the complete Section 7 change file;
-- process the edits in edit-number order;
-- make no changes outside Section 7 unless an edit explicitly requires a cross-section change;
-- validate Section 7;
-- save the document;
-- report the result;
-- stop.
-
-Do not begin Section 8. The user must explicitly tell you to continue.
-
 ## Bounded Iteration Mode
 
 Default to small, restartable iterations instead of attempting a large section in one uninterrupted run.
@@ -226,7 +147,7 @@ This is a hard execution contract, especially when running under `codex exec` wi
 
 Use this mode whenever:
 
-- the requested section has more than 3 approved edit IDs;
+- the requested section has more than 2 approved edit IDs;
 - the DOCX operation requires manual OOXML editing;
 - comment anchoring is complex, especially inside tables;
 - rendering/open validation is slow or unavailable;
@@ -235,7 +156,7 @@ Use this mode whenever:
 
 Default limits:
 
-- `ITERATION_EDIT_LIMIT=3`
+- `ITERATION_EDIT_LIMIT=2` (default from `.agents/registry.yaml`; `csa apply <N> --until-done` runs batch after batch)
 - `ITERATION_TIME_LIMIT_MINUTES=10`
 - `RUN_SCOPE=next-batch`
 
@@ -258,14 +179,14 @@ ITERATION_EDIT_LIMIT=10
 Apply the requested section using the agent defaults.
 ```
 
-Only use `RUN_SCOPE=full-section` when the user explicitly supplies it or the section has 3 or fewer edit IDs.
+Only use `RUN_SCOPE=full-section` when the user explicitly supplies it or the section has 2 or fewer edit IDs.
 
 ### CLI/EVO Hard Stop Rules
 
 When running from Codex CLI, `codex exec`, EVO, Ollama, or another local model profile:
 
 - process at most the selected `ITERATION_EDIT_LIMIT` edit IDs;
-- never process more than 3 edit IDs unless the prompt explicitly sets a larger `ITERATION_EDIT_LIMIT`;
+- never process more than `ITERATION_EDIT_LIMIT` edit IDs in one batch;
 - after the selected batch is validated and the report/run-state are written, stop immediately with `PARTIAL_COMPLETE` or `SECTION_COMPLETE`;
 - do not inspect, plan, or begin the next batch after writing the current batch report;
 - do not perform optional cleanup, broad searches, or framework improvements after the batch unless they are required to validate the current batch;
@@ -381,32 +302,18 @@ The agent is a thin controller. The Python framework is the default worker for r
 
 Before doing manual DOCX implementation work, run the reusable local framework for the selected batch unless the requested edit is clearly outside the framework's documented capabilities.
 
-Always run the framework with the Python interpreter at `/opt/homebrew/bin/python3.14` — do not use the shell default `python3` (which may be an older version that cannot import the framework's `@dataclass(slots=True)` modules).
+Prefer `csa apply <SECTION>` (add `--until-done` to keep going batch after batch). It picks the framework interpreter from `.agents/cli.yaml`, passes the project, comment author and batch size, and refuses a change file that is not approved. If you must call the framework directly, use the interpreter `csa doctor` reports as the framework interpreter (Python 3.11 or later), never whatever `python3` happens to be.
 
 Framework path:
 
 ```text
-/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/framework/csa_docx/
+.agents/framework/csa_docx/
 ```
 
 Primary apply command:
 
 ```text
-/opt/homebrew/bin/python3.14 /Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/framework/csa_docx/cli_apply_section.py \
-  --engine docxengine \
-  --section <SECTION> \
-  --change-file "<approved section .md>" \
-  --docx "<active working .docx>" \
-  --workspace "<workspace root>" \
-  --limit <ITERATION_EDIT_LIMIT> \
-  --comment-author "Wenzel Joubert" \
-  --comment-initials "WJ"
-```
-
-Framework command defaults to DocxEngine. Keep the explicit engine flag in examples so CLI/EVO runs are unambiguous:
-
-```text
-/opt/homebrew/bin/python3.14 /Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/framework/csa_docx/cli_apply_section.py \
+<framework python> .agents/framework/csa_docx/cli_apply_section.py \
   --engine docxengine \
   --section <SECTION> \
   --change-file "<approved section .md>" \
@@ -434,7 +341,7 @@ Use `--engine docxengine` for supported operations where native anchored editing
 
 If the framework returns `PARTIAL_COMPLETE` or `SECTION_COMPLETE`, trust its structured JSON only after verifying the reported files exist and the `## Changes Report` was updated.
 
-If the framework returns `BLOCKED`, do not keep retrying the same command. Read the reported blocker and either:
+If the framework returns `BLOCKED`, do not keep retrying the same command. Before any manual edit, read `.agents/references/document-agent-reference.md` in full: it holds the rules for locating edits, backups, comments, OOXML safety, tables, numbering and validation. Then read the reported blocker and either:
 
 - handle that one blocked edit manually using the document skill and OOXML safety rules; or
 - mark the edit `UNRESOLVED` when the anchor or instruction remains ambiguous.
@@ -458,78 +365,6 @@ This framework is shared by every CSA project. Every framework call that takes a
 
 `prepareDocument()`'s response also carries a `"project": {"key": ..., "label": ...}` field once the workspace resolves successfully. Before trusting anything else in that response, confirm `project.key`/`project.label` matches the project the user asked you to work on this run (see the orchestrator's Project Selection step, or the `PROJECT_CONTEXT`/`WORKSPACE` the user supplied directly). A mismatch here -- even without an outright `WORKSPACE_NOT_REGISTERED` error -- means stop and ask, do not proceed on the assumption it's close enough.
 
-## Change Order
-
-Apply edits in the exact documented sequence.
-
-For example:
-
-```text
-S7-E1
-S7-E2
-S7-E3
-...
-S7-E17
-```
-
-Do not reorder them unless necessary because an earlier approved edit changes the anchor text needed by a later edit.
-
-When that occurs:
-
-- preserve the intended edit order;
-- use the resulting text location carefully;
-- do not reinterpret the approved change.
-
-## Locating Edits
-
-Change records normally include an exact locator such as:
-
-```text
-Where:
-Section 7.2.1, sentence beginning exactly:
-"This confirms that authentication..."
-```
-
-Use this anchor to locate the correct text.
-
-Use:
-
-- section heading;
-- exact opening text;
-- table row;
-- paragraph;
-- surrounding context
-
-to ensure the correct location is being edited.
-
-Never use an approximate match if there are multiple possible locations.
-
-## Anchor Mismatch Rule
-
-If the exact text specified in the `.md` file cannot be found:
-
-- do not guess;
-- do not apply the change somewhere that merely looks similar;
-- search within the specified section for a safe and unambiguous equivalent;
-- determine whether a previous authorised edit changed the anchor;
-- if the location remains unambiguous, apply the edit;
-- if ambiguity remains, do not apply that edit.
-
-Record it as:
-
-```text
-UNRESOLVED CHANGE
-```
-
-Include:
-
-- Edit ID
-- Expected anchor
-- Section
-- Reason it could not safely be applied
-
-Continue with other edits in the same section only when they can be safely applied. At the end of the section, report the unresolved change.
-
 ## Word Comments And Side Notes
 
 Every material approved change must have a Microsoft Word comment associated with the changed text where practical.
@@ -548,366 +383,19 @@ Keep the comment to the Note: one or two sentences, 40 words at most. Where seve
 
 Do not add comments unrelated to authorised `.md` changes.
 
-## Question Comments From Change Files
-
-If the approved section `.md` change file contains questions, open questions, clarification items, unresolved review questions, or decision questions, add them to the Word document as question comments.
-
-Question comments are allowed only when the question appears in the approved `.md` change file. Do not invent new questions.
-
-Use the question text from the `.md` file as the source of truth. Preserve the meaning exactly, with only minimal wording cleanup if needed for a concise Word comment.
-
-Use this comment format:
-
-```text
-Question
-<question text from the approved change file>
-```
-
-If the question is associated with a specific edit ID, section, heading, table row, paragraph, or anchor, attach the question comment to that location.
-
-If the question is listed in an `Open questions` section and no more specific anchor is provided, attach the question comment to the relevant section heading or nearest stable paragraph for that section.
-
-If the approved `.md` file says there are no open questions, do not add any question comments.
-
-Do not treat question comments as approved content edits. They are review annotations only.
-
-Before adding a question comment, check whether the same question comment already exists. Do not create duplicate question comments when resuming work.
-
-Include question comments in the section completion report:
-
-- number of question comments added;
-- number of question comments already present;
-- any questions that could not be anchored safely.
-
-## Comment Placement
-
-Attach comments to:
-
-- replaced sentence or paragraph;
-- inserted paragraph;
-- changed table cell or row;
-- changed heading;
-- relevant deleted/replacement location where possible.
-
-If a deletion makes it impossible to anchor the comment cleanly, attach the comment to the nearest surviving heading or paragraph associated with that approved edit.
-
-The comment must include the Edit ID, and the evidence E-id(s) from the change file's `Why` when it cites any.
-
-Example:
-
-```text
-S10-E12 (E-076) - Replaced absolute security-loss wording because the approved review found the original conclusion exceeded the available evidence.
-```
-
-## Word Comment OOXML Safety
-
-When adding Word comments, preserve valid WordprocessingML structure.
-
-For normal paragraph edits, anchor the comment range to runs inside a paragraph.
-
-For table edits, anchor the comment inside the affected table cell paragraph. Do not attach comment markers around an entire table row. Do not place `w:commentRangeStart`, `w:commentRangeEnd`, `w:r`, or `w:commentReference` directly under `w:tr`.
-
-Valid table comment placement must follow this shape:
-
-```text
-w:tr
-  -> w:tc
-     -> w:p
-        -> w:commentRangeStart
-        -> w:r / changed text runs
-        -> w:commentRangeEnd
-        -> w:r
-           -> w:commentReference
-```
-
-Invalid placement that must never be produced:
-
-```text
-w:tr
-  -> w:commentRangeStart
-  -> w:r
-     -> w:commentReference
-  -> w:commentRangeEnd
-```
-
-After adding comments, inspect `word/document.xml` and confirm there are no direct `w:commentRangeStart`, `w:commentRangeEnd`, `w:r`, or `w:commentReference` elements under any `w:tr`. If any invalid table-row-level comment markup exists, fix it before saving or reporting completion.
-
-## Deletions
-
-If the `.md` instruction says `Do: Delete`, delete only the specified material.
-
-Do not delete:
-
-- surrounding blank paragraphs unless necessary for clean formatting;
-- neighbouring headings;
-- page breaks;
-- styles;
-- bookmarks;
-- cross references
-
-unless explicitly included in the approved change.
-
-After deletion, repair only formatting artefacts directly caused by that deletion.
-
-## Insertions
-
-When inserting approved text, preserve the formatting style of the surrounding document.
-
-For example:
-
-- Heading 1 remains Heading 1;
-- Heading 2 remains Heading 2;
-- body text uses the document's existing body style;
-- bullets use existing bullet style;
-- numbered sections continue existing numbering;
-- tables use the surrounding table style.
-
-Do not introduce arbitrary fonts, colours, spacing, or custom styles.
-
-## Table Changes
-
-For table edits:
-
-- preserve the existing table unless the change explicitly requires replacement;
-- preserve column widths where possible;
-- preserve table style;
-- preserve borders;
-- preserve shading;
-- preserve cell alignment;
-- preserve repeating headers;
-- change only the specified cells or rows;
-- do not recreate the entire table unless necessary.
-
-If an approved change supplies a replacement table, reproduce it using the existing document's visual style.
-
-## Heading And Numbering Integrity
-
-After each approved edit, check that:
-
-- heading levels are correct;
-- section numbering is correct;
-- numbering has not restarted accidentally;
-- nested numbering remains valid;
-- deleted sections do not leave invalid numbering;
-- inserted headings use the appropriate Word heading style.
-
-Do not independently renumber unrelated sections.
-
-## Format Preservation
-
-Protect the original document formatting.
-
-Preserve:
-
-- page size
-- margins
-- headers
-- footers
-- page numbers
-- fonts
-- styles
-- tables
-- images
-- diagrams
-- captions
-- links
-- bookmarks
-- section breaks
-- page breaks
-- lists
-- numbering
-- table of contents
-- document properties
-
-Do not reformat the entire document.
-
 ## Tracked Changes
 
-Do not enable Track Changes unless the user explicitly requests it.
+The framework applies every approved edit as a Word tracked change (`w:ins`/`w:del`). This is intended: the review agent checks each change against the original wording still in the document, and Wenzel can accept or reject each change in Word.
 
-The primary audit mechanism is:
-
-- the approved `.md` change record;
-- Word comments containing Edit IDs and reasons;
-- the section completion report.
-
-If Track Changes is already enabled in the source document, preserve the existing document state unless instructed otherwise.
-
-## Table Of Contents And Fields
-
-Do not unnecessarily rebuild the document.
-
-After a section edit:
-
-- ensure heading styles remain valid;
-- update affected document fields only if necessary;
-- do not change the visual structure of the Table of Contents except where an approved heading change naturally affects it.
-
-Where automated field updates could create unrelated changes, leave them untouched and report that a final field refresh may be required after all sections are complete.
-
-## Change Validation
-
-After completing the section, perform a validation pass.
-
-For every edit in the section's `.md` file, confirm one of:
-
-- `APPLIED`
-- `NOT APPLICABLE` because an earlier approved change superseded it
-- `UNRESOLVED`
-
-Verify that:
-
-- the approved replacement text exists;
-- deleted text is gone where required;
-- insertions are in the correct place;
-- Word comments are attached;
-- comments contain the correct Edit IDs;
-- no unrelated text was changed;
-- formatting remains consistent;
-- tables remain valid;
-- section numbering remains valid;
-- no content outside the authorised scope was altered.
-
-## Change Count Safety Check
-
-Before saving, compare:
-
-```text
-AUTHORISED CHANGES
-vs
-IMPLEMENTED CHANGES
-```
-
-If the document contains unexplained changes beyond:
-
-- authorised `.md` edits;
-- permitted version metadata;
-- explanatory comments;
-- unavoidable formatting repairs;
-
-stop. Do not save until the unexplained modification is removed.
-
-## Section Transaction Principle
-
-Treat each section as a controlled transaction.
-
-- Before section: Document is in known saved state.
-- Apply: Only authorised edits for that section.
-- Validate: Check all edit IDs.
-- Save: Only when section is internally consistent.
-- Stop: Do not start another section.
-
-This is intended to prevent a failed Section 9 edit, for example, from contaminating Sections 10 to 16.
-
-## Save Behaviour
-
-After finishing the section, save the working document.
-
-Do not create a new version number for every section.
-
-For example:
-
-- Original: `Current State Assessment - IAMPS.docx`
-- Working document: `Current State Assessment - IAMPS - v2.docx`
-- Section 1 edits: save `v2`
-- Section 2 edits: save the same `v2`
-- Section 3 edits: save the same `v2`
-
-Continue updating `v2` until all approved sections are applied.
-
-Only create another version when explicitly instructed by the user.
-
-If a previous section has already produced a working document, continue from that working document for the next section. Do not copy the original again and do not create `v2`, `v3`, or another duplicate working document unless the user explicitly asks for a new version.
-
-When more than one candidate working DOCX exists, choose the most recent valid working version only if it can be identified unambiguously from the file name, change reports, comments, or user instruction. If ambiguity remains, stop and ask for the correct working DOCX path.
-
-## Mandatory Per-Run DOCX Backup
-
-Before editing each section, create a recoverable backup of the active DOCX that will be changed.
-
-Example internal checkpoint:
-
-```text
-Current State Assessment - Example - v2.docx.before_section_08_20260914-193000.bak
-```
-
-This is for recovery only. Do not present multiple confusing document versions to the user unless recovery is required, but always include the backup path in the section `## Changes Report`.
-
-## Document Integrity Check
-
-After each section, verify that the DOCX still opens correctly.
-
-Check particularly:
-
-- document is not corrupt;
-- all pages remain present;
-- images remain embedded;
-- tables remain intact;
-- comments remain accessible;
-- headers and footers are unchanged;
-- section breaks remain intact;
-- numbering is not broken.
-
-For any section that adds or changes Word comments, include a package-level OOXML validation step:
-
-- `unzip -t` reports no archive errors;
-- `[Content_Types].xml`, `word/document.xml`, `word/_rels/document.xml.rels`, and `word/comments.xml` parse successfully;
-- each comment ID has matching `w:commentRangeStart`, `w:commentRangeEnd`, and `w:commentReference` markers;
-- `word/comments.xml` is referenced by content types and document relationships;
-- no Word comment markers or run elements are direct children of `w:tr`;
-- the DOCX renders successfully using the applicable document skill's render workflow when rendering tools are available.
-
-## Comment Author
-
-Where the Word-editing mechanism allows specifying a comment author, use:
-
-```text
-Wenzel Joubert
-```
-
-Do not impersonate the document author, reviewer, or user.
-
-## Skills And Tools
-
-You are required to use the available document-editing skill before editing any DOCX.
-
-Before editing a DOCX:
-
-- load and read the applicable DOCX editing skill completely;
-- follow the skill's instructions, including any required operation marker before edit commands;
-- use proper document tooling rather than treating the `.docx` as plain text;
-- preserve native Word structure, relationships, styles, comments, and package parts;
-- render or otherwise open-validate the DOCX after editing when the document skill provides a render workflow.
-
-Use tools that preserve native Word structure and comments.
-
-Do not convert the Word file to plain text and rebuild it unless absolutely necessary.
-
-Do not use PDF conversion as the editing mechanism.
-
-## Source Of Truth Priority
-
-When executing edits, use this authority hierarchy:
-
-1. User's explicit current instruction
-2. Approved section `.md` change file
-3. Current working Word document
-4. Existing formatting/style conventions in the document
-
-Do not use:
-
-- web research;
-- your own technical judgement;
-- earlier review observations that are not in the approved `.md`;
-- general best practices
-
-to introduce additional document changes.
+- Do not pass `--no-track-changes` unless Wenzel asks for it in this run.
+- Do not accept or reject tracked changes. Accepting them is the cleanup step (`csa cleanup <N>`), which runs only after the review has signed off and Wenzel has read the changes in Word.
+- When you apply an edit by hand (the framework reported `BLOCKED`), make it as a tracked change too, so it can be reviewed and rejected like the others.
 
 ## Evidence Check (csa-evidence-matrix skill)
 
 The approved `.md` change file remains the only source of edits. The evidence check never adds, changes, skips or reorders an approved edit.
 
-After a batch has been applied and saved, for each applied edit whose Text asserts a technical fact about the assessed system (hosts, services, ports, addresses, software, configuration, dates), use the `csa-evidence-matrix` skill (`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-evidence-matrix/SKILL.md`):
+After a batch has been applied and saved, for each applied edit whose Text asserts a technical fact about the assessed system (hosts, services, ports, addresses, software, configuration, dates), use the `csa-evidence-matrix` skill (`.agents/skills/csa-evidence-matrix/SKILL.md`):
 
 1. `evidence_matrix.py lookup "<claim keywords>"` -- matrix first.
 2. If the matrix answers it, record `supported (E-nnn)` or `contradicted by E-nnn`.
@@ -915,36 +403,6 @@ After a batch has been applied and saved, for each applied edit whose Text asser
 4. Report the outcome per edit in the completion report under `Evidence check`: `supported (E-nnn)`, `no evidence on record`, or `contradicted by E-nnn`. A contradiction is reported, never a reason to alter or skip an approved edit; the human decides.
 
 Bounds: one lookup per applied fact-bearing edit, at most two Discovery Data searches per batch. Skip edits that only change wording, structure, dates of the document, or governance fields. `EVIDENCE_CHECK=off` in the prompt disables this step. In `EXECUTION_MODE=framework-first` (thin controller) run the check only when the prompt says `EVIDENCE_CHECK=on`. Never edit `csa-work/evidence-matrix.csv` directly; the skill's append is the only write path. Do not write evidence notes into the section `## Changes Report` or run-state, because the framework rewrites those on the next batch.
-
-## Conflict Handling
-
-If two approved `.md` instructions conflict:
-
-- stop on the conflicting edit;
-- report both Edit IDs;
-- report the conflicting instructions;
-- report why both cannot be applied safely.
-
-Do not choose one yourself.
-
-## Already-Applied Change Handling
-
-If an approved change appears to already exist in the working document:
-
-- verify it matches the approved text exactly or materially;
-- do not duplicate it;
-- ensure the required Word comment exists;
-- mark the edit as `ALREADY APPLIED`.
-
-Do not rewrite an already-correct paragraph simply to force a modification.
-
-## No Duplicate Comments
-
-Before adding a Word comment for an Edit ID, check whether a comment for that Edit ID already exists.
-
-Do not create duplicate comments when resuming work.
-
-This makes the agent safe to rerun.
 
 ## Resumability
 
@@ -1050,7 +508,7 @@ Before stopping on `BLOCKED`, `NO_PROGRESS_STOP`, or a failed validator:
 
 ### At the end of a run
 
-- append any reusable lesson to the learnings inbox (`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/current-state-assessment-document-learnings.md`) using the format in that file. A one-off defect or blocked edit that was fixed this run belongs in `issues-fixed-log.md`, not the inbox - the inbox is for generic process lessons, the log is for "have we hit this exact thing before";
+- append any reusable lesson to the learnings inbox (`.agents/skills/current-state-assessment-document-learnings.md`) using the format in that file. A one-off defect or blocked edit that was fixed this run belongs in `issues-fixed-log.md`, not the inbox - the inbox is for generic process lessons, the log is for "have we hit this exact thing before";
 - only add lessons that are generic enough to help future Current State Assessment document work; keep project facts and approved technical changes out unless needed as a one-line example, and do not copy confidential document content unless it is already present in the approved `.md` change file;
 - if the learnings inbox has more than 15 entries, or an entry is contradicted by a newer one, say so in the completion report so Wenzel can review it;
 - if a lesson changes how this agent should behave on every future run, update this agent `.md` with a small, controlled instruction change and mention that in the `## Changes Report`;
@@ -1059,33 +517,6 @@ Before stopping on `BLOCKED`, `NO_PROGRESS_STOP`, or a failed validator:
 Do not rewrite approved change instructions in the reviewed section `.md`. Do not modify global Codex skills unless the user explicitly asks for that. The learnings inbox and the fixed-issues log are both append-only unless the user explicitly asks for cleanup. Prefer short, evidence-backed entries over broad rules.
 
 
-## Final Document Rule
-
-After the final approved section has eventually been processed, do not silently perform a document-wide clean-up.
-
-Wait for explicit user instruction before:
-
-- refreshing all fields;
-- rebuilding the Table of Contents;
-- accepting or rejecting tracked changes;
-- resolving all comments;
-- reformatting;
-- preparing a final issue-free release copy.
-
-The implementation phase and final publication phase are separate controlled activities.
-
-## First Action When Starting The Project
-
-When first given the source document and approved `.md` files:
-
-- inspect the source document only enough to determine filename, version, document integrity, and section structure;
-- create the next-version working copy;
-- inventory the available `.md` files by section and Edit ID range;
-- do not apply all changes;
-- process only the first section explicitly requested by the user;
-- save;
-- stop.
-
 ## Core Behaviour Summary
 
 You are not a reviewer. You are not an architect. You are not a technical assessor. You are not authorised to improve the document independently.
@@ -1093,8 +524,7 @@ You are not a reviewer. You are not an architect. You are not a technical assess
 Your job is:
 
 ```text
-COPY
--> VERSION
+PREPARE DOCUMENT (one working DOCX, edited in place)
 -> READ APPROVED CHANGE FILE
 -> PLAN SECTION EDIT INVENTORY
 -> APPLY NEXT BOUNDED ITERATION OR COMPLETE SMALL SECTION
@@ -1106,3 +536,37 @@ COPY
 -> REPORT
 -> STOP
 ```
+
+## Reference sections
+
+These sections were moved verbatim to `.agents/references/document-agent-reference.md`. Read the one you need, only when the situation arises:
+
+- Versioning
+- Backup And Working Copy Rule
+- Section-By-Section Execution
+- Change Order
+- Locating Edits
+- Anchor Mismatch Rule
+- Question Comments From Change Files
+- Comment Placement
+- Word Comment OOXML Safety
+- Deletions
+- Insertions
+- Table Changes
+- Heading And Numbering Integrity
+- Format Preservation
+- Table Of Contents And Fields
+- Change Validation
+- Change Count Safety Check
+- Section Transaction Principle
+- Save Behaviour
+- Mandatory Per-Run DOCX Backup
+- Document Integrity Check
+- Comment Author
+- Skills And Tools
+- Source Of Truth Priority
+- Conflict Handling
+- Already-Applied Change Handling
+- No Duplicate Comments
+- Final Document Rule
+- First Action When Starting The Project

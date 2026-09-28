@@ -18,3 +18,11 @@ projects:
     project_context: "/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-context/UTC_DTC_PROJECT_CONTEXT.yaml"
     work_dir: "/Users/wenzel/Work/ASE/CurrentStateAssessments/UTC DTC/07 UTC DTC with KVM/csa-work"
     default_source_set: "/Users/wenzel/Work/ASE/CurrentStateAssessments/UTC DTC/07 UTC DTC with KVM/01 Current State AS Built/UTC Discovery Data"
+    index_extra_sources: "/Users/wenzel/Work/ASE/CurrentStateAssessments/UTC DTC/07 UTC DTC with KVM/02 Current State Assessment"
+
+  - key: iamps-v12
+    label: "IAMPS (template v1.2 build pilot)"
+    project_root: "/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/07 IAMPS v1.2 build"
+    project_context: "/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-context/IAMPS_V12_PROJECT_CONTEXT.yaml"
+    work_dir: "/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/07 IAMPS v1.2 build/csa-work"
+    default_source_set: "/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS/01 Current State AS Built/IAMPS Discovery Data"

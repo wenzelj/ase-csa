@@ -6,6 +6,7 @@
 # Existing document owners, reviewers, and approvers are controlled fields in the assessment document and
 # are not recorded or changed here.
 #
+# 28 Sep 2026: the working document is now OT35_Current_State_Assessment_UTCDTCKVM v.01.docx (see authoritative_sources).
 # IMPORTANT -- this project does NOT use the CSA Word template (CSA Template/CSA_Template_v*.dotx).
 # The existing working document predates the template and the project owner has said to keep it as-is
 # for now: do not run it through new_csa.py / csa-document-template, and do not restructure it to match
@@ -27,15 +28,16 @@ project:
     - path: "01 Current State AS Built/UTC Discovery Data"
       role: "evidence data"
       confirmed_by: "project owner instruction, 2026-09-22"
-    - path: "02 Current State Assessment/NetSeg_Current_State_Assessment - UTC and DTC Access - v0.4.docx"
-      role: "existing current state assessment document (v0.4, Draft, kept in its current template -- do not convert)"
-      confirmed_by: "document control page, read 2026-09-22"
+    - path: "01 Current State AS Built/01 Final Version/OT35_Current_State_Assessment_UTCDTCKVM v.01.docx"
+      role: "working current state assessment document (v0.1, OT35 layout); copied from '01 Current State AS Built/00 Pre version', which keeps the untouched original"
+      confirmed_by: "project owner instruction, 2026-09-28"
     - path: "01 Current State AS Built/NetSeg_Current_State_Design As Built - UTC and DTC AccessTv0.4.docx"
       role: "as-built design document"
       confirmed_by: "folder present in workspace, observed 2026-09-22 -- confirm role with project owner"
   terminology: {}
   known_constraints:
-    - "Working document uses its own pre-existing template/styles, not the CSA Word template -- keep as-is, do not run csa-document-template / new_csa.py against it."
+    - "Working document is improved in place through the revise lane (tracked changes); do not rebuild it with csa build / new_csa.py."
+    - "Work on the v0.4 document (Sep 2026) is archived in csa-work/archive/pre-v01-20260928 and is not carried forward; evidence starts fresh."
   stakeholders: []
   required_deliverables:
     - detailed_current_state_assessment

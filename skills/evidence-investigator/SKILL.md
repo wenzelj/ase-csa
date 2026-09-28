@@ -5,7 +5,7 @@ description: Find, extract, classify, and reconcile source evidence for an Opera
 
 # Evidence Investigator
 
-Terminology: name every component, service, dependency and interface with `australian-it-ot-terminology` (`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/australian-it-ot-terminology/SKILL.md`), classify it as OT, supporting IT, shared, platform or external, and write in Australian English.
+Terminology: name every component, service, dependency and interface with `australian-it-ot-terminology` (`.agents/skills/australian-it-ot-terminology/SKILL.md`), classify it as OT, supporting IT, shared, platform or external, and write in Australian English.
 
 Build a defensible evidence set before analysis or writing.
 

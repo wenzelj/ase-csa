@@ -5,3 +5,9 @@ framework/csa_docx/section_manifest.json
 
 # csa CLI per-machine state (active project)
 .state/
+# not source: backups, stray .bak files, downloaded wheels, caches (improvements S01)
+backups/
+*.bak
+framework/vendor_incoming/
+.pytest_cache/
+**/.pytest_cache/

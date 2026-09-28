@@ -7,6 +7,8 @@ The single reference for **what belongs where** in a Current State Assessment (C
 
 `scripts/section_fit_scan.py` parses this file: the `### ` domain headings, and the `Legacy headings:` and `Signal terms:` lines under each. Keep those three shapes when you edit it.
 
+Each domain block's **Must explain** line lists the questions the section, and every subsection under it, exists to answer. Writers and authoring agents build their section brief from it (see `csa-change-authoring`, Section brief).
+
 Contents: 1. How to decide; 2. Subsection jobs; 3. Document-level sections; 4. Requirement domains; 5. Shared topics (tie-breaks); 6. Legacy documents; 7. Verdicts and severity.
 
 ## 1. How to decide
@@ -73,9 +75,10 @@ These sections are not requirement domains. Topic signals do not apply to them; 
 | Methodology | `METHOD` | Findings, facts about the system |
 | Discovery activity | `METHOD`: sources, captures, coverage, limitations of the evidence | Findings about the system (go to the domain) |
 | Architectural Review (legacy) | Design intent and the as-built overview: components, zones, asset list, drawings | Per-domain findings (go to the domain); migration planning (goes to Migration Discovery or out of scope) |
-| 4 Migration Discovery, 4.1 to 4.5 (template) | Section skill: `migration-discovery-analysis`. `FACT` inventories needed for migration planning, on the subsection's own topic: 4.1 installed applications, 4.2 failover and replication, 4.3 patch and update tooling, 4.4 Group Policy, 4.5 file transfer and local storage | `POSITION`, `FINDING` against a requirement (goes to the owning domain in section 3) |
+| 4 Governance Note and Next Steps (template v1.2) | The three standard OT 3.5 next steps, then system-specific actions with owner and target date | Findings, ratings or evidence (they belong in the domains) |
+| 5 Migration Discovery, 5.1 to 5.6 (template v1.2; 4, 4.1 to 4.5 in v1.1) | Section skill: `migration-discovery-analysis`. `FACT` inventories needed for migration planning, on the subsection's own topic: 5.1 discovery coverage (`METHOD`, host coverage), 5.2 installed applications, 5.3 failover and replication, 5.4 patch and update tooling, 5.5 Group Policy, 5.6 file transfer and local storage | `POSITION`, `FINDING` against a requirement (goes to the owning domain in section 3) |
 | Glossary and Acronyms | Term and definition | Anything else |
-| Appendix B Discovery Coverage / Evidence Appendix / Appendices | `METHOD`, `RAW`, host coverage | `FINDING` |
+| Discovery Coverage (5.1 in v1.2, Appendix B in v1.1) / Evidence Appendix / Appendices | `METHOD`, `RAW`, host coverage | `FINDING` |
 
 ## 4. Requirement domains
 
@@ -83,6 +86,7 @@ Requirement IDs and wording come from the OT35 checklist in the CSA template. **
 
 ### 3.1 General / Asset Inventory
 - **Requirements:** SEP-GEN-01 classified inventory of OT assets and enabling systems (type, role, location, IT/OT dependencies); SEP-GEN-03 dependencies of vital OT systems, including connections outside the OT environment, documented and understood.
+- **Must explain:** What vital OT assets and enabling systems exist, what role each plays, where each sits (site, IT or OT), and which systems outside the OT environment each depends on or exchanges data with.
 - **Owns:** the asset and host inventory; each asset's role, environment and location; the consolidated list of dependencies at summary level; whether that list is documented.
 - **Not here:** the detail of each dependency goes to its own domain (DNS to 3.5, time to 3.4, and so on); 3.1 keeps a one-line entry and points to that domain.
 - **Legacy headings:** Architectural Review
@@ -90,6 +94,7 @@ Requirement IDs and wording come from the OT35 checklist in the CSA template. **
 
 ### 3.2 Identity & Authentication
 - **Requirements:** SEP-ID-01 OT-resident authentication for human users, independent of IT AD (no shared forest or trust); SEP-ID-02 service accounts, processes and devices authenticated independently of IT-domain service accounts; SEP-ID-03 remote and administrative access via OT-resident jump hosts, monitored and authenticated.
+- **Must explain:** How people, services and devices prove who they are; which directory or account store does it; whether that store is OT-resident; and what stops working if the IT directory is unreachable.
 - **Owns:** domain membership, forests and trusts; how users and service accounts authenticate; local authentication fallback; the authentication used on remote and admin access.
 - **Not here:** the jump host as a host, and the route to it, go to 3.8; local admin group membership goes to 3.8; hypervisor management accounts go to 3.15; backup administration accounts go to 3.11; vendor accounts go to 3.16; certificates go to 3.3; domain controllers as DNS or time sources go to 3.5 or 3.4.
 - **Legacy headings:** Identity & Authentication, Identity and Authentication
@@ -97,6 +102,7 @@ Requirement IDs and wording come from the OT35 checklist in the CSA template. **
 
 ### 3.3 PKI / Certificates
 - **Requirements:** SEP-PKI-01 certificates from an OT-resident PKI or a tested fallback; SEP-PKI-02 issuance, renewal and revocation checking without IT-hosted CA, CRL or OCSP.
+- **Must explain:** Which certificates the system relies on, who issues and renews them, where revocation is checked, and what breaks as certificates expire during isolation.
 - **Owns:** which CA issues each certificate; certificate templates and expiry; CRL and OCSP locations; what happens to validation when the CA is unreachable.
 - **Not here:** LDAPS or TLS as an authentication mechanism goes to 3.2; the certificate part stays here.
 - **Legacy headings:** Identity & Authentication, Identity and Authentication
@@ -104,6 +110,7 @@ Requirement IDs and wording come from the OT35 checklist in the CSA template. **
 
 ### 3.4 Time Synchronisation
 - **Requirements:** SEP-TIME-01 time from an OT-resident authoritative source, independent of the IT domain hierarchy.
+- **Must explain:** Where each host takes its time from, what hierarchy sits above that source, and how fast drift becomes a problem if the source is lost.
 - **Owns:** each host's time source and hierarchy, stratum, drift, and behaviour without the source.
 - **Not here:** log integrity as a monitoring control goes to 3.9 (keep only the time dependency here).
 - **Legacy headings:** Time Synchronization, Time Synchronisation
@@ -111,6 +118,7 @@ Requirement IDs and wording come from the OT35 checklist in the CSA template. **
 
 ### 3.5 DNS
 - **Requirements:** SEP-DNS-01 OT-resident DNS resolvers, independent of IT DNS, or a tested fallback.
+- **Must explain:** Which resolvers each host uses, which zones it must resolve to work, where those zones are hosted, and what fails when they cannot be reached.
 - **Owns:** configured resolvers, zones and suffixes; hosts files; name resolution behaviour when IT DNS is unreachable.
 - **Not here:** the domain controllers themselves go to 3.2; host inventory goes to 3.1.
 - **Section skill:** `dns-name-resolution-analysis`
@@ -119,6 +127,7 @@ Requirement IDs and wording come from the OT35 checklist in the CSA template. **
 
 ### 3.6 Network / Segmentation
 - **Requirements:** SEP-NET-01 assets in defined zones (Z0 to Z6) with an SL-T, inter-zone traffic only through defined conduits; SEP-NET-02 boundary protection at every IT/OT and inter-zone boundary, no undocumented cross-zone flows; SEP-NET-03 general-purpose IT services restricted from vital OT zones.
+- **Must explain:** Which zones and networks the system's components sit in, which flows cross zones and through which conduits, and where the flows differ from the design.
 - **Owns:** zone placement, subnets and VLANs, the conduit list, observed flows across zones, general IT services present in OT zones.
 - **Not here:** the firewall or boundary device itself, its rule quality and who administers it go to 3.13; internet and SMTP paths go to 3.17; file transfer patterns go to 3.7.
 - **Legacy headings:** Network
@@ -126,6 +135,7 @@ Requirement IDs and wording come from the OT35 checklist in the CSA template. **
 
 ### 3.7 Storage & Data Transfer
 - **Requirements:** SEP-STOR-01 OT-resident storage for operational data, or a fallback; SEP-STOR-02 IT-to-OT file transfer only through a defined, controlled pattern; SEP-STOR-03 OT pushes data out rather than IT pulling data in.
+- **Must explain:** For each data flow in or out of the system: what data moves, which direction, which side starts the transfer, how it moves (file, share, message stream), where the data is held on each side and for how long, whether anything controls, inspects or scans it on the way, and whether the held data could be used to recover or rebuild after an outage.
 - **Owns:** where operational data lives; file shares used; file transfer mechanisms and direction.
 - **Not here:** backup storage goes to 3.11; storage arrays and SAN hardware go to 3.15.
 - **Legacy headings:** Infrastructure Dependencies
@@ -133,6 +143,7 @@ Requirement IDs and wording come from the OT35 checklist in the CSA template. **
 
 ### 3.8 Management & Administrative Access
 - **Requirements:** SEP-MGT-01 administrative and SaaS-bound access through OT-resident jump or management hosts and gateways, not the general IT proxy; SEP-MGT-02 local administrator and remote-access group membership defined in the OT domain.
+- **Must explain:** How administrators reach the system, through which jump or management hosts, who holds local administrator and remote-access rights, and whether any of that depends on IT.
 - **Owns:** jump and management hosts, the admin access path, RDP and RDS gateways, local Administrators and Remote Desktop Users membership.
 - **Not here:** how the admin authenticates goes to 3.2; vendor access goes to 3.16; firewall management goes to 3.13; hypervisor management goes to 3.15.
 - **Legacy headings:** Identity & Authentication, Identity and Authentication
@@ -140,6 +151,7 @@ Requirement IDs and wording come from the OT35 checklist in the CSA template. **
 
 ### 3.9 Monitoring & Logging
 - **Requirements:** SEP-MON-01 logs to an OT-resident monitoring capability that can federate to IT SIEM; SEP-MON-02 monitoring coverage (EDR/AV, patch compliance, central logging) verified across all vital hosts; SEP-MON-03 log sources, retention and tamper protection defined and applied.
+- **Must explain:** Which logs and security events the system produces, where they go and are kept, which monitoring and endpoint agents run, and what visibility is lost on isolation.
 - **Owns:** log forwarding and where logs go, monitoring agents and tools, alerting, retention, and whether coverage is verified.
 - **Not here:** whether AV/EDR and application whitelisting are deployed goes to 3.14 (3.9 keeps only whether their telemetry reaches monitoring); patch mechanism and cadence go to 3.10.
 - **Legacy headings:** Operations Monitoring and Procedures, Operations Monitoring
@@ -147,6 +159,7 @@ Requirement IDs and wording come from the OT35 checklist in the CSA template. **
 
 ### 3.10 Patch & Lifecycle Management
 - **Requirements:** SEP-PATCH-01 patching and configuration management through an OT-resident capability, independent of IT SCCM/MECM; SEP-PATCH-02 documented, OT-appropriate cadence with an escalation path for urgent patches.
+- **Must explain:** How software and security updates reach the hosts, from which source and with which tooling, how current the hosts are, and what happens to patching during isolation.
 - **Owns:** patch source and tooling, patch levels, cadence, OS and application end of support.
 - **Not here:** the tooling inventory for migration goes to 4.3; vulnerability scanning goes to 3.14.
 - **Legacy headings:** Patch & Lifecycle Management, Patch and Lifecycle Management
@@ -154,6 +167,7 @@ Requirement IDs and wording come from the OT35 checklist in the CSA template. **
 
 ### 3.11 Backup & Recovery
 - **Requirements:** SEP-BAK-01 working backup independent of IT backup infrastructure, not administered by privileged corporate IT accounts; SEP-BAK-02 complete, rapid rebuild from offline, known-good, tested backups.
+- **Must explain:** What is backed up, by which tool, to where, under whose accounts, how often, whether a restore has been proven, and whether a rebuild could be done from OT-held copies alone.
 - **Owns:** backup tools, jobs and their state; backup storage; who administers backup; restore and rebuild testing.
 - **Not here:** failover and replication as availability features go to 4.2 (template) or 3.15.
 - **Legacy headings:** Backup & Recovery, Backup and Recovery
@@ -161,6 +175,7 @@ Requirement IDs and wording come from the OT35 checklist in the CSA template. **
 
 ### 3.12 Isolation & Resilience Validation ("Drawbridge")
 - **Requirements:** SEP-ISO-01 a graduated, tested plan to isolate vital OT for at least three months; SEP-ISO-02 thresholds for isolation risk and the manual processes that replace automated IT/OT interactions.
+- **Must explain:** Which isolation scenario is assumed, which functions keep running and for how long, which manual processes replace automated IT/OT interactions, and whether any of this has been tested.
 - **Owns:** whether an isolation plan exists and has been tested; thresholds; manual workarounds.
 - **Not here:** each domain's own isolation consequence stays in that domain's Drawbridge Impact. 3.12 does not repeat them; it may summarise them in one table.
 - **Legacy headings:** Executive Overview & Discovery Summary, Executive Overview
@@ -168,6 +183,7 @@ Requirement IDs and wording come from the OT35 checklist in the CSA template. **
 
 ### 3.13 Perimeter / Firewall & Network Boundary Validation
 - **Requirements:** SEP-PERIM-01 boundary devices at every zone boundary enforcing only approved conduits, no any-any rules; SEP-PERIM-02 internet-facing and external exposure identified and validated; SEP-PERIM-03 boundary devices administered from the OT side, never from a privileged IT account.
+- **Must explain:** Which boundary devices sit between the system and other zones, what their rules allow, what external exposure exists, and who administers the boundary from where.
 - **Owns:** firewalls and boundary devices, rule quality, external exposure and scanning, firewall administration.
 - **Not here:** which zones and flows exist goes to 3.6 (the what); 3.13 is the device that enforces it and who manages it (the how and who).
 - **Legacy headings:** Network
@@ -175,6 +191,7 @@ Requirement IDs and wording come from the OT35 checklist in the CSA template. **
 
 ### 3.14 Vulnerability Management
 - **Requirements:** SEP-VULN-01 recurring OT vulnerability assessment independent of IT tooling, feeding an OT vulnerability register; SEP-VULN-02 AV/EDR and application whitelisting deployed and centrally verified on all vital hosts.
+- **Must explain:** How vulnerabilities are found and tracked, which endpoint protection and application control run on the hosts, and who verifies coverage.
 - **Owns:** vulnerability scanning and the register; AV/EDR and whitelisting deployment state on each host.
 - **Not here:** endpoint telemetry reaching monitoring goes to 3.9; patching goes to 3.10.
 - **Legacy headings:** Security Services, Security Controls
@@ -182,6 +199,7 @@ Requirement IDs and wording come from the OT35 checklist in the CSA template. **
 
 ### 3.15 Infrastructure Dependencies (Virtualisation / Hardware)
 - **Requirements:** SEP-INFRA-01 virtualisation hosting vital OT not managed only by privileged corporate IT accounts.
+- **Must explain:** Which platforms (hypervisors, hardware, storage) the hosts run on, who manages them with which accounts, and what depends on IT to keep them running.
 - **Owns:** hypervisors, vCenter, physical servers and storage hardware, who manages them, and the OS and platform they provide.
 - **Not here:** operational data storage goes to 3.7; backup goes to 3.11.
 - **Legacy headings:** Infrastructure Dependencies
@@ -189,6 +207,7 @@ Requirement IDs and wording come from the OT35 checklist in the CSA template. **
 
 ### 3.16 Supply Chain & Third-Party / Vendor Access
 - **Requirements:** SEP-SUPPLY-01 vendor and third-party remote access through the same controlled, monitored architecture as internal admin access, with no direct OT-to-internet connections.
+- **Must explain:** Which vendors and third parties access or support the system, how their access works, how it is controlled and monitored, and whether any path bypasses the internal admin route.
 - **Owns:** vendor and third-party access paths, vendor accounts, remote support tools, vendor-managed components.
 - **Not here:** the shared jump host itself goes to 3.8 (3.16 names it and points there).
 - **Legacy headings:** Identity & Authentication, Identity and Authentication
@@ -196,6 +215,7 @@ Requirement IDs and wording come from the OT35 checklist in the CSA template. **
 
 ### 3.17 Internet Access & Communications (Proxy / SMTP)
 - **Requirements:** SEP-INET-01 outbound HTTP/S only through the OT35 proxy; SEP-INET-02 outbound SMTP through the OT35 proxy, not direct or an IT relay.
+- **Must explain:** Which hosts reach the internet or send email, by which route (proxy, relay, direct), and what stops if those routes are closed.
 - **Owns:** proxy configuration, direct internet connections, cloud and SaaS endpoints reached, SMTP relays.
 - **Not here:** admin access to SaaS goes to 3.8 (SEP-MGT-01); person-to-person communications in OT zones go to 3.6 (SEP-NET-03).
 - **Legacy headings:** Network

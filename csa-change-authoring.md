@@ -1,5 +1,8 @@
 # C-S-A-Change-Authoring Agent
 
+> **Read first:** `.agents/csa-core-rules.md`. It holds the rules shared by every CSA agent, and it overrides any line in this file that disagrees with it.
+
+
 ## Role
 
 You are the C-S-A-Change-Authoring Agent.
@@ -38,6 +41,7 @@ If a section genuinely has no supportable gap, still write the file: an authored
 After completing one section:
 
 - write the change proposal file;
+- run `csa check-change <N>` and fix every ERROR it reports (read each WARN and fix it where the rules say so);
 - update the run-state file for that section;
 - record any reusable evidence-mapping or authoring lesson in the skill-notes file;
 - report what you found (or that nothing was found) to the user;
@@ -82,7 +86,7 @@ SECTION=3
 Draft change proposals for the requested section using the agent defaults.
 ```
 
-`EDIT_MODE` defaults to `evidence`. Add `EDIT_MODE=editorial` only for a concision pass (see Editorial Mode).
+`EDIT_MODE` defaults to `evidence`. Add `EDIT_MODE=editorial` only for a concision pass. When `EDIT_MODE=editorial`, read `.agents/references/authoring-editorial-mode.md` in full before drafting; it holds the editorial rules, the record format and the pilot lessons.
 
 When a `SECTION=<number>` value is supplied, treat that value as the authored section everywhere in the run: identifying the section's current text, searching evidence, drafting edits, naming the output file, writing the run-state file, reporting to the user, and stopping. Do not require the section number to be repeated elsewhere in the prompt.
 
@@ -91,18 +95,20 @@ When a `SECTION=<number>` value is supplied, treat that value as the authored se
 At the beginning of every authoring run:
 
 - load this agent definition completely;
-- load `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-writing-style/SKILL.md` and `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-section-writer/SKILL.md` -- these are the CSA Writer Agent's rules for how any drafted text must read and what it may claim; you will draft edit text to them in Review Method below, not to your own voice judgement;
-- read the section scope map `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-quality-review/references/section-scope.md` -- it says which section and subsection owns each topic, so every edit you draft lands in the right place (see Out-Of-Place Content below);
-- load `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/australian-it-ot-terminology/SKILL.md` -- every replacement, insertion and `Note` uses its terms, IT/OT classification and Australian English;
+- load `.agents/skills/csa-writing-style/SKILL.md` and `.agents/skills/csa-section-writer/SKILL.md` -- these are the CSA Writer Agent's rules for how any drafted text must read and what it may claim; you will draft edit text to them in Review Method below, not to your own voice judgement;
+- read the section scope map `.agents/skills/csa-quality-review/references/section-scope.md` -- it says which section and subsection owns each topic, so every edit you draft lands in the right place (see Out-Of-Place Content below);
+- load `.agents/skills/australian-it-ot-terminology/SKILL.md` -- every replacement, insertion and `Note` uses its terms, IT/OT classification and Australian English;
 - load and read the applicable document-editing/DOCX skill before reading the document;
 - call `prepareDocument()` (the `csa-mcp` tool, no `section` argument -- see Framework Tools below). If it returns `NOT_READY`, stop and report the `reasons`; do not author against a document that might be open in Word or already failing integrity checks. If it returns `"status": "ERROR"` with a `WORKSPACE_NOT_REGISTERED` message, stop immediately -- the cross-project safety guard has refused an unregistered workspace; do not retry with a guessed path. `id_manifest_summary` confirms the stable-ID manifest is current; check the response's `project.key`/`project.label` against the project you were asked to work on before trusting anything else in it -- a mismatch means stop and ask, even if no outright error was returned;
 - if `reviews/` does not yet exist next to the working DOCX, this is the first section ever authored for this document -- you will create that folder when you write your first change file;
-- read `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-evidence-matrix/SKILL.md` and run `evidence_matrix.py stats` once to see what the evidence matrix (`csa-work/evidence-matrix.csv`) already holds -- every evidence question in this run goes through that skill (see Evidence Matrix First below);
-- read `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-change-authoring-learnings.md` if it exists, for evidence-to-topic mappings and authoring lessons already established by earlier runs (this section's or another's) -- reuse and refine them rather than starting blind (see Evidence Mapping below);
+- read `.agents/skills/csa-evidence-matrix/SKILL.md` and run `evidence_matrix.py stats` once to see what the evidence matrix (`csa-work/evidence-matrix.csv`) already holds -- every evidence question in this run goes through that skill (see Evidence Matrix First below);
+- read `.agents/skills/csa-change-authoring-playbook.md` (current rules and evidence-to-topic mappings), and any entries in `.agents/skills/csa-change-authoring-learnings.md` (the inbox of lessons not yet folded into the playbook). Do not read the archive in `.agents/docs/archive/` unless a playbook rule points to it;
 - list `WORK_DIR/analysis/` and `WORK_DIR/drafts/`, if either exists. These hold the evidence-led orchestrator workflow's output (technical-analyst structured analyses and writer-agent section drafts) for this project, if that workflow has been run -- a synthesized starting point this agent must check before drafting edits from scratch. See Evidence Mapping below for how to use them;
 - scan every existing `reviews/*.md` file for this section (there may be none, if this is truly the first section authored) and identify the highest `S<N>-E<n>` and the highest `S<N>-A<n>` already used in this section's files. Your first content edit is `S<N>-E` followed by the next integer after that; your first administrative edit is `S<N>-A` followed by the next integer after that. IDs are section-scoped and sequential within the section -- they never reset between sections, and never re-derived from a stale counter file (there isn't one; this scan is the source of truth, the same reason `manifest.py` never caches its own manifest);
 - search the other sections' `reviews/*.md` files for `Relocation:` open questions whose target is this section, and any `csa qa` section-fit findings for this section; treat each as a candidate edit (see Out-Of-Place Content);
-- identify the requested section's heading text and read its current content (from the stable-ID manifest's text previews, or a direct read of the paragraphs/table rows under that heading).
+- identify the requested section's heading text and read its current content (from the stable-ID manifest's text previews, or a direct read of the paragraphs/table rows under that heading);
+- list the reviewer comments on that section or subsection with `csa -p <key> comments --heading "<number or title>"`; every comment becomes an item in the section brief;
+- write the section brief (see Section Brief below) before any evidence search.
 
 ## Framework Tools (`csa-mcp`)
 
@@ -115,6 +121,21 @@ At the beginning of every authoring run:
   - This never opens or modifies the DOCX -- it only reads the manifest `prepareDocument` already built, so it is safe and cheap to call once per candidate edit, including ones you end up discarding.
 - Neither tool needs a `section` argument in normal use -- the manifest they share covers the whole document. Only pass `section=<N>` if a call errors saying the workspace has more than one distinct working DOCX and needs one to disambiguate; that is not the normal case for a single-document CSA project.
 
+## Section Brief (required, before evidence)
+
+The existing text is not the brief. A subsection exists to answer its parent section's questions for one part of the system, and an evidence edit that only checks the existing claims keeps whatever framing the original author chose, right or wrong. So before any evidence search, write the brief into the change file under `## Section brief`:
+
+- **Purpose:** one sentence: what this subsection explains, in the parent section's terms (for 3.7: how data moves and where it is held, not how the network is built).
+- **Requirements:** the parent section's requirement IDs (from the scope map, part 4).
+- **Questions:** numbered `B1`, `B2`, ... Build them from the parent domain's **Must explain** line in `section-scope.md`, applied to what this subsection covers (one question per requirement per component is typical). Add any question a reviewer comment raises as `C1`, `C2`, ..., quoting the comment briefly.
+- **Not here:** topics this subsection touches that another section owns (from the scope map's **Not here** line), so they stay a one-clause mention at most.
+
+Then drive the evidence search from the questions, not from the existing sentences: every `B`/`C` item is looked up in the matrix and index. An item nothing answers becomes a `NOT_FOUND` row and an open question, which is itself a finding. An existing claim that answers no brief item is either relocated (`Relocation:` under Open questions) or dropped with a reason in `Why`.
+
+Every line of an edit's `**Facts:**` list starts with the brief item it answers, for example `- [B3] IAMPS opens the connection from the IT side (E-003)`. `Table detail:` and `Unknown:` lines are exempt. `csa check-change` warns on an untagged fact and on a brief item that no fact, open question or "left unchanged" note mentions.
+
+The Text then tells the subsection's story in brief order: open with the Purpose, walk the questions, end with the consequence for the section's requirements and the one unknown.
+
 ## Section Identification
 
 One top-level (H1) heading in the stable-ID manifest is one "section", matching `manifest.py`'s `Section<N>` numbering in `ChangesCSA_..._Section<N>_...md` filenames -- the same convention `csa-document-agent` and `csa-change-review-agent` already use. The requested section's ordinal position among H1 headings (1st H1 = Section 1, 2nd H1 = Section 2, ...) is `<N>`.
@@ -124,11 +145,11 @@ One top-level (H1) heading in the stable-ID manifest is one "section", matching 
 There is no predefined mapping from a document topic to which Discovery Data files matter. Figure it out on every run, and get better at it over time:
 
 1. Read the section's current text and identify the technical topics it actually covers (e.g. "DNS", "time synchronisation", "listening ports and processes", "authentication configuration").
-2. Before searching from scratch, check `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-change-authoring-learnings.md` for a mapping already recorded for the same or a related topic from an earlier run, and reuse or refine it.
+2. Before searching from scratch, check `.agents/skills/csa-change-authoring-playbook.md` (the mappings table) for a mapping already recorded for the same or a related topic from an earlier run, and reuse or refine it.
 3. **Check the orchestrator's analysis/drafts (required, before Discovery Data).** Skim `WORK_DIR/analysis/*.md` and `WORK_DIR/drafts/*.md` (listed in First Actions) for a filename or heading matching this section's topics -- e.g. an `infrastructure-analysis.md` or `security-posture-analysis.md` for an infrastructure/security section, a `drafts/<topic>.md` for a topic the writer agent already drafted. If nothing matches, this is a fast no-op; do not search further for these files or treat their absence as a problem -- the orchestrator workflow may not have been run for this topic at all. If something matches, use it as a synthesized starting point and a map of which evidence already answers which claim, but do not treat it as evidence in itself: every material claim in an analysis or draft file already cites its E-id(s) -- verify the claim against the cited E-id via Evidence Matrix First below (an E-id that doesn't actually support the claim as written means the analysis overreached; don't carry that overreach into the change file) before relying on it, and cite that E-id in the edit's `Why`, never the analysis/draft file itself.
-4. For each claim or topic, first do the Evidence Matrix First lookup below (this is also how step 3's analysis-file citations get verified). Only for what the matrix does not answer, search the Discovery Data folder for evidence speaking to those topics, across every host present (`PROD`, `UAT`, and any standalone discovery runs) -- host-level evidence is organised as numbered per-topic files (for example `14_resolver.txt`, `41_dns_query_tests.txt` for DNS; `20_listening_ports.txt`, `10_listeners_by_process.txt` for network services; `52_auth_configs.txt` for authentication; `00_host_summary.txt` for OS/version facts on every host) -- the exact numbering and filenames are discovered by listing the folder, not assumed from this description.
+4. For each claim or topic, first do the Evidence Matrix First lookup below (this is also how step 3's analysis-file citations get verified). Only for what the matrix does not answer, query the discovery index first when `WORK_DIR/discovery-index.sqlite` exists: `csa -p <key> index rows <table> --where "Col~text"` for cross-host facts (services, listening ports, local admins, firewall rules, installed software, update settings) and `csa -p <key> index search "<terms>"` for anything else; cite the capture file and line each hit returns (usage: `.agents/skills/csa-discovery-index/SKILL.md`). Open raw files only for what `csa -p <key> index status` reports as not indexed, or to read the context around a hit. Without an index, search the Discovery Data folder for evidence speaking to those topics, across every host present (`PROD`, `UAT`, and any standalone discovery runs) -- host-level evidence is organised as numbered per-topic files (for example `14_resolver.txt`, `41_dns_query_tests.txt` for DNS; `20_listening_ports.txt`, `10_listeners_by_process.txt` for network services; `52_auth_configs.txt` for authentication; `00_host_summary.txt` for OS/version facts on every host) -- the exact numbering and filenames are discovered by listing the folder, not assumed from this description.
 5. Correlate across hosts: a claim that holds on one host but not another is itself a finding worth recording (either as an edit that qualifies the claim, or as an open question if the discrepancy itself needs a human judgement call).
-6. At the end of every run, add or refine an entry in `/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-change-authoring-learnings.md`: `<topic> -> <discovery file name patterns that were actually useful, and any caveat about them>`, and note whether an existing analysis/draft file was found and useful for that topic. This is a required step, not optional housekeeping -- the entire point of this rule is that the mapping gets more reliable every time this agent runs, on this section or a different one.
+6. At the end of every run, append one inbox entry to `.agents/skills/csa-change-authoring-learnings.md` for each new or corrected mapping (`<topic> -> <discovery files or index tables that answered it, and any caveat>`), and say whether an analysis or draft file helped. Do not edit the playbook yourself. If the inbox has more than 10 entries, say so in your report so Wenzel can fold them into the playbook.
 
 ### Evidence Matrix First (required)
 
@@ -150,7 +171,7 @@ For each place in the section where evidence contradicts or fills a gap in the d
 
 1. Identify the exact current text and what specifically is wrong, outdated, or missing about it.
 2. Call `lookupStableId` to resolve its `@H...` anchor (see Framework Tools). Do not proceed to draft the edit until you have an unambiguous ID or have decided this item belongs under Open questions instead.
-3. Draft the replacement/insertion/deletion text following `csa-writing-style` and `csa-section-writer` (loaded in First Actions) -- the same table-row shape and sentence style as its neighbours, in plain, human-sounding wording, not your own idea of "the document's voice." These are the CSA Writer Agent's rules; you apply them here because implementation efficiency keeps authoring and drafting in one run, not because this agent owns the voice. Do not put an evidence ID in this text -- it is document prose, not a citation trail; the citation goes in `Why` (step 4) only.
+3. Write the edit's **Facts** list: every fact the new text must carry, one per line, each with its E-id(s), plus at most one line starting `Unknown:` for what is still open. This is the content decision, and it is yours. Include only what the reader needs; put addresses, ports and host lists in a `Table detail:` line, which tells the Writer the detail belongs in a table, not the paragraph. Then draft the Text from the Facts using the story model in `csa-writing-style` ("Tell the story" and "Identifier budget"). When the edit replaces a paragraph, you may restructure the whole paragraph: keeping the original's wording or density is never a reason to keep a hard-to-read paragraph, but every fact in it must either stay, move to `Table detail:`, or be removed with a reason in `Why`. Table-row edits keep their row shape. No evidence ID, IP address or subnet goes in prose Text. After the change file is written, the Writer agent rewrites the Text of every prose record from its Facts (`csa write SECTION=<N> MODE=records`) before approval; your draft is the starting point, not the final wording.
 4. Write the `Why`, citing the specific evidence file(s) and host(s) that support the change -- not "evidence supports this" but the actual filename and what it showed -- plus the matrix E-id(s) (see Evidence Matrix First).
 5. Write the `Note`: the plain-language comment reviewers will see in Word (see "Comment notes" in `csa-writing-style`). One or two sentences, 40 words at most. Before finishing the file, preview every comment with `cd .agents/framework && python3 -m csa_docx.comment_text <change file>` and fix every warning it prints.
 6. Assign the next sequential `S<N>-E<n>` (or `S<N>-A<n>` for a purely administrative field such as a cover date or document-control metadata, not a technical content claim).
@@ -172,58 +193,6 @@ Place every drafted edit where the section scope map says its topic and job belo
 - **A heading in the wrong place, or no owning section in this document:** `Structural suggestion` under Open questions. Change records cannot move headings.
 - **Out of scope** (a recommendation in a template CSA, general explanation): an editorial delete, provided the `Why` lists what was removed.
 
-## Editorial Mode (`EDIT_MODE=editorial`)
-
-Evidence mode deliberately never touches wording that is factually correct, so a section drafted in a fragmented, repetitive style stays that way through any number of evidence passes. Editorial mode is the fix: a concision pass over a section whose facts are settled, bringing the existing text into line with the "Say it once, say it first" rules in `csa-writing-style`. It runs only when the user asks for it.
-
-**When:** after the section's evidence edits have been approved, applied and reviewed. If `reviews/` holds unapplied evidence edits for the section, stop and report that; do not condense text that is about to be corrected. If no evidence pass has ever been run on the section, proceed only when the user asked for the editorial pass explicitly, and say in `## Review position` that the facts have not yet been checked against evidence.
-
-**Baseline:** before drafting, run the prose lint on the working DOCX for this section and record the result in the change file's `## Review position`:
-
-```text
-python3 /Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-writing-style/scripts/prose_lint.py "<working DOCX>" --section <N>
-```
-
-**Editorial edits may:**
-
-- replace a lead-in line and its bullet fragments with one or two sentences (a range Replace from the lead-in through the last bullet);
-- delete a paragraph or bullet whose facts are all stated elsewhere in the section;
-- replace a paragraph that announces a conclusion ("This confirms...", "As a result...") with the conclusion itself;
-- delete general technology explanation that says nothing specific about the assessed system;
-- remove evidence file names, capture dates and per-host lists from prose, but only where the same detail is already in a table or the evidence appendix;
-- move text to the subsection that owns its job, or delete text that belongs to another section once that section states it (see Out-Of-Place Content).
-
-**Editorial edits must not:**
-
-- add, change, strengthen or soften any fact, rating, risk, limitation or uncertainty label;
-- remove the only statement of a fact;
-- touch headings, table structure, controlled fields, or the Word comments of earlier edits;
-- carry an evidence correction. A factual error found during the pass becomes a separate evidence edit with its own evidence `Why`, or an open question.
-
-**Record format:** normal `S<N>-E<n>` numbering and the normal record layout (the framework parser only accepts E and A records). The `Why` starts with `Editorial --`, names the rule applied, lists every fact the removed text carried, and gives the stable ID (resolved with `lookupStableId`) where each fact is still stated after the change. For example:
-
-```markdown
-**Why:**
-Editorial -- each fact once; sentences not fragments. The removed bullets restated the two enterprise time sources and the absence of a local fallback. Both remain stated in @H10-P4 (Findings paragraph). No fact is removed.
-```
-
-Editorial edits need no E-id unless the replacement text states a fact in new words; then cite the E-id that already supports it. Their `Note` says what was tightened and that no facts changed, for example "Wording tightened: five bullets joined into one sentence. No facts changed." Keep each edit small enough for a human to accept or reject on its own.
-
-**Lessons from the first pilot (UTC DTC Security Services, 23 Sep 2026):**
-
-- **Number edits bottom-up.** Stable IDs are positional within a heading, and a range Replace collapses several paragraphs into one. The apply agent works in ID order, so give the edit lowest in the section `S<N>-E1` and work upwards. Every later anchor then still points at unchanged text when its turn comes. Say so in one line above the first edit.
-- **Range Replace format that parses:** `**Where:** \`@H<start-id>\`` and `**Do:** Replace this paragraph and all paragraphs through \`@H<end-id>\``. Check every record with `csa_docx.change_parser.parse_change_records` plus `ooxml._extract_range_spec` before finishing.
-- **Replace keeps the first paragraph's style.** A run of List Paragraph bullets collapses to one bullet, not a body paragraph, so the bullet share cannot fall through change records. Make each bullet a complete statement, and raise restyling prose as body paragraphs as a `Structural suggestion`.
-- **Raw log or command-output lines are evidence, not findings.** Replace them with the statement they support plus a short source reference (file name and date). List what was dropped (timestamps, process IDs, paths) in the `Why` with an "Approver check" line, so the human can reject the edit if they want the raw lines kept.
-- **Interpretation needs an approver check.** When joining fragments means deciding what an ambiguous sentence refers to ("This is explicitly denied by design"), state the reading in the `Why` and ask the approver to reject the edit if it is wrong. When the meaning cannot be recovered at all (for example a host list with no lead-in), leave it and raise an open question.
-- **Do not remove file-name lists that the appendix lacks.** Check the Evidence Appendix first. Missing entries become an open question, not a deletion.
-- **Section numbers:** the framework's `Section<N>` counts every Heading 1, including empty or hidden ones, so it can differ from Word's visible numbering. Resolve the section from the manifest (`@H<N+1>` is Section N) and state both numbers in the change file header. Run the lint with `--heading "<title>"` rather than `--section`.
-- **Expected-after metrics:** simulate the edits on the section text (apply each record's Text over its ID range) and lint the result, rather than estimating.
-
-Put what change records cannot do (merging subsections, removing duplicate headings, consolidating summary sections, fixing heading numbering) under `## Open questions`, each labelled `Structural suggestion`.
-
-In `## Expected result if approved`, give the section's prose word count and lint warnings before, and the expected values after, all editorial edits are applied.
-
 ## Bounded Authoring Iteration Mode
 
 Default to small, restartable authoring iterations instead of attempting to fully evidence every claim in a large section in one uninterrupted run.
@@ -237,7 +206,7 @@ Use this mode whenever:
 
 Default limits:
 
-- `AUTHOR_ITEM_LIMIT=10` (claims evaluated against evidence per iteration)
+- `AUTHOR_ITEM_LIMIT=6` (claims evaluated against evidence per iteration; default from `.agents/registry.yaml`)
 - `AUTHOR_TIME_LIMIT_MINUTES=20`
 - `RUN_SCOPE=next-authoring-batch`
 
@@ -302,6 +271,17 @@ Write the change file at `reviews/ChangesCSA_<AppName>_Section<N>.md` -- one fil
 
 ---
 
+## Section brief
+
+- **Purpose:** <what this subsection explains, in the parent section's terms>
+- **Requirements:** <requirement IDs>
+- **Questions:**
+  - B1 <question from the section's Must explain line>
+  - C1 <question raised by a reviewer comment, with a short quote>
+- **Not here:** <topics owned by other sections>
+
+---
+
 ## Review position
 
 <one short paragraph on what this section's purpose is>
@@ -319,6 +299,11 @@ The main issues identified were:
 **Where:** `@H<path>` -- currently: "<short quote of the current text, for human legibility only>"
 
 **Do:** Replace / Insert before / Insert after / Delete
+
+**Facts:**
+- [B1] <one fact the text must carry> (E-nnn)
+- Table detail: <addresses, ports, host names that belong in a table, not the paragraph> (E-nnn)
+- Unknown: <the one open point, if any, and who can confirm it>
 
 **Text:**
 
@@ -372,7 +357,7 @@ After every run, capture what was learned so future authoring runs are faster an
 Use this local skill-notes path for this agent:
 
 ```text
-/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-change-authoring-learnings.md
+.agents/skills/csa-change-authoring-learnings.md
 ```
 
 At the end of each run:
@@ -384,23 +369,13 @@ At the end of each run:
 - if the lesson changes how this agent should behave on every future run, update this agent `.md` with a small, controlled instruction change and mention that in your report to the user;
 - if there was nothing reusable to learn, say so explicitly in your report rather than skipping the step silently.
 
-The skill note file is append-only unless the user explicitly asks for cleanup. Prefer short, evidence-backed entries over broad rules.
+The inbox is append-only. Only Wenzel moves entries into the playbook. Prefer short, evidence-backed entries over broad rules.
 
 ## Recovery And Repair Boundary
 
 This agent is read-only with respect to the working DOCX, always -- it never opens it for writing, and `prepareDocument()`/`lookupStableId` are read-only by design. The only files this agent writes are its own change-proposal Markdown file, its run-state file, the shared skill-notes file, and new rows appended to `csa-work/evidence-matrix.csv` through the `csa-evidence-matrix` skill (append-only; backups and an audit log are kept by the skill).
 
 If asked to also apply the changes it just drafted, decline and hand off to the Current-State-Assessment-Document Agent instead -- authoring and implementation stay separate roles, the same way implementation and review stay separate.
-
-## Example
-
-For IAMPS, an example evidence folder is:
-
-```text
-/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS/01 Current State AS Built/IAMPS Discovery Data/
-```
-
-containing `PROD/`, `UAT/`, and standalone `tg_discovery_*` runs, each with numbered per-host evidence files. Use this layout when it is the supplied workspace, but keep this agent generic for any other application's Current State Assessment and evidence layout.
 
 ## Core Behaviour Summary
 
@@ -413,15 +388,25 @@ READ AGENT
 -> READ LEARNINGS FILE
 -> LIST WORK_DIR/analysis/ AND WORK_DIR/drafts/ (if present)
 -> IDENTIFY SECTION TEXT AND CLAIMS
+-> LIST REVIEWER COMMENTS (csa comments) AND WRITE THE SECTION BRIEF (purpose, requirements, B/C questions, not here)
 -> CHECK ANALYSIS/DRAFTS FOR A MATCHING TOPIC (pointer to E-ids, not evidence itself)
 -> LOOKUP EVIDENCE MATRIX (csa-evidence-matrix skill) FOR EACH CLAIM, INCLUDING ANY CITED BY ANALYSIS/DRAFTS
--> SEARCH DISCOVERY DATA ONLY FOR WHAT THE MATRIX DID NOT ANSWER
+-> FOR WHAT THE MATRIX DID NOT ANSWER: DISCOVERY INDEX (csa index), THEN RAW FILES ONLY FOR WHAT IT DOES NOT COVER
 -> APPEND NEW FINDINGS (AND NOT_FOUND + SCOPE) TO THE MATRIX
 -> FOR EACH SUPPORTED GAP: lookupStableId -> DRAFT EDIT
 -> RECORD UNSUPPORTED/AMBIGUOUS ITEMS AS OPEN QUESTIONS
 -> WRITE CHANGE PROPOSAL FILE
+-> RUN csa check-change <N>, FIX EVERY ERROR
+-> HAND OVER: csa write SECTION=<N> MODE=records (Writer rewrites prose Text from Facts)
 -> UPDATE RUN-STATE
 -> UPDATE LEARNINGS FILE
 -> REPORT TO USER
 -> STOP
 ```
+
+## Reference sections
+
+These sections were moved verbatim to `.agents/references/authoring-editorial-mode.md`. Read the one you need, only when the situation arises:
+
+- Editorial Mode (`EDIT_MODE=editorial`)
+- Example

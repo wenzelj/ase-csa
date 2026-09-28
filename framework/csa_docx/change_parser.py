@@ -40,12 +40,13 @@ def _parse_block(edit_id: str, title: str, block: str) -> ChangeRecord:
         raw=block,
         questions=_extract_questions(block),
         note=_extract_label(block, "Note"),
+        facts=_extract_label(block, "Facts"),
     )
 
 
 def _extract_label(block: str, label: str) -> str:
     pattern = re.compile(
-        rf"^\*\*{re.escape(label)}:\*\*\s*(.*?)(?=^\*\*(?:Where|Do|Text|Why|Note):\*\*|\n---[ \t]*(?:\n|\Z)|\Z)",
+        rf"^\*\*{re.escape(label)}:\*\*\s*(.*?)(?=^\*\*(?:Where|Do|Facts|Text|Why|Note):\*\*|\n---[ \t]*(?:\n|\Z)|\Z)",
         re.MULTILINE | re.DOTALL,
     )
     match = pattern.search(block)

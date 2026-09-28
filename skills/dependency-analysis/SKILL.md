@@ -5,7 +5,7 @@ description: Map upstream, downstream, shared-service, data, vendor, and operati
 
 # Dependency Analysis
 
-Terminology: name every component, service, dependency and interface with `australian-it-ot-terminology` (`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/australian-it-ot-terminology/SKILL.md`), classify it as OT, supporting IT, shared, platform or external, and write in Australian English.
+Terminology: name every component, service, dependency and interface with `australian-it-ot-terminology` (`.agents/skills/australian-it-ot-terminology/SKILL.md`), classify it as OT, supporting IT, shared, platform or external, and write in Australian English.
 
 Build a dependency register containing the assessed component, dependency, direction, purpose, data exchanged, interface or mechanism, site/environment, availability effect, owner, evidence ID, and confidence.
 
@@ -34,7 +34,7 @@ Rules:
 - State direction the same way you state it in the register (source -> destination) -- do not let the edge imply a direction the evidence doesn't support (see this skill's rule on not assuming interface direction from a diagram arrow).
 
 ```text
-G="/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-evidence-matrix/scripts/graph_store.py"
+G=".agents/skills/csa-evidence-matrix/scripts/graph_store.py"
 ```
 
 Append the two endpoint nodes if they don't already exist this run (`--workspace` is this project's `project_root`, the parent of `WORK_DIR`):

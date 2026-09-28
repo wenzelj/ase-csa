@@ -127,7 +127,7 @@ Test: could an engineer find this heading in a contents list when looking for th
 | Evidence Landscape | Usually belongs in Methodology; otherwise name what the evidence is about |
 | Key Observations (Derived from Table) | Name the subject: "Name Resolution", "Server Roles and Sites" |
 
-"Discovery" is the right word when the subject really is the discovery activity, for example Appendix B "Workstation and Server Discovery Coverage", which lists where the discovery script ran. It is the wrong word for describing the application.
+"Discovery" is the right word when the subject really is the discovery activity, for example 5.1 "Discovery Coverage" (Appendix B "Workstation and Server Discovery Coverage" in template v1.1), which lists where the discovery script ran. It is the wrong word for describing the application.
 
 ## 7. Australian English
 
@@ -164,7 +164,7 @@ Do not force cyber security framework terms onto architecture or application sec
 Run the lint, then read the section. The lint only proposes.
 
 ```text
-python3 /Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/australian-it-ot-terminology/scripts/term_lint.py <draft.md | working.docx> [--heading "<Heading 1 title>"] [--json]
+python3 .agents/skills/australian-it-ot-terminology/scripts/term_lint.py <draft.md | working.docx> [--heading "<Heading 1 title>"] [--json]
 ```
 
 Codes: `TERM_REVIEW_REQUIRED` (consulting or data-analysis phrase: decide what technical concept is meant), `EVIDENCE_CENTRIC` (evidence phrase as a subject or opener, or used too often), `SPECIFICITY_REVIEW` (vague generic term such as "technology asset"), `IT_OT_REVIEW` (an enterprise service described as part of the OT application or as OT), `AU_SPELLING` (US spelling outside code, quotes and product names).

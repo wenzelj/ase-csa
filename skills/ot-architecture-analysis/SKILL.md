@@ -5,7 +5,7 @@ description: Explain and assess the evidenced current architecture of an Operati
 
 # OT Architecture Analysis
 
-Terminology: name every component, service, dependency and interface with `australian-it-ot-terminology` (`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/australian-it-ot-terminology/SKILL.md`), classify it as OT, supporting IT, shared, platform or external, and write in Australian English.
+Terminology: name every component, service, dependency and interface with `australian-it-ot-terminology` (`.agents/skills/australian-it-ot-terminology/SKILL.md`), classify it as OT, supporting IT, shared, platform or external, and write in Australian English.
 
 Create a current-state architecture view from verified components and relationships.
 
@@ -37,7 +37,7 @@ Rules:
 - Do not guess a relationship's direction or a node's zone from how a diagram in a source document happens to be drawn -- the same evidence discipline as the rest of this skill applies here too.
 
 ```text
-G="/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-evidence-matrix/scripts/graph_store.py"
+G=".agents/skills/csa-evidence-matrix/scripts/graph_store.py"
 ```
 
 Append a node (repeat per component; `--workspace` is this project's `project_root`, the parent of `WORK_DIR`):

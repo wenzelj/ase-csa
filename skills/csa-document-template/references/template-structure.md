@@ -1,6 +1,6 @@
 # CSA template structure reference
 
-Template: `CSA Template/CSA_Template_v<highest>.dotx` (v1.1 at time of writing). Its own `README.md` is the human guide; this file is the agent-facing map. Stable-ID prefixes below are illustrative: the framework numbers headings by ordinal position **with a +1 offset at every level** (Document Control is `@H2`, not `@H1`), so always resolve IDs with `lookupStableId`, never from these numbers.
+Template: `CSA Template/CSA_Template_v<highest>.dotx` (v1.3 at time of writing; section structure from the UTC/DTC OT35 v0.1 document since v1.2). Its own `README.md` is the human guide; this file is the agent-facing map. Stable-ID prefixes below are illustrative: the framework numbers headings by ordinal position **with a +1 offset at every level** (Document Control is `@H2`, not `@H1`), so always resolve IDs with `lookupStableId`, never from these numbers.
 
 ## Section skeleton (every H1 is a framework "Section N" and starts a new page)
 
@@ -8,20 +8,21 @@ Template: `CSA Template/CSA_Template_v<highest>.dotx` (v1.1 at time of writing).
 | --- | --- | --- |
 | cover | (no heading; IDs `@H0-...`) | Title, subtitle, banner, four-line block. All from document properties. Do not edit through change records. |
 | - | Table of Contents | Live field inside a content control; not in the stable-ID manifest. Refreshed in Word (Ctrl+A, F9). |
-| 1 | Document Control | 1.1 Document Information (Field/Details, 7 rows from properties); 1.2 Revision History & Approvals (Version, Date, Author, Description, Approved By); 1.3 Document Map (4 standard rows). |
+| 1 | Document Control | 1.1 Document Information (Field/Details, 7 rows from properties); 1.2 Revision History & Approvals (Version, Date, Author, Description, Approved By); 1.3 Document Map (5 standard rows: the program document chain, Current State Assessment to As-Built). |
 | 2 | Executive Overview | 2.1 Executive Summary: three placeholder paragraphs, then figure placeholder, caption (`Figure n:`), source line. |
 | 3 | Requirement Domain Assessments | 17 domain blocks (3.1 to 3.17), see below. |
-| 4 | Migration Discovery | Intro sentence, then 4.1 Installed Applications, 4.2 Failover and Replication Behaviour, 4.3 Patch and Update Tooling, 4.4 Group Policy Observations, 4.5 File Transfer and Local Storage; one placeholder bullet each. |
-| 5 | Appendix A: Glossary and Acronyms | Term / Definition table, 10 standard terms pre-filled. |
-| 6 | Appendix B: Workstation and Server Discovery Coverage | Host / Role / Discovery Script Run / Notes; 3 placeholder rows. |
+| 4 | Governance Note and Next Steps | Four bullets: three standard OT 3.5 actions (pre-filled, keep them) and one placeholder for system-specific actions with owner and target date. |
+| 5 | Migration Discovery | Intro placeholder paragraph, then 5.1 Discovery Coverage (intro paragraph + Host / Role / Discovery Script Run / Notes table, 3 placeholder rows), 5.2 Installed Applications (intro + Application / component / Category / Observed host(s) / evidence scope table), 5.3 Failover and Replication Behaviour (one bullet), 5.4 Patch and Update Tooling (intro + Host(s) / scope / Update collection / Deployment / Settings / Maintenance window table, then one optional note paragraph; a bullet in v1.2), 5.5 Group Policy Observations (intro + GPO Name / Category / [Host group 1] / [Host group 2] table; the host-group headers are placeholders to rename or add), 5.6 File Transfer and Local Storage (one bullet). Tables have 2 placeholder rows unless stated. |
+| 6 | Appendix A: OT 3.5 Destination Boundary Reference Table | Intro sentence, then Infrastructure Service / Target Destination IP / Parameter / Native Configuration File Layer table with the 4 OT 3.5 destinations pre-filled (Syslog, Monitoring, DNS resolvers, NTP sources). |
+| 7 | Appendix B: Glossary and Acronyms | Term / Definition table, 10 standard terms pre-filled. |
 
-Appendices are Heading 1 paragraphs using the "Appendix A:" list (numId 3), so the framework counts them as Sections 5 and 6.
+Appendices are Heading 1 paragraphs using the "Appendix A:" list (numId 3), so the framework counts them as Sections 6 and 7. Stable IDs (tested 27 Sep 2026): Governance `@H5`, Migration `@H6`, Discovery Coverage `@H6.2`, Appendix A `@H7`, glossary `@H8`.
 
 ## Domain block (repeated for 3.1 to 3.17)
 
 1. Heading 2 = domain name.
 2. Requirement table (CSA Table, 4 columns: Req ID | Requirement | Current State | Rating). Req ID and Requirement are the OT35 checklist text; only Current State and Rating are written. Row IDs are `@H..-T1-R2` and up (R1 is the header).
-3. Heading 3 "Discovery Information": two placeholder bullets (style List Bullet). 3.1 adds a "Hosts and roles found" label and a 3-column table (Host(s), Environment, Role); 3.2 adds an "Accounts, groups and service accounts found" label and a 4-column table (Account / Group, Type, Host(s), Purpose / Role). Both tables have two placeholder rows.
+3. Heading 3 "Discovery Information": a 3-column table (Aspect | Configuration Observed | Coverage / Source, 2 placeholder rows; IDs `@H..-T1-R2` and up under the Discovery Information heading), then one optional note paragraph (style Normal, `[Optional note: …]`) for a finding that does not fit the table (delete it if unused; a bullet in v1.2). 3.1 adds a "Hosts and roles found" label and a 3-column table (Host(s), Environment, Role); 3.2 adds an "Accounts, groups and service accounts found" label and a 4-column table (Account / Group, Type, Host(s), Purpose / Role). Both tables have two placeholder rows.
 4. Heading 3 "Drawbridge Impact": one placeholder paragraph.
 
 | Domain | Name | Requirements (Req ID) |
@@ -60,12 +61,12 @@ Paragraph: Normal, Title, Subtitle, Heading 1-3, TOC Heading, TOC 1-2, List Bull
 
 ## Guidance comments
 
-The template carries 14 Word comments by author `CSA Template` (contents list, cover/properties, 1.1, 1.2, 2.1, Section 3, first requirement table, Discovery Information, hosts table, accounts table, Drawbridge Impact, Section 4, Appendix A, Appendix B). `new_csa.py` removes them by default; `check_csa.py --final` fails if any remain.
+The template carries 14 Word comments by author `CSA Template` (contents list, cover/properties, 1.1, 1.2, 2.1, Section 3, first requirement table, Discovery Information, hosts table, accounts table, Drawbridge Impact, Sections 4 and 5 (on the Migration Discovery heading), glossary, Discovery Coverage). `new_csa.py` removes them by default; `check_csa.py --final` fails if any remain.
 
 ## What the framework can and cannot do to a template CSA (tested 21 Sep 2026, Python 3.10 on Linux, framework as vendored)
 
-Works, and keeps styles: replace a requirement row's Current State and Rating (`Observed:` / `Assessment:` lines, positional columns 3 and 4); replace a whole table row with a pipe row; replace a placeholder bullet or paragraph (List Bullet style and numbering are kept; tracked change); prepareDocument and lookupStableId (appendices resolve as Sections 5 and 6).
+Works, and keeps styles: replace a requirement row's Current State and Rating (`Observed:` / `Assessment:` lines, positional columns 3 and 4); replace a whole table row with a pipe row; replace a placeholder bullet or paragraph (List Bullet style and numbering are kept; tracked change); prepareDocument and lookupStableId (appendices resolve as Sections 6 and 7 in v1.2).
 
 Does not work or loses formatting: `Replace the table content` cannot target a table by stable ID (BLOCKED: "Could not locate table caption"); a multi-bullet `Text:` block (`- a` / `- b`) creates List Paragraph paragraphs **without** bullet numbering, and a leading `- ` can survive as literal text; `Insert after` a bullet creates a plain paragraph with no bullet. Adding or removing table rows, bullets, headings or sections is out of the framework's scope. Hence `scaffold_csa.py`: set the number of placeholder rows/bullets first, then replace each placeholder by ID.
 
-Track changes: framework edits to paragraphs are tracked insertions/deletions; table-cell edits are direct replacements. Both are normal; `csa-change-cleanup` accepts revisions later.
+Track changes: with tracking on, framework edits to paragraphs and to table cells (requirement rows, including the Rating dropdown, Discovery Information and other tables) are tracked insertions/deletions (table cells since S64, 27 Sep 2026); with tracking off (previews) they are direct replacements. Every edit gets its Word comment. Both are normal; `csa-change-cleanup` accepts revisions later.

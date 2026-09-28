@@ -26,6 +26,7 @@ agents:
     file: csa-change-authoring.md
     title: C-S-A-Change-Authoring Agent
     group: pipeline
+    tier: frontier
     step: 1
     arg: SECTION
     inputs: SECTION*, AUTHOR_ITEM_LIMIT=6, RUN_SCOPE=next-authoring-batch, EDIT_MODE=evidence
@@ -38,6 +39,7 @@ agents:
     file: current-state-assessment-document.md
     title: Current-State-Assessment-Document Agent
     group: pipeline
+    tier: local
     step: 2
     arg: SECTION
     inputs: SECTION*, ITERATION_EDIT_LIMIT=2, RUN_SCOPE=next-batch, EXECUTION_MODE=framework-first
@@ -50,6 +52,7 @@ agents:
     file: csa-change-review.md
     title: C-S-A-Change-Review Agent
     group: pipeline
+    tier: frontier
     step: 3
     arg: SECTION
     inputs: SECTION*, ITERATION_REVIEW_LIMIT=2, RUN_SCOPE=next-batch
@@ -62,6 +65,7 @@ agents:
     file: csa-change-cleanup.md
     title: C-S-A-Change-Cleanup Agent
     group: pipeline
+    tier: local
     step: 4
     arg: SECTION
     inputs: SECTION*
@@ -74,6 +78,7 @@ agents:
     file: csa-orchestrator-agent.md
     title: CSA Orchestrator Agent
     group: analysis
+    tier: local
     arg: SECTION
     inputs: SECTION*
     locks: state, section
@@ -85,6 +90,7 @@ agents:
     file: csa-evidence-investigator-agent.md
     title: CSA Evidence Investigator Agent
     group: analysis
+    tier: local
     arg: SECTION
     inputs: SECTION*, MODE=EVIDENCE
     locks: section
@@ -96,6 +102,7 @@ agents:
     file: csa-evidence-investigator-agent.md
     title: CSA Evidence Investigator Agent
     group: analysis
+    tier: local
     arg: SECTION
     inputs: SECTION*, MODE=GAP
     locks: section
@@ -107,6 +114,7 @@ agents:
     file: csa-technical-analyst-agent.md
     title: CSA Technical Analyst Agent
     group: analysis
+    tier: frontier
     arg: ANALYSIS_SKILL
     inputs: ANALYSIS_SKILL*, SECTION
     locks: analysis
@@ -118,8 +126,9 @@ agents:
     file: csa-writer-agent.md
     title: CSA Writer Agent
     group: analysis
+    tier: frontier
     arg: SECTION
-    inputs: SECTION*, MODE=SECTION
+    inputs: SECTION*, MODE=SECTION, OUTPUT=section-file
     locks: section
     instruction: Draft or revise the requested section from approved evidence.
     skill: csa-writer-agent
@@ -129,6 +138,7 @@ agents:
     file: csa-writer-agent.md
     title: CSA Writer Agent
     group: analysis
+    tier: frontier
     arg: SECTION
     inputs: SECTION=Executive Summary, MODE=EXECUTIVE_SUMMARY
     locks: state, section
@@ -136,10 +146,23 @@ agents:
     skill: csa-executive-summary-agent
     summary: Writer in EXECUTIVE_SUMMARY mode - only after the detailed sections are reviewed READY.
 
+  - verb: audit-section
+    file: csa-audit-agent.md
+    title: CSA Audit Agent
+    group: analysis
+    tier: frontier
+    arg: SECTION
+    inputs: SECTION=next, AUDIT_DIR=latest
+    locks: section
+    instruction: Audit the requested unit of the latest document audit (coverage against the section's Must explain questions, claims against evidence, consistency) and write AUDIT_DIR/sections/<slug>.md in the required format.
+    skill: csa-audit-agent
+    summary: Read-only audit of one section for what it is missing; feeds csa audit --report.
+
   - verb: qa
     file: csa-quality-reviewer-agent.md
     title: CSA Quality Reviewer Agent
     group: analysis
+    tier: frontier
     arg: SECTION
     inputs: SECTION*
     locks: section

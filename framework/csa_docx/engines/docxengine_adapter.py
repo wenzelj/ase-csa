@@ -121,6 +121,96 @@ def _parse_markdown_table(text: str) -> list[list[str]] | None:
     return None
 
 
+
+_XMLNS_RE = re.compile(rb'xmlns:([A-Za-z_][\w.-]*)="([^"]*)"')
+_ROOT_TAG_RE = re.compile(rb"<(?!\?|!)[^>]*>")
+
+
+def _parse_part_preserving(data: bytes) -> ET.Element:
+    """Parse an OOXML part with ElementTree after registering the part's own namespace
+    prefixes, so that serialising it again keeps them (w14, mc, wp, a, ...)."""
+    for prefix, uri in _XMLNS_RE.findall(data):
+        name = prefix.decode()
+        if re.fullmatch(r"ns\d+", name):
+            continue
+        try:
+            ET.register_namespace(name, uri.decode())
+        except ValueError:
+            pass
+    return ET.fromstring(data)
+
+
+def _serialize_part_preserving(root: ET.Element, original: bytes) -> bytes:
+    """Serialise ``root`` and put back the original root start tag. ElementTree drops
+    namespace declarations the part does not use, but ``mc:Ignorable="w14 ..."`` still
+    names them, which makes the package invalid (Word reports unreadable content and
+    LibreOffice will not open it). The original tag declares every prefix again."""
+    old_tag = _ROOT_TAG_RE.search(original)
+    default_ns = re.search(rb'\sxmlns="([^"]*)"', old_tag.group(0)) if old_tag else None
+    out = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+    if default_ns:
+        # [Content_Types].xml and .rels parts must keep their default namespace;
+        # ElementTree writes it as an "nsN:" prefix, which Word and LibreOffice
+        # reject. (Its default_namespace option fails on their unprefixed
+        # attributes.) Turn the generated prefix back into the default namespace.
+        m = re.search(rb'xmlns:(ns\d+)="' + re.escape(default_ns.group(1)) + rb'"', out)
+        if m:
+            prefix = m.group(1)
+            out = re.sub(rb"(</?)" + prefix + rb":", rb"\1", out)
+            out = out.replace(b"xmlns:" + prefix + b"=", b"xmlns=")
+    new_tag = _ROOT_TAG_RE.search(out)
+    if not old_tag or not new_tag:
+        return out
+    closing = b"/>" if new_tag.group(0).endswith(b"/>") else b">"
+    old = old_tag.group(0)
+    if closing == b"/>" and not old.endswith(b"/>"):
+        old = old[:-1] + b"/>"
+    elif closing == b">" and old.endswith(b"/>"):
+        old = old[:-2] + b">"
+    return out[: new_tag.start()] + old + out[new_tag.end():]
+
+
+_CURRENTLY_RE = re.compile(r"currently:\s*[\"\u201c](.+?)[\"\u201d]\s*$", re.S)
+
+
+def _norm_text(t: str) -> str:
+    t = t.replace("\u2019", "'").replace("\u2018", "'").replace("\u201c", '"').replace("\u201d", '"')
+    return re.sub(r"\s+", " ", t).strip().lower()
+
+
+def _currently_segments(where: str) -> list[str]:
+    """The text a record quotes as the target's current wording ('currently: "... ..."'),
+    split at ellipses into segments long enough to identify the paragraph."""
+    m = _CURRENTLY_RE.search(where or "")
+    if not m:
+        return []
+    return [_norm_text(seg) for seg in re.split(r"\s*(?:\.\.\.|\u2026)\s*", m.group(1)) if len(seg.strip()) >= 12]
+
+
+def verified_stable_index(where: str, paragraphs, id_str: str, id_map: dict) -> tuple[int | None, str | None]:
+    """Resolve a stable ID, then check the paragraph against the record's 'currently' quote.
+
+    Stable IDs are positional, so an earlier edit that adds or removes a paragraph shifts
+    every later ID. When the quoted text is not in the paragraph the ID now points at, use
+    the one paragraph that does contain it; if none or several do, block rather than guess.
+    Records without a quote keep the old, ID-only behaviour."""
+    idx = id_map.get(id_str)
+    segs = _currently_segments(where)
+    if not segs:
+        return (idx, None) if idx is not None else (None, f"Stable ID {id_str} not found in document")
+
+    def fits(i: int) -> bool:
+        text = _norm_text(getattr(paragraphs[i], "text", "") or "")
+        return bool(text) and all(seg in text for seg in segs)
+
+    if idx is not None and fits(idx):
+        return idx, None
+    found = [i for i in range(len(paragraphs)) if fits(i)]
+    if len(found) == 1:
+        return found[0], None
+    return None, (f"Stable ID {id_str} now points at text that does not match the record's 'currently' quote, "
+                  f"and {len(found)} paragraphs contain that quote; run csa prepare and re-anchor the record")
+
 class DocxEngineEditor:
     """CSA adapter over the open-source DocxEngine library.
 
@@ -232,12 +322,13 @@ class DocxEngineEditor:
             if stable_id:
                 id_map = build_id_map(paragraphs)
                 id_str = str(stable_id)
-                if id_str in id_map:
-                    paragraph = paragraphs[id_map[id_str]]
+                idx, why = verified_stable_index(record.where, paragraphs, id_str, id_map)
+                if idx is not None:
+                    paragraph = paragraphs[idx]
                     matches = [paragraph]
                     anchor_text = anchor_text or id_str
                 else:
-                    return EditResult(record.edit_id, "BLOCKED", f"Stable ID {id_str} not found in document", id_str)
+                    return EditResult(record.edit_id, "BLOCKED", why, id_str)
             else:
                 if not anchor_text:
                     return EditResult(record.edit_id, "BLOCKED", "Could not extract a unique anchor from Where")
@@ -344,9 +435,10 @@ class DocxEngineEditor:
         if stable_id:
             id_map = build_id_map(paragraphs)
             id_str = str(stable_id)
-            if id_str in id_map:
-                return id_map[id_str], None
-            return None, EditResult(record.edit_id, "BLOCKED", f"Stable ID {id_str} not found in document", id_str)
+            idx, why = verified_stable_index(record.where, paragraphs, id_str, id_map)
+            if idx is not None:
+                return idx, None
+            return None, EditResult(record.edit_id, "BLOCKED", why, id_str)
         matches = self._matching_paragraphs(anchor_text, record.where, paragraphs)
         if len(matches) != 1:
             return None, EditResult(record.edit_id, "BLOCKED", f"{mismatch_label} was {len(matches)}; expected 1", anchor_text)
@@ -456,11 +548,12 @@ class DocxEngineEditor:
             if stable_id:
                 id_map = build_id_map(paragraphs)
                 id_str = str(stable_id)
-                if id_str in id_map:
-                    paragraph = paragraphs[id_map[id_str]]
+                idx, why = verified_stable_index(record.where, paragraphs, id_str, id_map)
+                if idx is not None:
+                    paragraph = paragraphs[idx]
                     matches = [paragraph]
                 else:
-                    return EditResult(record.edit_id, "BLOCKED", f"Stable ID {id_str} not found in document", anchor_text)
+                    return EditResult(record.edit_id, "BLOCKED", why, anchor_text)
             else:
                 if not anchor_text:
                     return EditResult(record.edit_id, "BLOCKED", "Could not extract a unique anchor from Where", None)
@@ -583,10 +676,9 @@ class DocxEngineEditor:
         if stable_id:
             id_str = str(stable_id)
             id_map = build_id_map(paragraphs)
-            if id_str in id_map:
-                anchor_index = id_map[id_str]
-            else:
-                return EditResult(record.edit_id, "BLOCKED", f"Stable ID {id_str} not found in document", id_str)
+            anchor_index, why = verified_stable_index(record.where, paragraphs, id_str, id_map)
+            if anchor_index is None:
+                return EditResult(record.edit_id, "BLOCKED", why, id_str)
         else:
             anchor_text = find_anchor(record.where)
             if not anchor_text:
@@ -798,16 +890,21 @@ class DocxEngineEditor:
             grouped.setdefault(update.table_anchor, []).append(update)
 
         try:
-            for table_anchor, table_updates in grouped.items():
-                self.doc.table(
-                    "set_cells",
-                    anchor=table_anchor,
-                    cells=[
-                        {"r": update.row_index, "c": update.cell_index, "text": update.value}
-                        for update in table_updates
-                    ],
-                    author=author,
-                )
+            if self.track_changes:
+                # DocxEngine's set_cells ignores track_changes, so write the cells
+                # as tracked revisions here (S64).
+                self._set_cells_tracked(updates, author)
+            else:
+                for table_anchor, table_updates in grouped.items():
+                    self.doc.table(
+                        "set_cells",
+                        anchor=table_anchor,
+                        cells=[
+                            {"r": update.row_index, "c": update.cell_index, "text": update.value}
+                            for update in table_updates
+                        ],
+                        author=author,
+                    )
             comment_id = self._add_table_cell_comment(updates[0], record, author, initials)
         except ToolError as exc:
             return EditResult(record.edit_id, "BLOCKED", f"DocxEngine table error: {exc}", updates[0].row_label)
@@ -980,7 +1077,10 @@ class DocxEngineEditor:
     def _stable_id_map(self) -> dict[str, int]:
         if not hasattr(self, "_stable_id_map_cache"):
             from csa_docx.stable_ids import build_id_map
-            self._stable_id_map_cache = build_id_map(self.paragraphs_with_table_rows())
+            # Keep the entries the map indexes into: the map is built once per batch, and
+            # a later paragraph deletion would shift a freshly built list under it.
+            self._stable_id_entries_cache = self.paragraphs_with_table_rows()
+            self._stable_id_map_cache = build_id_map(self._stable_id_entries_cache)
         return self._stable_id_map_cache
 
     def _resolve_stable_table_row(self, stable_id) -> "TableRowRef | None":
@@ -996,8 +1096,9 @@ class DocxEngineEditor:
         index = id_map.get(id_str)
         if index is None:
             return None
-        paragraphs = self.paragraphs_with_table_rows()
-        entry = paragraphs[index]
+        # Index into the same snapshot the map was built from. Table ordinals and row
+        # ordinals do not change during a batch (edits never add or remove tables or rows).
+        entry = self._stable_id_entries_cache[index]
         table_anchor = getattr(entry, "table_anchor", None)
         if not table_anchor:
             return None
@@ -1156,10 +1257,112 @@ class DocxEngineEditor:
                     )
         return merged
 
+    def _set_cells_tracked(self, updates: list["TableCellUpdate"], author: str) -> None:
+        """Write table cells as tracked changes: every existing run in the cell becomes
+        a tracked deletion (``w:del`` / ``w:delText``) and the new text a tracked
+        insertion (``w:ins``) in the cell's first paragraph, keeping that paragraph's
+        properties and the first run's formatting. Content controls (the Rating
+        dropdown) stay in place. Cells whose text already matches are left alone.
+        Revision IDs continue from the highest existing ``w:ins``/``w:del`` id, as
+        DocxEngine allocates them."""
+        from datetime import datetime, timezone
+        import copy as _copy
+
+        package = self.doc._doc.package
+        main_part = package.main_document_part()
+        original = package.part(main_part)
+        root = _parse_part_preserving(original)
+        ins_tag, del_tag = qn(W_NS, "ins"), qn(W_NS, "del")
+        rev = 1 + max((int(e.get(qn(W_NS, "id"), "0")) for e in root.iter()
+                       if e.tag in (ins_tag, del_tag) and e.get(qn(W_NS, "id"), "").isdigit()), default=0)
+        date = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        parents = {child: parent for parent in root.iter() for child in parent}
+
+        def revision(tag: str) -> ET.Element:
+            nonlocal rev
+            el = ET.Element(tag, {qn(W_NS, "id"): str(rev), qn(W_NS, "author"): author, qn(W_NS, "date"): date})
+            rev += 1
+            return el
+
+        def inside_revision(el: ET.Element) -> bool:
+            p = parents.get(el)
+            while p is not None:
+                if p.tag in (ins_tag, del_tag):
+                    return True
+                p = parents.get(p)
+            return False
+
+        for update in updates:
+            paragraph = self._find_table_cell_paragraph(root, update)
+            if paragraph is None:
+                raise ToolError(f"table cell not found for {update.row_label}")
+            cell = paragraph
+            while cell is not None and cell.tag != qn(W_NS, "tc"):
+                cell = parents.get(cell)
+            if cell is None:
+                raise ToolError(f"table cell not found for {update.row_label}")
+            old_text = "".join(t.text or "" for t in cell.iter(qn(W_NS, "t")) if not inside_revision(t))
+            if old_text.strip() == update.value.strip():
+                continue
+            runs = [r for r in cell.iter(qn(W_NS, "r"))
+                    if not inside_revision(r) and r.find(qn(W_NS, "commentReference")) is None]
+            first_rpr = next((r.find(qn(W_NS, "rPr")) for r in runs if r.find(qn(W_NS, "rPr")) is not None), None)
+            target_p = next(cell.iter(qn(W_NS, "p")))  # first paragraph, also inside a content control
+            wrappers: list[ET.Element] = []
+            for run in runs:
+                parent = parents[run]
+                index = list(parent).index(run)
+                for t in run.findall(qn(W_NS, "t")):
+                    t.tag = qn(W_NS, "delText")
+                for t in run.findall(qn(W_NS, "instrText")):
+                    t.tag = qn(W_NS, "delInstrText")
+                wrapper = revision(del_tag)
+                parent.remove(run)
+                wrapper.append(run)
+                parent.insert(index, wrapper)
+                parents[wrapper] = parent
+                parents[run] = wrapper
+                wrappers.append(wrapper)
+            ins = revision(ins_tag)
+            new_run = ET.SubElement(ins, qn(W_NS, "r"))
+            if first_rpr is not None:
+                rpr = _copy.deepcopy(first_rpr)
+                for style in rpr.findall(qn(W_NS, "rStyle")):
+                    if style.get(qn(W_NS, "val")) == "PlaceholderText":
+                        rpr.remove(style)  # the grey placeholder look must not carry over
+                if len(rpr):
+                    new_run.append(rpr)
+            for i, line in enumerate(update.value.split("\n")):
+                if i:
+                    ET.SubElement(new_run, qn(W_NS, "br"))
+                t = ET.SubElement(new_run, qn(W_NS, "t"))
+                t.text = line
+                t.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
+            if wrappers:
+                # Insert right after the deleted text, in the same container, so a
+                # value replacing a content control's placeholder (the Rating
+                # dropdown) lands inside the control.
+                container = parents[wrappers[0]]
+                last = max((w for w in wrappers if parents[w] is container), key=lambda w: list(container).index(w))
+                container.insert(list(container).index(last) + 1, ins)
+                parents[ins] = container
+                if container.tag == qn(W_NS, "sdtContent"):
+                    sdt_pr = parents[container].find(qn(W_NS, "sdtPr"))
+                    if sdt_pr is not None:
+                        for flag in sdt_pr.findall(qn(W_NS, "showingPlcHdr")):
+                            sdt_pr.remove(flag)
+            else:
+                target_p.append(ins)
+                parents[ins] = target_p
+
+        package.set_part(main_part, _serialize_part_preserving(root, original))
+        self.doc._doc.mark_dirty()
+
     def _add_table_cell_comment(self, update: "TableCellUpdate", record: ChangeRecord, author: str, initials: str) -> str | None:
         package = self.doc._doc.package
         main_part = package.main_document_part()
-        root = ET.fromstring(package.part(main_part))
+        original = package.part(main_part)
+        root = _parse_part_preserving(original)
         paragraph = self._find_table_cell_paragraph(root, update)
         if paragraph is None:
             return None
@@ -1173,7 +1376,7 @@ class DocxEngineEditor:
         ET.SubElement(ref_run, qn(W_NS, "commentReference"), {qn(W_NS, "id"): comment_id})
         paragraph.append(ref_run)
 
-        package.set_part(main_part, ET.tostring(root, encoding="utf-8", xml_declaration=True))
+        package.set_part(main_part, _serialize_part_preserving(root, original))
         self.doc._doc.mark_dirty()
         self._ensure_comment_relationship_parts()
         return comment_id
@@ -1205,8 +1408,9 @@ class DocxEngineEditor:
     def _append_comment_part(self, record: ChangeRecord, author: str, initials: str) -> str:
         package = self.doc._doc.package
         comments_part = "word/comments.xml"
-        if package.has_part(comments_part):
-            comments_root = ET.fromstring(package.part(comments_part))
+        comments_original = package.part(comments_part) if package.has_part(comments_part) else None
+        if comments_original is not None:
+            comments_root = _parse_part_preserving(comments_original)
         else:
             comments_root = ET.Element(qn(W_NS, "comments"))
         existing_ids = [int(node.get(qn(W_NS, "id"), "0")) for node in comments_root.findall(qn(W_NS, "comment"))]
@@ -1224,7 +1428,10 @@ class DocxEngineEditor:
         run = ET.SubElement(paragraph, qn(W_NS, "r"))
         text = ET.SubElement(run, qn(W_NS, "t"))
         text.text = build_comment_text(record)
-        package.set_part(comments_part, ET.tostring(comments_root, encoding="utf-8", xml_declaration=True))
+        comments_xml = ET.tostring(comments_root, encoding="utf-8", xml_declaration=True)
+        if comments_original is not None:
+            comments_xml = _serialize_part_preserving(comments_root, comments_original)
+        package.set_part(comments_part, comments_xml)
         self.doc._doc.mark_dirty()
         return comment_id
 
@@ -1232,8 +1439,10 @@ class DocxEngineEditor:
         package = self.doc._doc.package
         rels_part = "word/_rels/document.xml.rels"
         if package.has_part(rels_part):
-            rels_root = ET.fromstring(package.part(rels_part))
+            rels_original = package.part(rels_part)
+            rels_root = _parse_part_preserving(rels_original)
         else:
+            rels_original = None
             rels_root = ET.Element(qn(REL_NS, "Relationships"))
         if not any(rel.get("Type", "").endswith("/comments") for rel in rels_root):
             ids = []
@@ -1245,15 +1454,17 @@ class DocxEngineEditor:
             rel.set("Id", f"rId{max(ids, default=0) + 1}")
             rel.set("Type", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments")
             rel.set("Target", "comments.xml")
-            package.set_part(rels_part, ET.tostring(rels_root, encoding="utf-8", xml_declaration=True))
+            package.set_part(rels_part, _serialize_part_preserving(
+                rels_root, rels_original or f'<Relationships xmlns="{REL_NS}"/>'.encode()))
 
         content_types_part = "[Content_Types].xml"
-        ct_root = ET.fromstring(package.part(content_types_part))
+        ct_original = package.part(content_types_part)
+        ct_root = _parse_part_preserving(ct_original)
         if not any(part.get("PartName") == "/word/comments.xml" for part in ct_root):
             override = ET.SubElement(ct_root, qn(CONTENT_TYPES_NS, "Override"))
             override.set("PartName", "/word/comments.xml")
             override.set("ContentType", "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml")
-            package.set_part(content_types_part, ET.tostring(ct_root, encoding="utf-8", xml_declaration=True))
+            package.set_part(content_types_part, _serialize_part_preserving(ct_root, ct_original))
         self.doc._doc.mark_dirty()
 
     def _section_scope(self, paragraphs=None) -> tuple[int, int, int] | None:

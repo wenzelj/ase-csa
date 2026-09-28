@@ -1,0 +1,458 @@
+{
+  "template": "CSA_Template_v1.3",
+  "_note": "Template v1.3 (27 Sep 2026): v1.2 structure; the optional note under each Discovery Information table and under the 5.4 table is a plain paragraph, not a bullet. Headings must match the template exactly (check_section ignores curly vs straight quotes).",
+  "domains": [
+    {
+      "number": "3.1",
+      "heading": "General / Asset Inventory",
+      "req_ids": [
+        "SEP-GEN-01",
+        "SEP-GEN-03"
+      ],
+      "tables": {
+        "Hosts and roles found": {
+          "columns": [
+            "Host(s)",
+            "Environment",
+            "Role"
+          ],
+          "placeholder_rows": 2
+        }
+      },
+      "discovery_table": {
+        "columns": [
+          "Aspect",
+          "Configuration Observed",
+          "Coverage / Source"
+        ],
+        "placeholder_rows": 2
+      },
+      "drawbridge_paragraphs": 1,
+      "discovery_note_paragraphs": 1
+    },
+    {
+      "number": "3.2",
+      "heading": "Identity & Authentication",
+      "req_ids": [
+        "SEP-ID-01",
+        "SEP-ID-02",
+        "SEP-ID-03"
+      ],
+      "tables": {
+        "Accounts, groups and service accounts found": {
+          "columns": [
+            "Account / Group",
+            "Type",
+            "Host(s)",
+            "Purpose / Role"
+          ],
+          "placeholder_rows": 2
+        }
+      },
+      "discovery_table": {
+        "columns": [
+          "Aspect",
+          "Configuration Observed",
+          "Coverage / Source"
+        ],
+        "placeholder_rows": 2
+      },
+      "drawbridge_paragraphs": 1,
+      "discovery_note_paragraphs": 1
+    },
+    {
+      "number": "3.3",
+      "heading": "PKI / Certificates",
+      "req_ids": [
+        "SEP-PKI-01",
+        "SEP-PKI-02"
+      ],
+      "tables": {},
+      "discovery_table": {
+        "columns": [
+          "Aspect",
+          "Configuration Observed",
+          "Coverage / Source"
+        ],
+        "placeholder_rows": 2
+      },
+      "drawbridge_paragraphs": 1,
+      "discovery_note_paragraphs": 1
+    },
+    {
+      "number": "3.4",
+      "heading": "Time Synchronisation",
+      "req_ids": [
+        "SEP-TIME-01"
+      ],
+      "tables": {},
+      "discovery_table": {
+        "columns": [
+          "Aspect",
+          "Configuration Observed",
+          "Coverage / Source"
+        ],
+        "placeholder_rows": 2
+      },
+      "drawbridge_paragraphs": 1,
+      "discovery_note_paragraphs": 1
+    },
+    {
+      "number": "3.5",
+      "heading": "DNS",
+      "req_ids": [
+        "SEP-DNS-01"
+      ],
+      "tables": {},
+      "discovery_table": {
+        "columns": [
+          "Aspect",
+          "Configuration Observed",
+          "Coverage / Source"
+        ],
+        "placeholder_rows": 2
+      },
+      "drawbridge_paragraphs": 1,
+      "discovery_note_paragraphs": 1
+    },
+    {
+      "number": "3.6",
+      "heading": "Network / Segmentation",
+      "req_ids": [
+        "SEP-NET-01",
+        "SEP-NET-02",
+        "SEP-NET-03"
+      ],
+      "tables": {},
+      "discovery_table": {
+        "columns": [
+          "Aspect",
+          "Configuration Observed",
+          "Coverage / Source"
+        ],
+        "placeholder_rows": 2
+      },
+      "drawbridge_paragraphs": 1,
+      "discovery_note_paragraphs": 1
+    },
+    {
+      "number": "3.7",
+      "heading": "Storage & Data Transfer",
+      "req_ids": [
+        "SEP-STOR-01",
+        "SEP-STOR-02",
+        "SEP-STOR-03"
+      ],
+      "tables": {},
+      "discovery_table": {
+        "columns": [
+          "Aspect",
+          "Configuration Observed",
+          "Coverage / Source"
+        ],
+        "placeholder_rows": 2
+      },
+      "drawbridge_paragraphs": 1,
+      "discovery_note_paragraphs": 1
+    },
+    {
+      "number": "3.8",
+      "heading": "Management & Administrative Access",
+      "req_ids": [
+        "SEP-MGT-01",
+        "SEP-MGT-02"
+      ],
+      "tables": {},
+      "discovery_table": {
+        "columns": [
+          "Aspect",
+          "Configuration Observed",
+          "Coverage / Source"
+        ],
+        "placeholder_rows": 2
+      },
+      "drawbridge_paragraphs": 1,
+      "discovery_note_paragraphs": 1
+    },
+    {
+      "number": "3.9",
+      "heading": "Monitoring & Logging",
+      "req_ids": [
+        "SEP-MON-01",
+        "SEP-MON-02",
+        "SEP-MON-03"
+      ],
+      "tables": {},
+      "discovery_table": {
+        "columns": [
+          "Aspect",
+          "Configuration Observed",
+          "Coverage / Source"
+        ],
+        "placeholder_rows": 2
+      },
+      "drawbridge_paragraphs": 1,
+      "discovery_note_paragraphs": 1
+    },
+    {
+      "number": "3.10",
+      "heading": "Patch & Lifecycle Management",
+      "req_ids": [
+        "SEP-PATCH-01",
+        "SEP-PATCH-02"
+      ],
+      "tables": {},
+      "discovery_table": {
+        "columns": [
+          "Aspect",
+          "Configuration Observed",
+          "Coverage / Source"
+        ],
+        "placeholder_rows": 2
+      },
+      "drawbridge_paragraphs": 1,
+      "discovery_note_paragraphs": 1
+    },
+    {
+      "number": "3.11",
+      "heading": "Backup & Recovery",
+      "req_ids": [
+        "SEP-BAK-01",
+        "SEP-BAK-02"
+      ],
+      "tables": {},
+      "discovery_table": {
+        "columns": [
+          "Aspect",
+          "Configuration Observed",
+          "Coverage / Source"
+        ],
+        "placeholder_rows": 2
+      },
+      "drawbridge_paragraphs": 1,
+      "discovery_note_paragraphs": 1
+    },
+    {
+      "number": "3.12",
+      "heading": "Isolation & Resilience Validation (“Drawbridge”)",
+      "req_ids": [
+        "SEP-ISO-01",
+        "SEP-ISO-02"
+      ],
+      "tables": {},
+      "discovery_table": {
+        "columns": [
+          "Aspect",
+          "Configuration Observed",
+          "Coverage / Source"
+        ],
+        "placeholder_rows": 2
+      },
+      "drawbridge_paragraphs": 1,
+      "discovery_note_paragraphs": 1
+    },
+    {
+      "number": "3.13",
+      "heading": "Perimeter / Firewall & Network Boundary Validation",
+      "req_ids": [
+        "SEP-PERIM-01",
+        "SEP-PERIM-02",
+        "SEP-PERIM-03"
+      ],
+      "tables": {},
+      "discovery_table": {
+        "columns": [
+          "Aspect",
+          "Configuration Observed",
+          "Coverage / Source"
+        ],
+        "placeholder_rows": 2
+      },
+      "drawbridge_paragraphs": 1,
+      "discovery_note_paragraphs": 1
+    },
+    {
+      "number": "3.14",
+      "heading": "Vulnerability Management",
+      "req_ids": [
+        "SEP-VULN-01",
+        "SEP-VULN-02"
+      ],
+      "tables": {},
+      "discovery_table": {
+        "columns": [
+          "Aspect",
+          "Configuration Observed",
+          "Coverage / Source"
+        ],
+        "placeholder_rows": 2
+      },
+      "drawbridge_paragraphs": 1,
+      "discovery_note_paragraphs": 1
+    },
+    {
+      "number": "3.15",
+      "heading": "Infrastructure Dependencies (Virtualisation / Hardware)",
+      "req_ids": [
+        "SEP-INFRA-01"
+      ],
+      "tables": {},
+      "discovery_table": {
+        "columns": [
+          "Aspect",
+          "Configuration Observed",
+          "Coverage / Source"
+        ],
+        "placeholder_rows": 2
+      },
+      "drawbridge_paragraphs": 1,
+      "discovery_note_paragraphs": 1
+    },
+    {
+      "number": "3.16",
+      "heading": "Supply Chain & Third-Party / Vendor Access",
+      "req_ids": [
+        "SEP-SUPPLY-01"
+      ],
+      "tables": {},
+      "discovery_table": {
+        "columns": [
+          "Aspect",
+          "Configuration Observed",
+          "Coverage / Source"
+        ],
+        "placeholder_rows": 2
+      },
+      "drawbridge_paragraphs": 1,
+      "discovery_note_paragraphs": 1
+    },
+    {
+      "number": "3.17",
+      "heading": "Internet Access & Communications (Proxy / SMTP)",
+      "req_ids": [
+        "SEP-INET-01",
+        "SEP-INET-02"
+      ],
+      "tables": {},
+      "discovery_table": {
+        "columns": [
+          "Aspect",
+          "Configuration Observed",
+          "Coverage / Source"
+        ],
+        "placeholder_rows": 2
+      },
+      "drawbridge_paragraphs": 1,
+      "discovery_note_paragraphs": 1
+    }
+  ],
+  "executive_summary": {
+    "heading": "Executive Summary",
+    "paragraphs": 3
+  },
+  "migration": [
+    {
+      "number": "5.2",
+      "heading": "Installed Applications",
+      "intro_paragraphs": 1,
+      "table": {
+        "columns": [
+          "Application / component",
+          "Category",
+          "Observed host(s) / evidence scope"
+        ],
+        "placeholder_rows": 2
+      },
+      "bullets": 0
+    },
+    {
+      "number": "5.3",
+      "heading": "Failover and Replication Behaviour",
+      "bullets": 1
+    },
+    {
+      "number": "5.4",
+      "heading": "Patch and Update Tooling",
+      "intro_paragraphs": 1,
+      "table": {
+        "columns": [
+          "Host(s) / scope",
+          "Update collection",
+          "Deployment",
+          "Settings",
+          "Maintenance window"
+        ],
+        "placeholder_rows": 2
+      },
+      "bullets": 0,
+      "note_paragraphs": 1
+    },
+    {
+      "number": "5.5",
+      "heading": "Group Policy Observations",
+      "intro_paragraphs": 1,
+      "table": {
+        "columns": [
+          "GPO Name",
+          "Category",
+          "[Host group 1]",
+          "[Host group 2]"
+        ],
+        "placeholder_rows": 2,
+        "project_columns_from": 2
+      },
+      "bullets": 0
+    },
+    {
+      "number": "5.6",
+      "heading": "File Transfer and Local Storage",
+      "bullets": 1
+    }
+  ],
+  "glossary": {
+    "heading": "Glossary and Acronyms",
+    "columns": [
+      "Term",
+      "Definition"
+    ],
+    "standard_rows": 10
+  },
+  "coverage": {
+    "number": "5.1",
+    "heading": "Discovery Coverage",
+    "intro_paragraphs": 1,
+    "columns": [
+      "Host",
+      "Role",
+      "Discovery Script Run",
+      "Notes"
+    ],
+    "placeholder_rows": 3
+  },
+  "ratings": [
+    "Met",
+    "Partially Met",
+    "Not Met",
+    "Not Applicable"
+  ],
+  "max_current_state_words": 50,
+  "governance": {
+    "number": "4",
+    "heading": "Governance Note and Next Steps",
+    "standard_bullets": 3,
+    "placeholder_bullets": 1
+  },
+  "migration_intro": {
+    "heading": "Migration Discovery",
+    "paragraphs": 1
+  },
+  "boundary_appendix": {
+    "heading": "OT 3.5 Destination Boundary Reference Table",
+    "columns": [
+      "Infrastructure Service",
+      "Target Destination IP / Parameter",
+      "Native Configuration File Layer"
+    ],
+    "standard_rows": 4
+  }
+}

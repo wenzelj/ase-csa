@@ -5,7 +5,7 @@ description: Identify, prioritise, and convert missing, weak, stale, or contradi
 
 # CSA Gap Analysis
 
-Terminology: name every component, service, dependency and interface with `australian-it-ot-terminology` (`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/australian-it-ot-terminology/SKILL.md`), classify it as OT, supporting IT, shared, platform or external, and write in Australian English.
+Terminology: name every component, service, dependency and interface with `australian-it-ot-terminology` (`.agents/skills/australian-it-ot-terminology/SKILL.md`), classify it as OT, supporting IT, shared, platform or external, and write in Australian English.
 
 Review the evidence matrix and draft for claims that are absent, weakly sourced, inferred, stale, conflicting, or too broad for their evidence.
 

@@ -5,7 +5,7 @@ description: Matrix-first evidence lookup and append-only recording for the Curr
 
 # CSA Evidence Matrix (read + write skill)
 
-Terminology: name every component, service, dependency and interface with `australian-it-ot-terminology` (`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/australian-it-ot-terminology/SKILL.md`), classify it as OT, supporting IT, shared, platform or external, and write in Australian English.
+Terminology: name every component, service, dependency and interface with `australian-it-ot-terminology` (`.agents/skills/australian-it-ot-terminology/SKILL.md`), classify it as OT, supporting IT, shared, platform or external, and write in Australian English.
 
 The evidence matrix is the shared memory of what has already been established about the assessed system. It lives at `<work_dir>/evidence-matrix.csv`, where `<work_dir>` is the active project's `work_dir` from `csa-context/PROJECTS.yaml` (or the `WORK_DIR` supplied directly) -- never assume IAMPS. For example, IAMPS's matrix is at:
 
@@ -52,7 +52,7 @@ Never skip step 1 for a technical fact about hosts, services, ports, addresses, 
 One stdlib-only helper (Python 3.8+; `python3` or `/opt/homebrew/bin/python3.14` both work). All output is JSON. Exit code `2` means rejected and nothing was written.
 
 ```text
-S="/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-evidence-matrix/scripts/evidence_matrix.py"
+S=".agents/skills/csa-evidence-matrix/scripts/evidence_matrix.py"
 ```
 
 Read:
@@ -174,3 +174,5 @@ Writes take an exclusive file lock, so two agents can append at the same time wi
 ## Known data-quality note
 
 `verify` currently reports 6 legacy rows (E-006, E-007, E-008, E-009, E-011, E-014) whose `confidence` column holds gap text instead of high/medium/low. They are read normally and left untouched (append-only); a human can clean them.
+
+- `review E-nnn ... --by "<name>"` - records a review in `csa-work/evidence-reviews.jsonl`.

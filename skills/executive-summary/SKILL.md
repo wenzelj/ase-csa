@@ -5,9 +5,9 @@ description: Produce a concise, evidence-aligned stakeholder summary from a comp
 
 # Executive Summary
 
-Terminology: name every component, service, dependency and interface with `australian-it-ot-terminology` (`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/australian-it-ot-terminology/SKILL.md`), classify it as OT, supporting IT, shared, platform or external, and write in Australian English.
+Terminology: name every component, service, dependency and interface with `australian-it-ot-terminology` (`.agents/skills/australian-it-ot-terminology/SKILL.md`), classify it as OT, supporting IT, shared, platform or external, and write in Australian English.
 
-Create a short summary for readers who will not read the full assessment. Load `csa-writing-style` (`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-writing-style/SKILL.md`) before drafting -- an executive summary is exactly the kind of text that tends to read as AI-generated boilerplate if that skill isn't applied.
+Create a short summary for readers who will not read the full assessment. Load `csa-writing-style` (`.agents/skills/csa-writing-style/SKILL.md`) before drafting -- an executive summary is exactly the kind of text that tends to read as AI-generated boilerplate if that skill isn't applied.
 
 Cover:
 

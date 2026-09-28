@@ -17,9 +17,10 @@ After a run call prepareDocument(force_regenerate=True): the stable-ID manifest 
 itself when the heading skeleton changes, and row/paragraph IDs have moved.
 
 Locate the block by the heading above it (exact text, no number):
-  rows    --heading "Workstation and Server Discovery Coverage" --set-count 26
+  rows    --heading "Discovery Coverage" --set-count 26                               (template v1.2; v1.1: "Workstation and Server Discovery Coverage")
   rows    --heading "Discovery Information" --heading-occurrence 2 --set-count 6     (3.2 accounts table)
-  bullets --heading "Discovery Information" --heading-occurrence 5 --set-count 4     (3.5 DNS bullets)
+  rows    --heading "Discovery Information" --heading-occurrence 5 --set-count 4     (3.5 DNS Discovery table, v1.2)
+  bullets --heading "Governance Note and Next Steps" --set-count 5                 (3 standard actions + 2)
 
 Output: one JSON object. Exit 0 = done (or already at that count), 2 = refused (nothing changed).
 """

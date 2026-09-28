@@ -61,7 +61,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--change-file")
     parser.add_argument("--docx", required=True)
     parser.add_argument("--workspace", default=".")
-    parser.add_argument("--limit", type=int, default=3)
+    parser.add_argument("--limit", type=int, default=2)
     parser.add_argument("--start-edit-id")
     parser.add_argument("--end-edit-id")
     parser.add_argument("--comment-author", default="Wenzel Joubert")

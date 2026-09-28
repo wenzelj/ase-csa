@@ -50,7 +50,11 @@ def _load_project_registry() -> list[dict]:
     cross-project safety check is unavailable" rather than blocking every
     operation on a framework installation issue.
     """
-    registry_path = Path(__file__).resolve().parents[2] / "csa-context" / "PROJECTS.yaml"
+    registry_path = (
+        Path(os.environ["CSA_PROJECTS_FILE"])
+        if os.environ.get("CSA_PROJECTS_FILE")
+        else Path(__file__).resolve().parents[2] / "csa-context" / "PROJECTS.yaml"
+    )
     if not registry_path.is_file():
         return []
     projects: list[dict] = []
@@ -404,6 +408,13 @@ def _find_workspace_docx(workspace: Path) -> Path:
     if not candidates:
         raise ManifestError(f"No .docx file found under {workspace}.")
     if len(candidates) > 1:
+        # Project folders also hold reference documents (older CSAs, designs, review notes).
+        # The working document lives in a "01 Final Version" folder: if exactly one candidate
+        # is there, it is the working document. Otherwise still refuse to guess.
+        final = [p for p in candidates if any(part.lower() == "01 final version" for part in p.relative_to(workspace).parts[:-1])]
+        if len(final) == 1:
+            return final[0]
+    if len(candidates) > 1:
         raise ManifestError(
             f"{len(candidates)} .docx files found under {workspace} "
             f"({', '.join(sorted(p.name for p in candidates))}); expected exactly one "
@@ -570,6 +581,12 @@ def prepareDocument(section: str | None = None, *, workspace: str | Path = ".", 
     manifest_path = _id_manifest_path(workspace_path, docx)
     existing = _read_id_manifest(manifest_path)
     drifted = existing is not None and existing.get("structure_fingerprint") != fingerprint
+    # Body edits made outside the framework (typing in Word, accepting or rejecting tracked
+    # changes) keep the heading skeleton but move paragraph IDs and change their text. Lookups
+    # read the manifest's text, so a stale copy would match old wording: rewrite it then too.
+    content_drift = existing is not None and [
+        (e.get("id"), e.get("text")) for e in existing.get("entries", []) if e.get("kind") != "run"
+    ] != [(e.get("id"), e.get("text")) for e in entries if e.get("kind") != "run"]
 
     if existing is None:
         reason = "created"
@@ -577,6 +594,8 @@ def prepareDocument(section: str | None = None, *, workspace: str | Path = ".", 
         reason = "forced"
     elif drifted:
         reason = "structure_drift"
+    elif content_drift:
+        reason = "content_drift"
     else:
         reason = "unchanged"
 

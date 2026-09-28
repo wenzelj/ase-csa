@@ -7,7 +7,7 @@ description: Write or revise a Current State Assessment section from an approved
 
 Write for technical and operational readers using the existing document's structure and style unless the user requests a redesign.
 
-Before drafting, load `australian-it-ot-terminology` (`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/australian-it-ot-terminology/SKILL.md`) for the words (technical terms, IT/OT classification, headings, Australian English), and both shared references -- they govern what the section is about and how it reads: `csa-writing-style` (`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-writing-style/SKILL.md`) for how the sentences read, and `references/current-state-reasoning.md` (relative to this skill) for what the section is about: the subject rule (system, not evidence), the three statement classes (fact / evidence / gap), "not observed" vs "does not exist", evidence correlation, scope of a statement, and IT/OT terminology. Write to both; the rules below govern what the sentences are allowed to claim.
+Before drafting, load `australian-it-ot-terminology` (`.agents/skills/australian-it-ot-terminology/SKILL.md`) for the words (technical terms, IT/OT classification, headings, Australian English), and both shared references -- they govern what the section is about and how it reads: `csa-writing-style` (`.agents/skills/csa-writing-style/SKILL.md`) for how the sentences read, and `references/current-state-reasoning.md` (relative to this skill) for what the section is about: the subject rule (system, not evidence), the three statement classes (fact / evidence / gap), "not observed" vs "does not exist", evidence correlation, scope of a statement, and IT/OT terminology. Write to both; the rules below govern what the sentences are allowed to claim.
 
 ## What a section must expose
 
@@ -20,7 +20,7 @@ The CSA is the baseline the later phases (scope, design change, segmentation) ac
 
 Anything that does not help answer one of these belongs in a table, the appendix, or nowhere.
 
-Before drafting, read the section's entry in the section scope map (`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-quality-review/references/section-scope.md`, part 4, plus the tie-breaks in part 5). Write only what this domain owns. When evidence concerns another domain, give it one sentence here if it explains this section's condition, and put the detail in the owning section's draft, or list it as a `Relocation` note in the change record.
+Before drafting, read the section's entry in the section scope map (`.agents/skills/csa-quality-review/references/section-scope.md`, part 4, plus the tie-breaks in part 5). Write only what this domain owns. When evidence concerns another domain, give it one sentence here if it explains this section's condition, and put the detail in the owning section's draft, or list it as a `Relocation` note in the change record.
 
 ## Section shape
 

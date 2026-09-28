@@ -20,7 +20,7 @@ Order of use (extends `csa-evidence-matrix`):
 ## Script
 
 ```text
-X="/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/csa-discovery-index/scripts/discovery_index.py"
+X=".agents/skills/csa-discovery-index/scripts/discovery_index.py"
 python3 "$X" --project utcdtc <command>
 ```
 

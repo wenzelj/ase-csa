@@ -64,7 +64,11 @@ def _load_project_registry():
     This script's own location is .agents/skills/csa-evidence-matrix/scripts/
     -- three parents up is .agents/.
     """
-    registry_path = Path(__file__).resolve().parents[3] / "csa-context" / "PROJECTS.yaml"
+    registry_path = (
+        Path(os.environ["CSA_PROJECTS_FILE"])
+        if os.environ.get("CSA_PROJECTS_FILE")
+        else Path(__file__).resolve().parents[3] / "csa-context" / "PROJECTS.yaml"
+    )
     if not registry_path.is_file():
         return []
     projects = []
@@ -288,6 +292,8 @@ def cmd_get(args):
     header, body, *_ = load(matrix)
     ids = {i.strip().upper() for i in args.ids}
     rows = [as_dict(header, r) for r in body if r and r[0].upper() in ids]
+    reviews = latest_reviews(matrix)
+    rows = [with_review(r, reviews) for r in rows]
     found = {r["evidence_id"].upper() for r in rows}
     emit({"status": "OK", "rows": rows, "not_found": sorted(ids - found)})
 
@@ -513,6 +519,42 @@ def cmd_append(args):
 
 
 # --------------------------------------------------------------------------- main
+def latest_reviews(matrix) -> dict:
+    """evidence_id -> latest review record from evidence-reviews.jsonl (empty if none)."""
+    log = matrix.parent / "evidence-reviews.jsonl"
+    out = {}
+    if log.is_file():
+        for line in log.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                rec = json.loads(line)
+                out[rec["evidence_id"].upper()] = rec
+    return out
+
+
+def with_review(row: dict, reviews: dict) -> dict:
+    rec = reviews.get(row.get("evidence_id", "").upper())
+    if rec:
+        row = dict(row, review_state=rec["state"], reviewed_by=rec["by"], reviewed_at=rec["at"])
+    return row
+
+
+def cmd_review(args):
+    _, matrix = resolve_paths(args)
+    header, body, *_ = load(matrix)
+    known = {r[0].strip().upper() for r in body if r}
+    ids = [i.strip().upper() for i in args.ids]
+    missing = [i for i in ids if i not in known]
+    if missing:
+        fail(f"unknown evidence_id(s): {', '.join(missing)}")
+    log = matrix.parent / "evidence-reviews.jsonl"
+    at = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+    with open(log, "a", encoding="utf-8") as fh:
+        for i in ids:
+            fh.write(json.dumps({"evidence_id": i, "state": args.state, "by": args.by, "at": at,
+                                 "note": args.note or ""}, ensure_ascii=False) + "\n")
+    emit({"status": "OK", "reviewed": ids, "state": args.state, "log": str(log)})
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--workspace", help="workspace root (default: derived from this script's location)")
@@ -533,6 +575,13 @@ def main():
 
     p = sub.add_parser("stats"); p.set_defaults(fn=cmd_stats)
     p = sub.add_parser("verify"); p.set_defaults(fn=cmd_verify)
+
+    p = sub.add_parser("review", help="record a human review of rows (appends to evidence-reviews.jsonl; the CSV is not changed)")
+    p.add_argument("ids", nargs="+")
+    p.add_argument("--by", required=True)
+    p.add_argument("--state", choices=["reviewed", "rejected"], default="reviewed")
+    p.add_argument("--note")
+    p.set_defaults(fn=cmd_review)
 
     p = sub.add_parser("append", help="append new evidence rows (append-only)")
     p.add_argument("--agent", required=True, help="who is writing, e.g. csa-change-authoring-agent")

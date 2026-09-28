@@ -5,7 +5,7 @@ description: Coordinate an evidence-led Current State Assessment for an Operatio
 
 # CSA Orchestrator
 
-Terminology: name every component, service, dependency and interface with `australian-it-ot-terminology` (`/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/skills/australian-it-ot-terminology/SKILL.md`), classify it as OT, supporting IT, shared, platform or external, and write in Australian English.
+Terminology: name every component, service, dependency and interface with `australian-it-ot-terminology` (`.agents/skills/australian-it-ot-terminology/SKILL.md`), classify it as OT, supporting IT, shared, platform or external, and write in Australian English.
 
 Drive the assessment to a finished, reviewable result. Work on one bounded section or question set at a time and maintain visible status so analysis does not loop.
 
@@ -26,9 +26,9 @@ For each section, follow the current-state reasoning loop in `csa-section-writer
 5. Ask only material questions that would change the assessment.
 6. Draft through `csa-section-writer` (with `csa-writing-style`) only after the evidence set is stable. The draft must pass `csa-writing-style/scripts/prose_lint.py` before review.
 7. Run `csa-quality-review`, including its concision and flow check, and resolve material findings.
+8. Mark the section complete, partial, blocked, or not applicable.
 
 To tighten a section that already exists in the working DOCX, route it to the change pipeline's `EDIT_MODE=editorial` pass (`csa-change-authoring.md`), not back through drafting.
-8. Mark the section complete, partial, blocked, or not applicable.
 
 Stop when the section definition of done is met. Do not reopen a completed section unless new evidence, a contradiction, or a user correction requires it.
 
