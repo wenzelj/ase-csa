@@ -146,6 +146,18 @@ agents:
     skill: csa-executive-summary-agent
     summary: Writer in EXECUTIVE_SUMMARY mode - only after the detailed sections are reviewed READY.
 
+  - verb: audit-section
+    file: csa-audit-agent.md
+    title: CSA Audit Agent
+    group: analysis
+    tier: frontier
+    arg: SECTION
+    inputs: SECTION=next, AUDIT_DIR=latest
+    locks: section
+    instruction: Audit the requested unit of the latest document audit (coverage against the section's Must explain questions, claims against evidence, consistency) and write AUDIT_DIR/sections/<slug>.md in the required format.
+    skill: csa-audit-agent
+    summary: Read-only audit of one section for what it is missing; feeds csa audit --report.
+
   - verb: qa
     file: csa-quality-reviewer-agent.md
     title: CSA Quality Reviewer Agent

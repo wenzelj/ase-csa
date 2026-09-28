@@ -561,6 +561,47 @@ def run_check_change(p: dict, cf: Path, a) -> int:
     return subprocess.call(argv, cwd=str(FRAMEWORK))
 
 
+def _audit_dirs(p: dict) -> list[Path]:
+    root = local_path(p["work_dir"]) / "audit"
+    return sorted((d for d in root.glob("2*") if (d / "audit.json").is_file()), key=lambda d: d.name) if root.is_dir() else []
+
+
+def cmd_audit(a):
+    """csa audit            scripted checks on the working DOCX -> WORK_DIR/audit/<id>/
+    csa audit --status   units and which have an agent audit
+    csa audit --report   assemble the Word report for the latest (or --id) audit"""
+    p = project(a.project); banner(p)
+    env = dict(os.environ, PYTHONPATH=os.pathsep.join([str(FRAMEWORK), str(FRAMEWORK / "vendor"), os.environ.get("PYTHONPATH", "")]))
+    if a.report or a.status:
+        dirs = _audit_dirs(p)
+        d = next((x for x in dirs if x.name == a.id), None) if a.id else (dirs[-1] if dirs else None)
+        if not d:
+            die("no audit found; run `csa audit` first")
+        if a.status:
+            j = json.loads((d / "audit.json").read_text(encoding="utf-8"))
+            done = {f.stem for f in (d / "sections").glob("*.md")}
+            print(f"Audit {d.name}: {len(j['units'])} units, {len(done)} audited in depth")
+            for u in j["units"]:
+                print(f"  [{'x' if u['slug'] in done else ' '}] {u['title']}")
+            nxt = next((u for u in j["units"] if u["slug"] not in done), None)
+            if nxt:
+                print(f"Next: csa audit-section SECTION={nxt['slug']}")
+            return 0
+        return subprocess.call([framework_python(), "-m", "csa_docx.audit_report", str(d)], cwd=str(FRAMEWORK), env=env)
+    docx = working_docx(p)
+    if not docx:
+        res = fw_call("prepareDocument", workspace=_ws(p))
+        docx = Path(res["docx"]) if res.get("docx") else None
+    if not docx:
+        die("no working DOCX found")
+    rc = subprocess.call([framework_python(), "-m", "csa_docx.audit", str(docx), "--work-dir", str(local_path(p["work_dir"])),
+                          "--label", p.get("label", p["key"])], cwd=str(FRAMEWORK), env=env)
+    if rc == 0:
+        print("Next: csa audit --status, then `csa audit-section SECTION=next` per unit, then `csa audit --report`.")
+    metric(p, "audit", None, exit=rc)
+    return rc
+
+
 def cmd_comments(a):
     p = project(a.project); banner(p)
     docx = working_docx(p)
@@ -1719,6 +1760,7 @@ State       csa status [N] [--json] | csa next
 Pipeline    csa author N | csa check-change N | csa approve N | csa apply N [--until-done] | csa review N | csa cleanup N
             csa pipeline N            (walks one section, stops at every human gate)
 Build lane  csa sections | csa check-section <file> | csa build [--preview] [--sections ..]   (first draft, version 0.1, of a template CSA; spec: docs/build-lane-spec.md)
+Audit      csa audit | csa audit --status | csa audit-section SECTION=next | csa audit --report   (what the document is missing; read-only)
 Parallel    csa fleet "author 6" "evidence 7" [-f tasks.txt] [--dry-run] [--print] [--timeout MIN]
             (one headless worker per slot in cli.yaml; DOCX steps never overlap)
 Analysis    csa ask <section> | evidence | gaps | analyse <skill> [SECTION=..] | write | summary | qa
@@ -1767,6 +1809,8 @@ def main(argv=None) -> int:
     s.add_argument("--force", action="store_true", help="approve even if csa check-change reports errors")
     s.add_argument("--reject", nargs="+", default=[], metavar="EDIT_ID", help="mark these edits REJECTED; they are never applied")
     s.add_argument("--file", help="a labelled change file for this section, e.g. story for ChangesCSA_<App>_Section<N>_story.md")
+    s = sp("audit", cmd_audit, help="audit the working DOCX for what it is missing (scripted stage, --status, --report)")
+    s.add_argument("--report", action="store_true"); s.add_argument("--status", action="store_true"); s.add_argument("--id")
     s = sp("comments", cmd_comments, help="list the reviewer comments in the working DOCX, optionally under one heading")
     s.add_argument("--heading"); s.add_argument("--json", action="store_true")
     s = sp("check-change", cmd_check_change, help="check a section's change file before approval")
