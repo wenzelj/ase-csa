@@ -408,6 +408,13 @@ def _find_workspace_docx(workspace: Path) -> Path:
     if not candidates:
         raise ManifestError(f"No .docx file found under {workspace}.")
     if len(candidates) > 1:
+        # Project folders also hold reference documents (older CSAs, designs, review notes).
+        # The working document lives in a "01 Final Version" folder: if exactly one candidate
+        # is there, it is the working document. Otherwise still refuse to guess.
+        final = [p for p in candidates if any(part.lower() == "01 final version" for part in p.relative_to(workspace).parts[:-1])]
+        if len(final) == 1:
+            return final[0]
+    if len(candidates) > 1:
         raise ManifestError(
             f"{len(candidates)} .docx files found under {workspace} "
             f"({', '.join(sorted(p.name for p in candidates))}); expected exactly one "
