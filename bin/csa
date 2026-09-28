@@ -322,9 +322,21 @@ def _block(text: str, heading: str) -> str:
     return text[m.end(): m.end() + nxt.start()] if nxt else text[m.end():]
 
 
-def section_state(p: dict, section: str) -> dict:
+def pick_change_file(p: dict, section: str, file: str | None) -> Path | None:
+    """The section's main change file, or with ``file`` the labelled one whose name or label matches."""
+    files = all_change_files(p).get(str(int(section)), [])
+    if not file:
+        return files[0] if files else None
+    for f in files:
+        m = CHANGE_FILE_RE.match(f.name)
+        if file in (f.name, f.stem, m["label"] or ""):
+            return f
+    die(f"section {section} has no change file matching {file!r}: {', '.join(f.name for f in files) or 'none'}")
+
+
+def section_state(p: dict, section: str, file: str | None = None) -> dict:
     section = str(int(section))
-    cf = change_files(p).get(section)
+    cf = pick_change_file(p, section, file)
     st = {"section": section, "title": "", "change_file": str(cf) if cf else None,
           "authored": bool(cf), "edits": [], "approved": False, "status_line": None,
           "apply_status": "NOT_STARTED", "completed": [], "blocked": [], "next_edit": None,
@@ -551,7 +563,7 @@ def run_check_change(p: dict, cf: Path, a) -> int:
 
 def cmd_check_change(a):
     p = project(a.project); banner(p)
-    st = section_state(p, a.section)
+    st = section_state(p, a.section, getattr(a, "file", None))
     if not st["change_file"]:
         die(f"section {a.section} has no change file.")
     rc = run_check_change(p, Path(st["change_file"]), a)
@@ -646,7 +658,7 @@ def cmd_sections(a):
 
 def cmd_approve(a):
     p = project(a.project); banner(p)
-    st = section_state(p, a.section)
+    st = section_state(p, a.section, getattr(a, "file", None))
     if not st["change_file"]:
         die(f"section {a.section} has no change file yet. Run `csa author {a.section}` first.")
     cf = Path(st["change_file"])
@@ -698,12 +710,14 @@ def _apply_once(p, a, limit):
           "comment_initials": settings().get("comment_initials", "WJ")}
     if a.edit:
         kw["start_edit_id"] = kw["end_edit_id"] = a.edit
+    if getattr(a, "file", None):
+        kw["change_file"] = section_state(p, a.section, a.file)["change_file"]
     return fw_call("apply_next_batch", str(a.section), limit, **kw)
 
 
 def cmd_apply(a):
     p = project(a.project); banner(p)
-    st = section_state(p, a.section)
+    st = section_state(p, a.section, getattr(a, "file", None))
     if not st["change_file"]:
         die(f"section {a.section} has no change file. Run `csa author {a.section}` first.")
     if not st["approved"] and not a.allow_unapproved:
@@ -1705,8 +1719,9 @@ def main(argv=None) -> int:
     s.add_argument("--yes", "-y", action="store_true"); s.add_argument("--revoke", action="store_true")
     s.add_argument("--force", action="store_true", help="approve even if csa check-change reports errors")
     s.add_argument("--reject", nargs="+", default=[], metavar="EDIT_ID", help="mark these edits REJECTED; they are never applied")
+    s.add_argument("--file", help="a labelled change file for this section, e.g. story for ChangesCSA_<App>_Section<N>_story.md")
     s = sp("check-change", cmd_check_change, help="check a section's change file before approval")
-    s.add_argument("section"); s.add_argument("--no-anchors", action="store_true")
+    s.add_argument("section"); s.add_argument("--no-anchors", action="store_true"); s.add_argument("--file", help="a labelled change file for this section, e.g. story for ChangesCSA_<App>_Section<N>_story.md")
     s.add_argument("--no-lint", action="store_true"); s.add_argument("--json", action="store_true")
     s = sp("check-section", cmd_check_section, help="check a build-lane section file before approval")
     s.add_argument("file"); s.add_argument("--no-lint", action="store_true"); s.add_argument("--json", action="store_true")
@@ -1725,6 +1740,7 @@ def main(argv=None) -> int:
     s.add_argument("--agent", action="store_true", help="run the document agent (LLM) instead of the framework")
     s.add_argument("--agent-on-block", action="store_true", help="hand over to the document agent if a batch is BLOCKED")
     s.add_argument("--allow-unapproved", action="store_true"); s.add_argument("--json", action="store_true")
+    s.add_argument("--file", help="a labelled change file for this section, e.g. story for ChangesCSA_<App>_Section<N>_story.md")
     s.add_argument("--set", nargs="*", help="KEY=VALUE overrides for --agent"); agent_opts(s)
     s = sp("pipeline", cmd_pipeline); s.add_argument("section"); s.add_argument("--limit", type=int)
     s.add_argument("--max-batches", type=int, default=50); agent_opts(s)
