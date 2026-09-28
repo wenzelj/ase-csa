@@ -17,6 +17,38 @@ Before applying anything below, read a paragraph or two of the section's surroun
 
 Match the register (formality, level of detail), not the structural habits. Spelling and technical terms always follow `australian-it-ot-terminology` (`.agents/skills/australian-it-ot-terminology/SKILL.md`): Australian English and the terminology table, even where the surrounding text uses US spelling or looser terms. If the surrounding text breaks the "Say it once, say it first" rules below (bullet fragments, restated facts, announcing lead-ins), do not copy those habits into new text.
 
+## Tell the story
+
+A reader should be able to read a paragraph aloud to a colleague and have it make sense. Write each paragraph as a short explanation of how this part of the system works, not as a list of what the evidence contains. Follow this order, and leave out any step that has nothing to say:
+
+1. **What it is.** Name the part of the system and its job in a few words ("Three outside systems feed the control system").
+2. **How the pieces connect.** Who talks to whom, and who starts the conversation, in plain words. Name components by their role ("the two application servers", "the primary-site pair"), not by host name.
+3. **What is notable.** What differs from the design, the requirement, or between sites.
+4. **What it means.** The consequence for operations, including if the OT environment is isolated.
+5. **What is still unknown.** Once, at the end, in one sentence, with who can confirm it.
+
+### Identifier budget
+
+- **No IP addresses or subnets in prose.** They go in the discovery table, the observed-state table or the appendix. `csa check-change` rejects an IP address in an edit's prose text.
+- **At most one port number per paragraph**, and only where the port is the point (for example, the one inbound port a firewall must allow).
+- **Name hosts by role**, and give a host name only where the reader needs it to act or to find the host in a table. Never list more than two host names in a sentence.
+- **Average sentence 24 words or fewer; no sentence over 35 words.** Split any sentence that carries more than one fact about more than one component.
+- **One hedge per point.** Put the unknown once, at the end ("Whether the second site is used only on failover is still to be confirmed with the operations team."), not in every sentence.
+
+`prose_lint.py` measures each of these.
+
+### Example
+
+Before (accurate, but a data dump):
+
+> The historian is the single collection point for all three plant networks. The collector service runs on HIST01 (10.20.4.11) and HIST02 (10.20.4.12) and listens on tcp/5450 and tcp/5451, and PLC gateways GW01-GW06 (10.20.8.0/24) connect to it on tcp/5450 while the reporting server RPT01 (10.40.2.20) connects on tcp/5451 from the IT network, which is the inbound direction the requirement seeks to avoid, and no Kerberos or NTLM was observed on either flow, so the flows are effectively unauthenticated.
+
+After (the same facts, told as a story):
+
+> All three plant networks send their data to one place: the historian pair. The PLC gateways push readings to it from the OT side. The reporting server works the other way round: it reaches in from the IT network to pull data out, which is the inbound direction the requirement aims to avoid. Neither connection uses the Windows domain to prove who is calling; whether the historian checks the caller some other way is still to be confirmed with the vendor.
+
+The addresses, ports and gateway names move to the discovery table. Nothing is lost, and the paragraph now explains the system instead of listing it.
+
 ## Say it once, say it first
 
 A Current State Assessment (CSA) gives decision-makers an evidenced baseline: what exists, how it differs from what the design or reference standard expects, and what that means for operations. Its readers are technical and operational people who already know the technologies. They need the facts and their consequence, not a tour of the evidence. These rules apply to every paragraph, bullet and table cell, and they outrank "match the existing voice".

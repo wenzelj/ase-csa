@@ -154,7 +154,7 @@ For each place in the section where evidence contradicts or fills a gap in the d
 
 1. Identify the exact current text and what specifically is wrong, outdated, or missing about it.
 2. Call `lookupStableId` to resolve its `@H...` anchor (see Framework Tools). Do not proceed to draft the edit until you have an unambiguous ID or have decided this item belongs under Open questions instead.
-3. Draft the replacement/insertion/deletion text following `csa-writing-style` and `csa-section-writer` (loaded in First Actions) -- the same table-row shape and sentence style as its neighbours, in plain, human-sounding wording, not your own idea of "the document's voice." These are the CSA Writer Agent's rules; you apply them here because implementation efficiency keeps authoring and drafting in one run, not because this agent owns the voice. Do not put an evidence ID in this text -- it is document prose, not a citation trail; the citation goes in `Why` (step 4) only.
+3. Write the edit's **Facts** list: every fact the new text must carry, one per line, each with its E-id(s), plus at most one line starting `Unknown:` for what is still open. This is the content decision, and it is yours. Include only what the reader needs; put addresses, ports and host lists in a `Table detail:` line, which tells the Writer the detail belongs in a table, not the paragraph. Then draft the Text from the Facts using the story model in `csa-writing-style` ("Tell the story" and "Identifier budget"). When the edit replaces a paragraph, you may restructure the whole paragraph: keeping the original's wording or density is never a reason to keep a hard-to-read paragraph, but every fact in it must either stay, move to `Table detail:`, or be removed with a reason in `Why`. Table-row edits keep their row shape. No evidence ID, IP address or subnet goes in prose Text. After the change file is written, the Writer agent rewrites the Text of every prose record from its Facts (`csa write SECTION=<N> MODE=records`) before approval; your draft is the starting point, not the final wording.
 4. Write the `Why`, citing the specific evidence file(s) and host(s) that support the change -- not "evidence supports this" but the actual filename and what it showed -- plus the matrix E-id(s) (see Evidence Matrix First).
 5. Write the `Note`: the plain-language comment reviewers will see in Word (see "Comment notes" in `csa-writing-style`). One or two sentences, 40 words at most. Before finishing the file, preview every comment with `cd .agents/framework && python3 -m csa_docx.comment_text <change file>` and fix every warning it prints.
 6. Assign the next sequential `S<N>-E<n>` (or `S<N>-A<n>` for a purely administrative field such as a cover date or document-control metadata, not a technical content claim).
@@ -272,6 +272,11 @@ The main issues identified were:
 
 **Do:** Replace / Insert before / Insert after / Delete
 
+**Facts:**
+- <one fact the text must carry> (E-nnn)
+- Table detail: <addresses, ports, host names that belong in a table, not the paragraph> (E-nnn)
+- Unknown: <the one open point, if any, and who can confirm it>
+
 **Text:**
 
 > <the proposed replacement/insertion text, blockquoted; multiple paragraphs each on their own `>` line -- plain document prose, exactly as it should read in the DOCX. Never include an evidence ID, `E-nnn`, or any other citation marker inside this text. The document body is not a citation trail; the reader should not see "[E-042]" sitting in a paragraph. Evidence IDs belong only in `Why` below (and from there, in the Word comment the implementation agent attaches to this edit -- see current-state-assessment-document.md's Word Comments section).>
@@ -363,6 +368,7 @@ READ AGENT
 -> RECORD UNSUPPORTED/AMBIGUOUS ITEMS AS OPEN QUESTIONS
 -> WRITE CHANGE PROPOSAL FILE
 -> RUN csa check-change <N>, FIX EVERY ERROR
+-> HAND OVER: csa write SECTION=<N> MODE=records (Writer rewrites prose Text from Facts)
 -> UPDATE RUN-STATE
 -> UPDATE LEARNINGS FILE
 -> REPORT TO USER

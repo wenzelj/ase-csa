@@ -77,6 +77,14 @@ def anchor_findings(records, workspace: str) -> list[dict]:
 
 EID_RE = re.compile(r"\bE-\d{2,}\b")
 MARKDOWN_RE = re.compile(r"\*\*|`|^\s*>|^\s*#", re.M)
+# Addresses and subnets are table or appendix detail, never document prose (csa-writing-style, identifier budget).
+IP_RE = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}(?:/\d{1,2})?\b")
+
+
+def _is_table_text(t: str) -> bool:
+    """A table row or cell edit (pipe-separated, or Observed:/Assessment: row text) may carry addresses."""
+    first = t.strip().splitlines()[0] if t.strip() else ""
+    return " | " in first or first.startswith(("Observed:", "Assessment:"))
 
 
 def hygiene_findings(records) -> list[dict]:
@@ -91,6 +99,10 @@ def hygiene_findings(records) -> list[dict]:
             out.append(finding("ERROR", "STABLE_ID_IN_TEXT", "stable ID (@H...) in Text", r.edit_id))
         elif MARKDOWN_RE.search(t):
             out.append(finding("ERROR", "MARKDOWN_IN_TEXT", "Markdown (**, backticks, >, #) in Text; it would land in the document", r.edit_id))
+        if IP_RE.search(t) and not _is_table_text(t):
+            out.append(finding("ERROR", "IP_IN_TEXT", "IP address or subnet in prose Text; put it in the discovery table or appendix and name the component by role", r.edit_id))
+        if t.strip() and r.action.lower().startswith(("replace", "insert")) and not (r.facts or "").strip() and not _is_table_text(t):
+            out.append(finding("WARN", "NO_FACTS", "no **Facts:** list; the Writer should write Text from the authoring agent's fact list", r.edit_id))
         for w in comment_warnings(r):
             out.append(finding("WARN", "NOTE", w, r.edit_id))
     return out

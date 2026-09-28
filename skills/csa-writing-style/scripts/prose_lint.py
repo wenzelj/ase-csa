@@ -12,6 +12,8 @@ section, the patterns that make an assessment read as over-detailed and fragment
   - evidence IDs and evidence file names in body prose
   - heading label noise ("(Evidence-Based)", "(Script Evidence)") and placeholder headings
   - duplicate Heading 1 titles, and prose word count against a section budget
+  - readability: IP addresses in prose, identifier and port density per paragraph,
+    long sentences, average sentence length, and stacked hedges
 
 Tables are treated as the proper home for identifiers and detail: they count toward
 nothing except the word total. The script only reads; it never modifies the input.
@@ -82,6 +84,15 @@ IDENT_RES = [
     re.compile(r"\b[a-z][\w-]*(?:\.[a-z][\w-]*){2,}\b", re.IGNORECASE),  # FQDN
 ]
 SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+# Readability (tell the story): detail that belongs in a table, and paragraphs that read like a data dump.
+IP_RE = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}(?:/\d{1,2})?\b|\b\d{1,3}(?:\.\d{1,3}){2}\.x\b|\.\d{1,3}/\.\d{1,3}\b")
+PORT_RE = re.compile(r"\b(?:tcp|udp)\s*/\s*\d{2,5}\b|\bports?\s+\d{2,5}\b", re.IGNORECASE)
+HEDGE_RE = re.compile(r"\b(?:not (?:been )?(?:established|observed|confirmed|verified)|has not been|could not be|unclear|appears? to|may be|possibly)\b", re.IGNORECASE)
+MAX_SENTENCE_WORDS = 35
+MAX_AVG_SENTENCE_WORDS = 24
+MAX_IDENTIFIERS_PER_PARA = 3
+MAX_PORTS_PER_PARA = 1
+MAX_HEDGES_PER_PARA = 2
 
 # ---------------------------------------------------------------- model
 @dataclass
@@ -242,8 +253,39 @@ def analyse(sec: Section, max_words: int) -> dict:
     noisy_headings = [h.text for h in headings if HEADING_NOISE_RE.search(h.text)]
     placeholder_headings = [h.text for h in headings if PLACEHOLDER_HEADING_RE.search(h.text)]
 
+    # readability
+    ips = [m.group(0) for p in prose for m in IP_RE.finditer(p.text)]
+    sentences = [s for p in prose for s in SENTENCE_SPLIT_RE.split(p.text) if words(s) >= 3]
+    long_sents = [s for s in sentences if words(s) > MAX_SENTENCE_WORDS]
+    avg_sent = (sum(words(s) for s in sentences) / len(sentences)) if sentences else 0.0
+    dense_paras, porty_paras, hedgy_paras = [], [], []
+    for p in prose:
+        ids = set()
+        for rx in IDENT_RES:
+            ids.update(m.group(0).lower() for m in rx.finditer(p.text))
+        ports = PORT_RE.findall(p.text)
+        ids.update(x.lower() for x in ports)
+        if len(ids) > MAX_IDENTIFIERS_PER_PARA:
+            dense_paras.append(p.text[:60])
+        if len(ports) > MAX_PORTS_PER_PARA:
+            porty_paras.append(p.text[:60])
+        if len(HEDGE_RE.findall(p.text)) > MAX_HEDGES_PER_PARA:
+            hedgy_paras.append(p.text[:60])
+
     share = (len(bullets) / len(prose)) if prose else 0.0
     warns = []
+    if ips:
+        warns.append(f"{len(ips)} IP addresses or subnets in prose; move them to the discovery table or appendix")
+    if dense_paras:
+        warns.append(f"{len(dense_paras)} paragraphs name more than {MAX_IDENTIFIERS_PER_PARA} identifiers (hosts, addresses, ports); name components by role and put the detail in a table")
+    if porty_paras:
+        warns.append(f"{len(porty_paras)} paragraphs give more than {MAX_PORTS_PER_PARA} port number; keep a port only where it is the point")
+    if long_sents:
+        warns.append(f"{len(long_sents)} sentences over {MAX_SENTENCE_WORDS} words; split them")
+    if avg_sent > MAX_AVG_SENTENCE_WORDS:
+        warns.append(f"average sentence is {avg_sent:.0f} words (target {MAX_AVG_SENTENCE_WORDS} or fewer)")
+    if hedgy_paras:
+        warns.append(f"{len(hedgy_paras)} paragraphs carry more than {MAX_HEDGES_PER_PARA} hedges; state what is unknown once, at the end")
     if prose_words > max_words:
         warns.append(f"prose is {prose_words} words (budget {max_words}); cut restatement first")
     if share > 0.40 and len(prose) >= 8:
@@ -289,6 +331,10 @@ def analyse(sec: Section, max_words: int) -> dict:
         "evidence_files_in_prose": sorted(set(ev_files))[:10],
         "noisy_headings": noisy_headings,
         "placeholder_headings": placeholder_headings,
+        "ip_addresses_in_prose": ips[:10],
+        "long_sentences": len(long_sents),
+        "avg_sentence_words": round(avg_sent, 1),
+        "dense_paragraphs": dense_paras[:5],
         "warnings": warns,
         "status": "WARN" if warns else "PASS",
     }

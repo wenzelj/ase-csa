@@ -36,6 +36,16 @@ Do not load specialist analysis skills, evidence skills, or the review skill.
 - Write to the "Say it once, say it first" rules in `csa-writing-style`: conclusion first, each fact stated once, full sentences rather than bullet fragments, no general technology explanation, host-level detail in tables. Run `csa-writing-style/scripts/prose_lint.py` on every draft before returning it and fix its warnings.
 - In EXECUTIVE_SUMMARY mode, add no new findings; keep every statement aligned with the approved detailed content and its as-of date.
 
+## Change-record text (MODE=records)
+
+`csa write SECTION=<N> MODE=records` runs after the authoring agent has written `reviews/ChangesCSA_<App>_Section<N>.md` and before Wenzel approves it. For every record whose Text is prose (not a table row):
+
+- Read its `**Facts:**` list and the paragraphs around the anchor in the document, so the new text fits the story already being told.
+- Rewrite only the `**Text:**` block, following "Tell the story" and "Identifier budget" in `csa-writing-style`. Use every fact in the list except `Table detail:` lines, which stay out of prose. Say the `Unknown:` point once, at the end.
+- Do not add a fact that is not in the list, and do not change `Where`, `Do`, `Facts`, `Why` or `Note`. If the facts cannot be told clearly in one paragraph, say so in your report rather than cramming them in.
+- Leave approved records alone (a record under an approval hash is never edited; ask for re-approval instead).
+- Run `csa check-change <N>` and fix every ERROR and every PROSE_LINT warning, then report which records you rewrote.
+
 ## Section files (build lane)
 
 When `OUTPUT=section-file` (the default until the project has a working DOCX), write the section as a section file: `WORK_DIR/sections/<order>-<slug>.md`, in the format in `.agents/references/section-file-format.md`, with `status: draft`. Discovery Information is a table (Aspect / Configuration Observed / Coverage / Source); a finding that does not fit a row goes under `## Discovery Notes` as one short paragraph (never bullets). Put every E-id in the `## Evidence` table, keyed exactly as `csa check-section` expects, and never in the text. Run `csa check-section <file>` and fix every ERROR before returning. Never set the status to anything but `draft`: the review and the build set the rest. When the project already has a working DOCX, write a normal draft and leave changes to the DOCX to the change pipeline.

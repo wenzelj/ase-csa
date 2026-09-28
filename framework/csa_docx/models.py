@@ -15,6 +15,7 @@ class ChangeRecord:
     raw: str
     questions: list[str] = field(default_factory=list)
     note: str = ""  # plain-language summary for the Word comment (**Note:** field)
+    facts: str = ""  # authoring agent's fact list the Writer wrote Text from (**Facts:** field); never applied
 
 
 @dataclass(slots=True)
