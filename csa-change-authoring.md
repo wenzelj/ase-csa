@@ -106,7 +106,9 @@ At the beginning of every authoring run:
 - list `WORK_DIR/analysis/` and `WORK_DIR/drafts/`, if either exists. These hold the evidence-led orchestrator workflow's output (technical-analyst structured analyses and writer-agent section drafts) for this project, if that workflow has been run -- a synthesized starting point this agent must check before drafting edits from scratch. See Evidence Mapping below for how to use them;
 - scan every existing `reviews/*.md` file for this section (there may be none, if this is truly the first section authored) and identify the highest `S<N>-E<n>` and the highest `S<N>-A<n>` already used in this section's files. Your first content edit is `S<N>-E` followed by the next integer after that; your first administrative edit is `S<N>-A` followed by the next integer after that. IDs are section-scoped and sequential within the section -- they never reset between sections, and never re-derived from a stale counter file (there isn't one; this scan is the source of truth, the same reason `manifest.py` never caches its own manifest);
 - search the other sections' `reviews/*.md` files for `Relocation:` open questions whose target is this section, and any `csa qa` section-fit findings for this section; treat each as a candidate edit (see Out-Of-Place Content);
-- identify the requested section's heading text and read its current content (from the stable-ID manifest's text previews, or a direct read of the paragraphs/table rows under that heading).
+- identify the requested section's heading text and read its current content (from the stable-ID manifest's text previews, or a direct read of the paragraphs/table rows under that heading);
+- list the reviewer comments on that section or subsection with `csa -p <key> comments --heading "<number or title>"`; every comment becomes an item in the section brief;
+- write the section brief (see Section Brief below) before any evidence search.
 
 ## Framework Tools (`csa-mcp`)
 
@@ -118,6 +120,21 @@ At the beginning of every authoring run:
   - `match_count == 0` -> the text you searched for is not present as you expected (possible drift since the manifest was built, or you mis-transcribed it). Re-check against the manifest text preview; if it's still not there, record it under `## Open questions` rather than guessing a nearby location.
   - This never opens or modifies the DOCX -- it only reads the manifest `prepareDocument` already built, so it is safe and cheap to call once per candidate edit, including ones you end up discarding.
 - Neither tool needs a `section` argument in normal use -- the manifest they share covers the whole document. Only pass `section=<N>` if a call errors saying the workspace has more than one distinct working DOCX and needs one to disambiguate; that is not the normal case for a single-document CSA project.
+
+## Section Brief (required, before evidence)
+
+The existing text is not the brief. A subsection exists to answer its parent section's questions for one part of the system, and an evidence edit that only checks the existing claims keeps whatever framing the original author chose, right or wrong. So before any evidence search, write the brief into the change file under `## Section brief`:
+
+- **Purpose:** one sentence: what this subsection explains, in the parent section's terms (for 3.7: how data moves and where it is held, not how the network is built).
+- **Requirements:** the parent section's requirement IDs (from the scope map, part 4).
+- **Questions:** numbered `B1`, `B2`, ... Build them from the parent domain's **Must explain** line in `section-scope.md`, applied to what this subsection covers (one question per requirement per component is typical). Add any question a reviewer comment raises as `C1`, `C2`, ..., quoting the comment briefly.
+- **Not here:** topics this subsection touches that another section owns (from the scope map's **Not here** line), so they stay a one-clause mention at most.
+
+Then drive the evidence search from the questions, not from the existing sentences: every `B`/`C` item is looked up in the matrix and index. An item nothing answers becomes a `NOT_FOUND` row and an open question, which is itself a finding. An existing claim that answers no brief item is either relocated (`Relocation:` under Open questions) or dropped with a reason in `Why`.
+
+Every line of an edit's `**Facts:**` list starts with the brief item it answers, for example `- [B3] IAMPS opens the connection from the IT side (E-003)`. `Table detail:` and `Unknown:` lines are exempt. `csa check-change` warns on an untagged fact and on a brief item that no fact, open question or "left unchanged" note mentions.
+
+The Text then tells the subsection's story in brief order: open with the Purpose, walk the questions, end with the consequence for the section's requirements and the one unknown.
 
 ## Section Identification
 
@@ -254,6 +271,17 @@ Write the change file at `reviews/ChangesCSA_<AppName>_Section<N>.md` -- one fil
 
 ---
 
+## Section brief
+
+- **Purpose:** <what this subsection explains, in the parent section's terms>
+- **Requirements:** <requirement IDs>
+- **Questions:**
+  - B1 <question from the section's Must explain line>
+  - C1 <question raised by a reviewer comment, with a short quote>
+- **Not here:** <topics owned by other sections>
+
+---
+
 ## Review position
 
 <one short paragraph on what this section's purpose is>
@@ -273,7 +301,7 @@ The main issues identified were:
 **Do:** Replace / Insert before / Insert after / Delete
 
 **Facts:**
-- <one fact the text must carry> (E-nnn)
+- [B1] <one fact the text must carry> (E-nnn)
 - Table detail: <addresses, ports, host names that belong in a table, not the paragraph> (E-nnn)
 - Unknown: <the one open point, if any, and who can confirm it>
 
@@ -360,6 +388,7 @@ READ AGENT
 -> READ LEARNINGS FILE
 -> LIST WORK_DIR/analysis/ AND WORK_DIR/drafts/ (if present)
 -> IDENTIFY SECTION TEXT AND CLAIMS
+-> LIST REVIEWER COMMENTS (csa comments) AND WRITE THE SECTION BRIEF (purpose, requirements, B/C questions, not here)
 -> CHECK ANALYSIS/DRAFTS FOR A MATCHING TOPIC (pointer to E-ids, not evidence itself)
 -> LOOKUP EVIDENCE MATRIX (csa-evidence-matrix skill) FOR EACH CLAIM, INCLUDING ANY CITED BY ANALYSIS/DRAFTS
 -> FOR WHAT THE MATRIX DID NOT ANSWER: DISCOVERY INDEX (csa index), THEN RAW FILES ONLY FOR WHAT IT DOES NOT COVER

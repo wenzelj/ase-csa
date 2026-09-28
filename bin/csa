@@ -561,6 +561,22 @@ def run_check_change(p: dict, cf: Path, a) -> int:
     return subprocess.call(argv, cwd=str(FRAMEWORK))
 
 
+def cmd_comments(a):
+    p = project(a.project); banner(p)
+    docx = working_docx(p)
+    if not docx:
+        fv = sorted(local_path(p["project_root"]).rglob("01 Final Version/*.docx"))
+        docx = next((d for d in fv if not d.name.startswith("~$") and not _archived(d, local_path(p["project_root"]))), None)
+    if not docx:
+        die("no working DOCX found")
+    argv = [framework_python(), "-m", "csa_docx.list_comments", str(docx)]
+    if a.heading:
+        argv += ["--heading", a.heading]
+    if a.json:
+        argv.append("--json")
+    return subprocess.run(argv, cwd=str(FRAMEWORK)).returncode
+
+
 def cmd_check_change(a):
     p = project(a.project); banner(p)
     st = section_state(p, a.section, getattr(a, "file", None))
@@ -1751,6 +1767,8 @@ def main(argv=None) -> int:
     s.add_argument("--force", action="store_true", help="approve even if csa check-change reports errors")
     s.add_argument("--reject", nargs="+", default=[], metavar="EDIT_ID", help="mark these edits REJECTED; they are never applied")
     s.add_argument("--file", help="a labelled change file for this section, e.g. story for ChangesCSA_<App>_Section<N>_story.md")
+    s = sp("comments", cmd_comments, help="list the reviewer comments in the working DOCX, optionally under one heading")
+    s.add_argument("--heading"); s.add_argument("--json", action="store_true")
     s = sp("check-change", cmd_check_change, help="check a section's change file before approval")
     s.add_argument("section"); s.add_argument("--no-anchors", action="store_true"); s.add_argument("--file", help="a labelled change file for this section, e.g. story for ChangesCSA_<App>_Section<N>_story.md")
     s.add_argument("--no-lint", action="store_true"); s.add_argument("--json", action="store_true")

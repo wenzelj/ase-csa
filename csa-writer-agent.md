@@ -40,7 +40,7 @@ Do not load specialist analysis skills, evidence skills, or the review skill.
 
 `csa write SECTION=<N> MODE=records` runs after the authoring agent has written `reviews/ChangesCSA_<App>_Section<N>.md` and before Wenzel approves it. For every record whose Text is prose (not a table row):
 
-- Read its `**Facts:**` list and the paragraphs around the anchor in the document, so the new text fits the story already being told.
+- Read the change file's `## Section brief` first: the Purpose is the story you are telling, and the questions are its order. Then read the record's `**Facts:**` list and the paragraphs around the anchor. Open with the Purpose in the parent section's terms, answer the questions in brief order, and end with the consequence for the section's requirements. A fact that is true but answers no brief question stays out of the text.
 - Rewrite only the `**Text:**` block, following "Tell the story" and "Identifier budget" in `csa-writing-style`. Use every fact in the list except `Table detail:` lines, which stay out of prose. Say the `Unknown:` point once, at the end.
 - Do not add a fact that is not in the list, and do not change `Where`, `Do`, `Facts`, `Why` or `Note`. If the facts cannot be told clearly in one paragraph, say so in your report rather than cramming them in.
 - Leave approved records alone (a record under an approval hash is never edited; ask for re-approval instead).

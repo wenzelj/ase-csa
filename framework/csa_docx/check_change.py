@@ -87,6 +87,82 @@ def _is_table_text(t: str) -> bool:
     return " | " in first or first.startswith(("Observed:", "Assessment:"))
 
 
+BRIEF_RE = re.compile(r"^##\s+Section brief\s*$(.*?)(?=^#{2,}\s|^---\s*$|\Z)", re.M | re.S | re.I)
+BRIEF_ITEM_RE = re.compile(r"^\s*[-*]?\s*([BC]\d+)\b", re.M)
+FACT_TAG_RE = re.compile(r"^\s*[-*]\s*\[([BC]\d+(?:\s*,\s*[BC]\d+)*)\]")
+
+
+def brief_findings(text: str, records) -> list[dict]:
+    """Section brief: present, every fact tagged with the brief item it answers, every item answered somewhere."""
+    prose = [r for r in records if (r.text or "").strip() and not _is_table_text(r.text) and r.action.lower().startswith(("replace", "insert"))]
+    if not prose:
+        return []
+    m = BRIEF_RE.search(text)
+    if not m:
+        return [finding("WARN", "NO_BRIEF", "no '## Section brief' (purpose, requirements, B/C questions); write it before the evidence search")]
+    items = list(dict.fromkeys(BRIEF_ITEM_RE.findall(m.group(1))))
+    out = []
+    if not items:
+        out.append(finding("WARN", "BRIEF_NO_QUESTIONS", "the section brief lists no B1/C1 questions"))
+    for r in prose:
+        for line in (r.facts or "").splitlines():
+            ln = line.strip()
+            if not ln.startswith(("-", "*")) or re.match(r"^[-*]\s*(Table detail|Unknown)\s*:", ln, re.I):
+                continue
+            if not FACT_TAG_RE.match(ln):
+                out.append(finding("WARN", "UNTAGGED_FACT", f"fact does not name the brief item it answers: {ln[:80]}", r.edit_id))
+    rest = text[:m.start()] + text[m.end():]
+    for it in items:
+        if not re.search(rf"\b{it}\b", rest):
+            out.append(finding("WARN", "BRIEF_ITEM_UNANSWERED", f"{it} is not answered by any fact, open question or unchanged note"))
+    return out
+
+
+def section_fit_findings(text: str, records) -> list[dict]:
+    """Signal terms in each prose record against the domain the brief's requirement IDs name.
+    Uses the section scope map and the quality reviewer's scanner, so the rules live in one place."""
+    m = BRIEF_RE.search(text)
+    req = re.search(r"Requirements:\*?\*?\s*(.*)", m.group(1)) if m else None
+    families = set(re.findall(r"SEP-([A-Z]+)-\d+", req.group(1))) if req else set()
+    if not families:
+        return []
+    scan_py = SKILLS / "csa-quality-review" / "scripts" / "section_fit_scan.py"
+    scope_md = SKILLS / "csa-quality-review" / "references" / "section-scope.md"
+    if not scan_py.is_file() or not scope_md.is_file():
+        return []
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("section_fit_scan", scan_py)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules.setdefault("section_fit_scan", mod)
+    try:
+        spec.loader.exec_module(mod)
+        domains = mod.load_scope(scope_md)
+    except BaseException:
+        return []
+    owner = set()
+    cur = None
+    for line in scope_md.read_text(encoding="utf-8").splitlines():
+        h = re.match(r"^###\s+(\d+\.\d+)\s", line)
+        if h:
+            cur = h.group(1)
+        elif cur and line.startswith("- **Requirements:**") and families & set(re.findall(r"SEP-([A-Z]+)-\d+", line)):
+            owner.add(cur)
+    if not owner:
+        return []
+    out = []
+    for r in records:
+        t = (r.text or "").strip()
+        if not t or _is_table_text(t):
+            continue
+        sc = mod.scores(t, domains)
+        own = max(sc.get(d, 0) for d in owner)
+        other, hits = max(((d, n) for d, n in sc.items() if d not in owner), key=lambda kv: kv[1], default=(None, 0))
+        if other and hits >= 3 and hits >= own + 2:
+            name = next((d.name for d in domains if d.num == other), other)
+            out.append(finding("WARN", "SECTION_FIT", f"the text reads as {other} {name} ({hits} signal terms) more than this section's domain ({own}); tell the section's story or relocate the detail", r.edit_id))
+    return out
+
+
 def hygiene_findings(records) -> list[dict]:
     from csa_docx.comment_text import comment_warnings
 
@@ -147,6 +223,8 @@ def check(path: Path, workspace: str | None = None, anchors: bool = True, lint: 
         else:
             findings.append(finding("INFO", "ANCHOR_CHECK_SKIPPED", "no --workspace given"))
     findings += hygiene_findings(records)
+    findings += brief_findings(text, records)
+    findings += section_fit_findings(text, records)
     if lint:
         findings += lint_findings(records)
     return {

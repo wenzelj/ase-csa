@@ -13,3 +13,7 @@ Entry format:
 ## 2026-09-28 - Integration claims: check both ends and every site
 Trigger: a subsection said all integrations terminate "at the same hosts per site" and cited captures from the peer servers, which were held in another project; only one site showed sessions.
 Rule: confirm a cross-system flow from the evidence this project holds (listener-side process mapping, network monitoring exports), check each site separately, and treat "no domain authentication on the flow" as different from "unauthenticated".
+
+## 2026-09-28 - Write from the section brief, not from the existing paragraph
+Trigger: a Storage & Data Transfer subsection was corrected twice as a network description because the run checked the original paragraph's claims instead of asking what the section needs.
+Rule: write the section brief (purpose, requirement IDs, B/C questions from the Must explain line and reviewer comments) before searching evidence; search by question, and treat an unanswered question as a finding.
