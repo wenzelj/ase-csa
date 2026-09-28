@@ -581,6 +581,12 @@ def prepareDocument(section: str | None = None, *, workspace: str | Path = ".", 
     manifest_path = _id_manifest_path(workspace_path, docx)
     existing = _read_id_manifest(manifest_path)
     drifted = existing is not None and existing.get("structure_fingerprint") != fingerprint
+    # Body edits made outside the framework (typing in Word, accepting or rejecting tracked
+    # changes) keep the heading skeleton but move paragraph IDs and change their text. Lookups
+    # read the manifest's text, so a stale copy would match old wording: rewrite it then too.
+    content_drift = existing is not None and [
+        (e.get("id"), e.get("text")) for e in existing.get("entries", []) if e.get("kind") != "run"
+    ] != [(e.get("id"), e.get("text")) for e in entries if e.get("kind") != "run"]
 
     if existing is None:
         reason = "created"
@@ -588,6 +594,8 @@ def prepareDocument(section: str | None = None, *, workspace: str | Path = ".", 
         reason = "forced"
     elif drifted:
         reason = "structure_drift"
+    elif content_drift:
+        reason = "content_drift"
     else:
         reason = "unchanged"
 
