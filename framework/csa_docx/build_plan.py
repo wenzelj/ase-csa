@@ -543,7 +543,7 @@ def _record(resolved: dict, entry: dict, key: str, text: str | None, file_name: 
         "do": do,
         "text": record_text,
         "why": ", ".join(resolved["evidence"].get(key, [])),
-        "note": f"Built from approved section file {file_name}.",
+        "note": f"Written from section file {file_name}.",
     }
 
 

@@ -73,9 +73,9 @@ A section too big for one run can be worked one subsection at a time: `csa autho
 
 ## Tracked changes and human gates
 
-- The framework applies every approved edit as a Word tracked change. Do not turn this off unless Wenzel asks in that run.
-- Two gates are for Wenzel only, never an agent: `csa approve <N>` before apply, and reading the tracked changes in Word before `csa cleanup <N>`.
-- `csa apply` refuses a record that changed after approval. Never edit an approved record; ask for re-approval instead.
+- No step between writing and applying: `csa author N` applies its change file when the agent finishes; `csa write` places its section file (creating 0.1 if needed). The framework checks the file first and records what it applied.
+- Every edit is a Word tracked change with its evidence comment. Do not turn this off unless Wenzel asks in that run.
+- One gate, Wenzel's only: accept or reject the tracked changes in Word before `csa cleanup <N>`. Correct an applied edit with a new record or a rewritten section file, never by editing it.
 - There is one working DOCX per project, edited in place. No versioned copies unless Wenzel asks. The framework backs it up before every batch.
 
 ## Stopping

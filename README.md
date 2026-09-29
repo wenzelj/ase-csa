@@ -30,7 +30,7 @@ Daily use:
 ```text
 csa status [N] | csa next                    where each section is, and what to do next
 csa author 6 [EDIT_MODE=editorial]           step 1 (agent)
-csa approve 6                                human approval gate - flips the change file's Status line
+csa approve 6 --reject S6-E3                optional: keep an edit out before it is applied
 csa apply 6 --until-done                     step 2, framework-first, batch after batch; stops on BLOCKED
 csa apply 6 --agent                          step 2 through the document agent (for BLOCKED edits)
 csa review 6 | csa cleanup 6                 steps 3 and 4 (agents)
@@ -40,14 +40,14 @@ csa ask Network | evidence | gaps | analyse <skill> | write | summary | qa      
 csa lookup "<text>" | csa ev lookup "<q>" | csa lint 6 | csa check --final      no-LLM helpers
 ```
 
-Agent options: `--cli codex|claude|hermes` (default in `cli.yaml`), `--headless`, `--print` (show the prompt only), `-p <project>`, and `KEY=VALUE` overrides. Agents, their verbs, inputs and defaults are defined once in `registry.yaml`; edit that, then `csa sync`. `csa apply` refuses a change file that has not been approved with `csa approve` (existing change files still say "Proposed", so approve each before its next apply, or pass `--allow-unapproved`).
+Agent options: `--cli codex|claude|hermes` (default in `cli.yaml`), `--headless`, `--print` (show the prompt only), `-p <project>`, and `KEY=VALUE` overrides. Agents, their verbs, inputs and defaults are defined once in `registry.yaml`; edit that, then `csa sync`. There is no approval step between authoring and apply: `csa author N` applies its change file when the agent finishes, and `csa write` places its section file in the working DOCX (`csa place`). `csa apply` runs `csa check-change` and records what it applies; `--allow-unapproved` skips the check. Your approval is accepting or rejecting the tracked changes in Word, then `csa review N` and `csa cleanup N`. `--no-apply` on author/write stops after the agent.
 
 ## Agent Definitions
 
 Four agents form the pipeline, run in this order (the fourth, cleanup, accepts the reviewed tracked changes after you have read them in Word):
 
 ```text
-prepareDocument()  ->  csa-change-authoring.md  ->  [human approves]  ->  current-state-assessment-document.md  ->  csa-change-review.md
+prepareDocument()  ->  csa-change-authoring.md  ->  current-state-assessment-document.md (csa apply, automatic)  ->  csa-change-review.md  ->  [human accepts/rejects in Word]  ->  cleanup
      step 0              step 1: draft                                     step 2: apply                            step 3: verify
 ```
 
@@ -74,7 +74,7 @@ Draft change proposals for the requested section using the agent defaults.
 
 To condense a section whose facts are already settled (after its evidence edits are applied and reviewed), run the same agent with `EDIT_MODE=editorial` added. It proposes concision edits only (no fact added, changed or dropped), each with a `Why` starting `Editorial --` that says where every removed fact is still stated. See `csa-change-authoring.md`, Editorial Mode, and the "Say it once, say it first" rules in `skills/csa-writing-style/SKILL.md`. To measure a section first: `python3 skills/csa-writing-style/scripts/prose_lint.py "<working DOCX>" --section <N>`.
 
-Then a human reads the drafted `ChangesCSA_*.md` and decides whether to approve it -- nothing applies it automatically; the file's own `**Status:** Proposed changes for approval` line says so.
+`csa author` then applies the drafted `ChangesCSA_*.md` straight away as tracked changes (after `csa check-change`); the human decision is made in Word, change by change.
 
 Start an implementation run with:
 
@@ -205,7 +205,7 @@ RUN_SCOPE=next-authoring-batch
 Draft change proposals for the requested section using the agent defaults.
 ```
 
-then, once a human has approved the drafted change file:
+then (`csa author` does this for you straight after drafting; run it by hand only after `--no-apply`):
 
 ```text
 Use $csa-document-agent.
@@ -248,8 +248,8 @@ Layer 2 is the one that actually prevents contamination if layer 1 is ever bypas
 
 ## Safety Rules
 
-- A drafted `ChangesCSA_*.md` is a proposal, not an authority, until a human approves it -- the authoring agent's `**Status:** Proposed changes for approval` line is the gate; nothing in this framework applies a change file automatically just because it exists.
-- Once approved, the Markdown change file is the source of truth for implementation and review.
+- A drafted `ChangesCSA_*.md` is applied as soon as it is authored (tracked changes, each with its evidence comment). It is not accepted until Wenzel accepts it in Word; rejected changes simply do not survive `csa cleanup`.
+- The Markdown change file is the source of truth for implementation and review; its Status line and `.approval.json` record what was applied.
 - The active working DOCX must be backed up before every mutation.
 - Process one section at a time.
 - For CLI, EVO, or Ollama runs, use small bounded batches and stop immediately after updating the DOCX, report, and run-state.

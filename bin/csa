@@ -4,9 +4,10 @@
     csa use iamps                 set the active project (once)
     csa status [N]                where every section is in the pipeline
     csa next                      the next concrete action
-    csa author 6                  launch an agent with the prompt pre-built
-    csa approve 6                 human approval gate for a change file
+    csa author 6                  launch an agent; its change file is applied as soon as it finishes
+    csa write 3.4                 launch the writer; its section file is placed as soon as it finishes
     csa apply 6 --until-done      deterministic batches, agent only on BLOCKED
+    (you approve in Word: accept or reject the tracked changes, then csa review / csa cleanup)
     csa fleet "author 6" "author 7"   run independent tasks side by side
     csa help                      everything else
 
@@ -122,6 +123,30 @@ def approval_problems(cf: Path) -> list[str]:
     if added:
         out.append("edits added since approval: " + ", ".join(added))
     return out
+
+
+def record_approval(p: dict, cf: Path, section, who: str, source: str) -> list[str]:
+    """Record what is about to be applied: set the Status line and write the .approval.json with
+    per-edit hashes. There is no human step between writing a change and applying it; Wenzel
+    approves the applied changes in Word (accept / reject), then `csa review` and `csa cleanup`.
+    Edits marked REJECTED (``csa approve N --reject``) stay out. Returns the recorded edit IDs."""
+    text = cf.read_text(encoding="utf-8")
+    m = STATUS_LINE_RE.search(text)
+    if not m:
+        die(f"no '**Status:**' line in {cf.name}; add one (the framework records the approval there).")
+    edits = list(dict.fromkeys(EDIT_HEADING_RE.findall(text)))
+    if not edits:
+        die(f"{cf.name} has no edits to apply.")
+    rejected = re.findall(r"^#{2,4}\s+REJECTED\s+(S\d+-[EA]\d+)\b", text, re.M)
+    new = (f"**Status:** Approved for implementation {datetime.now():%Y-%m-%d %H:%M} by {who}. Edits: {', '.join(edits)}."
+           + (f" Rejected: {', '.join(rejected)}." if rejected else ""))
+    cf.write_text(text[:m.start()] + new + text[m.end():], encoding="utf-8")
+    approval_file(cf).write_text(json.dumps({"approved_at": datetime.now().isoformat(timespec="seconds"), "by": who,
+                                             "rejected": rejected,
+                                             "hashes": edit_record_hashes(cf.read_text(encoding="utf-8"))},
+                                            indent=2) + "\n", encoding="utf-8")
+    metric(p, "approve", section, approved=edits, rejected=rejected, source=source)
+    return edits
 
 
 def metric(p: dict, event: str, section=None, **data) -> None:
@@ -393,14 +418,11 @@ def section_state(p: dict, section: str, file: str | None = None) -> dict:
     if not st["edits"]:
         st["stage"], st["next"] = "authored, no edits (clean)", None
     elif not st["approved"] and st["apply_status"] == "NOT_STARTED":
-        st["stage"], st["next"] = "awaiting approval", f"read the change file, then: csa approve {n}"
+        st["stage"], st["next"] = "authored, not applied", f"csa apply {n} --until-done"
     elif st["apply_status"] == "BLOCKED":
         st["stage"], st["next"] = f"apply BLOCKED ({', '.join(st['blocked']) or '?'})", f"csa apply {n} --agent"
     elif st["apply_status"] != "SECTION_COMPLETE":
-        if not st["approved"]:
-            st["stage"], st["next"] = "applying, change file not marked approved", f"csa approve {n}"
-        else:
-            st["stage"], st["next"] = f"applying ({len(st['completed'])}/{len(st['edits'])})", f"csa apply {n} --until-done"
+        st["stage"], st["next"] = f"applying ({len(st['completed'])}/{len(st['edits'])})", f"csa apply {n} --until-done"
     elif not st["review_result"]:
         st["stage"], st["next"] = "applied, not reviewed", f"csa review {n}"
     elif st["review_result"] in ("FAIL", "BLOCKED"):
@@ -521,7 +543,7 @@ def cmd_next(a):
     p = project(a.project)
     states = all_states(p)
     order = lambda s: (0 if "BLOCK" in s["stage"] or "FAIL" in s["stage"] else 1 if s["stage"].startswith("applying") else
-                       2 if s["stage"] == "awaiting approval" else 3 if s["next"] and "review" in s["next"] else
+                       2 if s["stage"] == "authored, not applied" else 3 if s["next"] and "review" in s["next"] else
                        4 if s["next"] and "cleanup" in s["next"] else 5, int(s["section"]))
     todo = sorted([s for s in states if s["next"]], key=order)
     if a.json:
@@ -721,13 +743,12 @@ def section_rows(p: dict) -> list[dict]:
     for f in sorted(sd.glob("*.md")) if sd.is_dir() else []:
         fm = section_front_matter(f.read_text(encoding="utf-8"))
         status = fm.get("status") or ("draft" if fm else None)
-        verdict, problem = section_review(p, f)
-        if not fm:
-            problem = "no front matter"
-        elif status == "built":
-            problem = None
+        verdict, review_note = section_review(p, f)
+        # The review verdict is information, not a gate: `csa write` places a section file in the
+        # document as soon as it is written, and Wenzel approves the tracked changes in Word.
+        problem = "no front matter" if not fm else None
         rows.append({"file": f.name, "block": fm.get("block"), "heading": fm.get("heading"),
-                     "status": status, "review": verdict, "problem": problem})
+                     "status": status, "review": verdict, "review_note": review_note, "problem": problem})
     return rows
 
 
@@ -741,9 +762,14 @@ def cmd_sections(a):
         print(f"no section files under {local_path(p['work_dir']) / 'sections'}")
         return 0
     for r in rows:
-        print(f"{r['file']:<42} {r['status'] or '-':<9} review={r['review'] or '-':<26} {r['problem'] or 'ready to build'}")
-    ready = sum(1 for r in rows if not r["problem"] and r["status"] != "built")
-    print(f"\n{ready} of {len(rows)} ready to build. There is no approve step: you review the tracked changes in Word after `csa build`.")
+        where = r["problem"] or ("in the document" if r["status"] == "built" else "not placed yet (csa place " + r["file"] + ")")
+        review = r["review"] or "-"
+        if r["review_note"] and r["review_note"] not in ("no review", "not ready"):
+            review += f" ({r['review_note']})"
+        print(f"{r['file']:<42} {r['status'] or '-':<9} review={review:<26} {where}")
+    placed = sum(1 for r in rows if r["status"] == "built")
+    print(f"\n{placed} of {len(rows)} in the document. `csa write` places a section as soon as it is written; "
+          "you approve the tracked changes in Word.")
     return 0
 
 
@@ -833,15 +859,16 @@ def cmd_apply(a):
     st = section_state(p, a.section, getattr(a, "file", None))
     if not st["change_file"]:
         die(f"section {label_display(a.section, getattr(a, 'file', None))} has no change file. Run `csa author {label_display(a.section, getattr(a, 'file', None))}` first.")
-    if not st["approved"] and not a.allow_unapproved:
-        die(f"section {label_display(a.section, getattr(a, 'file', None))}'s change file is not approved ({st['status_line']}).\n"
-            f"  Read {st['change_file']}\n  then `csa approve {label_display(a.section, getattr(a, 'file', None))}` (or pass --allow-unapproved).")
-    if st["approved"] and not a.allow_unapproved:
-        problems = approval_problems(Path(st["change_file"]))
-        if problems:
-            die(f"section {label_display(a.section, getattr(a, 'file', None))}: " + "; ".join(problems)
-                + f"\n  Read the change file again, then `csa approve {label_display(a.section, getattr(a, 'file', None))} -y` to approve what it says now"
-                + " (or pass --allow-unapproved).")
+    cf = Path(st["change_file"])
+    if st["edits"] and (not st["approved"] or approval_problems(cf)):
+        # No human step between authoring and apply: check the file, record what is applied, apply it.
+        # Wenzel approves the result in Word (accept / reject), then `csa review` and `csa cleanup`.
+        if not a.allow_unapproved and run_check_change(p, cf, argparse.Namespace()) != 0:
+            die(f"csa check-change found errors in {cf.name} (above). Fix the change file; it is applied as written."
+                " (--allow-unapproved skips this check.)")
+        record_approval(p, cf, a.section, f"csa apply ({settings().get('comment_author', os.environ.get('USER', 'unknown'))})",
+                        "csa apply")
+        st = section_state(p, a.section, getattr(a, "file", None))
     if a.agent:
         return launch(p, agent("apply"), [label_display(a.section, getattr(a, "file", None))] + (a.set or []), a)
     limit = a.limit or 2
@@ -879,6 +906,168 @@ def cmd_apply(a):
     elif status in ("NOT_READY", "ERROR"):
         _emit(res, argparse.Namespace(json=False))
     return 0 if status in ("SECTION_COMPLETE", "PARTIAL_COMPLETE") else 2
+
+
+# ---------------------------------------------------------------- commands: place (section file -> document)
+def _order_key(text: str):
+    """(3, 4) for '3.04' or '3.4', (4,) for '4'; None when the text is not a section number."""
+    parts = str(text).strip().split(".")
+    return tuple(int(x) for x in parts) if parts and all(x.isdigit() for x in parts) else None
+
+
+def section_file_for(p: dict, target: str) -> Path:
+    """A section file by file name, stem, section number (3.4 = 3.04-*.md; 'Executive Summary' = 2.1)
+    or heading text."""
+    sd = local_path(p["work_dir"]) / "sections"
+    t = str(target).strip()
+    f = Path(t)
+    if f.is_absolute() and f.is_file():
+        return f
+    for cand in (sd / t, sd / f"{t}.md"):
+        if cand.is_file():
+            return cand
+    files = sorted(sd.glob("*.md")) if sd.is_dir() else []
+    if t.lower() in ("executive summary", "summary", "2.1"):
+        t = "2.1"
+    key = _order_key(t)
+    norm = lambda x: re.sub(r"[^a-z0-9]+", " ", x.lower()).strip()
+    hits = [x for x in files if key is not None and _order_key(x.name.split("-", 1)[0]) == key]
+    if not hits:
+        hits = [x for x in files if x.name.split("-", 1)[0].lower() == t.lower()
+                or norm(section_front_matter(x.read_text(encoding="utf-8")).get("heading", "")) == norm(t)]
+    if len(hits) != 1:
+        die(f"{'no' if not hits else 'more than one'} section file for {target!r} under {sd}"
+            + (f": {', '.join(x.name for x in hits)}" if hits else ""))
+    return hits[0]
+
+
+def project_context_value(p: dict, key: str) -> str:
+    """A flat `key: value` under `project:` in the project context YAML ('' when absent or blank)."""
+    path = local_path(p["project_context"]) if p.get("project_context") else None
+    if not path or not path.is_file():
+        return ""
+    m = re.search(rf"^\s+{re.escape(key)}:\s*(.*)$", path.read_text(encoding="utf-8"), re.M)
+    return _unquote(m[1].split(" #")[0].strip()) if m else ""
+
+
+def _document_in(fv: Path, system_name: str) -> Path | None:
+    docs = sorted(d for d in fv.glob("*.docx") if not d.name.startswith("~$"))
+    named = fv / f"Current State Assessment - {system_name}.docx"
+    return named if named in docs else (docs[0] if len(docs) == 1 else None)
+
+
+class _PlaceLock:
+    """One placement or apply at a time per document folder (fleet workers and story runs place in parallel)."""
+    def __init__(self, folder: Path):
+        self.path = folder / ".csa-place.lock"
+
+    def __enter__(self):
+        import fcntl
+        self.fh = open(self.path, "w")
+        fcntl.flock(self.fh, fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, *exc):
+        import fcntl
+        fcntl.flock(self.fh, fcntl.LOCK_UN)
+        self.fh.close()
+
+
+def _mark_placed(f: Path) -> None:
+    text = f.read_text(encoding="utf-8")
+    stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+    if re.search(r"^status:.*$", text, re.M):
+        text = re.sub(r"^status:.*$", "status: built", text, count=1, flags=re.M)
+    else:
+        text = text.replace("---", "---\nstatus: built", 1)
+    if re.search(r"^placed:.*$", text, re.M):
+        text = re.sub(r"^placed:.*$", f"placed: {stamp}", text, count=1, flags=re.M)
+    else:
+        text = re.sub(r"^status: built$", f"status: built\nplaced: {stamp}", text, count=1, flags=re.M)
+    f.write_text(text, encoding="utf-8")
+
+
+def cmd_place(a):
+    """Put section files straight into the working document as tracked changes (version 0.1 is created
+    from the template on the first placement). No approval step: Wenzel approves in Word."""
+    p = project(a.project); banner(p)
+    root = local_path(p["project_root"])
+    fv = root / "01 Current State AS Built" / "01 Final Version"
+    existing = sorted(d for d in fv.glob("*.docx") if not d.name.startswith("~$"))
+    from_doc = (m[1] if len(existing) == 1 and (m := re.match(r"Current State Assessment - (.+)\.docx$", existing[0].name))
+                else None)
+    system_name = (a.system_name or from_doc or project_context_value(p, "application")
+                   or p.get("label") or p["key"])
+    prepared_for = a.prepared_for or project_context_value(p, "organisation") or None
+    files = [section_file_for(p, t) for t in a.targets]
+    for f in files:
+        if run_check_section(p, f, argparse.Namespace(no_lint=False, json=False)) != 0:
+            die(f"cannot place {f.name}: csa check-section reported errors (above). Fix the section file first.")
+    fv.mkdir(parents=True, exist_ok=True)
+    with _PlaceLock(fv):
+        for f in files:
+            docx = _document_in(fv, system_name)
+            if docx and (docx.parent / ("~$" + docx.name[2:])).exists() and not a.keep_open:
+                print(f"{docx.name} is open in Word; saving and closing it ...")
+                if not close_in_word(docx):
+                    die(f"{docx.name} is open in Word; close it and run `csa place {f.name}` again.")
+            before = {x.name for x in fv.glob("*.docx")} | {x.name for x in fv.glob("reviews/*")} | {x.name for x in fv.glob("run-state/*")}
+            res = _fw_module_call("build", "place_prepare", str(root), str(f), system_name=system_name, source=f.name,
+                                  prepared_for=prepared_for, prepared_by=a.prepared_by,
+                                  doc_version=a.doc_version, status=a.status)
+            if res.get("status") == "ERROR":
+                if docx is None:        # a failed first placement leaves no half-made document behind
+                    for x in list(fv.glob("*.docx")) + list(fv.glob("reviews/ChangesCSA_*")) + list(fv.glob("run-state/*")):
+                        if x.is_file() and x.name not in before:
+                            x.unlink(missing_ok=True)
+                die(f"could not place {f.name}: {res.get('message')}")
+            for sec, cf in res["change_files"].items():
+                record_approval(p, Path(cf), sec, f"csa place {f.name}", "csa place")
+            applied = _fw_module_call("build", "place_apply", str(root), res["sections"],
+                                      system_name=system_name, docx=res["docx"], change_files=res["change_files"])
+            new = [e for ids in res["new_edits"].values() for e in ids]
+            if applied.get("status") == "ERROR":
+                metric(p, "place", f.name, status="BLOCKED", edits=new)
+                die(f"placing {f.name} stopped: {applied.get('message')}\n  Edits already applied stay as tracked changes. "
+                    f"Fix the section file and run `csa place {f.name}` again, or run `csa apply "
+                    f"{res['sections'][0]} --agent` to let the document agent resolve it.")
+            _mark_placed(f)
+            metric(p, "place", f.name, status="PLACED", edits=new, created=res["created"])
+            print(f"{C['g']}PLACED{C['0']} {f.name} -> {Path(res['docx']).name}"
+                  + (" (created version 0.1)" if res["created"] else "")
+                  + (f": {len(new)} tracked change(s), {new[0]}..{new[-1]}" if new else ""))
+    print(f"{C['d']}Accept or reject the tracked changes in Word, then csa review <N> and csa cleanup <N>.{C['0']}")
+    return 0
+
+
+def _after_agent(p: dict, verb: str, args: list[str], started: float, a) -> int:
+    """Change the document straight after the agent that wrote the change: an author run's change file
+    is applied, a writer's section file is placed. `--no-apply` stops after the agent."""
+    r = agent(verb)
+    values = task_values(r, args)
+    spec = values.get("SECTION", "")
+    if verb == "author" or (verb == "write" and values.get("MODE", "").lower() == "records"):
+        sec, label = split_section(spec)
+        if not sec or not str(sec).isdigit():
+            return 0
+        st = section_state(p, sec, label)
+        cf = Path(st["change_file"]) if st["change_file"] else None
+        if not cf or not st["edits"] or cf.stat().st_mtime < started - 1:
+            return 0
+        print(f"{C['b']}Applying {cf.name} now (tracked changes; you approve in Word).{C['0']}")
+        ns = argparse.Namespace(project=a.project, section=sec, file=label, allow_unapproved=False, agent=False, set=None,
+                                limit=None, until_done=True, max_batches=50, edit=None, json=False,
+                                agent_on_block=False, cli=getattr(a, "cli", None), headless=getattr(a, "headless", False),
+                                print=False, keep_open=False)
+        return cmd_apply(ns)
+    if verb in ("write", "summary") and values.get("OUTPUT", "section-file") == "section-file":
+        sd = local_path(p["work_dir"]) / "sections"
+        fresh = [x.name for x in sorted(sd.glob("*.md")) if x.stat().st_mtime >= started - 1] if sd.is_dir() else []
+        if not fresh:
+            return 0
+        return cmd_place(argparse.Namespace(project=a.project, targets=fresh, system_name=None, prepared_for=None,
+                                            prepared_by=None, doc_version=None, status=None, keep_open=False))
+    return 0
 
 
 # ---------------------------------------------------------------- commands: script pass-through
@@ -1149,7 +1338,11 @@ def launch(p: dict, r: dict, args: list[str], a) -> int:
 
 def cmd_agent(a):
     p = project(a.project); banner(p)
-    return launch(p, agent(a.verb), a.args, a)
+    started = time.time()
+    rc = launch(p, agent(a.verb), a.args, a)
+    if rc != 0 or getattr(a, "print", False) or getattr(a, "no_apply", False):
+        return rc
+    return _after_agent(p, a.verb, a.args, started, a)
 
 
 
@@ -1224,7 +1417,7 @@ Shared CSA framework for every project in this folder. Agents, skills and framew
 - Command reference: `CSA-COMMANDS.md` in this folder (setup, pipeline, analysis agents, helpers).
 - Start with `.agents/bin/csa status` (or `csa status` if it is on PATH): it shows the active project and where each section is.
 - Launch agents through `csa <verb>` (`csa agents` lists them) so the prompt, project and defaults are always the same.
-- Never edit a working DOCX outside the pipeline: author -> `csa approve` (human) -> apply -> review -> cleanup.
+- Never edit a working DOCX outside the pipeline. The document changes as soon as content is written: `csa write` places its section file, `csa author` applies its change file, both as tracked changes. Wenzel's one approval is accept/reject in Word, then review -> cleanup.
 - DOCX steps (apply, review, cleanup) run one at a time. `csa fleet` runs other tasks side by side under
   the locks in `registry.yaml`; a fleet worker never starts another fleet. Back up before any DOCX change
   (the framework does this for you).
@@ -1323,9 +1516,9 @@ def cmd_pipeline(a):
             print("Nothing left to do for this section.")
             return 0
         if nxt.startswith("csa author"):
-            launch(p, agent("author"), [d], a)
-            print(f"Authoring finished. Read {section_state(p, n, f)['change_file']} and run `csa approve {d}`, then `csa pipeline {d}` again.")
-            return 0
+            if launch(p, agent("author"), [d], a) != 0:
+                return 2
+            continue                             # the change file is applied next, without an approval step
         if "approve" in nxt:
             print(f"Human gate: read {st['change_file']}")
             if not sys.stdin.isatty():
@@ -1431,6 +1624,13 @@ def _fleet_tasks(p: dict, a) -> list[dict]:
     for i, text in enumerate(texts, 1):
         toks = shlex.split(text)
         verb, args = toks[0], toks[1:]
+        no_apply = "--no-apply" in args and verb != "apply"
+        args = [x for x in args if x != "--no-apply"] if no_apply else args
+        if verb == "place":
+            if not args:
+                die(f"task {i} '{text}': place needs a section file or number, e.g. \"place 3.4\"")
+            tasks.append(_fleet_task(i, text, verb, args, {"docx", f"section:{_norm_section(args[0])}"}, None))
+            continue
         if verb not in verbs:
             die(f"task {i} '{text}': unknown verb '{verb}'. `csa agents` lists them.")
         r = verbs[verb]
@@ -1447,13 +1647,37 @@ def _fleet_tasks(p: dict, a) -> list[dict]:
             values = task_values(r, args)
             fcli = settings().get("fleet_cli", "codex")
             prompt = build_prompt(p, r, args, local=local_launch(settings().get(f"{fcli}_fleet", "")))  # dies on a missing required input
-        tasks.append({"n": i, "text": text, "verb": verb, "args": args, "locks": task_locks(r, values),
-                      "prompt": prompt, "status": "queued", "slot": None, "rc": None, "note": "",
-                      "start": None, "end": None, "log": None, "last": None})
+        tasks.append(_fleet_task(i, text, verb, args, task_locks(r, values), prompt))
+        tasks[-1]["no_apply"] = no_apply
     return tasks
 
 
+def _fleet_task(n: int, text: str, verb: str, args: list[str], locks: set[str], prompt: str | None) -> dict:
+    return {"n": n, "text": text, "verb": verb, "args": args, "locks": locks,
+            "prompt": prompt, "status": "queued", "slot": None, "rc": None, "note": "",
+            "start": None, "end": None, "log": None, "last": None}
+
+
+def _fleet_follow_up(t: dict, n: int) -> dict | None:
+    """The framework step that changes the document after an agent task: an author task's change file
+    is applied, a writer's section file is placed. None when the task changes nothing in the document."""
+    if t["verb"] in ("apply", "place"):
+        return None
+    values = task_values(agent(t["verb"]), t["args"])
+    spec = values.get("SECTION", "")
+    if not spec or t.get("no_apply"):
+        return None
+    if t["verb"] == "author" or (t["verb"] == "write" and values.get("MODE", "").lower() == "records"):
+        return _fleet_task(n, f"apply {spec} --until-done", "apply", [spec, "--until-done"],
+                           task_locks(agent("apply"), {"SECTION": spec}), None)
+    if t["verb"] in ("write", "summary") and values.get("OUTPUT", "section-file") == "section-file":
+        return _fleet_task(n, f"place {spec}", "place", [spec], {"docx", f"section:{_norm_section(spec)}"}, None)
+    return None
+
+
 def _fleet_argv(p: dict, t: dict, slot: str, cli: str) -> list[str]:
+    if t["verb"] == "place":
+        return [sys.executable, str(Path(__file__).resolve()), "--project", p["key"], "place", *t["args"]]
     if t["verb"] == "apply":
         extra = [] if any(x in ("--until-done", "--edit") for x in t["args"]) else ["--until-done"]
         return [sys.executable, str(Path(__file__).resolve()), "--project", p["key"], "apply", *t["args"], *extra]
@@ -1479,7 +1703,7 @@ def cmd_fleet(a):
         die(f"duplicate slot names: {', '.join(slots)}")
     tasks = _fleet_tasks(p, a)
     local = {s.strip() for s in cfg.get("local_slots", "").split(",") if s.strip()}
-    heavy = [t for t in tasks if agent(t["verb"]).get("tier") == "frontier"] if local & set(slots) else []
+    heavy = [t for t in tasks if t["verb"] != "place" and agent(t["verb"]).get("tier") == "frontier"] if local & set(slots) else []
     if heavy:
         print(f"{C['y']}warning: frontier-tier task(s) {', '.join(t['text'] for t in heavy)} will run on local slot(s) "
               f"{', '.join(s for s in slots if s in local)}. Expect weaker results; check them closely.{C['0']}")
@@ -1491,11 +1715,14 @@ def cmd_fleet(a):
         for t in tasks:
             print(f"\n{C['b']}--- task {t['n']}: {t['text']}{C['0']}\n"
                   + (t["prompt"] or f"(framework, no LLM) {shlex.join(_fleet_argv(p, t, slots[0], cli)[2:])}"))
+    if any(_fleet_follow_up(t, 0) for t in tasks if t["verb"] not in ("apply", "place")):
+        print(f"{C['d']}After each write/summary task the fleet places its section file in the document (place N); "
+              f"after each author task it applies the change file (apply N). No approval step: you approve in Word.{C['0']}")
     if a.dry_run or a.print:
         return 0
 
-    if any(t["verb"] != "apply" for t in tasks):
-        exe = _fleet_argv(p, next(t for t in tasks if t["verb"] != "apply"), slots[0], cli)[0]
+    if any(t["verb"] not in ("apply", "place") for t in tasks):
+        exe = _fleet_argv(p, next(t for t in tasks if t["verb"] not in ("apply", "place")), slots[0], cli)[0]
         if not shutil.which(exe):
             die(f"'{exe}' is not on PATH (cli: {cli}).")
 
@@ -1562,6 +1789,13 @@ def cmd_fleet(a):
             + (f" exit {rc}" if rc else "") + (f" - {note}" if note else ""))
         if t["status"] != "done":
             skip_dependents(t)
+        elif t["verb"] not in ("apply", "place"):
+            fu = _fleet_follow_up(t, max(x["n"] for x in tasks) + 1)
+            if fu:
+                stem = f"{fu['n']:02d}-" + re.sub(r"[^A-Za-z0-9._-]+", "-", fu["text"]).strip("-")[:60]
+                fu["log"], fu["last"] = run_dir / f"{stem}.log", run_dir / f"{stem}.last.md"
+                tasks.insert(tasks.index(t) + 1, fu)      # before the section's later tasks (qa waits for it)
+                say(f"{C['c']}queue{C['0']} #{fu['n']} {fu['text']}  (after #{t['n']})")
 
     try:
         while running or any(t["status"] == "queued" for t in tasks):
@@ -1803,8 +2037,7 @@ def cmd_build(a):
                 f"the build lane only creates the first draft (0.1); later rounds use the revise lane. ({', '.join(sorted(str(c) for c in existing_cfs))})")
         for r in rows:
             if r["problem"]:
-                die(f"cannot build {r['file']}: {r['problem']}. "
-                    f"(Run `csa check-section {r['file']}` and get a current READY review.)")
+                die(f"cannot build {r['file']}: {r['problem']}. (Run `csa check-section {r['file']}`.)")
             rc = run_check_section(p, local_path(p["work_dir"]) / "sections" / r["file"],
                                    argparse.Namespace(no_lint=False, json=False))
             if rc != 0:
@@ -1891,9 +2124,12 @@ PASSTHROUGH = {
 HELP = """
 Project     csa projects | csa use <key> | csa agents | csa doctor
 State       csa status [N] [--json] | csa next
-Pipeline    csa author N | csa check-change N | csa approve N | csa apply N [--until-done] | csa review N | csa cleanup N
+Pipeline    csa author N  (applies its change file straight away) | csa review N | read in Word | csa cleanup N
+            csa apply N [--until-done] | csa check-change N | csa approve N --reject E..  (optional: keep edits out)
             csa pipeline N            (walks one section, stops at every human gate)
-Build lane  csa sections | csa check-section <file> | csa build [--preview] [--sections ..]   (first draft, version 0.1, of a template CSA; spec: docs/build-lane-spec.md)
+Build lane  csa write <sec>  (places its section file in the document straight away) | csa place <file|sec>
+            csa sections | csa check-section <file> | csa build [--preview] [--sections ..]   (spec: docs/build-lane-spec.md)
+            --no-apply on author/write stops after the agent. The one approval is yours, in Word.
 Audit      csa audit | csa audit --status | csa audit-section SECTION=next | csa audit --report   (what the document is missing; read-only)
 Parallel    csa fleet "author 6" "evidence 7" [-f tasks.txt] [--dry-run] [--print] [--timeout MIN]
             (one headless worker per slot in cli.yaml; DOCX steps never overlap)
@@ -1942,7 +2178,8 @@ def main(argv=None) -> int:
     s = sp("lookup", cmd_lookup); s.add_argument("query"); s.add_argument("--kind", choices=["paragraph", "table_row", "heading"]); s.add_argument("--json", action="store_true")
     s = sp("validate", cmd_validate); s.add_argument("section"); s.add_argument("--json", action="store_true")
     s = sp("refresh", cmd_refresh); s.add_argument("--json", action="store_true")
-    s = sp("approve", cmd_approve); s.add_argument("section"); s.add_argument("--by")
+    s = sp("approve", cmd_approve, help="optional: mark edits REJECTED before apply (apply records the approval itself)")
+    s.add_argument("section"); s.add_argument("--by")
     s.add_argument("--yes", "-y", action="store_true"); s.add_argument("--revoke", action="store_true")
     s.add_argument("--force", action="store_true", help="approve even if csa check-change reports errors")
     s.add_argument("--reject", nargs="+", default=[], metavar="EDIT_ID", help="mark these edits REJECTED; they are never applied")
@@ -1964,13 +2201,20 @@ def main(argv=None) -> int:
     s.add_argument("--system-name", help="name on the title page (default: project label)")
     s.add_argument("--prepared-for"); s.add_argument("--prepared-by")
     s.add_argument("--doc-version", help="default 0.1"); s.add_argument("--status")
+    s = sp("place", cmd_place, help="put section files straight into the working document as tracked changes (creates 0.1 when there is none)")
+    s.add_argument("targets", nargs="+", help="section file name, stem or number (3.4, 5.2, 'Executive Summary')")
+    s.add_argument("--system-name", help="default: project context application, else the project label")
+    s.add_argument("--prepared-for", help="default: project context organisation"); s.add_argument("--prepared-by")
+    s.add_argument("--doc-version", help="default 0.1"); s.add_argument("--status")
+    s.add_argument("--keep-open", action="store_true", help="do not save and close the document in Word when it is open")
     s = sp("apply", cmd_apply, help="framework-first apply; --agent for the LLM document agent")
     s.add_argument("section"); s.add_argument("--limit", type=int); s.add_argument("--edit", help="apply only this edit ID")
     s.add_argument("--until-done", action="store_true", help="keep running batches until complete, blocked or no progress")
     s.add_argument("--max-batches", type=int, default=50)
     s.add_argument("--agent", action="store_true", help="run the document agent (LLM) instead of the framework")
     s.add_argument("--agent-on-block", action="store_true", help="hand over to the document agent if a batch is BLOCKED")
-    s.add_argument("--allow-unapproved", action="store_true"); s.add_argument("--json", action="store_true")
+    s.add_argument("--allow-unapproved", action="store_true", help="apply even if csa check-change reports errors")
+    s.add_argument("--json", action="store_true")
     s.add_argument("--keep-open", action="store_true", help="do not save and close the document in Word when it is open")
     s.add_argument("--file", help="a labelled change file for this section, e.g. story for ChangesCSA_<App>_Section<N>_story.md")
     s.add_argument("--set", nargs="*", help="KEY=VALUE overrides for --agent"); agent_opts(s)
@@ -2009,6 +2253,8 @@ def main(argv=None) -> int:
             continue
         s = sp(v, cmd_agent, help=f"launch the {v} agent"); s.set_defaults(verb=v)
         s.add_argument("args", nargs="*", help="positional value and KEY=VALUE overrides"); agent_opts(s)
+        s.add_argument("--no-apply", action="store_true",
+                       help="author/write/summary: stop after the agent instead of changing the document")
 
     argv = list(sys.argv[1:] if argv is None else argv)
     glob_project = None

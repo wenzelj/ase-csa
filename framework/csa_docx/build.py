@@ -151,6 +151,65 @@ def apply(workspace: Path, sections: list, *, system_name: str, build_id: str, p
             shutil.rmtree(ws, ignore_errors=True)
 
 
+def working_document(root: Path, system_name: str) -> Path | None:
+    """The project's working DOCX in ``01 Final Version`` (``None`` when there is none yet).
+    With several, the one named after the system wins; otherwise there must be exactly one."""
+    fv = Path(root).resolve() / "01 Current State AS Built" / "01 Final Version"
+    docs = sorted(d for d in fv.glob("*.docx") if not d.name.startswith("~$"))
+    if not docs:
+        return None
+    named = fv / f"Current State Assessment - {system_name}.docx"
+    if named in docs:
+        return named
+    if len(docs) == 1:
+        return docs[0]
+    raise RuntimeError(f"several documents in {fv}: {', '.join(d.name for d in docs)}; keep one working DOCX there")
+
+
+def place_prepare(root: Path, section_path, *, system_name: str, source: str,
+                  prepared_for: str | None = None, prepared_by: str | None = None,
+                  doc_version: str | None = None, status: str | None = None) -> dict:
+    """Placement, step 1 of 2 (``csa place``): put one section file into the working document.
+
+    Creates version 0.1 from the CSA template when the project has no document yet,
+    scaffolds the placeholder counts this section needs, re-prepares the stable IDs,
+    plans the records and adds them to the per-section change files
+    (:func:`build_apply.append_place_records`). ``csa place`` records the approval,
+    then calls :func:`place_apply`. A section file that was placed before is placed
+    again the same way: its new records replace the placed text as tracked changes.
+    Returns ``docx``, ``created``, ``sections``, ``change_files``, ``new_edits``, ``scaffold``.
+    """
+    root = Path(root).resolve()
+    path = Path(section_path)
+    docx = working_document(root, system_name)
+    created = docx is None
+    if created:
+        docx = root / "01 Current State AS Built" / "01 Final Version" / f"Current State Assessment - {system_name}.docx"
+        new_document(root, docx, system_name=system_name, prepared_for=prepared_for,
+                     prepared_by=prepared_by, doc_version=doc_version, status=status)
+    prep = tools.prepareDocument(workspace=root, force_regenerate=not created)
+    if prep.get("status") != "READY":
+        detail = {k: prep.get(k) for k in ("status", "reasons", "message", "code") if prep.get(k)}
+        raise RuntimeError(f"prepareDocument did not return READY: {detail}")
+    scaffolded = scaffold(root, docx, [path])
+    records = build_plan.plan_records(root, [path])
+    if not records:
+        raise RuntimeError(f"{path.name} produced no records")
+    out = build_apply.append_place_records(root, records, system_name, source)
+    return {"docx": str(docx), "created": created, "sections": sorted(int(k) for k in records),
+            "scaffold": scaffolded, **out}
+
+
+def place_apply(root: Path, sections: list, *, system_name: str, docx: str, change_files: dict | None = None) -> dict:
+    """Placement, step 2 of 2: apply the section change files (``{N: path}`` from
+    :func:`place_prepare`) as tracked changes, each edit with its evidence comment,
+    until every section is complete."""
+    applied = build_apply.apply_build_records(Path(root).resolve(), [str(s) for s in sections], app=system_name,
+                                              track_changes=True, build_id="place", docx=Path(docx),
+                                              change_files={str(k): v for k, v in (change_files or {}).items()})
+    return {"applied": applied["sections"], "docx": docx}
+
+
 def build(workspace: Path, section_paths: list, *, system_name: str, build_id: str, preview: bool,
           prepared_for: str | None = None, prepared_by: str | None = None,
           doc_version: str | None = None, status: str | None = None) -> dict:

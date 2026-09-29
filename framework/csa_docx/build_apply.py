@@ -113,6 +113,76 @@ def write_build_records(workspace, records: dict, app: str, build_id: str) -> li
     return paths
 
 
+_EDIT_NO_RE = re.compile(r"^#{2,4}\s+(?:REJECTED\s+)?S(\d+)-E(\d+)\b", re.M)
+_REPORT_HEADING_RE = re.compile(r"^## .*Report\s*$", re.M)
+
+
+def _last_edit_number(reviews: Path, section: str) -> int:
+    """Highest ``S<section>-E<n>`` used by any change file for ``section`` in
+    ``reviews`` (labelled files included), so new edits number on from it."""
+    top = 0
+    for f in reviews.glob(f"ChangesCSA_*_Section{section}*.md"):
+        if not re.search(rf"_Section{section}(?:_[^.]+)?\.md$", f.name):
+            continue
+        for m in _EDIT_NO_RE.finditer(f.read_text(encoding="utf-8")):
+            if m[1] == str(section):
+                top = max(top, int(m[2]))
+    return top
+
+
+def append_place_records(workspace, records: dict, app: str, source: str) -> dict:
+    """Add planned records to the per-section change files, for ``csa place``.
+
+    The placement path writes one section file at a time straight into the
+    working document. Each framework section keeps one change file,
+    ``reviews/ChangesCSA_<App>_Section<N>.md`` (the same file ``csa build``
+    writes), so ``csa review N`` and ``csa cleanup N`` still see one record
+    per section. New records are numbered on from the highest edit ID in any
+    change file of that section and are inserted before the first ``## ...
+    Report`` block (the apply engine rewrites everything from its
+    ``## Changes Report`` on). Every file is checked with ``check_change``.
+
+    Returns ``{"change_files": {N: path}, "new_edits": {N: [edit ids]}}``.
+    """
+    workspace = Path(workspace).resolve()
+    reviews = workspace / "01 Current State AS Built" / "01 Final Version" / "reviews"
+    reviews.mkdir(parents=True, exist_ok=True)
+    files: dict[str, str] = {}
+    new_edits: dict[str, list[str]] = {}
+    for section in sorted(records, key=int):
+        existing = sorted(f for f in reviews.glob(f"ChangesCSA_*_Section{section}.md"))
+        change_file = existing[0] if existing else reviews / f"ChangesCSA_{app}_Section{section}.md"
+        start = _last_edit_number(reviews, section)
+        ids = []
+        for n, record in enumerate(records[section], start=start + 1):
+            record["edit_id"] = f"S{section}-E{n}"
+            ids.append(record["edit_id"])
+        block = "\n".join(part for record in records[section] for part in (_record_md(record), "---", ""))
+        if change_file.is_file():
+            text = change_file.read_text(encoding="utf-8")
+            m = _REPORT_HEADING_RE.search(text)
+            head, tail = (text[:m.start()], text[m.start():]) if m else (text, "")
+            head = head.rstrip()
+            if not head.endswith("---"):
+                head += "\n\n---"
+            text = head + "\n\n" + block.rstrip() + "\n" + (("\n" + tail) if tail else "")
+        else:
+            text = "\n".join([
+                f"# Changes to Current State Assessment - {app}",
+                f"## Section {section} Change Record",
+                "",
+                f"**Section:** {section}",
+                f"**Status:** Placed from section files by csa place ({source}).",
+                "",
+                block.rstrip(),
+            ]) + "\n"
+        change_file.write_text(text, encoding="utf-8")
+        _check_file(change_file)
+        files[section] = str(change_file)
+        new_edits[section] = ids
+    return {"change_files": files, "new_edits": new_edits}
+
+
 def _strip_comments(docx: Path) -> None:
     """Remove every Word comment from the DOCX in place (write to a temp
     file, then replace): delete the comment-reference runs and the
@@ -142,7 +212,8 @@ def _strip_comments(docx: Path) -> None:
         raise
 
 
-def apply_build_records(workspace, sections, *, app: str, track_changes: bool, build_id: str) -> dict:
+def apply_build_records(workspace, sections, *, app: str, track_changes: bool, build_id: str,
+                        docx: Path | None = None, change_files: dict | None = None) -> dict:
     """Apply the written change files for each framework section.
 
     ``app`` is the system name used by :func:`write_build_records` to name
@@ -165,16 +236,18 @@ def apply_build_records(workspace, sections, *, app: str, track_changes: bool, b
     # runs in its own throw-away workspace (build.prepare), so this never
     # touches the project's real folders.
     docx_dir = fv
+    fixed_docx = Path(docx) if docx else None
     applied_by_section = {}
     for section in sections:
         # Pass the change file and DOCX explicitly (layout fixed by build.prepare).
-        matches = sorted((fv / "reviews").glob(f"ChangesCSA_*_Section{section}.md"))
+        given = (change_files or {}).get(str(section))
+        matches = [Path(given)] if given else sorted((fv / "reviews").glob(f"ChangesCSA_*_Section{section}.md"))
         if not matches:
             raise RuntimeError(
                 f"section {section}: no change file in {fv / 'reviews'} "
                 f"(expected ChangesCSA_*_Section{section}.md)")
         change_file = matches[0]
-        docx = docx_dir / f"Current State Assessment - {app}.docx"
+        docx = fixed_docx or docx_dir / f"Current State Assessment - {app}.docx"
         applied = 0
         while True:
             res = tools.apply_next_batch(str(section), 500,

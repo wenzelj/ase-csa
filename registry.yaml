@@ -35,7 +35,7 @@ agents:
     locks: section
     instruction: Draft change proposals for the requested section using the agent defaults.
     skill: csa-change-authoring-agent
-    summary: Step 1 - draft ChangesCSA_*.md for one section from Discovery Data evidence (EDIT_MODE=editorial for a concision pass).
+    summary: Step 1 - draft ChangesCSA_*.md for one section from Discovery Data evidence, then apply it as tracked changes (EDIT_MODE=editorial for a concision pass; --no-apply to stop after drafting).
 
   - verb: apply
     file: current-state-assessment-document.md
@@ -48,7 +48,7 @@ agents:
     locks: docx, section
     instruction: Apply the requested section using the agent defaults.
     skill: csa-document-agent
-    summary: Step 2 - apply an approved change file to the working DOCX in bounded, backed-up batches (tracked changes).
+    summary: Step 2 - apply a change file to the working DOCX in bounded, backed-up batches (tracked changes); csa author runs this for you.
 
   - verb: review
     file: csa-change-review.md
@@ -134,7 +134,7 @@ agents:
     locks: section
     instruction: Draft or revise the requested section from approved evidence.
     skill: csa-writer-agent
-    summary: Draft a section from approved evidence into WORK_DIR/drafts (runs prose_lint first).
+    summary: Draft a section file from evidence, then place it in the working DOCX as tracked changes (csa place; --no-apply to stop after drafting).
 
   - verb: summary
     file: csa-writer-agent.md

@@ -2,6 +2,8 @@
 
 Status: design, 26 Sep 2026 (story S52; revised the same day: no separate section approval, the first draft is built as tracked changes). Implementation stories: S53–S64 with S55B, S56B, S58B and S58C in `improvements/stories/`. Template: CSA_Template_v1.3 (27 Sep 2026).
 
+**30 Sep 2026 (S185): no step between writing and the document.** A section file is placed in the working DOCX as soon as the writer finishes (`csa write` runs `csa place`), and a change file is applied as soon as the authoring agent finishes (`csa author` runs `csa apply`). The first placement creates version 0.1 from the template; later placements add their records to the same per-section change file (`ChangesCSA_<App>_Section<N>.md`, edit IDs numbered on) and apply them as tracked changes with evidence comments. A rewritten section file is placed again: its new text replaces the old as tracked changes. `csa qa` still reviews each section, but its verdict no longer gates the document; a NOT READY section is rewritten and placed again. `csa build` remains for building every section file at once into a project that has no document yet, and `csa build --preview` for a clean read-only copy. The one human approval is unchanged: Wenzel accepts or rejects the tracked changes in Word, then `csa review N` and `csa cleanup N`. `--no-apply` on `csa write` / `csa author` stops after the agent. See section 4a.
+
 ## Versions
 
 The build writes version **0.1** ("Initial draft"). Each peer-review round is made through the revise lane and moves the document to the next 0.x version, with a new revision-history row. It becomes **1.0** only when it is issued after the last review. `--doc-version` overrides the 0.1 default.
@@ -129,7 +131,25 @@ Document Control (1.1) and the cover come from the document properties, which `n
 | `reviewed` | `csa qa` on the section file, verdict READY or READY WITH DECLARED GAPS | Content-checked by the system; no human step here |
 | `built` | `csa build` | In the document as tracked changes, recorded with the build ID. From now on the text is edited in Word or through the revise lane, never in the section file. |
 
-There is no separate section approval. The human gate is Wenzel's review of the tracked changes in Word, closed by `csa cleanup` for each section (which refuses while tracked changes remain). `csa build` itself refuses a section that fails `csa check-section` or has no READY review newer than the file (S56B, S60).
+There is no separate section approval. The human gate is Wenzel's review of the tracked changes in Word, closed by `csa cleanup` for each section (which refuses while tracked changes remain). `csa place` and `csa build` refuse a section that fails `csa check-section`; since S185 neither needs a READY review first (`csa sections` still shows the verdict).
+
+## 4a. Placement: `csa place` (S185)
+
+```text
+csa write 3.4        writer agent -> sections/3.04-time-synchronisation.md (status: draft)
+  -> csa place 3.04  check-section -> [create 0.1 from the template if there is no document]
+                     -> scaffold this section's rows/bullets -> prepareDocument(force)
+                     -> plan records -> append to reviews/ChangesCSA_<App>_Section3.md (IDs numbered on,
+                        inserted before the ## Changes Report) -> record approval (Status line + .approval.json)
+                     -> apply_next_batch(track_changes=True) until SECTION_COMPLETE -> status: built
+csa qa 3.4           review; NOT READY -> csa write 3.4 again -> placed again as tracked changes
+Word                 Wenzel accepts / rejects -> csa review 3 -> csa cleanup 3
+```
+
+- `csa place <file|number>` takes a file name, stem, section number (`3.4` finds `3.04-*.md`; `Executive Summary` is 2.1) or heading. The system name comes from `--system-name`, else the existing document's name, else the project context's `application`; Prepared For from `--prepared-for` or the context's `organisation`.
+- Placements run one at a time per document folder (a file lock), so parallel fleet workers or story runs are safe. A document open in Word is saved and closed first (`--keep-open` refuses instead).
+- A failed first placement leaves no half-made document behind. A later failure leaves the edits already applied as tracked changes; fix the section file and place it again, or `csa apply N --agent`.
+- `csa fleet` queues `place <section>` after every write/summary task and `apply <section> --until-done` after every author task, holding the DOCX and section locks, so the section's qa task waits for it and a failed placement skips it.
 
 ## 5. `csa build`
 
