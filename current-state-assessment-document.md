@@ -106,202 +106,6 @@ Do not:
 
 If you notice another issue, ignore it. You are an implementation agent, not a review agent.
 
-## Simple Invocation Defaults
-
-The user should be able to start a section with a short instruction such as:
-
-```text
-Apply Section 2.
-```
-
-The user may also use a single section variable so the section number appears only once:
-
-```text
-SECTION=2
-Apply the requested section using the agent defaults.
-```
-
-When a `SECTION=<number>` value is supplied, treat that value as the requested section everywhere in the run: selecting the change file, locating the section, validating changes, writing the `## Changes Report`, saving, reporting, and stopping. Do not require the section number to be repeated elsewhere in the prompt.
-
-When the user gives a short section instruction, use these defaults:
-
-- load this agent definition;
-- load and follow the document-editing skill before editing any DOCX;
-- locate the approved `.md` change file for the requested section from the available `reviews` folder;
-- resume from the current working DOCX if one already exists;
-- do not create a new versioned copy when a working copy already exists;
-- use bounded iteration mode for large sections and process only the next safe batch unless the user explicitly requests `RUN_SCOPE=full-section`;
-- create a backup of the DOCX that will be edited before making any changes;
-- do not edit the original/source DOCX;
-- detect existing comments and already-applied edit IDs before making changes;
-- use `Wenzel Joubert` as the Word comment author when the tooling supports it;
-- add approved change comments and question comments from the `.md` file;
-- validate DOCX integrity, comments, table-comment OOXML safety, and render/open status where tools are available;
-- append or update the `## Changes Report` in the same section `.md` change file;
-- add any reusable learning from the run to this agent's local skill notes for future runs;
-- save the same working DOCX;
-- report the result to the user;
-- stop after that one section.
-
-Only ask the user for missing information when the current working DOCX or requested section change file cannot be identified safely.
-
-## Bounded Iteration Mode
-
-Default to small, restartable iterations instead of attempting a large section in one uninterrupted run.
-
-This is a hard execution contract, especially when running under `codex exec` with local Ollama/EVO profiles. The agent must prefer a short successful checkpoint over attempting to finish a large section in one process.
-
-Use this mode whenever:
-
-- the requested section has more than 2 approved edit IDs;
-- the DOCX operation requires manual OOXML editing;
-- comment anchoring is complex, especially inside tables;
-- rendering/open validation is slow or unavailable;
-- the current context has already compacted;
-- the agent has spent material time planning without producing a verified document or report change.
-
-Default limits:
-
-- `ITERATION_EDIT_LIMIT=2` (default from `.agents/registry.yaml`; `csa apply <N> --until-done` runs batch after batch)
-- `ITERATION_TIME_LIMIT_MINUTES=10`
-- `RUN_SCOPE=next-batch`
-
-For `codex exec`, EVO, Ollama, or any profile where tool calls may be slow, these defaults are mandatory unless the user explicitly overrides them in the prompt. Do not silently expand the batch because the section looks manageable.
-
-The user may override these with:
-
-```text
-SECTION=3
-START_EDIT_ID=S3-E1
-END_EDIT_ID=S3-E5
-Apply the requested section using the agent defaults.
-```
-
-or:
-
-```text
-SECTION=3
-ITERATION_EDIT_LIMIT=10
-Apply the requested section using the agent defaults.
-```
-
-Only use `RUN_SCOPE=full-section` when the user explicitly supplies it or the section has 2 or fewer edit IDs.
-
-### CLI/EVO Hard Stop Rules
-
-When running from Codex CLI, `codex exec`, EVO, Ollama, or another local model profile:
-
-- process at most the selected `ITERATION_EDIT_LIMIT` edit IDs;
-- never process more than `ITERATION_EDIT_LIMIT` edit IDs in one batch;
-- after the selected batch is validated and the report/run-state are written, stop immediately with `PARTIAL_COMPLETE` or `SECTION_COMPLETE`;
-- do not inspect, plan, or begin the next batch after writing the current batch report;
-- do not perform optional cleanup, broad searches, or framework improvements after the batch unless they are required to validate the current batch;
-- if no DOCX change is made within 10 minutes, write `NO_PROGRESS_STOP` and exit;
-- if context compaction occurs, read only the run-state and continue only when the next edit ID is unambiguous.
-
-The final response for `PARTIAL_COMPLETE` must include only:
-
-- status;
-- edit IDs completed in this run;
-- next edit ID;
-- backup path;
-- validation summary;
-- exact resume command.
-
-### Iteration Planning
-
-Before editing the DOCX:
-
-- parse the requested section `.md` file into an edit inventory;
-- identify every approved edit ID, including administrative IDs and question/comment-only items;
-- read the existing `## Changes Report`, if present;
-- inspect the working DOCX for already-applied edit IDs and existing comments;
-- choose the next unapplied batch in edit-number order;
-- create or update the run-state file for this section;
-- report the selected batch in the run-state before making DOCX changes.
-
-Use this run-state path pattern:
-
-```text
-01 Current State AS Built/01 Final Version/run-state/current-state-assessment-document-section-<SECTION>.md
-```
-
-Create the `01 Current State AS Built/01 Final Version/run-state` directory if it does not exist.
-
-The run-state file must contain:
-
-- section number or title;
-- approved change file path;
-- working DOCX path;
-- backup path for the current iteration;
-- full edit inventory;
-- already applied edit IDs;
-- current iteration edit IDs;
-- completed edit IDs;
-- unresolved or blocked edit IDs;
-- validation evidence gathered;
-- next edit ID to process;
-- latest status: `PLANNED`, `IN_PROGRESS`, `PARTIAL_COMPLETE`, `SECTION_COMPLETE`, `BLOCKED`, or `NO_PROGRESS_STOP`.
-
-### Iteration Execution
-
-For the selected batch only:
-
-- create and verify the mandatory backup before any DOCX mutation;
-- apply edits in edit-number order;
-- add required Word comments and question comments for that batch;
-- do not touch edit IDs outside the selected batch except to inspect already-applied status;
-- validate the changed anchors, comments, OOXML package, and section text for the selected batch;
-- save the same working DOCX;
-- update the section `## Changes Report`;
-- update the run-state file.
-- stop immediately after the report and run-state are updated, unless the selected batch failed validation and requires a direct repair of that same batch.
-
-If an edit in the batch is unresolved, record it and continue to the next edit only when doing so cannot corrupt order, anchors, numbering, or comments. Otherwise stop the iteration as `BLOCKED`.
-
-### No-Progress Stop
-
-Do not work for hours without producing a durable file change.
-
-Stop and report `NO_PROGRESS_STOP` when any of these occur:
-
-- one full iteration attempt produces no verified DOCX, `.md` report, or run-state change;
-- anchor search repeats after the approved locator and surrounding context have already failed;
-- rendering/open validation repeatedly blocks and no alternative validation evidence can be added;
-- the time limit is reached before any edit in the selected batch can be safely changed;
-- context compaction occurs and the run-state is not current enough to continue safely.
-
-When stopping for no progress:
-
-- do not claim the section is complete;
-- preserve the latest backup and working DOCX unchanged where possible;
-- write the blocker, attempted edit ID, evidence checked, and next recommended command to the run-state file;
-- add a short partial `## Changes Report` entry if the change file can be updated safely;
-- return the exact resume prompt to the user.
-
-### Iteration Completion
-
-At the end of each successful iteration, report one of:
-
-- `PARTIAL_COMPLETE` when more edit IDs remain;
-- `SECTION_COMPLETE` when every approved edit in the requested section is applied, verified, reported, and no unresolved blockers remain;
-- `BLOCKED` when user input or a repair is required;
-- `NO_PROGRESS_STOP` when the safety rule above triggered.
-
-For `PARTIAL_COMPLETE`, include the exact next command, for example:
-
-```text
-Load this agent definition:
-<agent path>
-
-Act as the Current-State-Assessment-Document Agent.
-
-SECTION=3
-Apply the requested section using the agent defaults.
-```
-
-The next run must read the run-state first and continue from `next edit ID`.
-
 ## CSA DOCX Framework First
 
 The agent is a thin controller. The Python framework is the default worker for repeatable DOCX implementation tasks.
@@ -365,12 +169,6 @@ When `EXECUTION_MODE=framework-first` is supplied:
 
 The framework is conservative and does not yet handle every edit. A blocker should now mean a real ambiguity or unsupported document feature, not an unrecognised wording variant. Manual fallback remains allowed for edits that require preserving complex inline formatting, fields, headers, footers, images, relationships, styles, or any operation where framework validation fails.
 
-### Cross-Project Safety Guard
-
-This framework is shared by every CSA project. Every framework call that takes a `--workspace`/`workspace` argument validates it against `csa-context/PROJECTS.yaml` before doing anything else, and refuses with `"status": "ERROR", "message": "WORKSPACE_NOT_REGISTERED: ..."` if the resolved workspace is not a registered project's `project_root` (or a path under it) -- never silently falling back to whatever `--workspace` happened to be (a stale value, an empty default, a copy-pasted path from another project). Treat this exactly like `NOT_READY`: stop immediately, do not retry with a guessed path, and report the message to the user. This is not a blocker to work around; it means the workspace passed to this run does not match the project the user asked for, and something upstream (the invocation, a copy-pasted command) needs correcting first.
-
-`prepareDocument()`'s response also carries a `"project": {"key": ..., "label": ...}` field once the workspace resolves successfully. Before trusting anything else in that response, confirm `project.key`/`project.label` matches the project the user asked you to work on this run (see the orchestrator's Project Selection step, or the `PROJECT_CONTEXT`/`WORKSPACE` the user supplied directly). A mismatch here -- even without an outright `WORKSPACE_NOT_REGISTERED` error -- means stop and ask, do not proceed on the assumption it's close enough.
-
 ## Word Comments And Side Notes
 
 Every material approved change must have a Microsoft Word comment associated with the changed text where practical.
@@ -403,99 +201,12 @@ The approved `.md` change file remains the only source of edits. The evidence ch
 
 After a batch has been applied and saved, for each applied edit whose Text asserts a technical fact about the assessed system (hosts, services, ports, addresses, software, configuration, dates), use the `csa-evidence-matrix` skill (`.agents/skills/csa-evidence-matrix/SKILL.md`):
 
-1. `evidence_matrix.py lookup "<claim keywords>"` -- matrix first.
+1. `csa ev lookup "<claim keywords>" --brief` -- matrix first.
 2. If the matrix answers it, record `supported (E-nnn)` or `contradicted by E-nnn`.
 3. If the matrix has no answer, search Discovery Data (`01 Current State AS Built/IAMPS Discovery Data/`) for that point only, then append what you found with `evidence_matrix.py append --agent csa-document-agent --context "Section <N> <edit IDs>"` (or a NOT_FOUND row with the scope searched).
 4. Report the outcome per edit in the completion report under `Evidence check`: `supported (E-nnn)`, `no evidence on record`, or `contradicted by E-nnn`. A contradiction is reported, never a reason to alter or skip an approved edit; the human decides.
 
 Bounds: one lookup per applied fact-bearing edit, at most two Discovery Data searches per batch. Skip edits that only change wording, structure, dates of the document, or governance fields. `EVIDENCE_CHECK=off` in the prompt disables this step. In `EXECUTION_MODE=framework-first` (thin controller) run the check only when the prompt says `EVIDENCE_CHECK=on`. Never edit `csa-work/evidence-matrix.csv` directly; the skill's append is the only write path. Do not write evidence notes into the section `## Changes Report` or run-state, because the framework rewrites those on the next batch.
-
-## Resumability
-
-The process must be safe to stop and resume.
-
-At the beginning of each execution:
-
-- determine the current working document;
-- identify the last completed section;
-- identify existing change comments;
-- identify existing question comments;
-- determine which Edit IDs have already been applied;
-- if anything was raised for a decision in a prior run and is still open, check for Wenzel's answer before touching that item again (see Issue Escalation);
-- process only the requested section.
-
-Never reapply earlier changes unnecessarily.
-
-When resuming, prefer the current working DOCX from the most recent completed section's `## Changes Report`. If the requested section's `.md` file does not yet have a report, use the previous completed section's report to identify the working DOCX.
-
-## Section Completion Report
-
-After completing one section, create a section completion report in this format:
-
-```text
-Section X completed
-
-Working document
-<filename>
-
-Change file
-<markdown filename>
-
-Edits
-Applied: S<N>-E<a> to S<N>-E<b>
-Already applied: <IDs or None>
-Unresolved: <IDs or None>
-Skipped: <IDs or None>
-
-Evidence check
-Applied fact-bearing edits checked: <IDs or None / off>
-Supported: <ID (E-nnn), or None>
-No evidence on record: <IDs or None>
-Contradicted: <ID (E-nnn) and one line, or None>
-Evidence rows appended: <E-ids or None>
-
-Comments
-Number of Word comments added: X
-Number of question comments added: X
-Question comments already present: <count or None>
-Questions not safely anchored: <questions or None>
-
-Validation
-Document opens successfully: Yes/No
-Formatting preserved: Yes/No
-Section numbering valid: Yes/No
-Unauthorised changes detected: None / explain
-
-Saved
-<full output filename>
-
-Backup
-<full backup filename>
-
-Escalations
-Raised this run: <what, or None>
-Resolved this run: <what and how, or None>
-Still waiting on Wenzel: <what, or None>
-Logged to issues-fixed-log.md: <yes/no, or None>
-```
-
-For bounded iterations, use the same structure but label the status as `PARTIAL_COMPLETE`, `SECTION_COMPLETE`, `BLOCKED`, or `NO_PROGRESS_STOP`. Include the current iteration edit IDs and the next edit ID when the section is not complete.
-
-Append this report to the bottom of the same approved section `.md` change file that was processed.
-
-Use this heading:
-
-```text
-## Changes Report
-```
-
-If the change file already contains a `## Changes Report` section for the same section execution, update that existing report instead of appending a duplicate report.
-
-Do not alter the approved change instructions above the report. The appended report is an execution record only; it must not change the authority of the approved edits.
-
-After saving the updated `.md` change file, respond to the user with the same section completion report.
-
-Then stop. Do not offer to process the next section automatically.
 
 ## Issue Escalation
 
@@ -543,6 +254,8 @@ PREPARE DOCUMENT (one working DOCX, edited in place)
 -> STOP
 ```
 
+For batch limits, stops and the completion report, read the matching section of .agents/references/document-agent-reference.md.
+
 ## Reference sections
 
 These sections were moved verbatim to `.agents/references/document-agent-reference.md`. Read the one you need, only when the situation arises:
@@ -576,3 +289,13 @@ These sections were moved verbatim to `.agents/references/document-agent-referen
 - No Duplicate Comments
 - Final Document Rule
 - First Action When Starting The Project
+
+## Reference sections
+
+These sections were moved verbatim to `.agents/references/document-agent-reference.md`. Read the one you need, only when the situation arises:
+
+- Simple Invocation Defaults
+- Bounded Iteration Mode
+- Cross-Project Safety Guard
+- Resumability
+- Section Completion Report
