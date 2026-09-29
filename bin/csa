@@ -952,6 +952,13 @@ def cmd_mcp(a):
 
 
 # ---------------------------------------------------------------- doctor
+def cmd_budget(a):
+    """Tokens each agent loads before it starts (csa_docx.context_budget). No project needed."""
+    argv = ([a.verb] if a.verb else []) + (["--max", str(a.max)] if a.max is not None else []) + (["--json"] if a.json else [])
+    code = "import sys;sys.path.insert(0,sys.argv[1]);from csa_docx import context_budget as m;sys.exit(m.main(sys.argv[2:]))"
+    return subprocess.call([framework_python(), "-c", code, str(FRAMEWORK), *argv])
+
+
 def cmd_doctor(a):
     ok = True
     def line(good, msg, hint=""):
@@ -1867,6 +1874,8 @@ def main(argv=None) -> int:
     sp("projects", cmd_projects)
     s = sp("use", cmd_use); s.add_argument("key")
     sp("agents", cmd_agents)
+    s = sp("budget", cmd_budget, help="tokens each agent loads before it starts"); s.add_argument("verb", nargs="?")
+    s.add_argument("--max", type=int, default=None); s.add_argument("--json", action="store_true")
     s = sp("doctor", cmd_doctor); s.add_argument("--no-tests", dest="tests", action="store_false", help="skip the framework test run")
     s = sp("status", cmd_status); s.add_argument("section", nargs="?"); s.add_argument("--json", action="store_true")
     s = sp("next", cmd_next); s.add_argument("--json", action="store_true")
