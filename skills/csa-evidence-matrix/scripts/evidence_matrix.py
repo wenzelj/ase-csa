@@ -210,6 +210,19 @@ def norm(text):
 
 
 # --------------------------------------------------------------------------- lookup
+def _cut(text, n):
+    text = text or ""
+    return text if len(text) <= n else text[:n] + "..."
+
+
+def brief_row(r):
+    """The compact row agents need to judge and cite evidence (--brief)."""
+    source = (r.get("source_title") or "") + " | " + (r.get("page_or_location") or "")
+    return {"evidence_id": r.get("evidence_id", ""), "status": r.get("status", ""),
+            "review_state": r.get("review_state", ""), "claim": _cut(r.get("claim"), 240),
+            "source": _cut(source, 160)}
+
+
 def cmd_lookup(args):
     workspace, matrix = resolve_paths(args)
     header, body, *_ = load(matrix)
@@ -252,7 +265,7 @@ def cmd_lookup(args):
         if score >= args.min_score:
             scored.append((score, len(matched) / len(q), r, sorted(matched)))
     scored.sort(key=lambda x: (-x[0], -x[1], x[2]["evidence_id"]))
-    top = scored[: args.limit]
+    top = scored[: args.limit if args.limit is not None else 5]
 
     best = scored[0] if scored else None
     best_status = best[2]["status"] if best else None
@@ -284,6 +297,17 @@ def cmd_lookup(args):
         nxt = ("Nothing on record. Search Discovery Data, then append every finding "
                "(and a NOT_FOUND with the searched scope if nothing is found).")
 
+    if getattr(args, "brief", False):
+        reviews = latest_reviews(matrix)
+        kept = [with_review(r, reviews) for _, _, r, _ in scored]
+        hidden = sum(1 for r in kept if r.get("review_state", "").lower() == "rejected")
+        kept = [r for r in kept if r.get("review_state", "").lower() != "rejected"]
+        limit = args.limit if args.limit is not None else 5
+        emit({"status": "OK", "query": args.query, "verdict": verdict,
+              "matches": [brief_row(r) for r in kept[:limit]],
+              "more": max(0, len(kept) - limit), "rejected_hidden": hidden})
+        return
+
     emit({
         "status": "OK",
         "matrix": str(matrix),
@@ -307,6 +331,8 @@ def cmd_get(args):
     reviews = latest_reviews(matrix)
     rows = [with_review(r, reviews) for r in rows]
     found = {r["evidence_id"].upper() for r in rows}
+    if getattr(args, "brief", False):
+        rows = [brief_row(r) for r in rows]
     emit({"status": "OK", "rows": rows, "not_found": sorted(ids - found)})
 
 
@@ -475,6 +501,8 @@ def cmd_append(args):
     with open(lock_path, "a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         try:
+            if not matrix.exists():              # first append in a new project: start the matrix
+                matrix.write_text(",".join(COLUMNS) + "\n", encoding="utf-8")
             header, body, bom, nl, raw = load(matrix)
             if header != COLUMNS:
                 fail("matrix header differs from the template; run 'verify' and repair before appending")
@@ -483,7 +511,7 @@ def cmd_append(args):
 
             prepared, errors = [], []
             for i, item in enumerate(data):
-                row, errs = validate_row(item, known_areas, args.allow_new_area)
+                row, errs = validate_row(item, known_areas, args.allow_new_area or not known_areas)
                 if errs:
                     errors.append({"index": i, "claim": (item.get("claim") or "")[:100], "errors": errs})
                 else:
@@ -600,12 +628,15 @@ def main():
     p.add_argument("query", help="short keyword phrase: topic + host/port/service names")
     p.add_argument("--area"); p.add_argument("--status", help="comma list, e.g. VERIFIED,INFERRED")
     p.add_argument("--host", help="substring that must appear in the row (host, port, file name)")
-    p.add_argument("--limit", type=int, default=5)
+    p.add_argument("--limit", "--top", type=int, default=None, dest="limit",
+                   help="rows to show (default 5)")
     p.add_argument("--min-score", type=float, default=0.25)
+    p.add_argument("--brief", action="store_true", help="compact rows for agents: id, status, review state, claim, source")
     p.set_defaults(fn=cmd_lookup)
 
     p = sub.add_parser("get", help="print rows by evidence_id")
     p.add_argument("ids", nargs="+")
+    p.add_argument("--brief", action="store_true", help="compact rows (same shape as lookup --brief)")
     p.set_defaults(fn=cmd_get)
 
     p = sub.add_parser("stats"); p.set_defaults(fn=cmd_stats)

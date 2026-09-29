@@ -78,7 +78,7 @@ python3 "$S" append ... --dry-run          # validate and preview IDs without wr
 
 ### How to query
 
-Use a short phrase of the topic plus the concrete names that matter: hosts, ports, services, file names. Good: `RabbitMQ listening ports application hosts`, `NTP source time.windows.com`, `CSFalconService ROKPRDAMP101`. Bad: a whole sentence copied from the document. Use `--host` to restrict to one host, `--area` to restrict to one CSA area. Run two or three differently-worded queries before concluding the matrix has no answer.
+Use a short phrase of the topic plus the concrete names that matter: hosts, ports, services, file names. Good: `RabbitMQ listening ports application hosts`, `NTP source time.windows.com`, `CSFalconService ROKPRDAMP101`. Bad: a whole sentence copied from the document. Use `--host` to restrict to one host, `--area` to restrict to one CSA area. Run two or three differently-worded queries before concluding the matrix has no answer. Agents use --brief (and get --brief) by default; drop it only to read a row's full excerpt.
 
 ### What the verdict means
 
