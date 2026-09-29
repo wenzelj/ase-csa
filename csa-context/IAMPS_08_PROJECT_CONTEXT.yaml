@@ -1,0 +1,37 @@
+# IAMPS CSA on template v1.3 (folder "08 IAMPS", created 29 Sep 2026; copied from IAMPS_V12_PROJECT_CONTEXT.yaml).
+# A new IAMPS CSA on CSA template v1.3; the existing IAMPS CSAs (keys iamps, iamps-v12) are not touched.
+# Only facts confirmed by the project owner's instructions are populated. Blank fields are intentionally
+# unfilled: do not guess owners, servers, architecture, network zones, versions, controls, dates, or
+# dependencies. Add a value only when it is confirmed by project documentation or the project owner.
+# Existing document owners, reviewers, and approvers are controlled fields in the assessment document and
+# are not recorded or changed here.
+project:
+  assessment_name: "IAMPS Current State Assessment (template v1.3)"
+  assessment_type: "Current State Assessment"
+  program: "OT 3.5 Migration Program"
+  environment: "AZNOPS"
+  application: "IAMPS"
+  organisation: ""
+  as_of_date: ""
+  scope_in: []
+  scope_out: []
+  authoritative_sources:
+    # Confirmed by the project owner for IAMPS. Path relative to this project's root ("08 IAMPS"):
+    # the discovery data is read in place from the original IAMPS project.
+    - path: "../06 IAMPS/01 Current State AS Built/IAMPS Discovery Data"
+      role: "evidence data"
+      confirmed_by: "project owner instruction, 2026-09-20"
+  terminology: {}
+  known_constraints:
+    - "New CSA on template v1.3, version 0.1 built with the build lane (`csa build`). Evidence matrix and discovery index start empty in this project's csa-work."
+  stakeholders: []
+  required_deliverables:
+    - detailed_current_state_assessment
+    - consumable_summary
+
+working_preferences:
+  evidence_only_factual_claims: true
+  expand_abbreviations_on_first_use: true
+  explain_ot_concepts_separately: true
+  preserve_existing_document_structure: true
+  do_not_design_future_state_unless_requested: true
