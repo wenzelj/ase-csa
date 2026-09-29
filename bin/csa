@@ -1083,9 +1083,20 @@ def parse_inputs(spec: str) -> list[tuple[str, str | None, bool]]:
     return out
 
 
-def build_prompt(p: dict, r: dict, args: list[str]) -> str:
+def local_launch(cmdline: str = "") -> bool:
+    """A local-model launch: CSA_LOCAL=1, or a codex command line that picks a --profile."""
+    if os.environ.get("CSA_LOCAL", "").strip().lower() in ("1", "true", "yes", "on"):
+        return True
+    return "--profile" in cmdline
+
+
+def build_prompt(p: dict, r: dict, args: list[str], local: bool | None = None) -> str:
     inputs = parse_inputs(r.get("inputs", ""))
     values = {k: v for k, v, _ in inputs if v is not None}
+    if local if local is not None else local_launch():
+        for k, v, _ in parse_inputs(r.get("local_inputs", "")):   # smaller batches for local models
+            if v is not None:
+                values[k] = v
     positional = [x for x in args if "=" not in x]
     for x in args:
         if "=" in x:
@@ -1119,13 +1130,13 @@ def build_prompt(p: dict, r: dict, args: list[str]) -> str:
 
 
 def launch(p: dict, r: dict, args: list[str], a) -> int:
-    prompt = build_prompt(p, r, args)
-    if getattr(a, "print", False):
-        print(prompt)
-        return 0
     cli = getattr(a, "cli", None) or os.environ.get("CSA_CLI") or settings().get("default_cli", "codex")
     mode = "headless" if getattr(a, "headless", False) else "interactive"
     tmpl = settings().get(f"{cli}_{mode}")
+    prompt = build_prompt(p, r, args, local=local_launch(tmpl or ""))
+    if getattr(a, "print", False):
+        print(prompt)
+        return 0
     if not tmpl:
         die(f"no '{cli}_{mode}' command in .agents/cli.yaml")
     argv = [prompt if t == "{prompt}" else t for t in shlex.split(tmpl)]
@@ -1434,7 +1445,8 @@ def _fleet_tasks(p: dict, a) -> list[dict]:
             values, prompt = {"SECTION": sec}, None
         else:
             values = task_values(r, args)
-            prompt = build_prompt(p, r, args)       # dies on a missing required input before anything starts
+            fcli = settings().get("fleet_cli", "codex")
+            prompt = build_prompt(p, r, args, local=local_launch(settings().get(f"{fcli}_fleet", "")))  # dies on a missing required input
         tasks.append({"n": i, "text": text, "verb": verb, "args": args, "locks": task_locks(r, values),
                       "prompt": prompt, "status": "queued", "slot": None, "rc": None, "note": "",
                       "start": None, "end": None, "log": None, "last": None})
@@ -2007,7 +2019,12 @@ def main(argv=None) -> int:
         return PASSTHROUGH[argv[0]](a) or 0
     if glob_project:
         argv = ["--project", glob_project] + argv
-    a = ap.parse_args(argv)
+    a, extra = ap.parse_known_args(argv)
+    if extra:                                    # KEY=VALUE overrides placed after an option (csa author 6 --print K=V)
+        if isinstance(getattr(a, "args", None), list) and all("=" in x and not x.startswith("-") for x in extra):
+            a.args += extra
+        else:
+            ap.error(f"unrecognized arguments: {' '.join(extra)}")
     if not getattr(a, "cmd", None):
         ap.print_help()
         return 0

@@ -13,6 +13,7 @@
 #   step         pipeline order (pipeline agents only)
 #   arg          name of the positional argument (SECTION, ANALYSIS_SKILL, ...)
 #   inputs       comma list; NAME* = required, NAME=value = default
+#   local_inputs defaults that replace inputs for local-model launches (CSA_LOCAL=1 or a codex --profile)
 #   locks        what the task holds while it runs under `csa fleet`; tasks sharing a lock never
 #                overlap. docx = working DOCX, state = assessment-state.yaml, section = section:<N>,
 #                analysis = analysis:<ANALYSIS_SKILL>. Missing = "docx, section" (safe default).
@@ -30,6 +31,7 @@ agents:
     step: 1
     arg: SECTION
     inputs: SECTION*, AUTHOR_ITEM_LIMIT=6, RUN_SCOPE=next-authoring-batch, EDIT_MODE=evidence
+    local_inputs: AUTHOR_ITEM_LIMIT=3
     locks: section
     instruction: Draft change proposals for the requested section using the agent defaults.
     skill: csa-change-authoring-agent
