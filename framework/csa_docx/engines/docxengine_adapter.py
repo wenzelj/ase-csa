@@ -167,6 +167,19 @@ def _serialize_part_preserving(root: ET.Element, original: bytes) -> bytes:
         old = old[:-1] + b"/>"
     elif closing == b">" and old.endswith(b"/>"):
         old = old[:-2] + b">"
+    # A part may declare prefixes on inner elements (a:, pic:, a14: inside drawings)
+    # rather than on its root. ElementTree hoists every declaration to the root on
+    # output, so restoring the original root tag alone leaves those prefixes unbound.
+    # Carry over any declaration the original root tag lacks.
+    have = {m[0] for m in _XMLNS_RE.findall(old)}
+    extra = b"".join(
+        b' xmlns:' + prefix + b'="' + uri + b'"'
+        for prefix, uri in _XMLNS_RE.findall(new_tag.group(0))
+        if prefix not in have
+    )
+    if extra:
+        cut = len(old) - (2 if old.endswith(b"/>") else 1)
+        old = old[:cut] + extra + old[cut:]
     return out[: new_tag.start()] + old + out[new_tag.end():]
 
 

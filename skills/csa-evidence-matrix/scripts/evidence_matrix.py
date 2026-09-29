@@ -419,10 +419,30 @@ def validate_row(raw, known_areas, allow_new_area):
     for f in COLUMNS:
         if len(row[f]) > MAX_FIELD and f != "evidence_excerpt":
             errs.append(f"{f} is too long ({len(row[f])} chars)")
+    m = SHORTHAND_RE.search(row["claim"])
+    if m:
+        errs.append(f"claim uses host shorthand {m.group(0)!r}; write every host name in full "
+                    "(the claim is about hosts, not the source's row layout)")
     for f in ("claim", "evidence_excerpt", "inference_reason", "source_title"):
         if SECRET_RE.search(row[f]):
             errs.append(f"{f} looks like it contains a credential/secret value; redact it before recording")
     return row, errs
+
+
+SHORTHAND_RE = re.compile(r"\b[A-Za-z][A-Za-z-]*\d+\s*/\s*\d+(?:\s*/\s*\d+)*\b")
+
+
+def register_hosts(matrix) -> set:
+    """Host names from <work_dir>/hosts/hosts.csv (built by `csa hosts build`), or empty."""
+    p = Path(matrix).parent / "hosts" / "hosts.csv"
+    if not p.is_file():
+        return set()
+    with open(p, encoding="utf-8", newline="") as fh:
+        return {r["host"].upper() for r in csv.DictReader(fh)}
+
+
+def hosts_named(text, known) -> list:
+    return sorted({w.upper() for w in re.findall(r"[A-Za-z][A-Za-z0-9-]{2,30}", text or "")} & known)
 
 
 def next_id_number(body):
@@ -522,9 +542,12 @@ def cmd_append(args):
                     "action": "append", "ids": [r["evidence_id"] for r in written],
                     "backup": backup.name}, ensure_ascii=False) + "\n")
 
+            known = register_hosts(matrix)
             emit({"status": "APPENDED", "matrix": str(matrix), "backup": str(backup),
                   "written": [{"evidence_id": r["evidence_id"], "status": r["status"],
-                               "claim": r["claim"][:100]} for r in written],
+                               "claim": r["claim"][:100],
+                               **({"hosts": hosts_named(r["claim"], known) or "none named: counts as system-wide"}
+                                  if known else {})} for r in written],
                   "skipped_duplicates": skipped, "same_claim_elsewhere": also})
         finally:
             fcntl.flock(lock, fcntl.LOCK_UN)

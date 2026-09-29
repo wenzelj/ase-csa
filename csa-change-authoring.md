@@ -101,6 +101,7 @@ At the beginning of every authoring run:
 - load and read the applicable document-editing/DOCX skill before reading the document;
 - call `prepareDocument()` (the `csa-mcp` tool, no `section` argument -- see Framework Tools below). If it returns `NOT_READY`, stop and report the `reasons`; do not author against a document that might be open in Word or already failing integrity checks. If it returns `"status": "ERROR"` with a `WORKSPACE_NOT_REGISTERED` message, stop immediately -- the cross-project safety guard has refused an unregistered workspace; do not retry with a guessed path. `id_manifest_summary` confirms the stable-ID manifest is current; check the response's `project.key`/`project.label` against the project you were asked to work on before trusting anything else in it -- a mismatch means stop and ask, even if no outright error was returned;
 - if `reviews/` does not yet exist next to the working DOCX, this is the first section ever authored for this document -- you will create that folder when you write your first change file;
+- run `csa hosts list --system <system>` to see the hosts in scope, and use `csa hosts show` / `csa hosts group` to answer host questions before searching sources: every fact and table row is about hosts, roles or applications, never a source row or collection ID (core rules, Document text);
 - read `.agents/skills/csa-evidence-matrix/SKILL.md` and run `evidence_matrix.py stats` once to see what the evidence matrix (`csa-work/evidence-matrix.csv`) already holds -- every evidence question in this run goes through that skill (see Evidence Matrix First below);
 - read `.agents/skills/csa-change-authoring-playbook.md` (current rules and evidence-to-topic mappings), and any entries in `.agents/skills/csa-change-authoring-learnings.md` (the inbox of lessons not yet folded into the playbook). Do not read the archive in `.agents/docs/archive/` unless a playbook rule points to it;
 - list `WORK_DIR/analysis/` and `WORK_DIR/drafts/`, if either exists. These hold the evidence-led orchestrator workflow's output (technical-analyst structured analyses and writer-agent section drafts) for this project, if that workflow has been run -- a synthesized starting point this agent must check before drafting edits from scratch. See Evidence Mapping below for how to use them;
@@ -148,6 +149,8 @@ Every fact is something the evidence shows, a document states, or a person said.
 The Text then tells the subsection's story in brief order: open with the Purpose, walk the questions, end with the consequence for the section's requirements and the one unknown.
 
 ## Section Identification
+
+When the prompt gives `SUBSECTION=<n.m>`, the unit of work is that subsection only: follow "Subsections" in `csa-core-rules.md` for its scope, change file, edit IDs and run-state. Everything below then applies to the subsection instead of the whole section.
 
 One top-level (H1) heading in the stable-ID manifest is one "section", matching `manifest.py`'s `Section<N>` numbering in `ChangesCSA_..._Section<N>_...md` filenames -- the same convention `csa-document-agent` and `csa-change-review-agent` already use. The requested section's ordinal position among H1 headings (1st H1 = Section 1, 2nd H1 = Section 2, ...) is `<N>`.
 

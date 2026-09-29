@@ -197,6 +197,29 @@ LINTS = (
 )
 
 
+SOURCE_KEY_RE = re.compile(r"^\s*(?:[A-Z]{2,6}\d{3,}[A-Z0-9]*|row\s*\d+|line\s*\d+|E-\d+)\s*[:(-]", re.I)
+
+
+def subject_findings(records) -> list[dict]:
+    """A table row is about hosts, a role, an application or the system. A first cell that
+    starts with a source identifier (a collection ID such as BRI0083D, a sheet row or line
+    number, an evidence ID) makes the source's own key the subject. See 'The subject is the
+    system' in csa-core-rules.md."""
+    out = []
+    for r in records:
+        t = (r.text or "").strip()
+        if not _is_table_text(t):
+            continue
+        for line in t.splitlines():
+            cells = [c.strip() for c in line.strip().lstrip(">").strip().strip("|").split("|")]
+            if cells and SOURCE_KEY_RE.match(cells[0]):
+                out.append(finding("WARN", "TABLE_ROW_SOURCE_KEYED",
+                                   f"first cell {cells[0][:40]!r} is a source ID; key the row by host(s), role or "
+                                   "application and keep the source ID in Why", r.edit_id))
+                break
+    return out
+
+
 def lint_findings(records) -> list[dict]:
     texts = [(r.edit_id, r.text) for r in records if (r.text or "").strip()]
     if not texts:
@@ -232,6 +255,7 @@ def check(path: Path, workspace: str | None = None, anchors: bool = True, lint: 
     findings += hygiene_findings(records)
     findings += brief_findings(text, records)
     findings += section_fit_findings(text, records)
+    findings += subject_findings(records)
     from csa_docx.fact_checks import fact_findings, load_matrix, parse_sites
     ev = Path(evidence) if evidence else (Path(workspace) / "csa-work" / "evidence-matrix.csv" if workspace else None)
     findings += fact_findings(records, load_matrix(ev), parse_sites(sites), finding)

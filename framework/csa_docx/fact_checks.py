@@ -24,7 +24,7 @@ import csv
 import re
 from pathlib import Path
 
-EID_RE = re.compile(r"\bE-\d{2,4}\b")
+EID_RE = re.compile(r"(?<![\w-])(?:[a-z][a-z0-9-]*:)?E-\d{2,4}\b")   # E-042, or utcdtc:E-088 (sibling project)
 BRACE_RE = re.compile(r"\{([^{}]*)\}\s*$")
 TAG_RE = re.compile(r"^\s*[-*]\s*(\[[^\]]*\]\s*)?")
 BASES = ("observed", "documented", "stated")
@@ -41,10 +41,31 @@ should system systems machines machine section""".split())
 
 
 def load_matrix(path: Path | None) -> dict[str, dict]:
+    """This project's evidence rows, plus those of the sibling projects of the same system
+    (hosts/roles.csv kind=system_project) under '<project>:E-nnn'. A fact may cite either."""
     if not path or not Path(path).is_file():
         return {}
     with open(path, newline="", encoding="utf-8-sig") as fh:
-        return {r["evidence_id"].strip(): r for r in csv.DictReader(fh) if r.get("evidence_id")}
+        out = {r["evidence_id"].strip(): r for r in csv.DictReader(fh) if r.get("evidence_id")}
+    roles = Path(path).parent / "hosts" / "roles.csv"
+    if roles.is_file():
+        try:
+            from csa_docx.hostmodel import _project_work_dir
+        except ImportError:
+            return out
+        with roles.open(encoding="utf-8-sig", newline="") as fh:
+            for r in csv.DictReader(fh):
+                if (r.get("kind") or "").strip() != "system_project":
+                    continue
+                key = (r.get("match") or "").strip()
+                wd = _project_work_dir(key)
+                m = wd / "evidence-matrix.csv" if wd else None
+                if m and m.is_file():
+                    with m.open(newline="", encoding="utf-8-sig") as fh2:
+                        for row in csv.DictReader(fh2):
+                            if row.get("evidence_id"):
+                                out[f"{key}:{row['evidence_id'].strip()}"] = row
+    return out
 
 
 def parse_sites(spec: str | None) -> dict[str, str]:
@@ -82,7 +103,7 @@ def fact_lines(facts: str):
                     meta[k.strip().lower()] = v.strip()
             body = body[:b.start()].rstrip()
         eids = EID_RE.findall(body)
-        claim = re.sub(r"\((?:\s*E-\d+\s*,?)+\)", "", body).strip()
+        claim = re.sub(r"\((?:\s*(?:[a-z][a-z0-9-]*:)?E-\d+\s*,?)+\)", "", body).strip()
         yield kind, claim, eids, meta, ln
 
 

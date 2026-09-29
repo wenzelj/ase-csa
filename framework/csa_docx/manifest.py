@@ -23,6 +23,9 @@ _CHANGE_FILE_RE = re.compile(
     r"^ChangesCSA_.*_Section(?P<section>\d+)(?:_E\d+_E\d+(?:_.*)?)?\.md$"
 )
 
+_LABELLED_RE = re.compile(r"^ChangesCSA_.*_Section(?P<section>\d+)_(?!E\d+_E\d+)[^.]+\.md$")
+
+
 class ManifestError(RuntimeError):
     """Raised when the workspace layout is ambiguous enough that guessing
     would be unsafe (duplicate section files, zero or multiple docx
@@ -60,15 +63,27 @@ def build_manifest(workspace: Path) -> dict[str, SectionEntry]:
     working docx. Raises :class:`ManifestError` on anything ambiguous."""
     workspace = Path(workspace).resolve()
     candidates: dict[str, list[Path]] = {}
+    labelled: dict[str, list[Path]] = {}
 
     for path in workspace.rglob("reviews/*.md"):
         if _is_archived(path, workspace):
             continue
         match = _CHANGE_FILE_RE.match(path.name)
         if not match:
+            sub = _LABELLED_RE.match(path.name)
+            if sub:
+                labelled.setdefault(str(int(sub.group("section"))), []).append(path)
             continue
         section = str(int(match.group("section")))
         candidates.setdefault(section, []).append(path)
+
+    # A section worked only through labelled change files (for example one per
+    # subsection, ChangesCSA_<App>_Section6_6-4.md) still needs an entry so the
+    # section resolves to its working DOCX. Callers that apply a labelled file
+    # pass it explicitly; the entry's change_file is only the first of them.
+    for section, paths in labelled.items():
+        if section not in candidates:
+            candidates[section] = [sorted(paths)[0]]
 
     entries: dict[str, SectionEntry] = {}
     for section, paths in sorted(candidates.items(), key=lambda kv: int(kv[0])):

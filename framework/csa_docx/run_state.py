@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from .models import ApplySummary, ChangeRecord
@@ -11,6 +12,17 @@ def state_path(base_dir: Path, section: str) -> Path:
     # contains the working DOCX (``01 Current State AS Built/01 Final
     # Version``), NOT the workspace root - callers pass ``docx.parent``.
     return base_dir / "run-state" / f"current-state-assessment-document-section-{section}.md"
+
+
+_LABELLED_RE = re.compile(r"^ChangesCSA_.+?_Section(?P<section>\d+)_(?P<label>[^.]+)\.md$")
+
+
+def state_key(section: str, change_file: Path | str | None) -> str:
+    """Run-state key for a change file: the section number, plus the label for a
+    labelled change file (``ChangesCSA_<App>_Section6_6-4.md`` -> ``6_6-4``), so two
+    change files for one section (e.g. two subsections) keep separate progress."""
+    m = _LABELLED_RE.match(Path(change_file).name) if change_file else None
+    return f"{section}_{m['label']}" if m else str(section)
 
 
 def read_completed_ids(path: Path) -> set[str]:

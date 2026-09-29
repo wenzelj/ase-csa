@@ -34,7 +34,7 @@ from .manifest import ManifestError, get_manifest, refresh_manifest as _refresh_
 from .models import ApplySummary
 from .ooxml import DocumentEditor
 from .report_writer import update_changes_report
-from .run_state import read_completed_ids, state_path, write_state
+from .run_state import read_completed_ids, state_key, state_path, write_state
 from .stable_ids import generate_manifest
 from .validator import validate_docx
 
@@ -802,7 +802,7 @@ def apply_next_batch(
     if not docx.exists():
         return _error(f"Working DOCX does not exist: {docx}")
 
-    state = state_path(docx.parent, section)
+    state = state_path(docx.parent, state_key(section, change_file))
 
     section_label, records = parse_change_file(change_file)
     section = str(section) or (section_label or "unknown")

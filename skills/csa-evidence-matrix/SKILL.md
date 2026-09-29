@@ -31,6 +31,10 @@ Three artefacts, three jobs. Keep them separate and do not let one become the ot
 
 The matrix is not the structure or subject of the CSA. The CSA body never takes the evidence as its subject; it states the system, and the matrix sits behind it as the traceability record. A reader of the CSA should be able to trace any material statement to an E-id in the matrix without the matrix being visible in the prose.
 
+## Rows are about hosts, not source rows
+
+Each row's claim names the host(s), role or application it is about, with every host name written in full. A source row that lists many hosts (a MECM collection, a GPO scope, an agent report) becomes one row per group of hosts that share the value, not one row per source row. The source's own row, collection or sheet key goes in `page_or_location`. `csa hosts build` derives `hosts/evidence_hosts.csv` (evidence ID -> hosts) from the claims, and `csa hosts show <HOST>` lists the evidence for a machine; a row that names no host counts as system-wide.
+
 ## The rule: matrix first, then data, then write back
 
 ```text

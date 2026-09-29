@@ -1,0 +1,233 @@
+host,project,in_scope,system,role,site,role_source,site_source,ips,capture,listening
+ABCCELEFT,utcdtc,No,,,,,,DNS;failed;lookup,,
+ABCCERIGHT,utcdtc,No,,,,,,DNS;failed;lookup,,
+BNESIMSIGMAP01,utcdtc,No,SIGMAP,SIGMAP host,,name pattern ^(MKY|ROK|BNESIM)SIGMAP[A-Z]?\d+$,,DNS;failed;lookup,,
+BNESIMTCSSRV101,utcdtc,No,,,,,,172.27.200.98,,
+BNESIMTCSSRV102,utcdtc,No,,,,,,172.27.200.12,,
+BNESIMTCSSRV103,utcdtc,No,,,,,,172.27.200.24,,
+BNESIMTCSWS001,utcdtc,No,,,,,,DNS;failed;lookup,,
+BNESIMTCSWS101,utcdtc,No,,,,,,DNS;failed;lookup,,
+BNESIMTCSWS103,utcdtc,No,,,,,,DNS;failed;lookup,,
+BNESIMTCSWS104,utcdtc,No,,,,,,172.27.200.95,,
+BNETSTOSE775,utcdtc,No,,,,,,DNS;failed;lookup,,
+BNETSTOSE777,utcdtc,No,,,,,,DNS;failed;lookup,,
+CONTROLLER1,utcdtc,Yes,UTC,Controller workstation,Rockhampton,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.34.0/24,192.168.34.30,tg_discovery_CONTROLLER1_20260317T054226Z,135;139;445;2701;2869;3389;5040;5985;8005;47001;49664;49665;49670;49671;49672;49673;49674;49675;49676;54955;57134
+CONTROLLER10,utcdtc,Yes,UTC,Controller workstation,Rockhampton,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.34.0/24,192.168.34.39,,
+CONTROLLER100,utcdtc,Yes,UTC,Controller workstation,Mackay,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.44.0/24,192.168.44.129,,
+CONTROLLER102,utcdtc,Yes,UTC,Controller workstation,Rockhampton,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.34.0/24,192.168.34.131,,
+CONTROLLER105,utcdtc,Yes,UTC,Controller workstation,Rockhampton,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.34.0/24,192.168.34.134,,
+CONTROLLER106,utcdtc,Yes,UTC,Controller workstation,Mackay,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.44.0/24,192.168.44.135,tg_discovery_CONTROLLER106_20260317T062918Z,135;139;445;2701;3389;5040;5985;8005;47001;49664;49665;49668;49669;49670;49671;49672;49675;49676;57170;65505
+CONTROLLER111,utcdtc,Yes,UTC,Controller workstation,Rockhampton,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.34.0/24,192.168.34.140,,
+CONTROLLER112,utcdtc,Yes,UTC,Controller workstation,Rockhampton,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.34.0/24,192.168.34.141,,
+CONTROLLER114,utcdtc,No,UTC,Controller workstation,,name pattern ^CONTROLLER\d+$,,DNS;failed;lookup,,
+CONTROLLER12,utcdtc,Yes,UTC,Controller workstation,Rockhampton,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.34.0/24,192.168.34.41,,
+CONTROLLER120,utcdtc,Yes,UTC,Controller workstation,Rockhampton,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.34.0/24,192.168.34.149,,
+CONTROLLER121,utcdtc,No,UTC,Controller workstation,,name pattern ^CONTROLLER\d+$,,DNS;failed;lookup,,
+CONTROLLER123,utcdtc,Yes,UTC,Controller workstation,Rockhampton,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.34.0/24,192.168.34.152,,
+CONTROLLER126,utcdtc,Yes,UTC,Controller workstation,Rockhampton,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.34.0/24,192.168.34.155,,
+CONTROLLER129,utcdtc,Yes,UTC,Controller workstation,Rockhampton,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.34.0/24,192.168.34.158,,
+CONTROLLER132,utcdtc,Yes,UTC,Controller workstation,Rockhampton,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.34.0/24,192.168.34.161,,
+CONTROLLER135,utcdtc,Yes,UTC,Controller workstation,Rockhampton,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.34.0/24,192.168.34.164,,
+CONTROLLER138,utcdtc,Yes,UTC,Controller workstation,Rockhampton,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.34.0/24,192.168.34.167,,
+CONTROLLER141,utcdtc,Yes,UTC,Controller workstation,Rockhampton,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.34.0/24,192.168.34.170,,
+CONTROLLER144,utcdtc,Yes,UTC,Controller workstation,Rockhampton,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.34.0/24,192.168.34.173,,
+CONTROLLER147,utcdtc,Yes,UTC,Controller workstation,Rockhampton,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.34.0/24,192.168.34.176,,
+CONTROLLER15,utcdtc,Yes,UTC,Controller workstation,Rockhampton,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.34.0/24,192.168.34.44,,
+CONTROLLER150,utcdtc,Yes,UTC,Controller workstation,Rockhampton,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.34.0/24,169.254.18.86;192.168.34.179,tg_discovery_CONTROLLER150_20260317T055014Z,135;139;445;2701;2869;3389;5040;5985;8005;47001;49664;49665;49668;49669;49670;49673;49674;49675;49676;49684;59086
+CONTROLLER153,utcdtc,Yes,UTC,Controller workstation,Rockhampton,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.34.0/24,192.168.34.182,,
+CONTROLLER156,utcdtc,Yes,UTC,Controller workstation,Rockhampton,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.34.0/24,192.168.34.185,,
+CONTROLLER159,utcdtc,Yes,UTC,Controller workstation,Rockhampton,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.34.0/24,192.168.34.188,,
+CONTROLLER162,utcdtc,Yes,UTC,Controller workstation,Rockhampton,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.34.0/24,192.168.34.191,,
+CONTROLLER165,utcdtc,Yes,UTC,Controller workstation,Rockhampton,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.34.0/24,192.168.34.194,,
+CONTROLLER168,utcdtc,Yes,UTC,Controller workstation,Rockhampton,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.34.0/24,192.168.34.197,,
+CONTROLLER17,utcdtc,Yes,UTC,Controller workstation,Rockhampton,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.34.0/24,192.168.34.46,,
+CONTROLLER20,utcdtc,Yes,UTC,Controller workstation,Rockhampton,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.34.0/24,192.168.34.49,,
+CONTROLLER24,utcdtc,Yes,UTC,Controller workstation,Rockhampton,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.34.0/24,192.168.34.53,,
+CONTROLLER25,utcdtc,Yes,UTC,Controller workstation,Rockhampton,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.34.0/24,192.168.34.54,,
+CONTROLLER27,utcdtc,Yes,UTC,Controller workstation,Rockhampton,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.34.0/24,192.168.34.56,,
+CONTROLLER33,utcdtc,Yes,UTC,Controller workstation,Rockhampton,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.34.0/24,192.168.34.62,,
+CONTROLLER36,utcdtc,Yes,UTC,Controller workstation,Rockhampton,evidence: ws.exe running (01 Current State AS Built/UTC Discovery Data/UTC_discovery_CONTROLLER36_20260505T010953Z/24_tasklist_services.txt),evidence: address on 192.168.34.0/24,192.168.34.65,UTC_discovery_CONTROLLER36_20260505T010953Z,135;139;445;2701;3389;5040;5985;8005;47001;49664;49665;49668;49669;49670;49671;49672;49673;49676;49703;63634
+CONTROLLER37,utcdtc,Yes,UTC,Controller workstation,Rockhampton,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.34.0/24,192.168.34.66,,
+CONTROLLER39,utcdtc,Yes,UTC,Controller workstation,Rockhampton,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.34.0/24,192.168.34.68,,
+CONTROLLER4,utcdtc,Yes,UTC,Controller workstation,Rockhampton,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.34.0/24,192.168.34.33,,
+CONTROLLER41,utcdtc,Yes,UTC,Controller workstation,Rockhampton,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.34.0/24,192.168.34.70,,
+CONTROLLER52,utcdtc,Yes,UTC,Controller workstation,Rockhampton,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.34.0/24,192.168.34.81,,
+CONTROLLER54,utcdtc,Yes,UTC,Controller workstation,Rockhampton,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.34.0/24,192.168.34.83,,
+CONTROLLER62,utcdtc,Yes,UTC,Controller workstation,Rockhampton,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.34.0/24,192.168.34.91,,
+CONTROLLER63,utcdtc,Yes,UTC,Controller workstation,Rockhampton,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.34.0/24,192.168.34.92,,
+CONTROLLER64,utcdtc,No,UTC,Controller workstation,,name pattern ^CONTROLLER\d+$,,DNS;failed;lookup,,
+CONTROLLER65,utcdtc,Yes,UTC,Controller workstation,Rockhampton,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.34.0/24,192.168.34.94,,
+CONTROLLER66,utcdtc,No,UTC,Controller workstation,Rockhampton,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.34.0/24,192.168.34.95;DNS;failed;lookup,tg_discovery_CONTROLLER66_20260317T062625Z,135;139;445;2701;2869;3389;5040;5985;8005;47001;49664;49665;49668;49669;49670;49673;49674;49675;49677;49686;57244
+CONTROLLER67,utcdtc,Yes,UTC,Controller workstation,Mackay,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.44.0/24,192.168.44.96,,
+CONTROLLER7,utcdtc,Yes,UTC,Controller workstation,Rockhampton,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.34.0/24,192.168.34.36,,
+CONTROLLER70,utcdtc,Yes,UTC,Controller workstation,Mackay,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.44.0/24,192.168.44.99,,
+CONTROLLER73,utcdtc,Yes,UTC,Controller workstation,Mackay,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.44.0/24,192.168.44.102,,
+CONTROLLER76,utcdtc,Yes,UTC,Controller workstation,Mackay,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.44.0/24,192.168.44.105,,
+CONTROLLER79,utcdtc,Yes,UTC,Controller workstation,Mackay,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.44.0/24,192.168.44.108,,
+CONTROLLER82,utcdtc,No,UTC,Controller workstation,,name pattern ^CONTROLLER\d+$,,DNS;failed;lookup,,
+CONTROLLER84,utcdtc,Yes,UTC,Controller workstation,Mackay,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.44.0/24,192.168.44.113,,
+CONTROLLER87,utcdtc,Yes,UTC,Controller workstation,Mackay,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.44.0/24,192.168.44.116,tg_discovery_CONTROLLER87_20260317T060223Z,135;139;445;2701;3389;5040;5985;8005;47001;49664;49665;49668;49669;49670;49671;49672;49673;49676;49710;57086
+CONTROLLER90,utcdtc,Yes,UTC,Controller workstation,Rockhampton,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.34.0/24,192.168.34.119,,
+CONTROLLER93,utcdtc,Yes,UTC,Controller workstation,Mackay,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.44.0/24,192.168.44.122,,
+CONTROLLER96,utcdtc,Yes,UTC,Controller workstation,Mackay,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.44.0/24,192.168.44.125,,
+CONTROLLER99,utcdtc,Yes,UTC,Controller workstation,Rockhampton,name pattern ^CONTROLLER\d+$,evidence: address on 192.168.34.0/24,192.168.34.128,,
+MAINTENANCE5,utcdtc,Yes,UTC,Maintenance workstation,Rockhampton,name pattern ^(MKY|ROK)(MAINT|MAINTENANCE)\d+$|^MAINTENANCE\d+$,evidence: address on 192.168.34.0/24,192.168.34.22,tg_discovery_MAINTENANCE5_20260317T053428Z,135;139;445;2701;3389;5040;5985;8005;47001;49664;49665;49668;49669;49670;49671;49672;49673;49676;49681;54701
+MKY-DTC-CWS11,utcdtc,No,DTC,DTC control workstation,Mackay,name pattern ^(MKY|ROK)-DTC-CWS\d+$,name pattern ^MKY,DNS;failed;lookup,,
+MKY-DTC-CWS12,utcdtc,Yes,DTC,DTC control workstation,Mackay,name pattern ^(MKY|ROK)-DTC-CWS\d+$,evidence: address on 192.168.44.0/24,192.168.44.214,tg_discovery_MKY-DTC-CWS12_20260317T060447Z,135;139;445;2701;3389;5040;5985;8005;47001;49664;49665;49668;49669;49670;49671;49672;49673;49674;49690;57355
+MKY-DTC-CWS13,utcdtc,Yes,DTC,DTC control workstation,Mackay,name pattern ^(MKY|ROK)-DTC-CWS\d+$,evidence: address on 192.168.44.0/24,192.168.44.215,,
+MKY-DTC-CWS14,utcdtc,Yes,DTC,DTC control workstation,Mackay,name pattern ^(MKY|ROK)-DTC-CWS\d+$,evidence: address on 192.168.44.0/24,192.168.44.216,,
+MKY-DTC-CWS15,utcdtc,Yes,DTC,DTC control workstation,Rockhampton,evidence: cws.exe running (01 Current State AS Built/UTC Discovery Data/UTC_discovery_MKY-DTC-CWS15_20260505T012213Z/24_tasklist_services.txt),evidence: address on 192.168.34.0/24,192.168.34.217,UTC_discovery_MKY-DTC-CWS15_20260505T012213Z,135;139;445;2701;3389;5040;5985;8005;47001;49664;49665;49668;49669;49670;49671;49672;49673;49674;49682;51263
+MKY-DTC-CWS16,utcdtc,Yes,DTC,DTC control workstation,Rockhampton,name pattern ^(MKY|ROK)-DTC-CWS\d+$,evidence: address on 192.168.34.0/24,169.254.189.54;192.168.34.218,tg_discovery_MKY-DTC-CWS16_20260317T062117Z,135;139;445;2701;3389;5040;5985;8005;47001;49664;49665;49668;49669;49670;49671;49672;49673;49674;49688;49823
+MKYCELEFT,utcdtc,Yes,UTC,Central Engine,Mackay,name pattern ^(MKY|ROK)CE(LEFT|RIGHT)$,evidence: address on 192.168.44.0/24,169.254.157.46;192.168.1.1;192.168.44.200,tg_discovery_MKYCELEFT_20260317T042559Z,135;139;445;623;2701;3389;5040;5985;6000;6001;6002;6003;6004;6005;8005;16992;47001;49666;49667;49669;51317;62781;62784;62785;62786;62788;62828;62834
+MKYCERIGHT,utcdtc,Yes,UTC,Central Engine,Mackay,name pattern ^(MKY|ROK)CE(LEFT|RIGHT)$,evidence: address on 192.168.44.0/24,169.254.214.111;192.168.1.1;192.168.44.201,tg_discovery_MKYCERIGHT_20260317T042522Z,135;139;445;623;2701;3389;5040;5985;6000;6001;6002;6004;6005;8005;16992;47001;49665;49666;49667;49668;49670;49671;49672;49673;49697;49698;60802
+MKYMAINT2,utcdtc,Yes,UTC,Maintenance workstation,Mackay,name pattern ^(MKY|ROK)(MAINT|MAINTENANCE)\d+$|^MAINTENANCE\d+$,evidence: address on 192.168.44.0/24,192.168.44.19,tg_discovery_MKYMAINT2_20260317T053417Z,135;139;445;2701;3389;5040;5985;8005;47001;49664;49665;49668;49669;49670;49671;49672;49675;49676;49681;58608
+MKYMAINT3,utcdtc,Yes,UTC,Maintenance workstation,Mackay,name pattern ^(MKY|ROK)(MAINT|MAINTENANCE)\d+$|^MAINTENANCE\d+$,evidence: address on 192.168.44.0/24,192.168.44.20,,
+MKYMAINTENANCE3,utcdtc,No,UTC,Maintenance workstation,Mackay,name pattern ^(MKY|ROK)(MAINT|MAINTENANCE)\d+$|^MAINTENANCE\d+$,name pattern ^MKY,DNS;failed;lookup,,
+MKYMRLEFT,utcdtc,Yes,UTC,Message Redirector,Mackay,evidence: mr.exe running (01 Current State AS Built/UTC Discovery Data/UTC_discovery_MKYMRLEFT_20260505T011739Z/24_tasklist_services.txt),evidence: address on 192.168.44.0/24,192.168.44.14,UTC_discovery_MKYMRLEFT_20260505T011739Z,135;139;445;623;2701;3389;5040;5985;6010;8005;16992;47001;49664;49665;49666;49667;58433;65245;65246;65247;65250;65276;65292
+MKYMRRIGHT,utcdtc,Yes,UTC,Message Redirector,Mackay,name pattern ^(MKY|ROK)MR(LEFT|RIGHT)$,evidence: address on 192.168.44.0/24,192.168.44.15,tg_discovery_MKYMRRIGHT_20260317T034920Z,135;139;445;623;2701;3389;5040;5985;6010;8005;16992;47001;49640;49641;49642;49664;49665;49666;49667;49668;49691;49706;63043
+MKYPRDAMP102,iamps,,IAMPS,IAMPS application server,Mackay,name pattern ^(ROK|MKY)PRDAMP\d+$ (unreviewed),evidence: address on 10.45.228.0/24,10.45.228.226,tg_discovery_20260317T002440Z,135;139;445;4369;5672;5985;8005;15672;25672;47001;49664;49665;49666;49667;49668;49669;49670;49686;49688;56403;58261
+MKYSIGMAPA3,utcdtc,Yes,SIGMAP,SIGMAP host,Mackay,name pattern ^(MKY|ROK|BNESIM)SIGMAP[A-Z]?\d+$,name pattern ^MKY,192.168.35.129,tg_discovery_MKYSIGMAPA3_20260317T051130Z,135;139;445;1947;2701;3389;5985;8005;8467;47001;49664;49665;49666;49667;49668;49669;49674;49677;58984
+MKYSIGMAPA4,utcdtc,Yes,SIGMAP,SIGMAP server,Mackay,evidence: sigmapmkii.server.exe running (01 Current State AS Built/UTC Discovery Data/SIGMAP Discovery Data/UTC_discovery_MKYSIGMAPA4_20260507T021804Z/24_tasklist_services.txt),name pattern ^MKY,192.168.36.129,UTC_discovery_MKYSIGMAPA4_20260507T021804Z,135;139;445;1947;2701;3389;5357;5985;8005;8467;47001;49664;49665;49666;55757;63796;63797;63834;63835;63841
+MKYSIGMAPB3,utcdtc,Yes,SIGMAP,SIGMAP host,Mackay,name pattern ^(MKY|ROK|BNESIM)SIGMAP[A-Z]?\d+$,name pattern ^MKY,192.168.35.130,tg_discovery_MKYSIGMAPB3_20260317T051134Z,135;139;445;623;1947;2701;3389;5040;5985;8005;8467;16992;47001;49664;49665;49666;49667;49668;49669;49670;49671;49672;49717;64650
+MKYSIGMAPB4,utcdtc,Yes,SIGMAP,SIGMAP host,Mackay,name pattern ^(MKY|ROK|BNESIM)SIGMAP[A-Z]?\d+$,name pattern ^MKY,192.168.36.130,,
+MKYSIGMAPW5,utcdtc,Yes,SIGMAP,,Mackay,,name pattern ^MKY,10.45.229.57,UTC_discovery_MKYSIGMAPW5_20260507T021202Z,135;139;445;623;1947;2701;3389;5040;5985;8005;16992;47001;49664;49665;49666;49667;49668;49942;57128;57129;57130;61042;61066
+MKYTCSILEFT,utcdtc,Yes,UTC,TCSI,Mackay,evidence: tcsi.exe running (01 Current State AS Built/UTC Discovery Data/UTC_discovery_MKYTCSILEFT_20260505T011354Z/24_tasklist_services.txt),name pattern ^MKY,192.168.42.16,UTC_discovery_MKYTCSILEFT_20260505T011354Z,135;139;445;623;2701;3389;5040;5985;6050;6056;6058;8005;16992;47001;49664;49665;49666;49667;50886;50887;50889;50890;55420;60759;60791;64568
+MKYTCSIRIGHT,utcdtc,Yes,UTC,TCSI,Mackay,name pattern ^(MKY|ROK)TCSI(LEFT|RIGHT)$,name pattern ^MKY,192.168.42.17,tg_discovery_MKYTCSIRIGHT_20260317T033827Z,135;139;445;623;2701;3389;5040;5985;6050;6056;8005;16992;47001;49664;49665;49666;49667;49668;49669;49670;49671;55015;55420;62446;62467
+MKYTELEFT,utcdtc,Yes,UTC,Telemetry Processor,Mackay,evidence: te.exe running (01 Current State AS Built/UTC Discovery Data/UTC_discovery_MKYTELEFT_20260505T011546Z/24_tasklist_services.txt),evidence: address on 192.168.44.0/24,169.254.20.141;192.168.1.1;192.168.44.12,UTC_discovery_MKYTELEFT_20260505T011546Z,135;139;445;623;2701;3389;5040;5985;8005;16992;47001;49665;49666;49667;49668;49670;49671;49672;49673;49692;49944;59362
+MKYTERIGHT,utcdtc,Yes,UTC,Telemetry Processor,Mackay,name pattern ^(MKY|ROK)TE(LEFT|RIGHT)\d*$,evidence: address on 192.168.44.0/24,169.254.106.166;192.168.1.1;192.168.44.13,tg_discovery_MKYTERIGHT_20260317T040114Z,135;139;445;623;2701;3389;5040;5985;8005;16992;47001;49665;49666;49667;49668;49670;49671;49673;49675;49696;49697;55355
+MKYUATAMP101,iamps,,IAMPS,IAMPS application server (UAT),Mackay,name pattern ^(ROK|MKY)UATAMP\d+$ (unreviewed),evidence: address on 10.45.228.0/24,10.45.228.241;169.254.216.102,tg_discovery_20260317T002428Z,21;135;139;445;4369;5672;5985;8005;14147;15672;25672;47001;49664;49665;49666;51723;56403;64838;64839;64841;64854;64874;64875
+MKYUATAMP102,iamps,,IAMPS,IAMPS application server (UAT),Mackay,name pattern ^(ROK|MKY)UATAMP\d+$ (unreviewed),evidence: address on 10.45.228.0/24,10.45.228.242,tg_discovery_20260317T002426Z,135;139;445;4369;5672;5985;8005;15672;25672;47001;49664;49665;49666;52856;52857;52858;52860;52903;52904;56403;57683
+PCAE24A6141,utcdtc,No,,,,,,DNS;failed;lookup,,
+PCH8CC51321Y6,utcdtc,No,,,,,,10.44.72.133,,
+PCM00032DD20121,utcdtc,No,,,,,,DNS;failed;lookup,,
+PCP9YJP064,utcdtc,No,,,,,,DNS;failed;lookup,,
+PCPBYJP064,utcdtc,No,,,,,,DNS;failed;lookup,,
+PCPCFZFHJ2,utcdtc,No,,,,,,DNS;failed;lookup,,
+PCPCYJP064,utcdtc,No,,,,,,DNS;failed;lookup,,
+PCPD3V9HJ2,utcdtc,No,,,,,,DNS;failed;lookup,,
+PCPD3XHHJ2,utcdtc,No,,,,,,DNS;failed;lookup,,
+PCPF11H2K2,utcdtc,No,,,,,,10.40.102.110,,
+ROK-DTC-CWS1,utcdtc,Yes,DTC,DTC control workstation,Rockhampton,name pattern ^(MKY|ROK)-DTC-CWS\d+$,evidence: address on 192.168.34.0/24,192.168.34.203,tg_discovery_ROK-DTC-CWS1_20260317T060926Z,135;139;445;2701;3389;5040;5985;8005;47001;49664;49665;49668;49669;49670;49671;49672;49673;49674;52834;62491
+ROK-DTC-CWS10,utcdtc,Yes,DTC,DTC control workstation,Rockhampton,name pattern ^(MKY|ROK)-DTC-CWS\d+$,evidence: address on 192.168.34.0/24,192.168.34.212,,
+ROK-DTC-CWS2,utcdtc,Yes,DTC,DTC control workstation,Rockhampton,name pattern ^(MKY|ROK)-DTC-CWS\d+$,evidence: address on 192.168.34.0/24,192.168.34.204,,
+ROK-DTC-CWS3,utcdtc,Yes,DTC,DTC control workstation,Rockhampton,name pattern ^(MKY|ROK)-DTC-CWS\d+$,evidence: address on 192.168.34.0/24,192.168.34.205,,
+ROK-DTC-CWS4,utcdtc,Yes,DTC,DTC control workstation,Rockhampton,name pattern ^(MKY|ROK)-DTC-CWS\d+$,evidence: address on 192.168.34.0/24,192.168.34.206,,
+ROK-DTC-CWS5,utcdtc,Yes,DTC,DTC control workstation,Rockhampton,name pattern ^(MKY|ROK)-DTC-CWS\d+$,evidence: address on 192.168.34.0/24,192.168.34.207,,
+ROK-DTC-CWS6,utcdtc,Yes,DTC,DTC control workstation,Rockhampton,name pattern ^(MKY|ROK)-DTC-CWS\d+$,evidence: address on 192.168.34.0/24,192.168.34.208,,
+ROK-DTC-CWS7,utcdtc,Yes,DTC,DTC control workstation,Rockhampton,name pattern ^(MKY|ROK)-DTC-CWS\d+$,evidence: address on 192.168.34.0/24,169.254.208.83;192.168.34.209,tg_discovery_ROK-DTC-CWS7_20260317T061607Z,135;139;445;2701;3389;5040;5985;8005;47001;49664;49665;49668;49669;49670;49671;49672;49673;49676;49692;58294
+ROK-DTC-CWS8,utcdtc,Yes,DTC,DTC control workstation,Rockhampton,name pattern ^(MKY|ROK)-DTC-CWS\d+$,evidence: address on 192.168.34.0/24,192.168.34.210,,
+ROK-DTC-CWS9,utcdtc,Yes,DTC,DTC control workstation,Rockhampton,name pattern ^(MKY|ROK)-DTC-CWS\d+$,evidence: address on 192.168.34.0/24,192.168.34.211,,
+ROKCELEFT,utcdtc,Yes,UTC,Central Engine,Rockhampton,name pattern ^(MKY|ROK)CE(LEFT|RIGHT)$,evidence: address on 192.168.34.0/24,192.168.1.1;192.168.34.200,tg_discovery_ROKCELEFT_20260317T041444Z,135;139;445;623;2701;3389;5040;5985;6000;6001;6002;6003;6004;6005;8005;16992;47001;49665;49666;49668;49669;58068;58069;58071;58072;58099;58142;60932
+ROKCERIGHT,utcdtc,Yes,UTC,Central Engine,Rockhampton,evidence: ce.exe running (01 Current State AS Built/UTC Discovery Data/UTC_discovery_ROKCERIGHT_20260505T012021Z/24_tasklist_services.txt),evidence: address on 192.168.34.0/24,192.168.1.1;192.168.34.201,UTC_discovery_ROKCERIGHT_20260505T012021Z,135;139;445;623;2701;3389;5040;5985;6000;6001;6002;6004;6005;8005;16992;47001;49665;49666;49667;49668;49670;49671;49672;49673;52329;52344;64775
+ROKMAINT1,utcdtc,Yes,UTC,Maintenance workstation,Rockhampton,name pattern ^(MKY|ROK)(MAINT|MAINTENANCE)\d+$|^MAINTENANCE\d+$,evidence: address on 192.168.34.0/24,192.168.34.18,tg_discovery_ROKMAINT1_20260317T051442Z,135;139;445;2701;3389;5040;5985;8005;47001;49664;49665;49668;49669;49670;49671;49672;49673;49676;49700;53602
+ROKMAINT3,utcdtc,Yes,UTC,Maintenance workstation,Rockhampton,name pattern ^(MKY|ROK)(MAINT|MAINTENANCE)\d+$|^MAINTENANCE\d+$,evidence: address on 192.168.34.0/24,192.168.34.20,tg_discovery_ROKMAINT3_20260317T053903Z,135;139;445;2701;3389;5040;5985;8005;47001;49664;49665;49668;49669;49670;60383;61252;61253;61257;61268;61276
+ROKMAINT4,utcdtc,Yes,UTC,Maintenance workstation,Rockhampton,name pattern ^(MKY|ROK)(MAINT|MAINTENANCE)\d+$|^MAINTENANCE\d+$,evidence: address on 192.168.34.0/24,169.254.137.37;169.254.83.173;192.168.34.21,tg_discovery_ROKMAINT4_20260317T053619Z,135;139;445;2701;3389;5040;5985;8005;47001;49664;49665;49668;49669;49670;49671;49672;49673;49674;49690;63320
+ROKMRLEFT,utcdtc,Yes,UTC,Message Redirector,Rockhampton,name pattern ^(MKY|ROK)MR(LEFT|RIGHT)$,evidence: address on 192.168.34.0/24,192.168.34.14,tg_discovery_ROKMRLEFT_20260317T034549Z,135;139;445;623;2701;3389;5040;5985;6010;8005;16992;47001;49664;49665;49666;49667;49668;49669;49670;49671;50898;50899;64236
+ROKMRRIGHT,utcdtc,Yes,UTC,Message Redirector,Rockhampton,name pattern ^(MKY|ROK)MR(LEFT|RIGHT)$,evidence: address on 192.168.34.0/24,192.168.34.15,tg_discovery_ROKMRRIGHT_20260317T034609Z,135;139;445;623;2701;3389;5040;5985;6010;8005;16992;47001;49664;49665;49666;49667;49668;49669;49670;49671;50704;50777;50805
+ROKPRDAMP101,iamps,,IAMPS,IAMPS application server,Rockhampton,evidence: listens on TCP/7059 (listening_ports),evidence: address on 10.40.228.0/24,10.40.228.225,IAMPS_discovery_ROKPRDAMP101_20260429T023652Z,135;139;443;445;4369;5672;5985;7059;8005;15672;25672;47001;49664;49665;49666;49667;49668;49669;49670;49687;49692;54294;56403
+ROKPRDAMP102,iamps,,IAMPS,IAMPS application server,Rockhampton,evidence: listens on TCP/7058 (listening_ports),evidence: address on 10.40.228.0/24,10.40.228.226,IAMPS_discovery_ROKPRDAMP102_20260429T023702Z,135;139;443;445;4369;5672;5985;7058;8005;15672;25672;47001;49664;49665;49666;49667;49668;49669;49670;49686;49688;56403;58913
+ROKPRDOPS114,iamps,,IAMPS,Jump/management host,Rockhampton,name pattern ^ROKPRDOPS114$ (unreviewed),evidence: address on 10.40.228.0/24,10.40.228.184,tg_discovery_20260317T010054Z,80;135;139;445;1947;2343;3387;3580;3582;5985;8005;8080;9000;17386;17387;17389;20879;47001;48080;49664;49665;50421;51158;51229;54410;54457;54897;54967;55527;55592;56403;58958;59012;59110;59111;59112;59780;59852;60302;60354;60452;60501;61900;63142;63145;63158;63182;63190;63206;63208;63232;63257;63266;63309;63384;64857;64925
+ROKSIGMAPA1,utcdtc,Yes,SIGMAP,SIGMAP server,Rockhampton,evidence: sigmapmkii.server.exe running (01 Current State AS Built/UTC Discovery Data/SIGMAP Discovery Data/UTC_discovery_ROKSIGMAPA1_20260507T021432Z/24_tasklist_services.txt),name pattern ^ROK,192.168.35.1,UTC_discovery_ROKSIGMAPA1_20260507T021432Z,135;139;445;1947;2701;3389;5985;8005;8467;47001;49664;49665;49666;49667;49668;49669;49682;49687;57685
+ROKSIGMAPA2,utcdtc,Yes,SIGMAP,SIGMAP host,Rockhampton,name pattern ^(MKY|ROK|BNESIM)SIGMAP[A-Z]?\d+$,name pattern ^ROK,192.168.36.1,tg_discovery_ROKSIGMAPA2_20260317T043917Z,135;139;445;1947;2701;3389;5357;5985;8005;8467;47001;49664;49665;49666;49667;49668;49683;49691;49701;64085
+ROKSIGMAPB1,utcdtc,Yes,SIGMAP,SIGMAP host,Rockhampton,name pattern ^(MKY|ROK|BNESIM)SIGMAP[A-Z]?\d+$,name pattern ^ROK,192.168.35.2,tg_discovery_ROKSIGMAPB1_20260317T044500Z,135;139;445;1947;2701;3389;5040;5985;8005;8467;47001;49664;49665;49666;49667;49668;49669;49670;49671;49681;55628
+ROKSIGMAPB2,utcdtc,Yes,SIGMAP,SIGMAP server,Rockhampton,evidence: sigmapmkii.server.exe running (01 Current State AS Built/UTC Discovery Data/SIGMAP Discovery Data/UTC_discovery_ROKSIGMAPB2_20260507T021623Z/24_tasklist_services.txt),name pattern ^ROK,192.168.36.2,UTC_discovery_ROKSIGMAPB2_20260507T021623Z,135;139;445;623;2701;3389;5040;5985;8005;8467;16992;47001;49664;49665;49666;49667;49668;49669;49670;49671;49672;49724;55009
+ROKSIGMAPW1,utcdtc,Yes,SIGMAP,SIGMAP server,Rockhampton,evidence: sigmapmkii.server.exe running (01 Current State AS Built/UTC Discovery Data/SIGMAP Discovery Data/UTC_discovery_ROKSIGMAPW1_20260507T021106Z/24_tasklist_services.txt),name pattern ^ROK,10.40.229.59;169.254.137.247;169.254.75.17,UTC_discovery_ROKSIGMAPW1_20260507T021106Z,135;139;445;1947;2701;3389;5985;8005;8467;47001;49664;49665;49666;49667;49668;49669;49684;49686;56663
+ROKSIGMAPW2,utcdtc,Yes,SIGMAP,SIGMAP host,Rockhampton,name pattern ^(MKY|ROK|BNESIM)SIGMAP[A-Z]?\d+$,name pattern ^ROK,"10.40.229.58;169.254.45.113;172.27.196.2, 169.254.194.239",tg_discovery_ROKSIGMAPW2_20260317T050138Z,135;139;445;502;1947;2701;3389;5985;8005;8467;47001;49664;49665;49666;49667;49668;49669;49682;49688;53598
+ROKSIMDTCCWS001,utcdtc,No,,,Rockhampton,,name pattern ^ROK,10.40.102.101,,
+ROKSIMDTCCWS002,utcdtc,No,,,Rockhampton,,name pattern ^ROK,DNS;failed;lookup,,
+ROKSIMDTCCWS003,utcdtc,No,,,Rockhampton,,name pattern ^ROK,10.40.98.12,,
+ROKSIMDTCCWS004,utcdtc,No,,,Rockhampton,,name pattern ^ROK,10.40.99.1,,
+ROKSIMECOWS1,utcdtc,No,,,Rockhampton,,name pattern ^ROK,10.40.98.255,,
+ROKSIMECOWS2,utcdtc,No,,,Rockhampton,,name pattern ^ROK,10.40.98.24,,
+ROKSIMTCSSRV101,utcdtc,No,,,Rockhampton,,name pattern ^ROK,10.89.162.240,,
+ROKSIMTCSSRV201,utcdtc,No,,,Rockhampton,,name pattern ^ROK,10.89.162.44,,
+ROKSIMUTCWS001,utcdtc,No,,,Rockhampton,,name pattern ^ROK,DNS;failed;lookup,,
+ROKSIMUTCWS002,utcdtc,No,,,Rockhampton,,name pattern ^ROK,DNS;failed;lookup,,
+ROKSIMUTCWS003,utcdtc,No,,,Rockhampton,,name pattern ^ROK,DNS;failed;lookup,,
+ROKSIMUTCWS004,utcdtc,No,,,Rockhampton,,name pattern ^ROK,DNS;failed;lookup,,
+ROKSIMUTCWS005,utcdtc,No,,,Rockhampton,,name pattern ^ROK,10.40.98.253,,
+ROKSIMUTCWS006,utcdtc,No,,,Rockhampton,,name pattern ^ROK,DNS;failed;lookup,,
+ROKSIMUTCWS007,utcdtc,No,,,Rockhampton,,name pattern ^ROK,10.40.98.248,,
+ROKTCSILEFT,utcdtc,Yes,UTC,TCSI,Rockhampton,evidence: tcsi.exe running (01 Current State AS Built/UTC Discovery Data/UTC_discovery_ROKTCSILEFT_20260415T002451Z/24_tasklist_services.txt),name pattern ^ROK,192.168.32.16,UTC_discovery_ROKTCSILEFT_20260415T002451Z,135;139;445;623;2701;3389;5040;5985;6050;6056;6058;8005;16992;47001;49664;49665;49666;49667;55420;62346;62347;62348;62349;62386;62394;63709
+ROKTCSIRIGHT,utcdtc,Yes,UTC,TCSI,Rockhampton,name pattern ^(MKY|ROK)TCSI(LEFT|RIGHT)$,name pattern ^ROK,192.168.32.17,tg_discovery_ROKTCSIRIGHT_20260317T032805Z,135;139;445;623;2701;3389;5040;5985;6050;6056;8005;16992;47001;49664;49665;49666;49667;49668;49669;49670;49671;49677;49726;55420;64468
+ROKTELEFT24,utcdtc,Yes,UTC,Telemetry Processor,Rockhampton,name pattern ^(MKY|ROK)TE(LEFT|RIGHT)\d*$,evidence: address on 192.168.34.0/24,192.168.1.1;192.168.34.12,tg_discovery_ROKTELEFT24_20260317T035512Z,135;139;445;623;2701;3389;5040;5985;8005;16992;47001;49665;49666;49667;49668;49669;49670;49671;49673;49676;49688;52150
+ROKTERIGHT,utcdtc,Yes,UTC,Telemetry Processor,Rockhampton,name pattern ^(MKY|ROK)TE(LEFT|RIGHT)\d*$,evidence: address on 192.168.34.0/24,192.168.1.1;192.168.34.13,tg_discovery_ROKTERIGHT_20260317T035500Z,135;139;445;623;2701;3389;5040;5985;8005;16992;47001;49665;49666;49667;49669;49670;49671;57316;60432;60456;60472;60475
+ROKUATAMP101,iamps,,IAMPS,IAMPS application server (UAT),Rockhampton,evidence: listens on TCP/7059 (listening_ports); qualifier from name pattern ^(ROK|MKY)UATAMP\d+$ (unreviewed),evidence: address on 10.40.228.0/24,10.40.228.241,tg_discovery_20260317T002420Z,21;135;139;445;4369;5672;5985;7059;8005;14147;15672;25672;47001;49664;49665;49666;53743;53745;53746;53753;53785;53789;56403;64085
+ROKUATAMP102,iamps,,IAMPS,IAMPS application server (UAT),Rockhampton,name pattern ^(ROK|MKY)UATAMP\d+$ (unreviewed),evidence: address on 10.40.228.0/24,10.40.228.242,tg_discovery_20260317T002415Z,135;139;445;1536;1537;1538;4369;5672;5985;8005;15672;25672;28347;28348;28349;28355;28388;28390;47001;49849;56403
+STYCONTROLLER1,utcdtc,No,,,,,,10.36.12.11,,
+STYCONTROLLER2,utcdtc,No,,,,,,10.36.12.12,,
+STYMAINTENANCE1,utcdtc,No,,,,,,10.36.12.8,,
+STYUTCENGNELEFT,utcdtc,No,,,,,,10.36.12.4,,
+STYUTCENGNERGHT,utcdtc,No,,,,,,10.36.12.5,,
+TEKDIS-DEMO,utcdtc,No,,,,,,172.27.200.100,,
+VPC-OPS-1607-01,utcdtc,No,,,,,,DNS;failed;lookup,,
+VPCOSETAS202,utcdtc,No,,,,,,172.27.195.54,,
+VPCOSETAS212,utcdtc,No,,,,,,172.27.195.55,,
+VPCOSETAS302,utcdtc,No,,,,,,172.27.195.70,,
+VPCOSETAS312,utcdtc,No,,,,,,172.27.195.71,,
+VPCOSETAS402,utcdtc,No,,,,,,172.27.195.102,,
+VPCOSETAS412,utcdtc,No,,,,,,172.27.195.103,,
+VPCOSEW10BLD101,utcdtc,No,,,,,,172.27.200.20,,
+VPCOSEW10BLD102,utcdtc,No,,,,,,172.27.200.15,,
+VPCOSEW10BLD103,utcdtc,No,,,,,,172.27.200.108,,
+VPCOSEW10BLD104,utcdtc,No,,,,,,172.27.200.52,,
+VPCOSEW10DEV121,utcdtc,No,,,,,,DNS;failed;lookup,,
+VPCOSEW10DEV122,utcdtc,No,,,,,,DNS;failed;lookup,,
+VPCOSEW10DEV123,utcdtc,No,,,,,,DNS;failed;lookup,,
+VPCOSEW10DEV124,utcdtc,No,,,,,,DNS;failed;lookup,,
+VPCOSEW10DEV125,utcdtc,No,,,,,,DNS;failed;lookup,,
+VPCOSEW10DEV126,utcdtc,No,,,,,,DNS;failed;lookup,,
+VPCOSEW10DEV127,utcdtc,No,,,,,,DNS;failed;lookup,,
+VPCOSEW10DEV128,utcdtc,No,,,,,,DNS;failed;lookup,,
+VPCOSEW10DEV129,utcdtc,No,,,,,,DNS;failed;lookup,,
+VPCOSEW10DEV130,utcdtc,No,,,,,,DNS;failed;lookup,,
+VPCOSEW10DEV131,utcdtc,No,,,,,,DNS;failed;lookup,,
+VPCOSEW10DEV132,utcdtc,No,,,,,,DNS;failed;lookup,,
+VPCOSEW10DEV133,utcdtc,No,,,,,,DNS;failed;lookup,,
+VPCOSEW10DEV134,utcdtc,No,,,,,,DNS;failed;lookup,,
+VPCOSEW10DEV135,utcdtc,No,,,,,,DNS;failed;lookup,,
+VPCOSEW10DEV136,utcdtc,No,,,,,,DNS;failed;lookup,,
+VPCOSEW10DEV137,utcdtc,No,,,,,,DNS;failed;lookup,,
+VPCOSEW10DEV138,utcdtc,No,,,,,,DNS;failed;lookup,,
+VPCOSEW10DEV139,utcdtc,No,,,,,,DNS;failed;lookup,,
+VPCOSEW10DEV140,utcdtc,No,,,,,,DNS;failed;lookup,,
+VPCOSEW10TCS101,utcdtc,No,,,,,,172.27.195.2,,
+VPCOSEW10TCS102,utcdtc,No,,,,,,172.27.195.3,,
+VPCOSEW10TCS103,utcdtc,No,,,,,,172.27.195.4,,
+VPCOSEW10TCS104,utcdtc,No,,,,,,172.27.195.5,,
+VPCOSEW10TCS105,utcdtc,No,,,,,,172.27.195.6,,
+VPCOSEW10TCS106,utcdtc,No,,,,,,172.27.195.7,,
+VPCOSEW10TCS107,utcdtc,No,,,,,,172.27.195.20,,
+VPCOSEW10TCS108,utcdtc,No,,,,,,172.27.195.22,,
+VPCOSEW10TCS111,utcdtc,No,,,,,,172.27.195.8,,
+VPCOSEW10TCS112,utcdtc,No,,,,,,172.27.195.9,,
+VPCOSEW10TCS113,utcdtc,No,,,,,,DNS;failed;lookup,,
+VPCOSEW10TCS114,utcdtc,No,,,,,,172.27.195.11,,
+VPCOSEW10TCS115,utcdtc,No,,,,,,172.27.195.12,,
+VPCOSEW10TCS116,utcdtc,No,,,,,,DNS;failed;lookup,,
+VPCOSEW10TCS117,utcdtc,No,,,,,,172.27.195.21,,
+VPCOSEW10TCS118,utcdtc,No,,,,,,172.27.195.23,,
+VPCOSEW10TCS201,utcdtc,No,,,,,,172.27.195.34,,
+VPCOSEW10TCS202,utcdtc,No,,,,,,172.27.195.35,,
+VPCOSEW10TCS203,utcdtc,No,,,,,,172.27.195.36,,
+VPCOSEW10TCS204,utcdtc,No,,,,,,172.27.195.37,,
+VPCOSEW10TCS205,utcdtc,No,,,,,,172.27.195.38,,
+VPCOSEW10TCS206,utcdtc,No,,,,,,172.27.195.39,,
+VPCOSEW10TCS207,utcdtc,No,,,,,,172.27.195.50,,
+VPCOSEW10TCS208,utcdtc,No,,,,,,172.27.195.53,,
+VPCOSEW10TCS211,utcdtc,No,,,,,,172.27.195.40,,
+VPCOSEW10TCS212,utcdtc,No,,,,,,172.27.195.41,,
+VPCOSEW10TCS213,utcdtc,No,,,,,,172.27.195.42,,
+VPCOSEW10TCS214,utcdtc,No,,,,,,172.27.195.43,,
+VPCOSEW10TCS215,utcdtc,No,,,,,,172.27.195.44,,
+VPCOSEW10TCS216,utcdtc,No,,,,,,172.27.195.45,,
+VPCOSEW10TCS217,utcdtc,No,,,,,,172.27.195.51,,
+VPCOSEW10TCS218,utcdtc,No,,,,,,172.27.195.52,,
+VPCOSEW10TCS301,utcdtc,No,,,,,,172.27.195.66,,
+VPCOSEW10TCS302,utcdtc,No,,,,,,172.27.195.67,,
+VPCOSEW10TCS303,utcdtc,No,,,,,,172.27.195.68,,
+VPCOSEW10TCS304,utcdtc,No,,,,,,172.27.195.69,,
+VPCOSEW10TCS401,utcdtc,No,,,,,,172.27.195.98,,
+VPCOSEW10TCS402,utcdtc,No,,,,,,172.27.195.99,,
+VPCOSEW10TCS403,utcdtc,No,,,,,,172.27.195.100,,
+VPCOSEW10TCS404,utcdtc,No,,,,,,172.27.195.101,,

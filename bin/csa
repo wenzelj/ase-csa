@@ -65,6 +65,24 @@ SCRIPTS = {
 EDIT_HEADING_RE = re.compile(r"^#{2,4}\s+(S\d+-[EA]\d+|E-\d+)\b", re.M)
 STATUS_LINE_RE = re.compile(r"^\*\*Status:\*\*\s*(.*)$", re.M)
 CHANGE_FILE_RE = re.compile(r"^ChangesCSA_.*?_Section(?P<section>\d+)(?:_(?P<label>[^.]+))?\.md$")
+# A subsection is given as <section>.<n>[.<n>] in the stable-ID numbering (the @H numbers
+# `csa lookup` prints, e.g. 6.4). Its change file is the labelled file
+# ChangesCSA_<App>_Section<section>_<label>.md with the dots written as dashes (6-4).
+SUBSECTION_RE = re.compile(r"^(?:section\s*)?(?P<section>\d+)\.(?P<rest>\d+(?:\.\d+)*)$", re.I)
+SUBSECTION_LABEL_RE = re.compile(r"^\d+(?:-\d+)+$")
+
+
+def split_section(spec) -> tuple[str, str | None]:
+    """'6.4' -> ('6', '6-4'); '6' -> ('6', None)."""
+    m = SUBSECTION_RE.match(str(spec or "").strip())
+    if not m:
+        return str(spec), None
+    return m["section"], f"{m['section']}-{m['rest'].replace('.', '-')}"
+
+
+def label_display(section: str, label: str | None) -> str:
+    """How a section or subsection is written in `csa` commands: 6 or 6.4."""
+    return label.replace("-", ".") if label and SUBSECTION_LABEL_RE.match(label) else str(section)
 
 RECORD_HEADING_RE = re.compile(r"^#{2,4}\s+(S\d+-[EA]\d+|E-\d+)\b.*$", re.M)
 NEXT_HEADING_RE = re.compile(r"^#{1,3}\s", re.M)
@@ -331,6 +349,8 @@ def pick_change_file(p: dict, section: str, file: str | None) -> Path | None:
         m = CHANGE_FILE_RE.match(f.name)
         if file in (f.name, f.stem, m["label"] or ""):
             return f
+    if SUBSECTION_LABEL_RE.match(file):
+        return None          # a subsection that has not been authored yet
     die(f"section {section} has no change file matching {file!r}: {', '.join(f.name for f in files) or 'none'}")
 
 
@@ -341,9 +361,12 @@ def section_state(p: dict, section: str, file: str | None = None) -> dict:
           "authored": bool(cf), "edits": [], "approved": False, "status_line": None,
           "apply_status": "NOT_STARTED", "completed": [], "blocked": [], "next_edit": None,
           "review_result": None, "signoff": None, "cleaned": False}
-    st["other_change_files"] = [str(x) for x in all_change_files(p).get(section, [])[1:]]
+    label = CHANGE_FILE_RE.match(cf.name)["label"] if cf else (file if file and SUBSECTION_LABEL_RE.match(file) else None)
+    n = label_display(section, label)
+    st["subsection"] = n if n != section else None
+    st["other_change_files"] = [str(x) for x in all_change_files(p).get(section, []) if not cf or x != cf]
     if not cf:
-        st["stage"], st["next"] = "not authored", f"csa author {section}"
+        st["stage"], st["next"] = "not authored", f"csa author {n}"
         return st
     text = cf.read_text(encoding="utf-8")
     m = re.search(r"^\*\*Section:\*\*\s*\d+\s*(?:[-\u2013]\s*)?(.*)$", text, re.M)
@@ -352,7 +375,8 @@ def section_state(p: dict, section: str, file: str | None = None) -> dict:
     m = STATUS_LINE_RE.search(text)
     st["status_line"] = m[1].strip() if m else None
     st["approved"] = bool(m and m[1].strip().lower().startswith("approved"))
-    rs = _kv_file(cf.parent.parent / "run-state" / f"current-state-assessment-document-section-{section}.md")
+    key = f"{section}_{label}" if label else section
+    rs = _kv_file(cf.parent.parent / "run-state" / f"current-state-assessment-document-section-{key}.md")
     if rs:
         st["apply_status"] = rs.get("Status", "UNKNOWN")
         split = lambda v: [x.strip() for x in (v or "").split(",") if x.strip() and x.strip() != "None"]
@@ -366,7 +390,6 @@ def section_state(p: dict, section: str, file: str | None = None) -> dict:
         st["signoff"] = m[1].upper() if m else None
     st["cleaned"] = bool(_block(text, "Cleanup Report"))
 
-    n = section
     if not st["edits"]:
         st["stage"], st["next"] = "authored, no edits (clean)", None
     elif not st["approved"] and st["apply_status"] == "NOT_STARTED":
@@ -394,8 +417,15 @@ def section_state(p: dict, section: str, file: str | None = None) -> dict:
 def all_states(p: dict) -> list[dict]:
     # Only sections with a change file are listed. The stable-ID manifest's heading
     # numbering (@H<n>) counts empty Heading 1s and does not match SECTION numbers.
-    secs = set(change_files(p))
-    return [section_state(p, s) for s in sorted(secs, key=int)]
+    out = []
+    for s, files in sorted(all_change_files(p).items(), key=lambda kv: int(kv[0])):
+        main = section_state(p, s)
+        subs = [f for f in files if (m := CHANGE_FILE_RE.match(f.name))["label"] and SUBSECTION_LABEL_RE.match(m["label"])]
+        main["other_change_files"] = [x for x in main["other_change_files"] if Path(x) not in subs]
+        if main["change_file"] and Path(main["change_file"]) not in subs:
+            out.append(main)
+        out += [section_state(p, s, CHANGE_FILE_RE.match(f.name)["label"]) for f in subs]
+    return out
 
 
 # ---------------------------------------------------------------- commands: project
@@ -427,7 +457,7 @@ def cmd_agents(a):
 def cmd_status(a):
     p = project(a.project)
     if a.section:
-        st = section_state(p, a.section)
+        st = section_state(p, a.section, getattr(a, "file", None))
         if a.json:
             return print(json.dumps(st, indent=2))
         banner(p)
@@ -449,7 +479,7 @@ def cmd_status(a):
     print(f"{C['b']}{'Sec':>3}  {'Title':<34} {'Edits':>5}  {'Stage':<40} Next{C['0']}")
     for s in states:
         colour = C["g"] if s["stage"] in ("done", "authored, no edits (clean)") else C["r"] if "BLOCK" in s["stage"] or "FAIL" in s["stage"] else C["y"]
-        print(f"{s['section']:>3}  {s['title'][:34]:<34} {len(s['edits']):>5}  {colour}{s['stage'][:40]:<40}{C['0']} {C['d']}{s['next'] or ''}{C['0']}")
+        print(f"{(s.get('subsection') or s['section']):>3}  {s['title'][:34]:<34} {len(s['edits']):>5}  {colour}{s['stage'][:40]:<40}{C['0']} {C['d']}{s['next'] or ''}{C['0']}")
         if s.get("other_change_files"):
             print(f"     {C['d']}+ {len(s['other_change_files'])} other change file(s): "
                   f"{', '.join(Path(x).name for x in s['other_change_files'])}{C['0']}")
@@ -626,7 +656,7 @@ def cmd_check_change(a):
     p = project(a.project); banner(p)
     st = section_state(p, a.section, getattr(a, "file", None))
     if not st["change_file"]:
-        die(f"section {a.section} has no change file.")
+        die(f"section {label_display(a.section, getattr(a, 'file', None))} has no change file.")
     rc = run_check_change(p, Path(st["change_file"]), a)
     metric(p, "check_change", a.section, exit=rc)
     return rc
@@ -721,7 +751,7 @@ def cmd_approve(a):
     p = project(a.project); banner(p)
     st = section_state(p, a.section, getattr(a, "file", None))
     if not st["change_file"]:
-        die(f"section {a.section} has no change file yet. Run `csa author {a.section}` first.")
+        die(f"section {label_display(a.section, getattr(a, 'file', None))} has no change file yet. Run `csa author {label_display(a.section, getattr(a, 'file', None))}` first.")
     cf = Path(st["change_file"])
     text = cf.read_text(encoding="utf-8")
     rejected = [e.strip().upper() for e in (getattr(a, "reject", None) or [])]
@@ -802,18 +832,18 @@ def cmd_apply(a):
     p = project(a.project); banner(p)
     st = section_state(p, a.section, getattr(a, "file", None))
     if not st["change_file"]:
-        die(f"section {a.section} has no change file. Run `csa author {a.section}` first.")
+        die(f"section {label_display(a.section, getattr(a, 'file', None))} has no change file. Run `csa author {label_display(a.section, getattr(a, 'file', None))}` first.")
     if not st["approved"] and not a.allow_unapproved:
-        die(f"section {a.section}'s change file is not approved ({st['status_line']}).\n"
-            f"  Read {st['change_file']}\n  then `csa approve {a.section}` (or pass --allow-unapproved).")
+        die(f"section {label_display(a.section, getattr(a, 'file', None))}'s change file is not approved ({st['status_line']}).\n"
+            f"  Read {st['change_file']}\n  then `csa approve {label_display(a.section, getattr(a, 'file', None))}` (or pass --allow-unapproved).")
     if st["approved"] and not a.allow_unapproved:
         problems = approval_problems(Path(st["change_file"]))
         if problems:
-            die(f"section {a.section}: " + "; ".join(problems)
-                + f"\n  Read the change file again, then `csa approve {a.section} -y` to approve what it says now"
+            die(f"section {label_display(a.section, getattr(a, 'file', None))}: " + "; ".join(problems)
+                + f"\n  Read the change file again, then `csa approve {label_display(a.section, getattr(a, 'file', None))} -y` to approve what it says now"
                 + " (or pass --allow-unapproved).")
     if a.agent:
-        return launch(p, agent("apply"), [str(a.section)] + (a.set or []), a)
+        return launch(p, agent("apply"), [label_display(a.section, getattr(a, "file", None))] + (a.set or []), a)
     limit = a.limit or 2
     rounds, max_rounds = 0, (a.max_batches if a.until_done else 1)
     while True:
@@ -836,16 +866,16 @@ def cmd_apply(a):
             print(json.dumps(res, indent=2))
         if status == "BLOCKED" and a.agent_on_block:
             print("BLOCKED -> handing the section to the document agent")
-            return launch(p, agent("apply"), [str(a.section)] + (a.set or []), a)
+            return launch(p, agent("apply"), [label_display(a.section, getattr(a, "file", None))] + (a.set or []), a)
         if status != "PARTIAL_COMPLETE" or rounds >= max_rounds or a.edit:
             break
         if not applied:
             print("no progress in this batch; stopping.")
             break
     if status == "BLOCKED":
-        print(f"{C['r']}Blocked: {res.get('blocked')}{C['0']}\n  -> csa apply {a.section} --agent   (LLM resolves or reports the ambiguity)")
+        print(f"{C['r']}Blocked: {res.get('blocked')}{C['0']}\n  -> csa apply {label_display(a.section, getattr(a, 'file', None))} --agent   (LLM resolves or reports the ambiguity)")
     elif status == "SECTION_COMPLETE":
-        print(f"{C['g']}Section {a.section} applied.{C['0']} Next: csa review {a.section}")
+        print(f"{C['g']}Section {label_display(a.section, getattr(a, 'file', None))} applied.{C['0']} Next: csa review {label_display(a.section, getattr(a, 'file', None))}")
     elif status in ("NOT_READY", "ERROR"):
         _emit(res, argparse.Namespace(json=False))
     return 0 if status in ("SECTION_COMPLETE", "PARTIAL_COMPLETE") else 2
@@ -1012,6 +1042,11 @@ def build_prompt(p: dict, r: dict, args: list[str]) -> str:
             values[k.strip().upper()] = v.strip()
     if positional:
         values[r.get("arg", "SECTION")] = " ".join(positional)
+    sec, label = split_section(values.get("SECTION", ""))
+    if label:
+        values["SECTION"], values["SUBSECTION"] = sec, label_display(sec, label)
+        cf = pick_change_file(p, sec, label)
+        values["CHANGE_FILE"] = str(cf) if cf else f"reviews/ChangesCSA_<App>_Section{sec}_{label}.md (create it)"
     missing = [k for k, _, req in inputs if req and not values.get(k)]
     if missing:
         die(f"`csa {r['verb']}` needs {', '.join(missing)}, e.g. `csa {r['verb']} <{missing[0].lower()}>`")
@@ -1023,6 +1058,11 @@ def build_prompt(p: dict, r: dict, args: list[str]) -> str:
     for k in order:
         if values.get(k):
             lines.append(f"{k}={values[k]}")
+    if values.get("SUBSECTION"):
+        lines.append(f"\nWork on subsection {values['SUBSECTION']} only (its heading and everything under it, "
+                     f"stable IDs @H{values['SUBSECTION']}...), using the change file CHANGE_FILE. "
+                     f"Edit IDs stay S{values['SECTION']}-E<n>, numbered on from every Section {values['SECTION']} change file. "
+                     "See 'Subsections' in csa-core-rules.md.")
     lines.append("\n" + r.get("instruction", ""))
     return "\n".join(lines)
 
@@ -1181,53 +1221,80 @@ def cmd_sync(a):
     print(f"{len(written)} file(s) written." + ("" if a.codex_prompts else "  (add --codex-prompts to also write ~/.codex/prompts/csa-*.md)"))
     return 0
 
+# ---------------------------------------------------------------- hosts
+def cmd_hosts(a):
+    """Host-centred view of the evidence: register, facts per host, host-to-host links."""
+    p = project(a.project)
+    argv = [a.action] + ([a.host] if a.host else []) + ["--work-dir", str(local_path(p["work_dir"])),
+                                                        "--workspace", str(local_path(p["project_root"]))]
+    if getattr(a, "dry_run", False):
+        argv.append("--dry-run")
+    if getattr(a, "all", False):
+        argv.append("--all")
+    if getattr(a, "fix", False):
+        argv.append("--fix")
+    if getattr(a, "question", None):
+        argv += ["--question", a.question]
+    if a.action == "system":
+        argv += ["--project-key", p["key"], "--name", getattr(a, "name", None) or "system"]
+    for x in a.attr or []:
+        argv += ["--attr", x]
+    if a.system:
+        argv += ["--system", a.system]
+    if a.json:
+        argv.append("--json")
+    return subprocess.call([framework_python(), "-m", "csa_docx.hostmodel", *argv], cwd=str(FRAMEWORK))
+
+
 # ---------------------------------------------------------------- pipeline
 def cmd_pipeline(a):
     """Take one section as far as it can go, stopping at every human gate."""
     p = project(a.project); banner(p)
     n = str(a.section)
+    f = getattr(a, "file", None)
+    d = label_display(n, f)                    # 6, or 6.4 for a subsection
     for _ in range(12):
-        st = section_state(p, n)
-        print(f"\n{C['b']}Section {n}: {st['stage']}{C['0']}")
+        st = section_state(p, n, f)
+        print(f"\n{C['b']}Section {d}: {st['stage']}{C['0']}")
         nxt = st["next"] or ""
         if not nxt:
             print("Nothing left to do for this section.")
             return 0
         if nxt.startswith("csa author"):
-            launch(p, agent("author"), [n], a)
-            print(f"Authoring finished. Read {section_state(p, n)['change_file']} and run `csa approve {n}`, then `csa pipeline {n}` again.")
+            launch(p, agent("author"), [d], a)
+            print(f"Authoring finished. Read {section_state(p, n, f)['change_file']} and run `csa approve {d}`, then `csa pipeline {d}` again.")
             return 0
         if "approve" in nxt:
             print(f"Human gate: read {st['change_file']}")
             if not sys.stdin.isatty():
                 return 0
-            cmd_approve(argparse.Namespace(project=a.project, section=n, revoke=False, yes=False, by=None))
+            cmd_approve(argparse.Namespace(project=a.project, section=n, file=f, reject=[], force=False, revoke=False, yes=False, by=None))
             continue
         if nxt.endswith("--until-done"):
             ns = argparse.Namespace(project=a.project, section=n, allow_unapproved=False, agent=False, set=None, limit=a.limit,
                                     until_done=True, max_batches=a.max_batches, edit=None, json=False, agent_on_block=False,
-                                    cli=a.cli, headless=a.headless, print=False)
+                                    cli=a.cli, headless=a.headless, print=False, file=f, keep_open=False)
             if cmd_apply(ns) != 0:
-                st = section_state(p, n)
+                st = section_state(p, n, f)
                 if st["apply_status"] == "BLOCKED":
-                    launch(p, agent("apply"), [n], a)
-                print(f"Stopped at apply ({st['apply_status']}). Check `csa status {n}`.")
+                    launch(p, agent("apply"), [d], a)
+                print(f"Stopped at apply ({st['apply_status']}). Check `csa status {d}`.")
                 return 2
             continue
         if nxt.endswith("--agent"):
-            launch(p, agent("apply"), [n], a)
+            launch(p, agent("apply"), [d], a)
             return 2
         if nxt.startswith("csa review"):
-            launch(p, agent("review"), [n], a)
-            st = section_state(p, n)
+            launch(p, agent("review"), [d], a)
+            st = section_state(p, n, f)
             metric(p, "review", n, result=st["review_result"], signoff=st["signoff"])
             if st["signoff"] != "YES":
                 print(f"Review not signed off ({st['review_result']}). Stopping for a human look.")
                 return 2
             continue
         if nxt.startswith("csa cleanup"):
-            print(f"Human gate: open the working DOCX in Word and read the tracked changes for section {n}.")
-            print(f"When you are satisfied, run: csa cleanup {n}")
+            print(f"Human gate: open the working DOCX in Word and read the tracked changes for section {d}.")
+            print(f"When you are satisfied, run: csa cleanup {d}")
             return 0
         print(f"Next step needs a human: {nxt}")
         return 2
@@ -1842,6 +1909,15 @@ def main(argv=None) -> int:
     s.add_argument("--set", nargs="*", help="KEY=VALUE overrides for --agent"); agent_opts(s)
     s = sp("pipeline", cmd_pipeline); s.add_argument("section"); s.add_argument("--limit", type=int)
     s.add_argument("--max-batches", type=int, default=50); agent_opts(s)
+    s = sp("hosts", cmd_hosts, help="host register, facts per host and host-to-host links (build | list | show HOST | links [HOST] | group --attr ...)")
+    s.add_argument("action", nargs="?", default="list", choices=["build", "list", "show", "links", "group", "graph", "unresolved", "system", "evidence"])
+    s.add_argument("host", nargs="?"); s.add_argument("--attr", action="append"); s.add_argument("--system")
+    s.add_argument("--dry-run", action="store_true")
+    s.add_argument("--json", action="store_true")
+    s.add_argument("--all", action="store_true", help="include hosts the inventory marks In Scope: No")
+    s.add_argument("--name", help="system layer name for `csa hosts system` (e.g. tcs)")
+    s.add_argument("--fix", action="store_true", help="graph: reject stale/out-of-scope/mis-cited items csa hosts created, then re-add")
+    s.add_argument("--question", help="evidence: the question the host-group rows answer")
     s = sp("fleet", cmd_fleet, help="run independent tasks in parallel, one headless worker per slot")
     s.add_argument("tasks", nargs="*", help='quoted tasks, e.g. "author 6" "analyse infrastructure-analysis SECTION=5"')
     s.add_argument("--file", "-f", help="task file, one task per line (# comments allowed)")
@@ -1882,6 +1958,16 @@ def main(argv=None) -> int:
         return 0
     if not hasattr(a, "project"):
         a.project = None
+    if isinstance(getattr(a, "section", None), str):
+        sec, label = split_section(a.section)
+        if label:
+            if a.cmd in ("validate", "prepare"):
+                a.section = sec                  # document-level checks: the whole section
+            elif hasattr(a, "file") or a.cmd in ("status", "pipeline"):
+                a.section = sec
+                a.file = getattr(a, "file", None) or label
+            else:
+                die(f"`csa {a.cmd}` does not take a subsection yet; use section {sec}.")
     return a.fn(a) or 0
 
 
