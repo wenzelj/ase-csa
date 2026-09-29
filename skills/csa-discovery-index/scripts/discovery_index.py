@@ -669,6 +669,24 @@ def cite(con, file_id, lines, excerpt):
                 source_class=f["source_class"], superseded=bool(f["superseded_by"]))
 
 
+def brief_result(hit: dict) -> dict:
+    """Compact hit for agents (--brief): host, non-empty values cut to 120 characters, one file/line citation."""
+    c = hit.get("cite") or hit
+    if "row" in hit:
+        values = {k: str(v) for k, v in (hit.get("row") or {}).items() if v not in (None, "")}
+    else:
+        values = {"excerpt": str(c.get("evidence_excerpt") or "")}
+    values = {k: (v if len(v) <= 120 else v[:120] + "...") for k, v in values.items()}
+    loc = c.get("page_or_location") or ""
+    m = re.search(r"((?:line|lines|sheet!row) \S+)$", loc)
+    cite_s = f"{c['rel_path']} {m.group(1)}" if c.get("rel_path") and m else (loc or c.get("rel_path", ""))
+    return {"host": hit.get("host") or c.get("host"), "values": values, "cite": cite_s}
+
+
+def _limit(args):
+    return args.limit if args.limit is not None else (25 if getattr(args, "brief", False) else 20)
+
+
 def fts_query(terms, any_mode):
     toks = [t for t in re.findall(r'"[^"]+"|\S+', terms)]
     quoted = ['"' + t.strip('"').replace('"', '""') + '"' for t in toks]
@@ -676,6 +694,7 @@ def fts_query(terms, any_mode):
 
 
 def cmd_search(args, project, root):
+    args.limit = _limit(args)
     con, meta = open_ro(project)
     where, params = scope_sql(args)
     q, words = fts_query(args.terms, args.any)
@@ -706,8 +725,13 @@ def cmd_search(args, project, root):
         nums = [h[0] for h in hits[:8]]
         excerpt = " | ".join(h[1].strip() for h in hits[:8])
         out.append(dict(score=round(r["score"], 2), **cite(con, r["file_id"], nums, excerpt)))
-        if len(out) >= args.limit:
+        if len(out) >= args.limit and not args.brief:
             break
+    if args.brief:
+        shown = out[:args.limit]
+        emit(dict(status="OK", query=args.terms, total=len(out), shown=len(shown), more=len(out) - len(shown),
+                  results=[brief_result(h) for h in shown]))
+        return
     emit(dict(status="OK", query=args.terms, fts=q, scope=scope_label(args), count=len(out), results=out,
               note=None if out else "no hits in scope; try --any, fewer terms, --all-captures or --include-archive"))
 
@@ -721,6 +745,7 @@ WHERE_RE = re.compile(r"^(?P<col>[^=~!]+?)(?P<op>!~|~|=|!=)(?P<val>.*)$")
 
 
 def cmd_rows(args, project, root):
+    args.limit = _limit(args)
     con, _ = open_ro(project)
     where, params = scope_sql(args)
     tables = [r[0] for r in con.execute("SELECT DISTINCT table_name FROM rows")]
@@ -769,6 +794,10 @@ def cmd_rows(args, project, root):
         excerpt = "; ".join(f"{k}={v}" for k, v in d.items() if v not in (None, ""))
         c = cite(con, r["file_id"], [r["line_no"]], excerpt)
         out.append(dict(table=r["table_name"], host=c["host"], row=d, cite=c))
+    if args.brief:
+        emit(dict(status="OK", tables=tsel, total=len(res), shown=len(out), more=len(res) - len(out),
+                  results=[brief_result(h) for h in out]))
+        return
     emit(dict(status="OK", tables=tsel, scope=scope_label(args), total=len(res), shown=len(out), results=out))
 
 
@@ -839,7 +868,8 @@ def main():
         sp.add_argument("--path-like")
         sp.add_argument("--all-captures", action="store_true", help="include superseded captures")
         sp.add_argument("--include-archive", action="store_true")
-        sp.add_argument("--limit", type=int, default=20)
+        sp.add_argument("--limit", type=int, default=None, help="default 20, or 25 with --brief")
+        sp.add_argument("--brief", action="store_true", help="compact results for agents: host, non-empty values, file + line")
 
     s = sub.add_parser("search"); s.add_argument("terms"); scope(s)
     s.add_argument("--any", action="store_true", help="match any term instead of all")

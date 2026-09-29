@@ -41,6 +41,8 @@ Called directly, always pass `--project <key>` (from `csa-context/PROJECTS.yaml`
 | `sql "SELECT ..."` | read-only SQL for anything else (tables: `captures`, `files`, `rows(data JSON)`, `chunk_map`, `chunks`) |
 | `status` | what was indexed, skipped and why |
 
+Agents use --brief; raise --limit only when "more" matters to the question.
+
 Scope defaults: **current captures only, archive excluded.** Add `--all-captures` to include superseded captures
 (e.g. to compare March `tg_` with May `UTC_` captures) and `--include-archive` for archived ones.
 
