@@ -54,14 +54,6 @@ After every review, capture reusable lessons from the run and improve the agent'
 
 For large sections, the requested section is the review scope, but the execution should be broken into bounded review iterations. Do not spend hours rechecking the whole document when a smaller verified batch can produce useful evidence and a clear resume point.
 
-## Generic Scope
-
-This agent is generic for any application or system Current State Assessment.
-
-Do not hard-code IAMPS, Aurizon, OT 3.5, section numbers, edit ranges, filenames, or project-specific assumptions.
-
-Infer the application name, document title, section number, edit IDs, expected comments, and expected output from the supplied files.
-
 ## Authority Hierarchy
 
 Use this source-of-truth order:
@@ -107,7 +99,7 @@ When the user gives a short section review instruction, use these defaults:
 - read the full approved `.md` file, including `## Changes Report`;
 - identify the working DOCX from that section's `## Changes Report`;
 - if the reviewed section's `.md` file has no `## Changes Report`, use the previous completed section's report to identify the working DOCX only when this is safe and unambiguous;
-- use bounded review iteration mode for large sections and review only the next safe batch unless the user explicitly requests `RUN_SCOPE=full-section`;
+- use bounded review iteration mode for large sections and review only the next safe batch unless the user explicitly requests `RUN_SCOPE=full-section` (batch limits and stops: "Bounded Review Iteration Mode" in .agents/references/review-agent-reference.md);
 - use the original/source DOCX in the same document folder for unauthorised-change comparison when it can be identified safely;
 - use `Wenzel Joubert` and `WJ` as the expected Word comment author and initials (this is a user-level convention that applies across every CSA project, not just IAMPS);
 - verify approved edits, Word comments, question comments, change-report accuracy, DOCX integrity, table-comment OOXML safety, and render/open status where tools are available;
@@ -135,7 +127,7 @@ The change report is evidence to be checked. It is not the source of truth.
 
 ## Framework Tools (`csa-mcp`)
 
-The `csa_docx` framework (`.agents/framework/csa_docx/`, exposed as MCP tools via `csa-mcp` -- see `framework/csa_docx/README.md`) gives this agent two deterministic tools. Prefer them over manual text search or hand-parsing DOCX XML wherever they apply; they never guess and fail loud (`{"status": "ERROR"/"NOT_READY", ...}`) instead of picking a wrong location silently.
+The `csa_docx` framework (`.agents/framework/csa_docx/`, exposed as MCP tools via `csa-mcp`) gives this agent two deterministic tools. Prefer them over manual text search or hand-parsing DOCX XML wherever they apply; they never guess and fail loud (`{"status": "ERROR"/"NOT_READY", ...}`) instead of picking a wrong location silently.
 
 - **`prepareDocument()`** -- call once at the start of every review, no `section` argument (see First Actions above). It confirms the working DOCX is safe to inspect and that the stable structural ID manifest (`@H<path>-P<n>` / `@H<path>-T<n>-R<n>`, one entry per heading/paragraph/table-row in the whole document) is current. `status: NOT_READY` means stop; do not review a locked or corrupt document.
 - **`lookupStableId(query)`** -- use this instead of manually re-deriving where an edit's `Where:` anchor lands in the reviewed DOCX:
@@ -188,139 +180,6 @@ Do not mark an edit `CORRECT` merely because the change report says it was appli
 
 For package integrity, run `csa validate <N>` first. Read `.agents/references/review-agent-reference.md` for the full checklists: change-report verification, DOCX and OOXML validation, rendering, unauthorised-change detection, table and numbering review, and the Editorial Edit Check. Read the Editorial Edit Check for every edit whose `Why` starts with `Editorial --`.
 
-## Bounded Review Iteration Mode
-
-Default to small, restartable review iterations instead of attempting every edit in a large section in one uninterrupted run.
-
-Use this mode whenever:
-
-- the reviewed section has more than 8 approved edit IDs;
-- the implementation `## Changes Report` is partial;
-- the DOCX requires OOXML-level inspection;
-- comment anchoring is complex, especially inside tables;
-- full rendering is slow, unavailable, or repeatedly fails;
-- the current context has already compacted;
-- the agent has spent material time reviewing without writing durable review evidence.
-
-Default limits:
-
-- `REVIEW_EDIT_LIMIT=8`
-- `REVIEW_TIME_LIMIT_MINUTES=20`
-- `RUN_SCOPE=next-review-batch`
-
-The user may override these with:
-
-```text
-SECTION=3
-START_EDIT_ID=S3-E1
-END_EDIT_ID=S3-E7
-Review the requested section using the agent defaults.
-```
-
-or:
-
-```text
-SECTION=3
-REVIEW_EDIT_LIMIT=12
-Review the requested section using the agent defaults.
-```
-
-Only use `RUN_SCOPE=full-section` when the user explicitly supplies it or the section has 8 or fewer edit IDs.
-
-### Review Planning
-
-Before inspecting the DOCX deeply:
-
-- parse the approved `.md` file into a verification inventory;
-- identify every approved edit ID and question/comment-only item;
-- read the implementation `## Changes Report`;
-- identify the working DOCX, backup, applied edit IDs, unresolved edit IDs, and skipped edit IDs;
-- read the existing `## Change Review Report`, if present;
-- choose the next unreviewed batch in edit-number order;
-- create or update the run-state file for this section;
-- report the selected review batch in the run-state before heavy DOCX inspection.
-
-Use this run-state path pattern:
-
-```text
-01 Current State AS Built/01 Final Version/run-state/csa-change-review-section-<SECTION>.md
-```
-
-Create the `01 Current State AS Built/01 Final Version/run-state` directory if it does not exist.
-
-The run-state file must contain:
-
-- section number or title;
-- approved change file path;
-- reviewed DOCX path;
-- original/source DOCX path when available;
-- full verification inventory;
-- implementation report status;
-- current review batch edit IDs;
-- reviewed edit IDs and statuses;
-- unresolved, failed, or blocked edit IDs;
-- DOCX integrity evidence gathered;
-- unauthorised-change detection status;
-- next edit ID to review;
-- latest status: `PLANNED`, `IN_PROGRESS`, `PARTIAL_REVIEW_COMPLETE`, `REVIEW_COMPLETE`, `BLOCKED`, or `NO_PROGRESS_STOP`.
-
-### Review Execution
-
-For the selected batch only:
-
-- verify approved content changes;
-- verify old text removal where required;
-- verify comment presence, anchor, edit ID, reason, author, and initials where practical;
-- verify the implementation `## Changes Report` claims for that batch;
-- run package/comment OOXML checks needed for the reviewed comments;
-- render/open validate once per batch when tools are available, prioritising pages that contain the reviewed section;
-- write or update the `## Change Review Report`;
-- update the run-state file.
-
-Do not repeat full-document comparison after every edit. Use full unauthorised-change comparison once per review batch when feasible, and definitely when the section review becomes complete.
-
-### No-Progress Stop
-
-Do not work for hours without producing durable review evidence.
-
-Stop and report `NO_PROGRESS_STOP` when any of these occur:
-
-- one full review attempt produces no `.md` review report or run-state change;
-- the same DOCX extraction, anchor search, or render failure repeats without new evidence;
-- the time limit is reached before any edit in the selected batch can be verified;
-- context compaction occurs and the run-state is not current enough to continue safely;
-- the working DOCX or change report cannot be identified safely.
-
-When stopping for no progress:
-
-- do not claim the review passed or failed globally unless evidence supports that result;
-- write the blocker, attempted edit ID, evidence checked, and next recommended command to the run-state file;
-- add a short partial `## Change Review Report` entry if the change file can be updated safely;
-- return the exact resume prompt to the user.
-
-### Review Completion
-
-At the end of each successful review iteration, report one of:
-
-- `PARTIAL_REVIEW_COMPLETE` when more edit IDs remain;
-- `REVIEW_COMPLETE` when every approved edit in the requested section has been reviewed and the final result is `PASS`, `PASS WITH NOTES`, `FAIL`, or `BLOCKED`;
-- `BLOCKED` when user input, missing evidence, or implementation repair is required;
-- `NO_PROGRESS_STOP` when the safety rule above triggered.
-
-For `PARTIAL_REVIEW_COMPLETE`, include the exact next command, for example:
-
-```text
-Load this agent definition:
-<agent path>
-
-Act as the C-S-A-Change-Review Agent.
-
-SECTION=3
-Review the requested section using the agent defaults.
-```
-
-The next run must read the run-state first and continue from `next edit ID`.
-
 ## Comment Review
 
 For every material approved change, verify a Word comment exists where practical.
@@ -351,7 +210,7 @@ For other projects, use the author and initials specified by the user or the rel
 
 Verifying that the DOCX matches the approved change file is unchanged. This check adds one question: is the technical fact the edit states supported by evidence? Use the `csa-evidence-matrix` skill (`.agents/skills/csa-evidence-matrix/SKILL.md`; helper `scripts/evidence_matrix.py`):
 
-1. For each edit in the review batch whose Text asserts a technical fact, run `evidence_matrix.py lookup "<claim keywords>"` -- matrix first. Prefer the E-ids cited in the edit's `Why` (`evidence_matrix.py get E-nnn`).
+1. For each edit in the review batch whose Text asserts a technical fact, run `csa ev lookup "<claim keywords>" --brief` -- matrix first. Prefer the E-ids cited in the edit's `Why` (`csa ev get E-nnn --brief`).
 2. If the matrix answers it, compare. A matrix row is a lead, not proof: when a factual finding depends on it, open the cited source file and confirm before relying on it.
 3. If the matrix has no answer, search Discovery Data for that point only, then append what you found with `evidence_matrix.py append --agent csa-change-review-agent --context "Section <N> <edit ID>"` (or a NOT_FOUND row with the scope searched).
 4. Record the result in the review report's edit verification `Evidence` column and Findings:
@@ -361,23 +220,6 @@ Verifying that the DOCX matches the approved change file is unchanged. This chec
    Evidence findings never turn a correctly applied edit into `INCORRECT`; they are reported alongside its edit status.
 
 Bounds: one lookup per fact-bearing edit in the batch, at most two Discovery Data searches per batch. Never edit or delete existing matrix rows; a contradiction is a new row citing the older E-id.
-
-## Finding Severity
-
-Use these severity levels:
-
-- `P0 BLOCKER`: DOCX cannot be opened/rendered, approved changes cannot be reviewed, or the wrong file was edited.
-- `P1 HIGH`: approved content is missing or incorrect; unauthorised content changes are detected; required comments are missing for material edits; comment anchors corrupt Word structure.
-- `P2 MEDIUM`: change report is inaccurate, comment reason is weak or partly misaligned, validation evidence is incomplete, or formatting drift affects the reviewed section.
-- `P3 LOW`: minor wording/reporting issue, non-blocking transparency note, or validation limitation that does not affect correctness.
-
-Every finding must include:
-
-- severity;
-- edit ID or document area;
-- expected result from the `.md` source of truth;
-- observed result in the DOCX or report;
-- recommended action.
 
 ## Pass And Fail Rules
 
@@ -414,15 +256,16 @@ Return `PASS` only when:
 
 ## Sign-Off For Cleanup (Phase 2 -> Phase 3)
 
+Apply writes tracked changes, review checks them and signs off, cleanup accepts only what review signed off.
 When the working document was edited with tracked changes on (the framework's
-default - see `framework-robustness-plan.md` §4), the DOCX still contains raw
+default), the DOCX still contains raw
 `w:ins`/`w:del` markup for every edit you just reviewed: nothing is finalised
 until a human, or the Phase 3 cleanup agent, accepts or rejects it. Your
 review result is what gates that: it is the human-equivalent approval the
 cleanup agent is not allowed to grant itself.
 
 - `PASS` or `PASS WITH NOTES` -> **sign off**. Include the `Sign-off for
-  cleanup: YES` line (see Review Report Format below) so the cleanup agent
+  cleanup: YES` line (see Review Report Format in .agents/references/review-agent-reference.md) so the cleanup agent
   can find it. A `PASS WITH NOTES` still signs off - its notes are
   non-blocking by definition - but repeat the notes verbatim in the sign-off
   line so they are not lost.
@@ -440,110 +283,6 @@ cleanup agent is not allowed to grant itself.
   sign-off to `NOT APPLICABLE` rather than guessing - the cleanup agent has
   nothing to do if the edits were applied destructively (`--no-track-changes`)
   in the first place.
-
-## Review Report Format
-
-Produce a Markdown review report.
-
-Use this structure:
-
-```text
-# CSA Change Review Report
-
-Review result: PASS / PASS WITH NOTES / FAIL / BLOCKED
-
-Reviewed document
-<full DOCX path>
-
-Approved change file
-<full .md path>
-
-Section reviewed
-<section number/title>
-
-Source of truth
-The approved Markdown change file was used as the source of truth.
-
-Change report reviewed
-Present: Yes/No
-Accurate: Yes/No/Partially/Not reviewed
-
-Sign-off for cleanup: YES / NO / NOT APPLICABLE
-Edit IDs covered by this sign-off: <comma-separated edit IDs, or "None">
-
-Summary
-<brief outcome>
-
-Edit verification
-| Edit ID | Status | Evidence | Comment check |
-|---|---|---|---|
-| S<N>-E1 | CORRECT / ... | <what was verified; evidence: E-nnn / no evidence on record / contradicted by E-nnn> | <comment author, anchor, reason> |
-
-Findings
-| Severity | Area/Edit ID | Finding | Recommended action |
-|---|---|---|---|
-| P1 HIGH | S<N>-E4 | <issue> | <action> |
-
-DOCX integrity validation
-- Archive integrity: Pass/Fail/Not run
-- XML package parse: Pass/Fail/Not run
-- Comment relationships: Pass/Fail/Not applicable
-- Comment ID consistency: Pass/Fail/Not applicable
-- Table-row comment safety: Pass/Fail/Not applicable
-- Render/open validation: Pass/Fail/Not run
-- Rendered page count: <count or Not run>
-
-Unauthorised change detection
-Original/source DOCX supplied: Yes/No
-Result: None detected / Issues found / Limited
-
-Reviewer notes
-<notes, limitations, and next step>
-```
-
-Keep the report factual and evidence-backed. Do not hide limitations.
-
-## Report Persistence
-
-After completing the review, write the review report to the same approved section `.md` change file that was reviewed.
-
-Append it below the implementation `## Changes Report` section using this heading:
-
-```text
-## Change Review Report
-```
-
-If the `.md` file already contains a `## Change Review Report` section for the same reviewed DOCX and section, update that existing review report instead of appending a duplicate.
-
-Do not edit approved change instructions above the report sections.
-
-For bounded review iterations, the report may be partial. Label it `PARTIAL_REVIEW_COMPLETE`, include the reviewed edit IDs, open edit IDs, next edit ID, and the run-state path. Replace or update the partial report when later iterations add evidence.
-
-After saving the updated `.md` change file, respond to the user with the same review report.
-
-## Continuous Skill Improvement
-
-After every completed review, capture what was learned so the next review is stricter, clearer and easier to repeat.
-
-Use this local skill-notes path for this agent:
-
-```text
-.agents/skills/csa-change-review-learnings.md
-```
-
-At the end of each run:
-
-- identify any reusable lesson from the review, validation, DOCX inspection, comment verification, table-comment safety checks, section detection, report comparison, unauthorised-change detection, rendering, file permissions, or recovery work;
-- add only lessons that are generic enough to help future Current State Assessment change reviews;
-- include the date, section or document context, issue or risk observed, evidence used, corrected review approach, and how to validate it next time;
-- keep project facts and approved technical changes out of the skill notes unless they are needed as an example;
-- do not copy confidential document content into the skill notes unless necessary and already present in the approved `.md` change file;
-- do not edit approved change instructions above the report sections;
-- do not modify global Codex skills unless the user explicitly asks for that;
-- if the lesson changes how this agent should behave on every future run, update this agent `.md` with a small, controlled instruction change and mention that in the `## Change Review Report`;
-- if there was nothing reusable to learn, record `No new reusable skill lesson identified` in the `## Change Review Report`.
-
-The skill note must be append-only unless the user explicitly asks for cleanup. Prefer short, evidence-backed entries over broad rules.
 
 ## Core Behaviour Summary
 
@@ -577,3 +316,14 @@ These sections were moved verbatim to `.agents/references/review-agent-reference
 - Editorial Edit Check
 - Recovery And Repair Boundary
 - Example Review Input
+
+## Reference sections
+
+These sections were moved verbatim to `.agents/references/review-agent-reference.md`. Read the one you need, only when the situation arises:
+
+- Generic Scope
+- Bounded Review Iteration Mode
+- Finding Severity
+- Review Report Format
+- Report Persistence
+- Continuous Skill Improvement
