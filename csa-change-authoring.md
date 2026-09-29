@@ -36,20 +36,11 @@ Read these before any other step, and nothing else until a step tells you to:
 
 ## Primary Objective
 
-For one requested section (one top-level heading of the document), compare that section's current text against the relevant Discovery Data evidence and draft `reviews/ChangesCSA_<AppName>_Section<N>.md`: a single proposal file listing every edit you can support with specific cited evidence, using stable `@H...` IDs (from `stable_ids.py`, resolved via `lookupStableId`) as the anchor for every edit -- never a hand-typed or quoted-text anchor. Edit IDs are section-scoped: `S<N>-E<n>` for content edits and `S<N>-A<n>` for administrative edits, so each section's numbering is independent and adding an edit to one section never forces renumbering in another.
+For one requested section (one top-level heading of the document), compare that section's current text against the relevant Discovery Data evidence and draft `reviews/ChangesCSA_<AppName>_Section<N>.md`: a single proposal file listing every edit you can support with specific cited evidence (IDs and anchors: core rules, "Change files").
 
 If a section genuinely has no supportable gap, still write the file: an authored-and-clean section is itself useful audit evidence that the section was reviewed, not silently skipped. Say so plainly (see Output Format) rather than omitting the file.
 
-After completing one section:
-
-- write the change proposal file;
-- run `csa check-change <N>` and fix every ERROR it reports (read each WARN and fix it where the rules say so);
-- update the run-state file for that section;
-- record any reusable evidence-mapping or authoring lesson in the skill-notes file;
-- report what you found (or that nothing was found) to the user;
-- stop.
-
-Do not automatically continue to the next section. Wait for explicit instruction, same as the other two agents in this pipeline.
+After one section: write the file, run `csa check-change <N>` and fix every ERROR (and each WARN the rules say to fix), update run-state and learnings, report, and stop (core rules, Stopping).
 
 ## Authority Hierarchy
 
@@ -69,7 +60,7 @@ That is the default, `EDIT_MODE=evidence`. The one exception is `EDIT_MODE=edito
 To author one section, identify or ask for:
 
 - the working DOCX (already prepared -- `prepareDocument()` must have returned `READY` for this run; see First Actions);
-- the Discovery Data evidence folder for the assessed system (for IAMPS: `01 Current State AS Built/IAMPS Discovery Data/`, containing `PROD/`, `UAT/`, and loose `tg_discovery_*` runs -- generalise this location per project);
+- the Discovery Data evidence folder for the assessed system (from the project context);
 - `WORK_DIR/analysis/` and `WORK_DIR/drafts/`, if the evidence-led orchestrator workflow has been run for this project -- not required to exist, but check for them (see First Actions and Evidence Mapping);
 - the section number to author (the requested section's H1 heading), or "the next section with no existing change file" when none is given.
 
@@ -96,14 +87,9 @@ At the beginning of every authoring run:
 
 ## Framework Tools (`csa-mcp`)
 
-- **`prepareDocument()`** -- call once at the start of every run, no `section` argument. Covered in First Actions.
-- **`lookupStableId(query)`** -- call once for every edit you draft, to get its `@H...` anchor. Never hand-derive, guess, or invent one.
-  - Call it with a snippet of the *current* document text you are about to replace/delete, or the anchor text for an insertion point.
-  - `unique_id` non-null (`match_count == 1`) -> use it. This is the only case where you write the edit as a normal `S<N>-E<n>`/`S<N>-A<n>` record.
-  - `unique_id` null with `match_count > 1` -> the snippet is ambiguous in the document. Try a longer or more specific snippet once. If it's still ambiguous, do not guess among `matches` -- record the finding under `## Open questions` instead, naming what you found and why you could not anchor it safely.
-  - `match_count == 0` -> the text you searched for is not present as you expected (possible drift since the manifest was built, or you mis-transcribed it). Re-check against the manifest text preview; if it's still not there, record it under `## Open questions` rather than guessing a nearby location.
-  - This never opens or modifies the DOCX -- it only reads the manifest `prepareDocument` already built, so it is safe and cheap to call once per candidate edit, including ones you end up discarding.
-- Neither tool needs a `section` argument in normal use -- the manifest they share covers the whole document. Only pass `section=<N>` if a call errors saying the workspace has more than one distinct working DOCX and needs one to disambiguate; that is not the normal case for a single-document CSA project.
+- **`prepareDocument()`** -- once at the start of every run, no `section` argument (First Actions).
+- **`lookupStableId(query)`** -- once for every edit you draft, with a snippet of the current text you replace or the anchor for an insertion. One match (`unique_id` set): use it. Several: try one longer snippet, then record the item under `## Open questions`. None: re-check the manifest preview, then an open question. Never hand-derive or guess an `@H...` ID. It only reads the manifest, so it is cheap and safe.
+- Pass `section=<N>` only when a call asks you to pick between working DOCX files.
 
 ## Section Brief (required, before evidence)
 
@@ -120,13 +106,12 @@ Every line of an edit's `**Facts:**` list starts with the brief item it answers,
 
 ### Never infer
 
-Every fact is something the evidence shows, a document states, or a person said. Nothing is concluded from it.
+See "Never infer" in .agents/csa-core-rules.md. Specific to change files:
 
-- Each fact line cites its rows and ends with its basis and scope: `- [B5] OIA records a replay file on the TCSI machines. (E-011) {basis: observed; scope: ROKTCSILEFT, ROKCERIGHT}`.
+- Each fact line cites its rows and ends with its basis and scope: `- [B5] The service writes a replay file on the site servers. (E-011) {basis: observed; scope: HOST01, HOST02}`.
 - **basis** is `observed` (seen in a capture, config or log), `documented` (a document says so) or `stated` (interview or review comment). There is no `inferred`: a conclusion you would have to reason your way to becomes an `Unknown:` line and an open question, never a fact.
-- **scope** names the hosts or sites the evidence covers, from the matrix row. Where the evidence covers part of the estate, the Text says so ("found on the Rockhampton machines; Mackay is still to be confirmed"). Never widen to "all", "every", "both" or "the system".
-- Use only the evidence's own terms for frequency, timing, direction, content and quantity. "Copies yesterday's file" is not "daily"; "a replay file" is not "a replay of what it sends". If you need the stronger word, find evidence for it or leave it out.
-- `csa check-change` enforces this against the evidence matrix: FACT_NO_EVIDENCE, FACT_EVIDENCE_MISSING, FACT_INFERRED, FACT_NOT_IN_EVIDENCE (a host, path, port or frequency the cited rows do not hold), UNSUPPORTED_QUALIFIER and SCOPE_WIDENED are errors; FACT_NO_BASIS, FACT_NO_SCOPE, SCOPE_QUANTIFIER and PROSE_UNSUPPORTED are warnings you resolve before hand-over.
+- **scope** names the hosts or sites the evidence covers, from the matrix row; where it covers part of the estate, the Text says so.
+- `csa check-change` enforces this against the evidence matrix (FACT_*, SCOPE_*, UNSUPPORTED_QUALIFIER): fix every error and resolve every warning before hand-over.
 - Before hand-over, write a `## Fact audit` table in the change file, one row per Text sentence: `| Record | Sentence | Evidence quote | Basis | Scope |`. The quote is copied from the matrix row (`claim` or `evidence_excerpt`). A sentence you cannot quote for is deleted or turned into the unknown.
 
 The Text then tells the subsection's story in brief order: open with the Purpose, walk the questions, end with the consequence for the section's requirements and the one unknown.
@@ -144,17 +129,11 @@ There is no predefined mapping from a document topic to which Discovery Data fil
 
 ### Evidence Matrix First (required)
 
-The evidence matrix `csa-work/evidence-matrix.csv` is the first place to look for any technical fact, and the place every finding is written back to. Access it only through the `csa-evidence-matrix` skill (read + append-only write). Do not edit the CSV by hand.
+See "Evidence matrix first" in .agents/csa-core-rules.md, and use the `csa-evidence-matrix` skill for every lookup and append. Specific to this agent:
 
-For every claim or topic in the section that turns on a technical fact:
-
-1. **Look up** -- `csa ev lookup "<topic + host/port/service names>" --brief` (run two or three differently-worded queries before concluding nothing is on record). Read the returned rows; confirm host, capture date and wording match the claim.
-2. **Use what is there** -- if a VERIFIED or INFERRED row answers the question, use it and cite its E-id. Do not search Discovery Data again for that point. A `PRIOR_NOT_FOUND` row means search only outside the scope it records.
-3. **Search Discovery Data only for the gaps** -- per Evidence Mapping above.
-4. **Append what you find** -- `evidence_matrix.py append --agent csa-change-authoring-agent --context "Section <N>"`, one atomic row per claim (VERIFIED / INFERRED / CONFLICTING / UNCONFIRMED), and a NOT_FOUND row with the scope searched when nothing is found. Do this for every finding you rely on, including ones you decide not to turn into an edit, so the next run does not repeat the search. Never edit or delete existing rows; a contradiction is a new row citing the older E-id.
-5. **Cite** -- in each edit's `Why`, name the E-id(s) with the evidence file and host. The run-state file lists the E-ids used and the E-ids appended.
-
-Rows record only what Discovery Data or a named source document established. Never append your own inference as VERIFIED, and never record credentials or secret values (the script rejects them).
+- Run two or three differently-worded `csa ev lookup "<topic + host/port/service names>" --brief` queries before concluding nothing is on record. A `PRIOR_NOT_FOUND` row means search only outside the scope it records.
+- Append with `csa ev append --agent csa-change-authoring-agent --context "Section <N>"`, one atomic row per claim, for every finding you rely on, including ones you do not turn into an edit. A contradiction is a new row citing the older E-id.
+- In each edit's `Why`, name the E-id(s) with the evidence file and host. The run-state file lists the E-ids used and appended.
 
 ## Review Method (Per Candidate Edit)
 

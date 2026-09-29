@@ -37,6 +37,8 @@ Each row's claim names the host(s), role or application it is about, with every 
 
 ## The rule: matrix first, then data, then write back
 
+See "Evidence matrix first" in .agents/csa-core-rules.md. The five steps:
+
 ```text
 1. LOOKUP   -> search the matrix for the question
 2. JUDGE    -> does a returned row answer THIS question for THIS host/date?
@@ -47,9 +49,7 @@ Each row's claim names the host(s), role or application it is about, with every 
 5. CITE     -> quote the E-id(s) in your Why / comment / report
 ```
 
-Never skip step 1 for a technical fact about hosts, services, ports, addresses, software, configuration, ownership or dates. Never write a claim into a proposed edit, comment or report that you have not either found in the matrix or verified in Discovery Data.
-
-**Step 3 (SEARCH) - use the discovery index first where the project has one.** If `<work_dir>/discovery-index.sqlite` exists, query it with the `csa-discovery-index` skill (`discovery_index.py rows` / `search`) before opening raw Discovery Data files. It covers every current host capture in one query and returns the source file, capture and line numbers to put in the new row. Search raw files only for what the index reports as not indexed. (Trial on UTC DTC, 25/09/2026.)
+Step 3 uses the discovery index first where the project has one (`csa-discovery-index` skill), then raw files only for what the index reports as not indexed.
 
 ## Script
 
@@ -154,11 +154,7 @@ Example `rows.json` (illustrative values - always use what you actually found):
 
 ## Per-agent use
 
-**csa-change-authoring-agent** (reads and writes)
-- Before searching Discovery Data for any claim in the section, run `lookup`. Search Discovery Data only for what the matrix did not answer.
-- Append each supported finding (and each NOT_FOUND) before or as you draft the edit that depends on it.
-- In each edit's `Why`, cite the E-id(s) together with the source file and host, e.g. `Evidence: E-075 (ROKPRDAMP101 03_time_status.txt)`.
-- List E-ids used and appended in the run-state file.
+**csa-change-authoring-agent** (reads and writes): see "Evidence Matrix First" in its agent file.
 
 **csa-document-agent** (reads; writes only when it verifies a fact)
 - The approved change file remains the only source of edits. This skill never changes what is applied.

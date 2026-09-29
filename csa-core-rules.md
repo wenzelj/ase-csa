@@ -17,7 +17,6 @@ Every agent and skill in `.agents/` follows these rules. Where a line in an agen
 ## Evidence
 
 - Classes: `VERIFIED`, `INFERRED`, `UNCONFIRMED`, `CONFLICTING`, `NOT_FOUND`. Never upgrade an inference because it is plausible. "Not observed in the evidence searched" is never written as "does not exist".
-- Look things up in this order: the evidence matrix (`csa ev lookup`), the discovery index (`csa index rows` / `csa index search`), then raw files for what the index does not cover. Append what you find with `csa ev append`; never edit the matrix CSV by hand.
 - Work from the hosts: `csa hosts show <HOST>` gives everything known about one machine (register entry, facts from every source with file and line, evidence IDs, connections to other hosts); `csa hosts group --attr "<attribute>" [--attr ...] [--system UTC]` gives the hosts that share a configuration; `csa hosts links [HOST]` gives host-to-host connections. Rebuild with `csa hosts build` after `csa index build`.
 - Applications of the same system (for example UTC/DTC and IAMPS in TCS) know each other's hosts: each project's `hosts/roles.csv` lists the others as `system_project`. A connection is verified when either project's capture proves it, and the basis names that project. Cite the sibling project's evidence as `<project>:E-nnn` (for example `utcdtc:E-088`); `csa check-change` checks it against that project's matrix. Never state as observed what neither project's evidence shows. `csa hosts system --name <system>` writes the combined view to `.agents/csa-context/systems/<system>/`.
 - One evidence row per claim about a host or a group of hosts that share the value. Write every host name in full (expand `CONTROLLER70 / 73` shorthand); keep the source's row or collection ID in `page_or_location` only.
@@ -27,8 +26,27 @@ Every agent and skill in `.agents/` follows these rules. Where a line in an agen
 
 - **The subject is the system, its applications and its hosts.** A source's own keys (a workbook row, a collection or group ID, a sheet or line number, an evidence ID) are citations, never the subject of a sentence, a fact or a table row. Tables are keyed by host(s), role or application; hosts that share the same configuration share a row.
 
-- Evidence IDs (`E-nnn`), stable IDs (`@H...`), evidence file names and status tags never appear in document text. They belong in the change record's `Why:` and, from there, the Word comment.
+- Stable IDs (`@H...`), evidence file names and status tags never appear in document text either (see Evidence IDs never in document text).
 - Prose follows `csa-writing-style`; terms and spelling follow `australian-it-ot-terminology`.
+
+## Never infer
+
+- State what the evidence shows at the strength it shows it. No conclusions the evidence does not state ("which means", "likely", "therefore", "typically").
+- Use the evidence's own words for frequency, timing, direction, content and quantity: "copies yesterday's file" is not "daily".
+- Keep the scope of the capture: name the hosts or sites it covers, and never widen to "all", "every", "both" or "the system".
+- A conclusion you would have to reason your way to is an unknown and an open question, never a fact. A gap stated plainly is good writing.
+- `prose_lint` flags inference wording; `csa check-change` checks every fact against the evidence matrix.
+
+## Evidence IDs never in document text
+
+- Evidence IDs (`E-nnn`) belong in the change record's `Why:` and, from there, the Word comment; never inline in a sentence or table cell (no "`[E-042]`").
+- Uncertainty is said in plain words ("has not been directly observed", "reported inconsistently across hosts"), never as a bracketed status tag.
+
+## Evidence matrix first
+
+- Every technical fact (hosts, services, ports, addresses, software, configuration, ownership, dates) starts with `csa ev lookup --brief`. If a row answers this question for this host and date, cite its E-id and stop searching.
+- Otherwise search the discovery index, then raw files for what it does not cover, and append every finding (including NOT_FOUND with the scope searched) with `csa ev append`; never edit the matrix CSV by hand.
+- Never write a claim you have neither found in the matrix nor verified in Discovery Data.
 
 ## Change files
 

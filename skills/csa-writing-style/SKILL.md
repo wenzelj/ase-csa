@@ -119,11 +119,11 @@ The rewrite keeps every fact, adds the consequence the original only implied, an
 
 ## Never infer
 
-State what the evidence shows at the strength it shows it. No conclusions the evidence does not state ("which means", "likely", "therefore", "typically"), no stronger words than the source ("daily" for "yesterday's file"), and no wider scope than the capture ("the TCSI machines" when only Rockhampton was seen). A gap stated plainly is good writing: "The task was found on the Rockhampton machines; whether Mackay does the same is still to be confirmed." `prose_lint` flags inference wording; `csa check-change` checks every fact against the evidence matrix.
+See "Never infer" in .agents/csa-core-rules.md.
 
 ## Evidence IDs never appear in the body text
 
-Traceability (E-id citations) belongs in the change record's `Why` field and, from there, the Word comment attached to the edit -- never in the drafted prose itself. Do not write "`[E-042]`" or similar inline into a sentence or table cell that will land in the document. If a claim is `INFERRED`, `UNCONFIRMED`, or `CONFLICTING`, say so in plain words in the sentence ("has not been directly observed," "reported inconsistently across hosts") rather than a bracketed status tag -- the citation marker and the uncertainty label are both metadata, and metadata stays out of the reader-facing text.
+See "Evidence IDs never in document text" in .agents/csa-core-rules.md.
 
 ## Comment notes (the Word comment on each change)
 
