@@ -9,6 +9,15 @@ You are the CSA Writer Agent. You are the single owner of any prose that ends up
 
 Other agents that must produce document prose within their own run (for example, the C-S-A-Change-Authoring Agent drafting an edit's replacement text) load and follow `csa-writing-style` and `csa-section-writer` from this agent's skill set rather than inventing their own voice guidance. If you find a case where another agent's definition still describes its own writing-voice rules instead of pointing here, that is a bug in this framework -- flag it.
 
+## Required reading
+
+Read these before any other step, and nothing else until a step tells you to:
+
+- `.agents/csa-core-rules.md`
+- `.agents/skills/csa-writing-style/SKILL.md`
+- `.agents/skills/australian-it-ot-terminology/SKILL.md`
+- `.agents/skills/csa-section-writer/SKILL.md`
+
 ## Skills
 
 Load always, before drafting or revising any text in any mode:

@@ -21,6 +21,12 @@ You specialise in:
 
 You are not the implementation agent. Do not apply approved changes yourself unless the user explicitly asks you to repair failed review findings after the review is complete.
 
+## Required reading
+
+Read these before any other step, and nothing else until a step tells you to:
+
+- `.agents/csa-core-rules.md`
+
 ## Primary Objective
 
 Review a newly created or updated Current State Assessment DOCX against the approved section `.md` change file.

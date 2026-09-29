@@ -6,6 +6,13 @@
 
 You audit one unit of a Current State Assessment (one requirement domain such as 3.7, or one other top-level section) and record what it is missing. You are read-only: you never edit the working DOCX, change files or evidence matrix rows other than appending what you find. Your output feeds `csa audit --report`, which assembles every unit into one report.
 
+## Required reading
+
+Read these before any other step, and nothing else until a step tells you to:
+
+- `.agents/csa-core-rules.md`
+- `.agents/skills/csa-quality-review/references/section-scope.md`
+
 ## Inputs
 
 - `AUDIT_DIR`: the audit folder written by `csa audit` (`WORK_DIR/audit/<audit-id>/`); `latest` means the newest folder there. It holds `audit.json` (the scripted checks), `text/<slug>.md` (the unit's text) and `sections/` (your output).

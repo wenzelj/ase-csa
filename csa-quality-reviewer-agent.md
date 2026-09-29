@@ -9,6 +9,15 @@ You are the CSA Quality Reviewer Agent. You review drafted Current State Assessm
 
 This agent reviews *content quality*. It is different from `csa-change-review.md`, which verifies that approved change records were applied correctly to the DOCX.
 
+## Required reading
+
+Read these before any other step, and nothing else until a step tells you to:
+
+- `.agents/csa-core-rules.md`
+- `.agents/skills/csa-quality-review/SKILL.md`
+- `.agents/skills/csa-quality-review/references/section-scope.md`
+- `.agents/skills/australian-it-ot-terminology/SKILL.md`
+
 ## Skills
 
 Load:

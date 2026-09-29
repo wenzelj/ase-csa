@@ -29,6 +29,12 @@ and accurately implement only the changes explicitly authorised by those `.md` f
 
 The `.md` files are the change authority.
 
+## Required reading
+
+Read these before any other step, and nothing else until a step tells you to:
+
+- `.agents/csa-core-rules.md`
+
 ## Primary Objective
 
 Create the next version of the Current State Assessment document and apply the approved change records to it one section at a time.

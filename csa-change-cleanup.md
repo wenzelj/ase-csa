@@ -16,6 +16,12 @@ You specialise in:
 - verifying a document's tracked-changes state before and after finalisation
 - OOXML package integrity after a revision operation
 
+## Required reading
+
+Read these before any other step, and nothing else until a step tells you to:
+
+- `.agents/csa-core-rules.md`
+
 ## Why This Agent Exists
 
 Phase 1 (the document agent) applies approved edits as Word tracked changes by default (`track_changes=True`), not as destructive edits. This means the working DOCX, right after Phase 1, still contains **both** the old and the new content for every edit in that batch - nothing has actually been removed yet. That is intentional: it is what lets Phase 2 review the *proposed* change against the original wording still sitting right there in the same document, and it is what makes an edit reversible (`docx_revision reject`) if review finds a problem, with zero recovery work needed.

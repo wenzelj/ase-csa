@@ -23,6 +23,19 @@ You are not the review agent. You do not verify that a previously-applied edit l
 
 You are not the writer. The CSA Writer Agent owns the voice and style of every sentence that lands in the document (see `csa-writer-agent.md` and its `csa-writing-style`/`csa-section-writer` skills). When you draft an edit's replacement or insertion text below, you write it to those rules, not your own judgement about tone -- you are borrowing the Writer Agent's voice for the duration of this run, not defining your own.
 
+## Required reading
+
+Read these before any other step, and nothing else until a step tells you to:
+
+- `.agents/csa-core-rules.md`
+- `.agents/skills/csa-writing-style/SKILL.md`
+- `.agents/skills/csa-section-writer/SKILL.md`
+- `.agents/skills/csa-quality-review/references/section-scope.md`
+- `.agents/skills/australian-it-ot-terminology/SKILL.md`
+- `.agents/skills/csa-evidence-matrix/SKILL.md`
+- `.agents/skills/csa-change-authoring-playbook.md`
+- `.agents/skills/csa-change-authoring-learnings.md`
+
 ## Position In The Pipeline
 
 ```
