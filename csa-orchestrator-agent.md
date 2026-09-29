@@ -37,42 +37,44 @@ Follow that skill for the control loop, evidence classes, and outputs. Do not lo
 
 ## Position In The Workflow
 
-This agent covers the *content* workflow: evidence, analysis, drafting, quality review. It does not replace the existing DOCX change pipeline (`csa-change-authoring.md` -> human approval -> `current-state-assessment-document.md` -> `csa-change-review.md`). Anything that must change the working DOCX still goes through that pipeline and its approval gate.
+This agent covers the *content* workflow: evidence, analysis, drafting, quality review. It does not replace the existing DOCX change pipeline (`csa author` -> human approval -> `csa apply` -> `csa review`). Anything that must change the working DOCX still goes through that pipeline and its approval gate.
 
 ## Routing Table
+
+Route with commands, not by reading other agents' files: `csa agents` lists the agents, `csa status [N]` shows where a section is, `csa next` names the next step, and `csa scope <domain>` gives a domain's scope entry.
 
 For the active section, pick one row. Prefer the narrowest match. Do not invoke every specialist by default.
 
 Choose by the requested action first (find evidence, analyse, draft, review, summarise, explain), then by topic. A topic word such as "infrastructure" or "network" selects an analysis skill only when the task is to analyse that area; "create an evidence matrix for the hosting section" is evidence work, and "draft the infrastructure section" is writing.
 
-| Request or need | Agent definition | Skill(s) loaded by that agent |
+| Request or need | Agent (command) | Skill(s) loaded by that agent |
 | --- | --- | --- |
-| Find, extract, classify, or reconcile source evidence; build or update the evidence matrix | `.agents/csa-evidence-investigator-agent.md` | `evidence-investigator` |
-| Turn missing, weak, stale, or conflicting evidence into a gap register and questions | `.agents/csa-evidence-investigator-agent.md` (GAP mode) | `csa-gap-analysis` |
-| Application purpose, users, functions, ownership, criticality, lifecycle | `.agents/csa-technical-analyst-agent.md` | `application-discovery` |
-| Hosting, servers, virtualisation, OS, databases, storage, platform services | `.agents/csa-technical-analyst-agent.md` | `infrastructure-analysis` |
-| Current architecture, sites, trust boundaries, OT zones | `.agents/csa-technical-analyst-agent.md` | `ot-architecture-analysis`, `dependency-analysis` |
-| Upstream, downstream, shared-service, vendor dependencies only | `.agents/csa-technical-analyst-agent.md` | `dependency-analysis` |
-| Network zones, flows, ports, protocols, firewall paths, remote connectivity | `.agents/csa-technical-analyst-agent.md` | `network-connectivity-analysis` |
-| Authentication, authorisation, accounts, privileged and remote access | `.agents/csa-technical-analyst-agent.md` | `identity-access-analysis` |
-| Availability, redundancy, backup, restore, disaster recovery, single points of failure | `.agents/csa-technical-analyst-agent.md` | `resilience-analysis` |
-| Ownership, support, monitoring, patching, incident/change, vendor support | `.agents/csa-technical-analyst-agent.md` | `operations-support-analysis` |
-| Current security controls, exposures, exceptions | `.agents/csa-technical-analyst-agent.md` | `security-posture-analysis` |
-| DNS / name resolution: resolvers, AD-integrated DNS, resolution behaviour, dependent services, isolation consequence (legacy Section 5, template 3.5) | `.agents/csa-technical-analyst-agent.md` | `dns-name-resolution-analysis` |
-| Migration discovery: application hosts in the asset list vs hosts with discovery captures, installed applications and components, failover/replication, patch and update tooling, Group Policy, file transfer and local storage (legacy Section 6, template 4) | `.agents/csa-technical-analyst-agent.md` | `migration-discovery-analysis` |
-| Draft or revise a section from approved evidence | `.agents/csa-writer-agent.md` | `csa-writing-style` (always) + `csa-section-writer` (+ `technical-explainer` when an explanation is requested) |
-| Build lane (no working DOCX yet): write and review section files, build version 1 as tracked changes (spec: `.agents/docs/build-lane-spec.md`) | `.agents/csa-writer-agent.md` with `OUTPUT=section-file`, then `.agents/csa-quality-reviewer-agent.md`; when `csa sections` shows every planned section ready, tell Wenzel `csa build` is next, then to accept or reject the tracked changes in Word and run `csa review N` and `csa cleanup N` for each section | `csa-writing-style` + `csa-section-writer`; `csa-quality-review` |
-| Review a draft or section for unsupported claims, consistency, readability, concision and flow | `.agents/csa-quality-reviewer-agent.md` | `csa-quality-review` (+ `technical-explainer` when needed); runs `prose_lint.py` |
+| Find, extract, classify, or reconcile source evidence; build or update the evidence matrix | `csa evidence` | `evidence-investigator` |
+| Turn missing, weak, stale, or conflicting evidence into a gap register and questions | `csa gaps` | `csa-gap-analysis` |
+| Application purpose, users, functions, ownership, criticality, lifecycle | `csa analyse <skill>` | `application-discovery` |
+| Hosting, servers, virtualisation, OS, databases, storage, platform services | `csa analyse <skill>` | `infrastructure-analysis` |
+| Current architecture, sites, trust boundaries, OT zones | `csa analyse <skill>` | `ot-architecture-analysis`, `dependency-analysis` |
+| Upstream, downstream, shared-service, vendor dependencies only | `csa analyse <skill>` | `dependency-analysis` |
+| Network zones, flows, ports, protocols, firewall paths, remote connectivity | `csa analyse <skill>` | `network-connectivity-analysis` |
+| Authentication, authorisation, accounts, privileged and remote access | `csa analyse <skill>` | `identity-access-analysis` |
+| Availability, redundancy, backup, restore, disaster recovery, single points of failure | `csa analyse <skill>` | `resilience-analysis` |
+| Ownership, support, monitoring, patching, incident/change, vendor support | `csa analyse <skill>` | `operations-support-analysis` |
+| Current security controls, exposures, exceptions | `csa analyse <skill>` | `security-posture-analysis` |
+| DNS / name resolution: resolvers, AD-integrated DNS, resolution behaviour, dependent services, isolation consequence (legacy Section 5, template 3.5) | `csa analyse <skill>` | `dns-name-resolution-analysis` |
+| Migration discovery: application hosts in the asset list vs hosts with discovery captures, installed applications and components, failover/replication, patch and update tooling, Group Policy, file transfer and local storage (legacy Section 6, template 4) | `csa analyse <skill>` | `migration-discovery-analysis` |
+| Draft or revise a section from approved evidence | `csa write` | `csa-writing-style` (always) + `csa-section-writer` (+ `technical-explainer` when an explanation is requested) |
+| Build lane (no working DOCX yet): write and review section files, build version 1 as tracked changes | `csa write` with `OUTPUT=section-file`, then `csa qa`; when `csa sections` shows every planned section ready, tell Wenzel `csa build` is next, then to accept or reject the tracked changes in Word and run `csa review N` and `csa cleanup N` for each section | `csa-writing-style` + `csa-section-writer`; `csa-quality-review` |
+| Review a draft or section for unsupported claims, consistency, readability, concision and flow | `csa qa` | `csa-quality-review` (+ `technical-explainer` when needed); runs `prose_lint.py` |
 | Measure how a draft or DOCX section reads (bullet fragments, repetition, lead-ins, length) | none: run `skills/csa-writing-style/scripts/prose_lint.py <draft.md or DOCX> --heading "<section title>"` yourself, read-only, and record the result | none |
-| Tighten or condense a section that already exists in the working DOCX, with no new facts | hand off to the DOCX change pipeline, not the writer: `csa-change-authoring.md` with `EDIT_MODE=editorial` (then human approval, `current-state-assessment-document.md`, `csa-change-review.md`) | the authoring agent loads `csa-writing-style` and `csa-section-writer` itself |
+| Tighten or condense a section that already exists in the working DOCX, with no new facts | hand off to the DOCX change pipeline, not the writer: `csa author N EDIT_MODE=editorial` (then human approval, `csa apply N`, `csa review N`) | the authoring agent loads `csa-writing-style` and `csa-section-writer` itself |
 | Explain an OT/IT concept to the user | writer or reviewer agent, whichever is active | `technical-explainer` |
-| Executive summary of the completed assessment | `.agents/csa-writer-agent.md` (EXECUTIVE_SUMMARY mode) | `executive-summary` |
+| Executive summary of the completed assessment | `csa summary` | `executive-summary` |
 
 ## Gates You Enforce
 
 - Evidence before analysis, analysis before drafting: hand a section to the writer only after its evidence set is stable and marked approved.
 - The writer receives approved evidence; it does not search sources independently.
-- `australian-it-ot-terminology` (`.agents/skills/australian-it-ot-terminology/SKILL.md`) is foundational, not routed: the evidence investigator, technical analyst, writer, change-authoring agent and quality reviewer load it on every run. Do not route to it as a task.
+- `australian-it-ot-terminology` is foundational, not routed: the evidence investigator, technical analyst, writer, change-authoring agent and quality reviewer load it on every run. Do not route to it as a task.
 - Every drafted section goes to the quality reviewer before it is marked complete. The review includes concision and flow (check 10 in `csa-quality-review`): a section with an open `MAJOR` concision finding (restated facts, overlapping summaries, conclusion missing from the start, far over its word budget, placeholder headings) is not complete.
 - A draft goes to the reviewer only after the writer has run `prose_lint.py` on it and fixed its warnings. Record the lint result for the section in `assessment-state.yaml`.
 - A request to shorten or tidy a section already in the DOCX goes to `EDIT_MODE=editorial`, and only after that section's evidence edits are applied. Rewriting it through the writer would bypass the approval gate.
