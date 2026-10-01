@@ -27,6 +27,10 @@ A reader should be able to read a paragraph aloud to a colleague and have it mak
 4. **What it means.** The consequence for operations, including if the OT environment is isolated.
 5. **What is still unknown.** Once, at the end, in one sentence, with who can confirm it.
 
+### Answer the question first
+
+The reader asked a question of a system: where does its time come from, which resolvers does it use, what fails when they go. Answer it in terms of the systems and applications (the Reveloc application servers, the SQL clusters, the TETRA log server, the jump hosts), not host counts or capture coverage, and name the server or address the answer points to, so the reader knows what to look at. The limits below are guides that `prose_lint.py` reports as warnings. Never leave the question half answered, or drop a fact that answers it, to meet a limit; a longer sentence or one more host name is the smaller fault.
+
 ### Identifier budget
 
 - **No IP addresses or subnets in prose.** They go in the discovery table, the observed-state table or the appendix. `csa check-change` rejects an IP address in an edit's prose text.

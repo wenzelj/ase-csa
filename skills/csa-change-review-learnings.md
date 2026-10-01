@@ -115,3 +115,37 @@ Confirm every review iteration writes durable evidence: reviewed DOCX path, curr
 - MINOR (noted): §14 "This results in:" promoted to H3; §11 bare non-heading "Recommendations" line under container.
 - NOT defects (do not re-flag): <Image place holder> (keep); 16× TBA in §1 (governance); §15/§16 table-only content; standalone H2 Recommendations/Assessment (acceptable per scope map).
 - Applied earlier this session (backup .before_findings_heading_rename_20260924.bak): normalised 9 findings-heading variants + 'Benefit: Achieves:' dangling colon; then renamed headings to 'Findings and Recommendations' (may be walked back per user query).
+
+## 2026-10-01 - Replacement of text already inside a tracked insertion
+
+- **Context:** REVELOC TETRA subsection 3.5, where a correction targeted text that was itself still inside an earlier `w:ins` revision.
+- **Risk observed:** The later replace operation added a second `w:ins` beside the first without deleting or superseding the earlier insertion. The requested wording was present, but accepting all revisions would retain both versions and duplicate the paragraph or table-cell content.
+- **Review approach:** For a replacement whose current anchor contains tracked markup, inspect the complete paragraph or cell and model the accepted result. Presence of the new text is insufficient; verify that no superseded `w:ins` remains as accepted content.
+- **Validation:** Check neighbouring `w:ins` and `w:del` elements at the stable-ID anchor, then confirm that accepting all revisions yields exactly one authorised final version.
+
+## 2026-10-01 - Subsection review state and concurrent changes
+
+- Context: A labelled subsection change file was reused after an earlier review, while its review run-state still described older edit IDs.
+- Risk: Trusting the stale run-state can review or sign off the wrong inventory; comparing a pre-change backup to a later working DOCX can also misclassify a separately approved concurrent edit as unauthorised.
+- Corrected approach: Reconcile the live approved change file and Changes Report before using existing run-state, replace stale inventory with the current edit IDs, and classify backup differences by revision timestamp, edit ID and section scope.
+- Validation next time: Confirm the run-state inventory equals the change file inventory, list current revisions, and verify every accepted-view difference against the reviewed edit or another approved change report.
+
+## 2026-10-01 - DNS apex address overlap does not establish server role
+
+- Context: A discovery-table change correlated configured resolver addresses with addresses returned for an Active Directory DNS domain apex.
+- Risk: Address overlap can be correctly observed while the conclusion that the endpoints are domain controllers remains unsupported. An apex A-record response is not a role-aware domain-controller lookup.
+- Review approach: Treat resolver configuration, domain apex responses and server role as separate claims. Require role-aware records or another direct source before describing an endpoint as a domain controller, even with qualifiers such as "likely".
+- Validation next time: Check the exact query type and returned record, then look for domain-controller service records, authoritative inventory or direct server identification before accepting a role statement.
+## 2026-10-01 — Cumulative subsection review after a later apply
+
+- Context: A later correction batch reused a change file whose earlier edit had already been reviewed.
+- Risk observed: The earlier tracked replacement was no longer present in the live accepted view, while its Word comment and the cumulative Applied list remained, so trusting prior run-state would have produced a false pass.
+- Corrected approach: For cumulative change files, review the next unreviewed batch but also recheck the live accepted view of earlier approved edits when the latest Changes Report still claims they are applied.
+- Validation next time: Compare each cumulatively reported applied edit against the refreshed stable-ID manifest and accepted OOXML view; a surviving comment does not prove the tracked content remains applied.
+
+## 2026-10-01 — Rejected records are not part of the approved review inventory
+
+- Context: A subsection change file retained an older record under a `REJECTED` heading while its cumulative implementation report still listed that ID as applied.
+- Risk observed: Treating every historical record or cumulative Applied entry as approved can create a false failure when rejected wording is absent from the live accepted view.
+- Corrected approach: Build the verification inventory from the current approval status and record headings first. Review only approved IDs; report a rejected ID in the Applied list as a report-accuracy note, not as a missing approved edit.
+- Validation next time: Reconcile the status line, `REJECTED` headings, current-iteration IDs and detailed edit results before selecting the review batch or granting cleanup sign-off.

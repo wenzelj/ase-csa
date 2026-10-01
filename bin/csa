@@ -66,8 +66,12 @@ SCRIPTS = {
 EDIT_HEADING_RE = re.compile(r"^#{2,4}\s+(S\d+-[EA]\d+|E-\d+)\b", re.M)
 STATUS_LINE_RE = re.compile(r"^\*\*Status:\*\*\s*(.*)$", re.M)
 CHANGE_FILE_RE = re.compile(r"^ChangesCSA_.*?_Section(?P<section>\d+)(?:_(?P<label>[^.]+))?\.md$")
-# A subsection is given as <section>.<n>[.<n>] in the stable-ID numbering (the @H numbers
-# `csa lookup` prints, e.g. 6.4). Its change file is the labelled file
+# A subsection is given as the number printed in the document, <section>.<n>[.<n>]
+# (for example 3.3 PKI / Certificates).  It is deliberately *not* a stable-ID
+# path: template heading ordinals include unnumbered headings and therefore the
+# live structural ID for visible 3.3 may be @H4.4.  ``resolve_visible_section``
+# below performs that translation from the live manifest.
+# Its change file is the labelled file
 # ChangesCSA_<App>_Section<section>_<label>.md with the dots written as dashes (6-4).
 SUBSECTION_RE = re.compile(r"^(?:section\s*)?(?P<section>\d+)\.(?P<rest>\d+(?:\.\d+)*)$", re.I)
 SUBSECTION_LABEL_RE = re.compile(r"^\d+(?:-\d+)+$")
@@ -84,6 +88,74 @@ def split_section(spec) -> tuple[str, str | None]:
 def label_display(section: str, label: str | None) -> str:
     """How a section or subsection is written in `csa` commands: 6 or 6.4."""
     return label.replace("-", ".") if label and SUBSECTION_LABEL_RE.match(label) else str(section)
+
+
+TEMPLATE_BLOCKS = SKILLS / "csa-document-template" / "references" / "template-blocks.json"
+
+
+def _template_visible_headings() -> dict[str, str]:
+    """Visible template number -> heading text.
+
+    Stable IDs are structural ordinals, not the numbers printed by Word.  The
+    template block map is the authority for visible numbers; the live manifest
+    is the authority for the corresponding structural path.
+    """
+    out = {
+        "1": "Document Control",
+        "2": "Executive Overview",
+        "2.1": "Executive Summary",
+        "3": "Requirement Domain Assessments",
+        "4": "Governance Note and Next Steps",
+        "5": "Migration Discovery",
+        "6": "OT 3.5 Destination Boundary Reference Table",
+        "7": "Glossary and Acronyms",
+    }
+    if not TEMPLATE_BLOCKS.is_file():
+        return out
+    data = json.loads(TEMPLATE_BLOCKS.read_text(encoding="utf-8"))
+    for item in data.get("domains", []):
+        if item.get("number") and item.get("heading"):
+            out[str(item["number"])] = item["heading"]
+    for key in ("governance", "coverage", "boundary_appendix", "glossary", "discovery_required"):
+        item = data.get(key) or {}
+        if item.get("number") and item.get("heading"):
+            out[str(item["number"])] = item["heading"]
+    for item in data.get("migration", []):
+        if item.get("number") and item.get("heading"):
+            out[str(item["number"])] = item["heading"]
+    return out
+
+
+def _live_manifest(p: dict) -> Path | None:
+    root = local_path(p["project_root"])
+    manifests = [x for x in root.rglob("run-state/stable-ids-*.json") if not _archived(x, root)]
+    if not manifests:
+        return None
+    return max(manifests, key=lambda x: x.stat().st_mtime)
+
+
+def resolve_visible_section(p: dict, spec: str) -> dict:
+    """Resolve a user-visible section number against the live manifest.
+
+    Returns both identities; callers must retain the visible number for change
+    files/edit IDs and use ``stable_path`` only to scope document content.
+    """
+    visible = str(spec or "").strip()
+    heading = _template_visible_headings().get(visible)
+    if not heading:
+        return {"visible": visible, "heading": None, "stable_path": None}
+    manifest = _live_manifest(p)
+    if manifest is None:
+        return {"visible": visible, "heading": heading, "stable_path": None}
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+    norm = lambda s: re.sub(r"\s+", " ", str(s or "").replace("“", '"').replace("”", '"')).strip().casefold()
+    matches = [e for e in data.get("entries", [])
+               if e.get("kind") == "heading" and norm(e.get("text")) == norm(heading)]
+    if len(matches) != 1:
+        die(f"SECTION_MAPPING_ERROR: visible {visible} ({heading}) resolved to {len(matches)} live headings; "
+            f"run `csa lookup {shlex.quote(heading)}` and refresh the manifest")
+    return {"visible": visible, "heading": heading,
+            "stable_path": str(matches[0]["section_path"]), "manifest": str(manifest)}
 
 RECORD_HEADING_RE = re.compile(r"^#{2,4}\s+(S\d+-[EA]\d+|E-\d+)\b.*$", re.M)
 NEXT_HEADING_RE = re.compile(r"^#{1,3}\s", re.M)
@@ -347,6 +419,11 @@ def working_docx(p: dict) -> Path | None:
     return None
 
 
+def legacy_docx(p: dict) -> Path | None:
+    v = p.get("legacy_docx")
+    return local_path(v) if v else None
+
+
 def _kv_file(path: Path) -> dict:
     out = {}
     if path.is_file():
@@ -413,7 +490,9 @@ def section_state(p: dict, section: str, file: str | None = None) -> dict:
         st["review_result"] = m[1].strip() if m else "PRESENT"
         m = re.search(r"Sign-off for cleanup:\s*\**\s*(YES|NO|NOT APPLICABLE)", rev, re.I)
         st["signoff"] = m[1].upper() if m else None
-    st["cleaned"] = bool(_block(text, "Cleanup Report"))
+    cl = _block(text, "Cleanup Report")
+    m = re.search(r"Cleanup result:\s*\**\s*([A-Z][A-Z ]+?)\s*(?:\*|$)", cl, re.M)
+    st["cleaned"] = bool(cl) and not (m and m[1].strip() in ("STOPPED", "FAILED", "BLOCKED"))
 
     if not st["edits"]:
         st["stage"], st["next"] = "authored, no edits (clean)", None
@@ -1212,7 +1291,7 @@ def cmd_doctor(a):
     except SystemExit:
         line(False, "no framework interpreter >= 3.11", "set CSA_PYTHON or cli.yaml python:")
     for f in (PROJECTS_FILE, REGISTRY_FILE, CLI_FILE):
-        line(f.is_file(), f"{f.relative_to(AGENTS_DIR)} present")
+        line(f.is_file(), f"{f.relative_to(AGENTS_DIR) if f.is_relative_to(AGENTS_DIR) else f} present")
     for r in registry():
         line((AGENTS_DIR / r["file"]).is_file(), f"agent '{r['verb']}' -> {r['file']}")
         sk = r.get("skill")
@@ -1235,6 +1314,12 @@ def cmd_doctor(a):
             locks = [x.name for x in d.parent.glob("~$*.docx")]
             line(None if locks else True, f"project {p['key']}: {d.name}" + (" is OPEN in Word (lock file)" if locks else ""),
                  "close Word before apply/review/cleanup" if locks else "")
+        ld = legacy_docx(p)
+        if ld:
+            if ld.is_file():
+                line(True, f"project {p['key']}: legacy document {ld.name}")
+            else:
+                line(False, f"project {p['key']}: legacy document missing", str(ld))
     for cli in ("codex", "claude", "hermes"):
         line(True if shutil.which(cli) else None, f"{cli} CLI " + ("found" if shutil.which(cli) else "not on PATH"))
     if getattr(a, "tests", True):
@@ -1293,11 +1378,16 @@ def build_prompt(p: dict, r: dict, args: list[str], local: bool | None = None) -
             values[k.strip().upper()] = v.strip()
     if positional:
         values[r.get("arg", "SECTION")] = " ".join(positional)
-    sec, label = split_section(values.get("SECTION", ""))
+    requested_section = values.get("SECTION", "")
+    sec, label = split_section(requested_section)
+    resolved = resolve_visible_section(p, label_display(sec, label)) if str(requested_section).strip() else {}
     if label:
         values["SECTION"], values["SUBSECTION"] = sec, label_display(sec, label)
         cf = pick_change_file(p, sec, label)
         values["CHANGE_FILE"] = str(cf) if cf else f"reviews/ChangesCSA_<App>_Section{sec}_{label}.md (create it)"
+    if resolved.get("stable_path"):
+        values["STABLE_SUBTREE"] = "@H" + resolved["stable_path"]
+        values["DOCUMENT_HEADING"] = resolved["heading"]
     missing = [k for k, _, req in inputs if req and not values.get(k)]
     if missing:
         die(f"`csa {r['verb']}` needs {', '.join(missing)}, e.g. `csa {r['verb']} <{missing[0].lower()}>`")
@@ -1310,10 +1400,19 @@ def build_prompt(p: dict, r: dict, args: list[str], local: bool | None = None) -
         if values.get(k):
             lines.append(f"{k}={values[k]}")
     if values.get("SUBSECTION"):
-        lines.append(f"\nWork on subsection {values['SUBSECTION']} only (its heading and everything under it, "
-                     f"stable IDs @H{values['SUBSECTION']}...), using the change file CHANGE_FILE. "
+        stable = values.get("STABLE_SUBTREE")
+        if not stable:
+            die(f"SECTION_MAPPING_ERROR: visible subsection {values['SUBSECTION']} has no live stable-ID mapping; "
+                "run `csa prepare` and try again")
+        lines.append(f"\nWork on visible document subsection {values['SUBSECTION']} "
+                     f"({values.get('DOCUMENT_HEADING')}) only: its live stable-ID subtree is {stable}. "
+                     "Do not derive a stable ID from the visible number. Use CHANGE_FILE. "
                      f"Edit IDs stay S{values['SECTION']}-E<n>, numbered on from every Section {values['SECTION']} change file. "
                      "See 'Subsections' in csa-core-rules.md.")
+    elif resolved.get("stable_path"):
+        lines.append(f"\nVisible document section {sec} ({resolved['heading']}) resolves to live stable-ID subtree "
+                     f"@H{resolved['stable_path']}. Do not derive a stable ID from the visible number. "
+                     f"Edit IDs stay S{sec}-E<n>.")
     lines.append("\n" + r.get("instruction", ""))
     return "\n".join(lines)
 
@@ -1336,8 +1435,45 @@ def launch(p: dict, r: dict, args: list[str], a) -> int:
     return subprocess.call(argv, cwd=str(ROOT))
 
 
+def tracked_revision_count(docx: Path) -> int:
+    """Tracked insertions, deletions and moves in the document body (0 = nothing left to accept)."""
+    import zipfile
+    with zipfile.ZipFile(docx) as z:
+        xml = z.read("word/document.xml").decode("utf-8", errors="ignore")
+    return len(re.findall(r"<w:(?:ins|del|moveFrom|moveTo)\s", xml))
+
+
+def _cleanup_not_needed(p: dict, args: list[str]) -> bool:
+    """`csa cleanup N` accepts signed-off tracked changes. When review signed off and the working DOCX has none
+    left (accepted in Word already), record that and skip the agent session."""
+    values = task_values(agent("cleanup"), args)
+    sec, label = split_section(values.get("SECTION", ""))
+    docx = working_docx(p)
+    if not sec or not str(sec).isdigit() or not docx:
+        return False
+    st = section_state(p, sec, label)
+    cf = Path(st["change_file"]) if st["change_file"] else None
+    if not cf or st["signoff"] != "YES" or st["cleaned"]:
+        return False
+    if tracked_revision_count(docx):
+        return False
+    stamp = time.strftime("%Y-%m-%d %H:%M")
+    cf.write_text(cf.read_text(encoding="utf-8").rstrip("\n") + f"""
+
+## Cleanup Report
+
+Cleanup result: NOT NEEDED
+
+The working document had no tracked revisions at {stamp}; the signed-off changes were already accepted in Word. Nothing was changed and no backup was made (`csa cleanup`, no agent session).
+""", encoding="utf-8")
+    print(f"{C['b']}Nothing to accept: {docx.name} has no tracked revisions. Recorded in {cf.name}.{C['0']}")
+    return True
+
+
 def cmd_agent(a):
     p = project(a.project); banner(p)
+    if a.verb == "cleanup" and not getattr(a, "print", False) and _cleanup_not_needed(p, a.args):
+        return 0
     started = time.time()
     rc = launch(p, agent(a.verb), a.args, a)
     if rc != 0 or getattr(a, "print", False) or getattr(a, "no_apply", False):
@@ -1624,12 +1760,15 @@ def _fleet_tasks(p: dict, a) -> list[dict]:
     for i, text in enumerate(texts, 1):
         toks = shlex.split(text)
         verb, args = toks[0], toks[1:]
+        if verb == "convert":
+            tasks.extend(_fleet_convert_tasks(p, a, i, text, args, verbs, len(tasks) + 1))
+            continue
         no_apply = "--no-apply" in args and verb != "apply"
         args = [x for x in args if x != "--no-apply"] if no_apply else args
         if verb == "place":
             if not args:
                 die(f"task {i} '{text}': place needs a section file or number, e.g. \"place 3.4\"")
-            tasks.append(_fleet_task(i, text, verb, args, {"docx", f"section:{_norm_section(args[0])}"}, None))
+            tasks.append(_fleet_task(len(tasks) + 1, text, verb, args, {"docx", f"section:{_norm_section(args[0])}"}, None))
             continue
         if verb not in verbs:
             die(f"task {i} '{text}': unknown verb '{verb}'. `csa agents` lists them.")
@@ -1647,9 +1786,53 @@ def _fleet_tasks(p: dict, a) -> list[dict]:
             values = task_values(r, args)
             fcli = settings().get("fleet_cli", "codex")
             prompt = build_prompt(p, r, args, local=local_launch(settings().get(f"{fcli}_fleet", "")))  # dies on a missing required input
-        tasks.append(_fleet_task(i, text, verb, args, task_locks(r, values), prompt))
+        tasks.append(_fleet_task(len(tasks) + 1, text, verb, args, task_locks(r, values), prompt))
         tasks[-1]["no_apply"] = no_apply
     return tasks
+
+
+def _fleet_convert_tasks(p: dict, a, i: int, text: str, args: list[str], verbs: dict, n0: int) -> list[dict]:
+    """`convert N` in a fleet: brief and pre-pass run now (framework, no slot); the two agents become
+    ordinary tasks on the section lock, then the usual `place N` follows the writer, and the ledger runs
+    in-process after that place. Targets 7 and 5.1 are framework only: a `place` task."""
+    if not args or args[0].startswith("-"):
+        die(f"task {i} '{text}': convert needs a subsection, e.g. \"convert 3.4\"")
+    target = args[0]
+    ld = _convert_legacy(p)
+    dry = bool(a.dry_run or a.print)
+    if target in ("7", "5.1"):
+        spec = target
+        if not dry:
+            res = _convert_call(p, ld, target)
+            if res.get("status") != "PLACE":
+                die(f"task {i} '{text}': {res.get('message') or res.get('status')}")
+            spec = Path(res["file"]).name
+        t = _fleet_task(n0, f"place {spec}", "place", [spec], {"docx", f"section:{_norm_section(spec)}"}, None)
+        return [t]
+    work = local_path(p["work_dir"])
+    if dry:
+        files = [str(work / "convert" / target / "brief.md")]
+    else:
+        res = _convert_call(p, ld, target, "brief")
+        if res.get("status") == "EMPTY":
+            print(f"{C['y']}convert {target}: nothing in the previous assessment maps here; no tasks added{C['0']}")
+            return []
+        pre = _convert_call(p, ld, target, "prepass")
+        if pre.get("status") == "ERROR":
+            die(f"task {i} '{text}': {pre.get('message')}")
+        files = res["stages"]["brief"]["files"]
+    out = []
+    plan = [("evidence", [target, "MODE=convert", f"BRIEF={f}"]) for f in files] + \
+           [("write", [target, "BRIEF=" + ";".join(files)])]
+    for verb, vargs in plan:
+        r = verbs[verb]
+        fcli = settings().get("fleet_cli", "codex")
+        prompt = build_prompt(p, r, vargs, local=local_launch(settings().get(f"{fcli}_fleet", "")))
+        t = _fleet_task(n0 + len(out), f"{verb} {' '.join(vargs)}", verb, vargs, task_locks(r, task_values(r, vargs)), prompt)
+        t["no_apply"] = False
+        t["convert"] = target
+        out.append(t)
+    return out
 
 
 def _fleet_task(n: int, text: str, verb: str, args: list[str], locks: set[str], prompt: str | None) -> dict:
@@ -1671,7 +1854,10 @@ def _fleet_follow_up(t: dict, n: int) -> dict | None:
         return _fleet_task(n, f"apply {spec} --until-done", "apply", [spec, "--until-done"],
                            task_locks(agent("apply"), {"SECTION": spec}), None)
     if t["verb"] in ("write", "summary") and values.get("OUTPUT", "section-file") == "section-file":
-        return _fleet_task(n, f"place {spec}", "place", [spec], {"docx", f"section:{_norm_section(spec)}"}, None)
+        fu = _fleet_task(n, f"place {spec}", "place", [spec], {"docx", f"section:{_norm_section(spec)}"}, None)
+        if t.get("convert"):
+            fu["convert"] = t["convert"]
+        return fu
     return None
 
 
@@ -1789,6 +1975,23 @@ def cmd_fleet(a):
             + (f" exit {rc}" if rc else "") + (f" - {note}" if note else ""))
         if t["status"] != "done":
             skip_dependents(t)
+        elif t["verb"] == "evidence" and t.get("convert") and any(
+                x is not t and x.get("convert") == t["convert"] and x["verb"] == "evidence"
+                and x["status"] in ("queued", "running") for x in tasks):
+            pass                                        # a split brief: check the plan after its last evidence task
+        elif t["verb"] == "evidence" and t.get("convert"):
+            pc = _convert_call(p, _convert_legacy(p), t["convert"], "plan-check")
+            if pc.get("status") in ("FAILED", "ERROR"):
+                errs = pc.get("findings", [])
+                t["status"], t["note"] = "failed", f"plan-check: {pc.get('message') or str(len(errs)) + ' error(s) in answer-plan.csv'}"
+                say(f"{C['r']}plan-check{C['0']} {t['convert']}: {t['note']}")
+                skip_dependents(t)
+            else:
+                say(f"{C['c']}plan-check{C['0']} {t['convert']}: OK")
+        elif t["verb"] == "place" and t.get("convert"):
+            led = _convert_call(p, _convert_legacy(p), t["convert"], "ledger").get("stages", {}).get("ledger", {})
+            say(f"{C['c']}ledger{C['0']} {t['convert']}: {led.get('status')} {json.dumps(led.get('counts', {}))}"
+                + (f" missing {', '.join(led.get('missing', [])[:10])}" if led.get("missing") else ""))
         elif t["verb"] not in ("apply", "place"):
             fu = _fleet_follow_up(t, max(x["n"] for x in tasks) + 1)
             if fu:
@@ -2130,6 +2333,7 @@ Pipeline    csa author N  (applies its change file straight away) | csa review N
 Build lane  csa write <sec>  (places its section file in the document straight away) | csa place <file|sec>
             csa sections | csa check-section <file> | csa build [--preview] [--sections ..]   (spec: docs/build-lane-spec.md)
             --no-apply on author/write stops after the agent. The one approval is yours, in Word.
+Convert    csa convert --prepare | --map [N] | N [--stage S] [--print] | --status | --parked   (old-format CSA -> template)
 Audit      csa audit | csa audit --status | csa audit-section SECTION=next | csa audit --report   (what the document is missing; read-only)
 Parallel    csa fleet "author 6" "evidence 7" [-f tasks.txt] [--dry-run] [--print] [--timeout MIN]
             (one headless worker per slot in cli.yaml; DOCX steps never overlap)
@@ -2143,6 +2347,275 @@ Scripts     csa ev lookup "<q>" | csa index rows|search|hosts|tables|build ... |
 Agent opts  KEY=VALUE overrides (EDIT_MODE=editorial, ITERATION_EDIT_LIMIT=4), --cli codex|claude|hermes,
             --headless, --print (just show the prompt), --project <key>
 """
+
+
+# ---------------------------------------------------------------- convert (old-format CSA -> template)
+CONVERT_STAGES = ("brief", "prepass", "evidence", "plan-check", "write", "ledger")
+
+
+def _convert_legacy(p: dict) -> Path:
+    ld = legacy_docx(p)
+    if not ld:
+        die(f"project '{p['key']}' has no legacy_docx. Add `legacy_docx: \"<path to the old CSA .docx>\"` "
+            "to its entry in .agents/csa-context/PROJECTS.yaml")
+    if not ld.is_file():
+        die(f"legacy document not found: {ld}")
+    return ld
+
+
+def _convert_fw(func: str, *args, **kwargs):
+    return _fw_module_call("convert", func, *args, **kwargs)
+
+
+def _convert_call(p: dict, ld: Path, target: str, stage: str | None = None) -> dict:
+    return _convert_fw("convertOldTemplateToNew", target, workspace=_ws(p), legacy_docx=str(ld), stage=stage)
+
+
+def _convert_briefs(p: dict, target: str) -> list[str]:
+    d = local_path(p["work_dir"]) / "convert" / target
+    files = sorted(d.glob("brief*.md"), key=lambda f: (0, 0) if f.name == "brief.md"
+                   else (1, int(re.sub(r"\D", "", f.stem) or 0)))
+    return [str(f) for f in files]
+
+
+def _convert_csv(path: Path) -> list[dict]:
+    if not path.is_file():
+        return []
+    import csv as _csv
+    with path.open(newline="", encoding="utf-8-sig") as fh:
+        return list(_csv.DictReader(fh))
+
+
+def _convert_print(p: dict, target: str) -> int:
+    work = local_path(p["work_dir"])
+    brief = work / "convert" / target / "brief.md"
+    print(f"{C['b']}csa convert {target}{C['0']}  (plan only; nothing is run or written)")
+    print(f"  1. brief      framework   python -m csa_docx.convert --section {target} --stage brief   -> {brief}")
+    print(f"  2. prepass    framework   one evidence row per legacy fact of {target}")
+    print(f"  3. prepare    framework   only when the stable-ID manifest is older than the working document")
+    print(f"  4. evidence   agent       csa evidence {target} MODE=convert BRIEF={brief}   (writes convert/{target}/answer-plan.csv)")
+    print(f"  5. plan-check framework   python -m csa_docx.answer_plan convert/{target}/answer-plan.csv --target {target}")
+    print(f"  6. write      agent       csa write {target} BRIEF={brief}   (places the section file as tracked changes)")
+    print(f"  7. ledger     framework   every requirement answered and every candidate fact accounted for; then Appendix E rows from the plan's gaps")
+    print(f"{C['d']}Targets 7 and 5.1 need no agents. A split brief adds one evidence command per file and lists all files in BRIEF=.{C['0']}")
+    return 0
+
+
+def _convert_agent(p: dict, a, verb: str, args: list[str]) -> int:
+    cmd = [sys.executable, str(Path(__file__).resolve()), "--project", p["key"], verb, *args, "--headless"]
+    if getattr(a, "cli", None):
+        cmd += ["--cli", a.cli]
+    print(f"{C['d']}$ csa {verb} {' '.join(args)}{C['0']}")
+    return subprocess.call(cmd, cwd=str(ROOT))
+
+
+def _convert_prepare_if_stale(p: dict) -> None:
+    d = working_docx(p)
+    if not d:
+        return
+    m = _live_manifest(p)
+    if m is None or m.stat().st_mtime < d.stat().st_mtime:
+        print(f"{C['d']}stable-ID manifest is stale: running prepare{C['0']}")
+        fw_call("prepareDocument", workspace=_ws(p))
+
+
+def _convert_report_ledger(p: dict, ld: Path, target: str, res: dict) -> int:
+    counts = res.get("counts", {})
+    if res.get("mode") == "requirement":
+        if res.get("status") == "COMPLETE":
+            print(f"{C['g']}{target} converted:{C['0']} {counts.get('ANSWERED', 0)} requirements answered, "
+                  f"{counts.get('ACCOUNTED', 0)} candidate fact groups accounted for.")
+        else:
+            inc, miss = res.get("incomplete_requirements", []), res.get("missing", [])
+            print(f"{C['y']}{target} INCOMPLETE:{C['0']} " + (f"requirements not answered: {', '.join(inc)}. " if inc else "")
+                  + (f"{len(miss)} fact group(s) not in the answer plan: {', '.join(miss[:15])}" if miss else "")
+                  + ("" if res.get("status") != "NO_SECTION_FILE" else " (no section file yet)"))
+            print(f"  fix convert/{target}/answer-plan.csv or the section file, then `csa convert {target} --stage ledger`; "
+                  f"see {local_path(p['work_dir']) / 'convert' / target / 'ledger.csv'}")
+    elif res.get("status") == "COMPLETE" or res.get("status") == "OK":
+        left = counts.get("DUPLICATE", 0) + counts.get("NOT_USED", 0)
+        print(f"{C['g']}{target} converted:{C['0']} {counts.get('USED', 0)} facts used, {counts.get('SUPERSEDED', 0)} superseded, "
+              f"{counts.get('MOVED', 0)} moved (re-mapped), {left} left out.")
+    else:
+        missing = res.get("missing", [])
+        print(f"{C['y']}{target} INCOMPLETE:{C['0']} {len(missing)} legacy block(s) have no outcome: {', '.join(missing[:20])}"
+              + (" ..." if len(missing) > 20 else ""))
+        print(f"  rerun `csa convert {target} --stage write`, or add lines (id,outcome,target,reason) to "
+              f"{local_path(p['work_dir']) / 'convert' / target / 'outcomes.csv'}, then `csa convert {target} --stage ledger`")
+    if res.get("moved"):
+        print(f"{C['d']}{len(res['moved'])} block(s) moved to another subsection: re-mapping{C['0']}")
+        _convert_fw("prepare", _ws(p), str(ld))
+    return 0 if res.get("status") in ("COMPLETE", "OK") else 1
+
+
+def _convert_run(p: dict, a, ld: Path, target: str) -> int:
+    stage = a.stage
+    wanted = CONVERT_STAGES if stage is None else (stage,)
+
+    if target in ("7", "5.1"):                      # glossary and coverage: framework only
+        res = _convert_call(p, ld, target, stage)
+        print(f"{C['b']}[convert {target}]{C['0']} {res.get('status')}")
+        for name, r in res.get("stages", {}).items():
+            print(f"  {name}: {r.get('status')}" + (f" {r['file']}" if r.get("file") else ""))
+        if res.get("status") == "PLACE" and not getattr(a, "no_apply", False):
+            rc = cmd_place(argparse.Namespace(project=a.project, targets=[Path(res["file"]).name], system_name=None,
+                                              prepared_for=None, prepared_by=None, doc_version=None, status=None,
+                                              keep_open=False))
+            if rc:
+                return rc
+        if res.get("status") in ("ERROR", "FAILED"):
+            print(res.get("message", ""), file=sys.stderr)
+            return 2
+        led = res.get("stages", {}).get("ledger")
+        return _convert_report_ledger(p, ld, target, led) if led else 0
+
+    briefs: list[str] = []
+    for name in wanted:
+        if name == "brief":
+            res = _convert_call(p, ld, target, "brief")
+            b = res.get("stages", {}).get("brief", {})
+            print(f"{C['b']}[brief]{C['0']} {res.get('status')}  {', '.join(b.get('files', []))}")
+            if res.get("status") == "EMPTY":
+                print(f"nothing in the previous assessment maps to {target}. See `csa convert --map`.")
+                return 0
+            briefs = b.get("files", [])
+        elif name == "prepass":
+            res = _convert_call(p, ld, target, "prepass")
+            pp = res.get("stages", {}).get("prepass", {})
+            if res.get("status") == "ERROR":
+                die(f"prepass: {res.get('message') or pp.get('message')}")
+            print(f"{C['b']}[prepass]{C['0']} {len(pp.get('appended', []))} evidence rows added, "
+                  f"{len(pp.get('skipped', []))} already there, {len(pp.get('rejected', []))} rejected")
+            for rj in pp.get("rejected", []):
+                print(f"  rejected {rj['id']}: {rj['reason']}")
+        elif name == "evidence":
+            briefs = briefs or _convert_briefs(p, target) or \
+                _convert_call(p, ld, target, "brief").get("stages", {}).get("brief", {}).get("files", [])
+            if not briefs:
+                die(f"no brief for {target}; run `csa convert {target} --stage brief`")
+            _convert_prepare_if_stale(p)
+            for f in briefs:
+                rc = _convert_agent(p, a, "evidence", [target, "MODE=convert", f"BRIEF={f}"])
+                if rc:
+                    print(f"{C['r']}[evidence] failed (exit {rc}); stopping{C['0']}")
+                    return rc
+            print(f"{C['b']}[evidence]{C['0']} done")
+        elif name == "plan-check":
+            res = _convert_call(p, ld, target, "plan-check")
+            pc = res.get("stages", {}).get("plan-check", {})
+            print(f"{C['b']}[plan-check]{C['0']} {pc.get('status') or res.get('status')}"
+                  + (f"  {pc.get('warnings', 0)} warning(s)" if pc.get("status") == "OK" else ""))
+            if res.get("status") in ("FAILED", "ERROR"):
+                print(res.get("message", ""), file=sys.stderr)
+                for f in res.get("findings", []):
+                    print(f"  {f['code']:<24} row {f['row']:<3} {f['message']}", file=sys.stderr)
+                print(f"  fix convert/{target}/answer-plan.csv (or rerun `csa convert {target} --stage evidence`)", file=sys.stderr)
+                return 2
+        elif name == "write":
+            briefs = briefs or _convert_briefs(p, target) or \
+                _convert_call(p, ld, target, "brief").get("stages", {}).get("brief", {}).get("files", [])
+            if not briefs:
+                die(f"no brief for {target}; run `csa convert {target} --stage brief`")
+            extra = ["--no-apply"] if getattr(a, "no_apply", False) else []
+            rc = _convert_agent(p, a, "write", [target, "BRIEF=" + ";".join(briefs), *extra])
+            if rc:
+                print(f"{C['r']}[write] failed (exit {rc}); stopping{C['0']}")
+                return rc
+            print(f"{C['b']}[write]{C['0']} done")
+        elif name == "ledger":
+            res = _convert_call(p, ld, target, "ledger")
+            led = res.get("stages", {}).get("ledger", {})
+            print(f"{C['b']}[ledger]{C['0']} {led.get('status')}  {json.dumps(led.get('counts', {}))}")
+            dr = res.get("stages", {}).get("discovery-required")
+            if dr:
+                print(f"{C['b']}[discovery-required]{C['0']} {dr.get('status')}  {dr.get('items', 0)} item(s)  {dr.get('file', '')}")
+                if dr.get("status") == "OK" and not getattr(a, "no_apply", False):
+                    cmd_place(argparse.Namespace(project=a.project, targets=[Path(dr["file"]).name], system_name=None,
+                                                 prepared_for=None, prepared_by=None, doc_version=None, status=None,
+                                                 keep_open=False))
+            return _convert_report_ledger(p, ld, target, led)
+    return 0
+
+
+def _convert_next(row: dict) -> str:
+    t = row["target"]
+    if row["ledger"] == "COMPLETE":
+        return "review in Word"
+    if row["ledger"] == "INCOMPLETE":
+        return f"csa convert {t} --stage write (or add outcomes.csv lines)"
+    if row["section_file"]:
+        return f"csa convert {t} --stage ledger"
+    return f"csa convert {t}"
+
+
+def cmd_convert(a):
+    p = project(a.project); banner(p)
+    if a.print and a.target:
+        return _convert_print(p, a.target)
+    chosen = [bool(a.prepare), a.map is not None, bool(a.status), bool(a.parked), bool(a.audit), bool(a.target)]
+    if sum(chosen) != 1:
+        die("usage: csa convert --prepare | --map [N] | --audit | N [--stage S] [--print] [--no-apply] | --status | --parked")
+    ld = _convert_legacy(p)
+    work = local_path(p["work_dir"])
+    if a.prepare:
+        res = _convert_fw("prepare", _ws(p), str(ld))
+        if res.get("status") != "OK":
+            print(res.get("message", res), file=sys.stderr)
+            return 2
+        m = res["map"]
+        print(f"{C['g']}prepared{C['0']} {ld.name}: {m['blocks']} blocks, {m['mapped']} mapped, {m['unmapped']} unmapped, "
+              f"{m['low_confidence']} low confidence; {res['parked']} parked, {res['figures']} figures")
+        print(f"  map report: {work / 'legacy' / 'map-report.md'}")
+        print(f"  overrides:  {work / 'legacy' / 'legacy-map.csv'}  (checked before the defaults)")
+        return 0
+    if a.map is not None:
+        report = work / "legacy" / "map-report.md"
+        rows = _convert_csv(work / "legacy" / "map.csv")
+        if not rows:
+            die("no map yet; run `csa convert --prepare`")
+        if not a.map:
+            print(report.read_text(encoding="utf-8"), end="")
+            return 0
+        blocks = {}
+        for line in (work / "legacy" / "blocks.jsonl").read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                b = json.loads(line)
+                blocks[b["id"]] = b
+        hits = [r for r in rows if r["target"] == a.map]
+        for r in hits:
+            print(f"{r['id']}  {r['job']:<13} {r['rule']:<15} {r['confidence']:<7} {r['path']}  |  "
+                  f"{blocks.get(r['id'], {}).get('text', '')[:80]}")
+        if not hits:
+            print(f"no block maps to {a.map}")
+        return 0
+    if a.status:
+        rows = _convert_fw("status", _ws(p))
+        if not rows:
+            print("nothing mapped yet; run `csa convert --prepare`")
+            return 0
+        print(f"{'target':<8}{'blocks':>7}{'evidence':>9}  {'reqs':<7}{'DR':>3}  {'brief':<6}{'section file':<14}{'ledger':<12}next")
+        for r in rows:
+            print(f"{r['target']:<8}{r['blocks']:>7}{r['evidence_rows']:>9}  {r.get('requirements') or '-':<7}"
+                  f"{r.get('dr_items', 0):>3}  {'yes' if r['brief'] else '-':<6}"
+                  f"{r['section_file'] or '-':<14}{r['ledger'] or '-':<12}{_convert_next(r)}")
+        return 0
+    if a.audit:
+        md = work / "convert" / "requirement-audit.md"
+        if not (md.is_file() and "<!-- keep -->" in md.read_text(encoding="utf-8")):
+            res = _fw_module_call("requirement_audit", "audit", str(work))
+            if res.get("status") != "OK":
+                die(f"audit failed: {res.get('message', res)}")
+        if not md.is_file():
+            die("no audit; run `csa convert --prepare`")
+        print(md.read_text(encoding="utf-8"), end="")
+        return 0
+    if a.parked:
+        pk = _fw_module_call("convert_ledger", "write_parked", str(work))
+        fg = _fw_module_call("convert_ledger", "write_figures", str(work))
+        print(f"{pk.get('parked', 0)} parked block(s): {work / 'convert' / 'parked.md'}")
+        print(f"{fg.get('figures', 0)} figure(s): {work / 'convert' / 'figures.md'}")
+        return 0
+    return _convert_run(p, a, ld, a.target)
 
 
 def main(argv=None) -> int:
@@ -2220,8 +2693,8 @@ def main(argv=None) -> int:
     s.add_argument("--set", nargs="*", help="KEY=VALUE overrides for --agent"); agent_opts(s)
     s = sp("pipeline", cmd_pipeline); s.add_argument("section"); s.add_argument("--limit", type=int)
     s.add_argument("--max-batches", type=int, default=50); agent_opts(s)
-    s = sp("hosts", cmd_hosts, help="host register, facts per host and host-to-host links (build | list | show HOST | links [HOST] | group --attr ...)")
-    s.add_argument("action", nargs="?", default="list", choices=["build", "list", "show", "links", "group", "graph", "unresolved", "system", "evidence"])
+    s = sp("hosts", cmd_hosts, help="host register, facts per host and host-to-host links (build | list | show HOST | links [HOST] | group --attr ... | roles [--fix])")
+    s.add_argument("action", nargs="?", default="list", choices=["build", "list", "show", "links", "group", "graph", "unresolved", "system", "evidence", "roles"])
     s.add_argument("host", nargs="?"); s.add_argument("--attr", action="append"); s.add_argument("--system")
     s.add_argument("--dry-run", action="store_true")
     s.add_argument("--json", action="store_true")
@@ -2238,6 +2711,15 @@ def main(argv=None) -> int:
     s.add_argument("--log-dir", help="where logs go (default .agents/.state/fleet/<time>)")
     s.add_argument("--dry-run", action="store_true", help="show tasks and locks, start nothing")
     s.add_argument("--print", action="store_true", help="also print every prompt, start nothing")
+    s = sp("convert", cmd_convert, help="move an old-format CSA into the template, one subsection at a time")
+    s.add_argument("target", nargs="?", help="subsection to convert, e.g. 3.4, 5.3, 7 (Glossary), 8, 5.1")
+    s.add_argument("--prepare", action="store_true", help="extract and map the legacy document")
+    s.add_argument("--map", nargs="?", const="", default=None, metavar="N", help="print the map report, or one target's blocks")
+    s.add_argument("--status", action="store_true"); s.add_argument("--parked", action="store_true")
+    s.add_argument("--audit", action="store_true", help="per-requirement audit: what the old document and the captures offer")
+    s.add_argument("--stage", choices=CONVERT_STAGES); s.add_argument("--no-apply", action="store_true")
+    s.add_argument("--cli", choices=["codex", "claude", "hermes"])
+    s.add_argument("--print", action="store_true", help="show the stages and agent commands; run and write nothing")
     s = sp("lint", cmd_lint); s.add_argument("section", nargs="?", type=int); s.add_argument("--path"); s.add_argument("--heading")
     s.add_argument("rest", nargs=argparse.REMAINDER)
     s = sp("check", cmd_check); s.add_argument("--final", action="store_true"); s.add_argument("--docx"); s.add_argument("rest", nargs=argparse.REMAINDER)

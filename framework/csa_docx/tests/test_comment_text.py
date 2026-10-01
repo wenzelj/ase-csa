@@ -8,7 +8,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from csa_docx.change_parser import parse_change_records
-from csa_docx.comment_text import build_comment_text, comment_warnings
+from csa_docx.comment_text import build_comment_text, comment_warnings, comments_enabled
 
 RECORD = """### S9-E3 - Reconcile the Findings "no local NTP" claim
 
@@ -97,3 +97,10 @@ if __name__ == "__main__":  # no pytest needed
             except AssertionError as e:
                 failed += 1; print("FAIL", name, e)
     sys.exit(1 if failed else 0)
+
+
+def test_comments_enabled_follows_the_csa_comments_setting(monkeypatch):
+    monkeypatch.setenv("CSA_COMMENTS", "off")
+    assert comments_enabled() is False
+    monkeypatch.setenv("CSA_COMMENTS", "on")
+    assert comments_enabled() is True

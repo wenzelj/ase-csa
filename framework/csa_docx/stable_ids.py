@@ -98,7 +98,7 @@ def build_id_map(paragraphs: list) -> dict[str, int]:
             # directly follows an H1 with no H2 in between is still "1.1");
             # any missing intermediate level takes the next ordinal so the
             # path stays unique and deterministic for the whole document.
-            path = [str(ordinals.get(lvl, 0) + (1 if lvl == level else 1)) for lvl in range(1, level + 1)]
+            path = [str(ordinals.get(lvl, 0)) for lvl in range(1, level + 1)]
             section_path = ".".join(path)
             id_map[f"@H{section_path}"] = index
 
@@ -148,7 +148,7 @@ def generate_manifest(paragraphs: list) -> list[dict]:
             for deeper in list(ordinals):
                 if deeper > level:
                     del ordinals[deeper]
-            path = [str(ordinals.get(lvl, 0) + (1 if lvl == level else 1)) for lvl in range(1, level + 1)]
+            path = [str(ordinals.get(lvl, 0)) for lvl in range(1, level + 1)]
             section_path = ".".join(path)
             entries.append({
                 "id": f"@H{section_path}",

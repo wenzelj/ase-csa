@@ -54,7 +54,7 @@ Then run `check_csa.py` (section 3) once: on a fresh file it must report 0 error
 ## 2. Prepare and fill
 
 1. `prepareDocument()` (no `section`). Stop on `NOT_READY`.
-2. Read `references/template-structure.md`. Sections for change files are the Heading 1 ordinals: 1 Document Control, 2 Executive Overview, 3 Requirement Domain Assessments, 4 Governance Note and Next Steps, 5 Migration Discovery, 6 Appendix A (OT 3.5 Destination Boundary Reference Table), 7 Appendix B (Glossary and Acronyms). This is template v1.2; a document made from v1.1 has 4 Migration Discovery, 5 Appendix A Glossary, 6 Appendix B Discovery Coverage: check which template the document came from. Filenames `ChangesCSA_<System>_Section<N>.md`, header `**Section:** 3 - Requirement Domain Assessments`.
+2. Read `references/template-structure.md`. Sections for change files are the Heading 1 ordinals: 1 Document Control, 2 Executive Overview, 3 Requirement Domain Assessments, 4 Governance Note and Next Steps, 5 Migration Discovery, 6 Appendix A (OT 3.5 Destination Boundary Reference Table), 7 Appendix B (Glossary and Acronyms), 8 Appendix E (Discovery Required). This is template v1.7; earlier templates have fewer appendices, so check which template the document came from. Filenames `ChangesCSA_<System>_Section<N>.md`, header `**Section:** 3 - Requirement Domain Assessments`.
 3. **Scaffold before drafting.** Change records fill only what exists. Decide from the evidence how many hosts, accounts, glossary terms, coverage rows or bullets a block needs, then set the count. It is idempotent, backs up first, and only removes placeholder-only rows or bullets:
 
    ```bash

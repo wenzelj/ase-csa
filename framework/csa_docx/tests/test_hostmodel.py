@@ -82,3 +82,125 @@ def test_name_addresses_trusted_and_spread(tmp_path):
     assert "10.9.9.1" not in out                           # FWLOG01 names 4 addresses: it is the log writer
     untrusted = hm.name_addresses(con, {"10.1.1.5"}, {}, [])["10.1.1.5"]
     assert untrusted["name"] is None and untrusted["ambiguous"] == ["OTHERHOST1", "SQLSRV001"]
+
+
+def test_time_source_pairs_reads_address_and_name_from_one_status_block():
+    text = (
+        "Stratum: 5\n"
+        "ReferenceId: 0x0A28E461 (source IP:  10.40.228.97)\n"
+        "Last Successful Sync Time: 08-Jun-26 4:29:39\n"
+        "Source: ROTPRDSRV122.internal.qr.com.au \n"
+        "\n"
+        "ReferenceId: 0x00000000 (source IP:  10.1.1.1)\n"
+        "Source: Local CMOS Clock\n"
+    )
+    assert hm.time_source_pairs(text) == [("10.40.228.97", "ROTPRDSRV122", 3)]
+
+
+def test_name_addresses_ignores_a_prose_line_that_lists_many_addresses(tmp_path):
+    con = sqlite3.connect(tmp_path / "t.sqlite")
+    con.executescript("""create table files(file_id integer, rel_path text);
+        create table chunk_map(chunk_id integer, file_id integer, line_start integer);
+        create table chunks_content(id integer, c0 text);""")
+    prose = ("Resolved addresses: " + "; ".join(f"HOSTAA{i:02d} - 10.5.5.{i}" for i in range(1, 8))
+             + "; mail.example.com.au - 10.6.6.1 and 10.6.6.2.")
+    docs = {"doc.docx": prose, "dns/41_dns_query_tests.txt": "HOSTAA03  10.5.5.3"}
+    for i, (rel, text) in enumerate(docs.items(), 1):
+        con.execute("insert into files values (?,?)", (i, rel))
+        con.execute("insert into chunk_map values (?,?,1)", (i, i))
+        con.execute("insert into chunks_content values (?,?)", (i, text))
+    out = hm.name_addresses(con, {"10.5.5.3"}, {}, [])
+    assert out["10.5.5.3"]["name"] == "HOSTAA03"          # only the one-address line counts; MAIL is not offered
+
+
+def test_attr_match_accepts_a_bare_column_or_a_qualified_attribute():
+    assert hm._attr_match("Source", "time_status: Source")
+    assert hm._attr_match("Source", "sheet1: Source")
+    assert hm._attr_match("time_status: Source", "time_status: Source")
+    assert not hm._attr_match("time_status: Source", "sheet1: Source")
+
+
+def _roles_workspace(tmp_path, monkeypatch, rules_csv):
+    hosts = tmp_path / "hosts"
+    hosts.mkdir()
+    (hosts / "roles.csv").write_text(rules_csv, encoding="utf-8")
+    (hosts / "hosts.csv").write_text("host,capture,listening,ips\nAPP01,cap,7000;7001,10.0.0.5\n", encoding="utf-8")
+    monkeypatch.setattr(hm, "_db", lambda wd: None)
+    monkeypatch.setattr(hm, "_processes", lambda wd, con: {"APP01": ({"revadmin.exe"}, "24_tasklist_services.txt")})
+    monkeypatch.setattr(hm, "_rows", lambda con, where, args=(): iter(
+        [("x", "APP01", "services_inventory", 1, {"Name": "GatewaySvc", "DisplayName": "Gateway", "State": "Running"})]))
+    return tmp_path
+
+
+RULES = ("kind,match,system,role,site,basis,reviewed\n"
+         "process,RevAdmin.exe,S,App,,seen,no\n"
+         "process,Missing.exe,S,Ghost,,claimed,yes\n"
+         "service,GatewaySvc,S,Gateway,,seen,no\n"
+         "listening,7001,S,Listener,,seen,no\n"
+         "subnet,10.0.0.0/24,,,Site A,names,yes\n"
+         "name,^APP,,App,,prefix,yes\n"
+         "name_source,design,,,,doc,no\n")
+
+
+def test_verify_roles_reports_what_each_rule_matches(tmp_path, monkeypatch):
+    wd = _roles_workspace(tmp_path, monkeypatch, RULES)
+    res = hm.verify_roles(wd)
+    verdicts = {(r["kind"], r["match"]): r["verdict"] for r in res["results"]}
+    assert verdicts == {("process", "RevAdmin.exe"): "VALID", ("process", "Missing.exe"): "NO_MATCH",
+                        ("service", "GatewaySvc"): "VALID", ("listening", "7001"): "VALID",
+                        ("subnet", "10.0.0.0/24"): "NEEDS_SOURCE", ("name", "^APP"): "NOT_EVIDENCE",
+                        ("name_source", "design"): "NEEDS_APPROVAL"}
+    assert res["status"] == "PROBLEMS" and res["problems"] == 1     # Missing.exe is reviewed=yes but matches nothing
+    assert [r["hosts"] for r in res["results"] if r["match"] == "RevAdmin.exe"] == [["APP01"]]
+    assert "no" in (wd / "hosts" / "roles.csv").read_text()          # a check alone never edits the file
+
+
+def test_verify_roles_fix_marks_only_what_the_evidence_settles(tmp_path, monkeypatch):
+    wd = _roles_workspace(tmp_path, monkeypatch, RULES)
+    res = hm.verify_roles(wd, fix=True)
+    rows = {(r["kind"], r["match"]): r for r in csv.DictReader((wd / "hosts" / "roles.csv").open(encoding="utf-8"))}
+    assert rows[("process", "RevAdmin.exe")]["reviewed"] == "yes"
+    assert "verified" in rows[("process", "RevAdmin.exe")]["basis"]
+    assert rows[("process", "Missing.exe")]["reviewed"] == "no"     # claimed evidence that is not there
+    assert rows[("subnet", "10.0.0.0/24")]["reviewed"] == "yes"     # not decided by captures: left as the person set it
+    assert rows[("name_source", "design")]["reviewed"] == "no"
+    assert res["fixed"] is True
+
+
+def test_domain_controller_list_reads_host_site_and_pdc_role():
+    text = ("Get list of DCs in domain 'INTERNAL' from '\\\\ROTPRDSRV122'.\n"
+            "    IPTPRDSRV123.internal.qr.com.au [PDC]  [DS] Site: IPT\n"
+            "    ROTPRDSRV122.internal.qr.com.au        [DS] Site: ROT\n"
+            "                    AzureADKerberos [RODC]     \n"
+            "The command completed successfully\n")
+    assert hm.domain_controller_list(text) == [
+        ("IPTPRDSRV123", "iptprdsrv123.internal.qr.com.au", "IPT", True, 1),
+        ("ROTPRDSRV122", "rotprdsrv122.internal.qr.com.au", "ROT", False, 2)]
+
+
+def test_fact_role_and_fact_site_take_the_documented_role_and_site_over_a_subnet_guess(tmp_path):
+    """A workbook that gives a host's role, and a capture table that says where it is, beat the
+    address-based site; the address rule stays visible as a conflict."""
+    _index(tmp_path)
+    con = sqlite3.connect(tmp_path / "discovery-index.sqlite")
+    con.execute("insert into files values (7,'matrix.xlsx',null,null,'x',0,0,'','indexed','',null,'other')")
+    con.execute("insert into rows values (7,'matrix/sheet2','csv',0,7,?)", (json.dumps({"System": "HMA1", "Current Role": "Jump Host"}),))
+    con.execute("insert into rows values (3,'host_map','csv',0,3,?)", (json.dumps({"Host": "HMB1", "Role": "Reveloc Mackay physical server"}),))
+    con.execute("insert into rows values (3,'ip_route','csv',0,4,?)", (json.dumps({"IPv4Address": "{10.9.9.9}"}),))
+    con.commit()
+    (tmp_path / "hosts").mkdir()
+    (tmp_path / "hosts" / "roles.csv").write_text(
+        "kind,match,system,role,site,basis,reviewed\n"
+        "inventory,tcs_computers/tcs_computers,,ComputerName,,test,yes\n"
+        "fact_role,matrix/sheet2:System:Current Role,Reveloc,,,test,yes\n"
+        "fact_site,host_map:Host:Role,,,Mackay,test,yes\n"
+        "subnet,10.0.0.0/24,,,Rockhampton,test,no\n", encoding="utf-8")
+    hm.build(tmp_path)
+    hosts = {r["host"]: r for r in csv.DictReader((tmp_path / "hosts" / "hosts.csv").open(encoding="utf-8"))}
+    assert hosts["HMA1"]["role"] == "Jump Host" and hosts["HMA1"]["system"] == "Reveloc"
+    assert hosts["HMA1"]["role_source"].startswith("evidence: Current Role")
+    assert hosts["HMB1"]["site"] == "Mackay" and "Role" in hosts["HMB1"]["site_source"]
+    assert "gives Rockhampton" in hosts["HMB1"]["conflicts"]
+    res = hm.verify_roles(tmp_path)
+    verdicts = {r["kind"]: r["verdict"] for r in res["results"]}
+    assert verdicts["fact_role"] == "VALID" and verdicts["fact_site"] == "VALID"

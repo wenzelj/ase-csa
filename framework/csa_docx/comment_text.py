@@ -12,9 +12,28 @@ Source of the sentence, in order:
 """
 from __future__ import annotations
 
+import os
 import re
+from pathlib import Path
 
 from .models import ChangeRecord
+
+
+def comments_enabled() -> bool:
+    """Whether applied edits get a Word comment.
+
+    ``CSA_COMMENTS`` (on/off) wins; otherwise the ``comments:`` key in .agents/cli.yaml;
+    default on. When off, edits are still tracked changes, just without the comment.
+    """
+    value = os.environ.get("CSA_COMMENTS")
+    if value is None:
+        cfg = Path(__file__).resolve().parents[2] / "cli.yaml"
+        try:
+            m = re.search(r"^comments:\s*(\S+)", cfg.read_text(encoding="utf-8"), re.M)
+            value = m.group(1) if m else None
+        except OSError:
+            value = None
+    return (value or "on").strip().lower() not in {"off", "false", "no", "0", "disabled"}
 
 MAX_NOTE_WORDS = 40
 

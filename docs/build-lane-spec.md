@@ -213,3 +213,9 @@ The revise lane, `csa check-change`, the approval hashes, tracked changes and th
 | S58C | Build plan and scaffold for template v1.2 |
 | S63 | Pilot: build a preview from three real section files (human) |
 | S64 | Tracked changes for table-cell edits, so every built statement can be accepted or rejected in Word |
+
+## 10. Converting an old-format CSA (`csa convert`)
+
+The conversion feeds the build lane; it does not replace it. Per template subsection it writes a brief (`csa-work/convert/<N>/brief.md`), adds one source-checked evidence row per old fact (`gap_or_action: legacy L-nnnn`), runs the evidence investigator (`MODE=convert`) and the writer (`BRIEF=`), places the section file with `csa place`, and checks the coverage ledger (`csa-work/convert/<N>/ledger.csv`): every old block mapped to the subsection is USED, SUPERSEDED, MOVED, DUPLICATE or NOT_USED with a reason. Glossary (7) and Discovery Coverage (5.1) are generated without an agent; Discovery Required (8) is written from NOT_FOUND rows. Converted text never mentions the old document. See `docs/convert-old-template-plan.md`.
+
+Since S203-S212 the conversion is requirement-led: facts (`legacy/facts.jsonl`) carry requirement IDs, the brief has one part per requirement, the evidence agent writes an answer plan per subsection, and the ledger checks each requirement (Current State, Rating, Discovery rows with Coverage / Source, or a Discovery Required row) as well as each candidate fact.

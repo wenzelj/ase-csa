@@ -11,12 +11,14 @@ python: /opt/homebrew/bin/python3.14, python3.14, python3.13, python3.12, python
 # Word comment author for applied edits.
 comment_author: Wenzel Joubert
 comment_initials: WJ
+# Add a Word comment to each applied edit: on | off. Env CSA_COMMENTS overrides.
+comments: off
 
 # How to launch each CLI. {prompt} is replaced by the generated prompt (passed as
 # one argument, never through a shell). interactive = you stay in the session;
 # headless = runs to completion and exits (used by --headless and `csa pipeline`).
 codex_interactive: codex {prompt}
-codex_headless: codex exec {prompt}
+codex_headless: codex exec --profile evo-x3-qwen --skip-git-repo-check {prompt}
 claude_interactive: claude {prompt}
 claude_headless: claude -p {prompt}
 # Hermes has no "start interactive with a prompt" flag; both run the prompt as one query.

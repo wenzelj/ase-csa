@@ -255,3 +255,9 @@ Layer 2 is the one that actually prevents contamination if layer 1 is ever bypas
 - For CLI, EVO, or Ollama runs, use small bounded batches and stop immediately after updating the DOCX, report, and run-state.
 - Do not create duplicate comments when resuming.
 - Do not create another DOCX copy when a valid working DOCX already exists.
+
+## Converting an old-format CSA
+
+`csa convert` moves a pre-template CSA into the CSA template one subsection at a time, only the parts that map. Set `legacy_docx:` for the project in `csa-context/PROJECTS.yaml`, then run `csa convert --prepare` and read `csa-work/legacy/map-report.md`. Correct the map in `csa-work/legacy/legacy-map.csv` (it overrides `skills/csa-document-template/references/legacy-map-default.csv`). Then `csa convert 3.4` (or `csa fleet "convert 3.4" "convert 3.5"`): brief, evidence pre-pass, evidence agent, writer, placement as tracked changes, ledger. Recommendations and scores go to `csa-work/convert/parked.md`, figures to `csa-work/convert/figures.md`. Design: `docs/convert-old-template-plan.md`.
+
+The conversion is requirement-led. `csa convert --prepare` also splits the old document into facts, gives each a requirement ID (`skills/csa-document-template/references/requirement-map.csv`) and writes `csa-work/convert/requirement-audit.md`: can each requirement be answered, and from what? Per subsection the evidence agent writes `csa-work/convert/<N>/answer-plan.csv` (legacy ID → requirement ID → fact → evidence scope → destination field → confidence → transformation → gap), checked by `python3 -m csa_docx.answer_plan`; the writer writes from it; gaps become Appendix E rows. Facts move, narratives do not; qualifiers stay; recommendations go to the roadmap list.

@@ -1,0 +1,21 @@
+pattern,target,job,note
+^Document Control,,controlled,Controlled fields: set by new_csa.py; the old revision history is not carried
+^(Document Information|Document Revision|Document Approvals|Document Ownership|Distribution List|Document Control Notes|Document Map),,controlled,Controlled fields
+recommendation,,mine,Recommendation subsections are mined: factual sentences are kept; recommendation sentences go to convert/parked.md
+readiness score,,parked,Scores are not template content; kept in convert/parked.md
+(^| > )Drawings?( > |$),,figure,Figures are added by hand in Word; listed in convert/figures.md
+(^| > )Evidence Appendix( > |$),,evidence-only,Feeds the evidence matrix; never printed
+^(Appendix(es)?|Appendices)$,,evidence-only,Old appendices feed the evidence matrix
+^Glossary,7,convert,Appendix B Glossary and Acronyms
+(^| > )(Group Policy|GPO),5.5,convert,Group Policy Observations
+(Always-?On|failover|replication|cluster architecture|survivability),5.3,convert,Failover and Replication Behaviour
+(^| > )Installed (Applications|Software),5.2,convert,Installed Applications
+(^| > )Patch and Update Tooling,5.4,convert,Patch and Update Tooling
+(^| > )(File Transfer|Local Storage),5.6,convert,File Transfer and Local Storage
+(scope gaps|Discovery Required),8,convert,Appendix E Discovery Required
+^(Discovery activity|Methodology)|(^| > )Methodology( > |$),5.1,convert,Discovery Coverage (method notes)
+(^| > )Discovery Coverage,5.1,convert,Discovery Coverage
+(^| > )(Overall drawbridge|Drawbridge assessment),3.12,convert,Isolation and Resilience Validation
+(^| > )(Dependency impact|Drawbridge Impacts?)( > |$),signal,convert,Each row goes to the domain its terms name (its Drawbridge Impact)
+^(Executive Overview > Executive Summary|Executive Summary),2.1,context,Summary is rewritten last from the converted sections
+(^| > )(Business Functional Overview|Objectives|Scope)( > |$),2.1,context,Background for the executive summary

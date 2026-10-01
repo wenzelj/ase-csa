@@ -40,6 +40,7 @@ _DRAWBRIDGE_HEADING = "Drawbridge Impact"
 _SUMMARY_HEADING = "Summary"
 _FINDINGS_HEADING = "Findings"
 _GLOSSARY_HEADING = "Terms"
+_ITEMS_HEADING = "Items"
 _COVERAGE_HEADING = "Hosts"
 _NOTES_HEADING = "Discovery Notes"
 _NOTE_HEADING = "Notes"  # migration: the note under the 5.4 table
@@ -478,10 +479,10 @@ def _resolve_section_file(workspace: Path, path: Path) -> dict:
                 items.append((entry, f"Actions {n}", text,
                               sc if n > len(placeholders) else None))
 
-    elif block in ("glossary", "coverage"):
+    elif block in ("glossary", "coverage", "discovery-required"):
         # Template v1.2: the glossary is an appendix (Heading 1); Discovery Coverage is
         # 5.1, a Heading 2 under Migration Discovery.
-        level = 1 if block == "glossary" else 2
+        level = 1 if block in ("glossary", "discovery-required") else 2
         heading_entry = _find_heading(entries, heading_text, level=level)
         if heading_entry is None:
             raise ValueError(f"no Heading {level} {heading_text!r} in the document")
@@ -505,6 +506,19 @@ def _resolve_section_file(workspace: Path, path: Path) -> dict:
                            "section_path": data_rows[-1]["section_path"]}
                 items.append((row, f"{_GLOSSARY_HEADING} {n}", " | ".join(cells),
                               sc if idx >= len(data_rows) else None))
+        elif block == "discovery-required":
+            # No standard rows: the template's bracketed placeholder row(s) are replaced in order.
+            item_rows = parsed.get("tables", {}).get(_ITEMS_HEADING, [])
+            sc = (_scaffold_entry(entries, "rows", heading_text, len(item_rows), heading_entry)
+                  if len(item_rows) > len(data_rows) else None)
+            for n, cells in enumerate(item_rows, start=1):
+                if n <= len(data_rows):
+                    row = data_rows[n - 1]
+                else:
+                    row = {"id": f"{data_rows[-1]['id']}(+1)",
+                           "section_path": data_rows[-1]["section_path"]}
+                items.append((row, f"{_ITEMS_HEADING} {n}", " | ".join(cells),
+                              sc if n > len(data_rows) else None))
         else:
             # Summary paragraph (optional).
             summary = parsed.get("paragraphs", {}).get(_SUMMARY_HEADING, [])
@@ -562,7 +576,11 @@ def plan_records(workspace, section_paths) -> dict[str, list[dict]]:
         path = Path(path)
         resolved = _resolve_section_file(workspace, path)
         for entry, key, text, _scaffold in resolved["items"]:
-            section_no = _framework_section(entry["section_path"])
+            if resolved["block"] == "discovery-required":
+                # Appendix E is keyed by the template's own section number, not the H1 ordinal - 1.
+                section_no = str(_load_template_blocks().get("discovery_required", {}).get("number", "8"))
+            else:
+                section_no = _framework_section(entry["section_path"])
             grouped.setdefault(section_no, []).append(
                 _record(resolved, entry, key, text, path.name)
             )

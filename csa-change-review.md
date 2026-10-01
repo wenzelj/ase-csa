@@ -156,7 +156,7 @@ For each edit ID in the `.md` file:
 4. Verify old text is absent where the approved instruction required replacement or deletion.
 5. Verify the change did not spill into neighbouring content.
 6. Verify the applied body text contains no evidence ID, `E-nnn`, or other citation marker -- if the change file's `Why` cited evidence, that citation must have stayed out of the `Text` and out of the document; treat an `E-nnn` (or similar) sitting inside the applied prose or table cell as `INCORRECT`, not a minor note.
-7. Locate the associated Word comment where practical.
+7. Locate the associated Word comment where practical. If comments are switched off (`comments: off` in `.agents/cli.yaml`, or `CSA_COMMENTS=off`), skip steps 7-11 and do not report `COMMENT MISSING` or `COMMENT INCORRECT`; the edit is checked as a tracked change only.
 8. Verify the comment includes the edit ID.
 9. Verify the comment reason aligns with the approved `Why` field and reads as the record's `Note`: one or two plain sentences, 40 words at most, with no file names, host lists or stable IDs. A comment that is correct but fails this is a P3 note (comment readability), not `COMMENT INCORRECT`. `python3 -m csa_docx.comment_text <change file>` shows what each comment should say.
 10. If the `Why` field cited evidence E-id(s), verify the comment includes them (see current-state-assessment-document.md's Word Comments And Side Notes format) -- a comment missing an E-id the `Why` cited is `COMMENT INCORRECT`, not `COMMENT MISSING`, since a comment exists but the traceability is incomplete.

@@ -1,6 +1,6 @@
 # CSA template structure reference
 
-Template: `CSA Template/CSA_Template_v<highest>.dotx` (v1.3 at time of writing; section structure from the UTC/DTC OT35 v0.1 document since v1.2). Its own `README.md` is the human guide; this file is the agent-facing map. Stable-ID prefixes below are illustrative: the framework numbers headings by ordinal position **with a +1 offset at every level** (Document Control is `@H2`, not `@H1`), so always resolve IDs with `lookupStableId`, never from these numbers.
+Template: `CSA Template/CSA_Template_v<highest>.dotx` (v1.7 at time of writing; v1.5 structure and colours with refined spacing and landscape Appendix E). Its own `README.md` is the human guide; this file is the agent-facing map. Stable-ID prefixes below are illustrative: always resolve IDs with `lookupStableId` or the CLI's visible-section resolver, never derive them from printed numbering.
 
 ## Section skeleton (every H1 is a framework "Section N" and starts a new page)
 
@@ -15,8 +15,9 @@ Template: `CSA Template/CSA_Template_v<highest>.dotx` (v1.3 at time of writing; 
 | 5 | Migration Discovery | Intro placeholder paragraph, then 5.1 Discovery Coverage (intro paragraph + Host / Role / Discovery Script Run / Notes table, 3 placeholder rows), 5.2 Installed Applications (intro + Application / component / Category / Observed host(s) / evidence scope table), 5.3 Failover and Replication Behaviour (one bullet), 5.4 Patch and Update Tooling (intro + Host(s) / scope / Update collection / Deployment / Settings / Maintenance window table, then one optional note paragraph; a bullet in v1.2), 5.5 Group Policy Observations (intro + GPO Name / Category / [Host group 1] / [Host group 2] table; the host-group headers are placeholders to rename or add), 5.6 File Transfer and Local Storage (one bullet). Tables have 2 placeholder rows unless stated. |
 | 6 | Appendix A: OT 3.5 Destination Boundary Reference Table | Intro sentence, then Infrastructure Service / Target Destination IP / Parameter / Native Configuration File Layer table with the 4 OT 3.5 destinations pre-filled (Syslog, Monitoring, DNS resolvers, NTP sources). |
 | 7 | Appendix B: Glossary and Acronyms | Term / Definition table, 10 standard terms pre-filled. |
+| 8 | Appendix E: Discovery Required | Landscape eight-column evidence-gap register with one bracketed instructional row. The Appendix E label is automatic Word numbering; the heading text stored in the document is `Discovery Required`. |
 
-Appendices are Heading 1 paragraphs using the "Appendix A:" list (numId 3), so the framework counts them as Sections 6 and 7. Stable IDs (tested 27 Sep 2026): Governance `@H5`, Migration `@H6`, Discovery Coverage `@H6.2`, Appendix A `@H7`, glossary `@H8`.
+Appendices are Heading 1 paragraphs. Appendix A and B use the continuous appendix list; Appendix E uses the same list definition with a level-zero start override of 5. The framework counts them as Sections 6, 7 and 8. Stable IDs (tested 30 Sep 2026): Governance `@H4`, Migration `@H5`, Discovery Coverage `@H5.1`, Appendix A `@H6`, glossary `@H7`, Discovery Required `@H8`. The CLI resolves visible framework Section 8 to `@H8`; it does not infer a stable ID from the printed Appendix E label.
 
 ## Domain block (repeated for 3.1 to 3.17)
 
@@ -53,7 +54,7 @@ Appendices are Heading 1 paragraphs using the "Appendix A:" list (numId 3), so t
 
 ## Styles (all others are errors in `check_csa.py`)
 
-Paragraph: Normal, Title, Subtitle, Heading 1-3, TOC Heading, TOC 1-2, List Bullet, Label, Table Text, Table Header, Table Rating, Table Gap, Figure, Caption, Figure Source, Cover Block, Header, Footer, plus Word's comment/footnote styles. Character: Placeholder Text, Hyperlink, Comment Reference. Table: CSA Table (orange header row F79646 with white Arial bold 9 pt, banded FDE9D9, black thin borders), CSA Cover Block (dark grey block 3E3E48). Fonts: Arial for headings, Calibri 10 pt body, tables 9 pt.
+Paragraph: Normal, Title, Subtitle, Heading 1-3, TOC Heading, TOC 1-2, List Bullet, Label, Table Text, Table Header, Table Rating, Table Gap, Figure, Caption, Figure Source, Cover Block, Header, Footer, plus Word's comment/footnote styles. Character: Placeholder Text, Hyperlink, Comment Reference. Table: CSA Table (orange header row F79646 with white Arial bold 9 pt, banded FDE9D9, black borders and increased cell padding), CSA Cover Block (grey block 3E3E48). Fonts: Arial for headings, Calibri 10.5 pt body, tables 9 pt. The original blue heading palette is preserved with a 21/16/12.5 pt H1/H2/H3 ladder. Appendix E is landscape; all earlier sections remain portrait.
 
 ## Document properties (File > Info > Properties > Advanced > Custom)
 
@@ -65,7 +66,7 @@ The template carries 14 Word comments by author `CSA Template` (contents list, c
 
 ## What the framework can and cannot do to a template CSA (tested 21 Sep 2026, Python 3.10 on Linux, framework as vendored)
 
-Works, and keeps styles: replace a requirement row's Current State and Rating (`Observed:` / `Assessment:` lines, positional columns 3 and 4); replace a whole table row with a pipe row; replace a placeholder bullet or paragraph (List Bullet style and numbering are kept; tracked change); prepareDocument and lookupStableId (appendices resolve as Sections 6 and 7 in v1.2).
+Works, and keeps styles: replace a requirement row's Current State and Rating (`Observed:` / `Assessment:` lines, positional columns 3 and 4); replace a whole table row with a pipe row; replace a placeholder bullet or paragraph (List Bullet style and numbering are kept; tracked change); prepareDocument and lookupStableId (in v1.7 Appendix A, Appendix B and Appendix E resolve as framework Sections 6, 7 and 8, with Discovery Required at `@H8`).
 
 Does not work or loses formatting: `Replace the table content` cannot target a table by stable ID (BLOCKED: "Could not locate table caption"); a multi-bullet `Text:` block (`- a` / `- b`) creates List Paragraph paragraphs **without** bullet numbering, and a leading `- ` can survive as literal text; `Insert after` a bullet creates a plain paragraph with no bullet. Adding or removing table rows, bullets, headings or sections is out of the framework's scope. Hence `scaffold_csa.py`: set the number of placeholder rows/bullets first, then replace each placeholder by ID.
 

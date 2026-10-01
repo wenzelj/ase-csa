@@ -10,6 +10,7 @@ Commands
   stats    counts by status / area / review_state             (READ)
   verify   structural health check of the matrix              (READ)
   append   add new evidence rows, append-only, validated      (WRITE)
+  check-sources  check each row's excerpt against its cited source; approve the rows it proves (WRITE: review log)
 
 Every command prints one JSON document to stdout. Exit code 0 = OK,
 2 = rejected / error (nothing was written).
@@ -24,6 +25,7 @@ import math
 import os
 import re
 import shutil
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -339,7 +341,8 @@ def cmd_get(args):
 def cmd_stats(args):
     _, matrix = resolve_paths(args)
     header, body, *_ = load(matrix)
-    rows = [as_dict(header, r) for r in body]
+    reviews = latest_reviews(matrix)
+    rows = [with_review(as_dict(header, r), reviews) for r in body]
     def count(key):
         out = {}
         for r in rows:
@@ -408,7 +411,7 @@ def validate_row(raw, known_areas, allow_new_area):
     row["confidence"] = row["confidence"].lower()
     row["review_state"] = row["review_state"].lower() or "pending"
     if row["review_state"] != "pending":
-        errs.append("review_state must be 'pending' on append (reviewing is a human decision)")
+        errs.append("review_state must be 'pending' on append; a VERIFIED row is approved by the source check (check-sources), not by its author")
     for req in ("csa_area", "question", "claim", "status"):
         if not row[req]:
             errs.append(f"{req} is required")
@@ -480,6 +483,120 @@ def next_id_number(body):
     return top + 1
 
 
+# --------------------------------------------------------------------------- source check
+AUTO_REVIEWER = "csa source check (automated)"
+_FILE_RE = re.compile(r"[\w.\-]+\.(?:txt|csv|xlsx|docx|md|log|json|xml|ps1)\b", re.I)
+_CAPTURE_RE = re.compile(r"([A-Za-z0-9]+)_(\d{8}T\d{6}Z)")
+
+
+def _flat(text):
+    return re.sub(r"\s+", " ", text or "").strip().lower()
+
+
+def _source_units(source_title):
+    """[(capture (host, timestamp) or None, file name)] named by a row's source_title."""
+    files = sorted(set(_FILE_RE.findall(source_title or "")))
+    caps = sorted(set(_CAPTURE_RE.findall(source_title or "")))
+    return [(c, f) for f in files for c in (caps or [None])]
+
+
+def _unit_text(con, unit):
+    """Indexed text of one cited file (all chunks in line order), or None if the index has no such file.
+    A file the index marks as a duplicate has no text of its own; it is read from the file it duplicates."""
+    cap, name = unit
+    like_name = "%/" + name
+    if cap:
+        ids = con.execute("select coalesce(dup_of, file_id), rel_path from files where rel_path like ? and rel_path like ?",
+                          (f"%_{cap[0]}_{cap[1]}%", like_name)).fetchall()
+    else:
+        ids = con.execute("select coalesce(dup_of, file_id), rel_path from files where rel_path like ? and archived = 0", (like_name,)).fetchall()
+        if not ids:
+            ids = con.execute("select coalesce(dup_of, file_id), rel_path from files where rel_path like ?", (like_name,)).fetchall()
+    if not ids:
+        return None
+    parts = []
+    for fid, _rel in ids:
+        parts += [t for (t,) in con.execute(
+            "select cc.c0 from chunks_content cc join chunk_map m on m.chunk_id = cc.id "
+            "where m.file_id = ? order by m.line_start", (fid,))]
+    return "\n".join(parts)
+
+
+def source_check(row, con):
+    """Does the row's excerpt appear in the source it cites? Only VERIFIED rows are checkable this way.
+    SOURCE_OK: every ' | ' part of the excerpt is found in a cited file and every cited file holds at
+    least one part. SOURCE_NOT_FOUND: a cited file is not in the index. SOURCE_MISMATCH: an excerpt part
+    is in none of the cited files, or a cited file holds none of them."""
+    if row.get("status") != "VERIFIED":
+        return {"verdict": "NOT_CHECKABLE", "reason": f"{row.get('status')} rows rest on reasoning or a search scope, not on one quoted source"}
+    units = _source_units(row.get("source_title"))
+    if not units:
+        return {"verdict": "NOT_CHECKABLE", "reason": "source_title names no file"}
+    parts = [_flat(x) for x in (row.get("evidence_excerpt") or "").split(" | ") if _flat(x)]
+    if not parts:
+        return {"verdict": "NOT_CHECKABLE", "reason": "no excerpt to check"}
+    texts, missing = {}, []
+    for u in units:
+        t = _unit_text(con, u)
+        label = (f"{u[0][0]}_{u[0][1]}/" if u[0] else "") + u[1]
+        if t is None:
+            missing.append(label)
+        else:
+            texts[label] = _flat(t)
+    if missing:
+        return {"verdict": "SOURCE_NOT_FOUND", "missing_files": missing}
+    unmatched = [x for x in parts if not any(x in t for t in texts.values())]
+    empty = [label for label, t in texts.items() if not any(x in t for x in parts)]
+    if unmatched or empty:
+        return {"verdict": "SOURCE_MISMATCH", "excerpt_not_found": unmatched, "files_without_excerpt": empty}
+    return {"verdict": "SOURCE_OK", "files": sorted(texts)}
+
+
+def _index_for(matrix):
+    p = matrix.parent / "discovery-index.sqlite"
+    return sqlite3.connect(str(p)) if p.is_file() else None
+
+
+def record_reviews(matrix, ids, note_by_id, state="reviewed", by=AUTO_REVIEWER):
+    log = matrix.parent / "evidence-reviews.jsonl"
+    at = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+    with open(log, "a", encoding="utf-8") as fh:
+        for i in ids:
+            fh.write(json.dumps({"evidence_id": i, "state": state, "by": by, "at": at,
+                                 "note": note_by_id.get(i, "")}, ensure_ascii=False) + "\n")
+
+
+def cmd_check_sources(args):
+    _, matrix = resolve_paths(args)
+    con = _index_for(matrix)
+    if con is None:
+        fail("no discovery index next to the matrix; run `csa index build` first")
+    header, body, *_ = load(matrix)
+    reviews = latest_reviews(matrix)
+    want = {i.strip().upper() for i in args.ids} if args.ids else None
+    results, approve, notes = [], [], {}
+    for r in body:
+        row = as_dict(header, r)
+        eid = row["evidence_id"].upper()
+        if want is not None and eid not in want:
+            continue
+        if want is None and eid in reviews and reviews[eid]["state"] in ("reviewed", "accepted") and not args.all:
+            continue
+        res = {"evidence_id": eid, "status": row["status"], **source_check(row, con)}
+        results.append(res)
+        if res["verdict"] == "SOURCE_OK":
+            approve.append(eid)
+            notes[eid] = "excerpt found in cited source: " + "; ".join(res["files"])[:600]
+    if approve and not args.dry_run:
+        record_reviews(matrix, approve, notes)
+    counts = {}
+    for r in results:
+        counts[r["verdict"]] = counts.get(r["verdict"], 0) + 1
+    emit({"status": "OK", "checked": len(results), "verdicts": counts,
+          "approved": approve if not args.dry_run else [], "would_approve": approve if args.dry_run else [],
+          "results": results})
+
+
 def cmd_append(args):
     workspace, matrix = resolve_paths(args)
     if args.rows_file:
@@ -509,9 +626,17 @@ def cmd_append(args):
             existing = [as_dict(header, r) for r in body]
             known_areas = {r["csa_area"] for r in existing if r["csa_area"]}
 
-            prepared, errors = [], []
+            src_con = None if args.no_source_check else _index_for(matrix)
+            prepared, errors, checked = [], [], {}
             for i, item in enumerate(data):
                 row, errs = validate_row(item, known_areas, args.allow_new_area or not known_areas)
+                if not errs and src_con is not None and row["status"] == "VERIFIED":
+                    res = source_check(row, src_con)
+                    checked[id(row)] = res
+                    if res["verdict"] != "SOURCE_OK":
+                        errs.append(f"the excerpt was not confirmed in the cited source ({res['verdict']}: "
+                                    f"{ {k: v for k, v in res.items() if k != 'verdict'} }); quote lines that are in the "
+                                    "named file, or pass --no-source-check if the source is not in the discovery index")
                 if errs:
                     errors.append({"index": i, "claim": (item.get("claim") or "")[:100], "errors": errs})
                 else:
@@ -562,6 +687,10 @@ def cmd_append(args):
                 fh.flush()
                 os.fsync(fh.fileno())
 
+            proven = [r["evidence_id"] for r in written if checked.get(id(r), {}).get("verdict") == "SOURCE_OK"]
+            if proven:
+                record_reviews(matrix, proven, {r["evidence_id"]: "excerpt found in cited source: " +
+                               "; ".join(checked[id(r)]["files"])[:600] for r in written if r["evidence_id"] in proven})
             audit = matrix.parent / "evidence-matrix-audit.jsonl"
             with open(audit, "a", encoding="utf-8") as fh:
                 fh.write(json.dumps({
@@ -574,6 +703,7 @@ def cmd_append(args):
             emit({"status": "APPENDED", "matrix": str(matrix), "backup": str(backup),
                   "written": [{"evidence_id": r["evidence_id"], "status": r["status"],
                                "claim": r["claim"][:100],
+                               "review": "reviewed (source check)" if r["evidence_id"] in proven else "pending",
                                **({"hosts": hosts_named(r["claim"], known) or "none named: counts as system-wide"}
                                   if known else {})} for r in written],
                   "skipped_duplicates": skipped, "same_claim_elsewhere": also})
@@ -657,7 +787,15 @@ def main():
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--allow-duplicate", action="store_true")
     p.add_argument("--allow-new-area", action="store_true")
+    p.add_argument("--no-source-check", action="store_true",
+                   help="skip the check that a VERIFIED row's excerpt is in its cited source (source not in the index)")
     p.set_defaults(fn=cmd_append)
+
+    p = sub.add_parser("check-sources", help="check each row's excerpt against its cited source and approve the rows it proves")
+    p.add_argument("ids", nargs="*", help="evidence ids (default: every row not yet reviewed)")
+    p.add_argument("--all", action="store_true", help="include rows that are already reviewed")
+    p.add_argument("--dry-run", action="store_true")
+    p.set_defaults(fn=cmd_check_sources)
 
     args = ap.parse_args()
     try:

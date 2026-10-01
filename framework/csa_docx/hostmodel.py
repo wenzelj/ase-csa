@@ -122,7 +122,13 @@ def _roles(work_dir: Path) -> list[dict]:
     name_source match = regular expression on an indexed file's path whose lines pairing an address
                with one host name are trusted to name that address (design docs, DNS tests).
     name       match = regular expression on the host name: fallback, used only when no
-               evidence gives the value, and reported as such."""
+               evidence gives the value, and reported as such.
+    fact_role  match = "<index table>:<host column>:<value column>", for example
+               ``system_matrix/sheet2:System:Current Role``: the host's role is that row's value
+               (evidence-based; only when no process, service or port sets it). ``system`` sets the system.
+    fact_site  same match; ``site`` is a site name. A host whose row value names that site gets it, even
+               where the address-based rule says otherwise (the address rule is recorded as a conflict):
+               a document that states where a host is beats a subnet guess."""
     p = work_dir / "hosts" / "roles.csv"
     if not p.is_file():
         return []
@@ -134,6 +140,25 @@ def _roles(work_dir: Path) -> list[dict]:
                 out.append({"kind": kind, "match": match, **{k: (r.get(k) or "").strip()
                             for k in ("system", "role", "site", "basis", "reviewed")}})
     return out
+
+
+def _fact_rows(con, spec: str) -> list[tuple[str, str, str, int]]:
+    """(HOST, value, source file, line) for a fact rule's match ``table:host column:value column``."""
+    parts = spec.split(":")
+    if len(parts) != 3:
+        return []
+    table, host_col, value_col = (x.strip() for x in parts)
+    out, seen = [], set()
+    for rel, _h, _t, line, d in _rows(con, "r.table_name = ?", (table,)):
+        host, value = str(d.get(host_col) or "").strip().upper(), str(d.get(value_col) or "").strip()
+        if host and value and (host, value) not in seen:
+            seen.add((host, value))
+            out.append((host, value, rel, line))
+    return out
+
+
+def _site_named(value: str, site: str) -> bool:
+    return bool(site) and re.search(rf"(?<![A-Za-z]){re.escape(site)}(?![A-Za-z])", value, re.I) is not None
 
 
 def _processes(work_dir: Path, con) -> dict[str, tuple[set, str]]:
@@ -173,6 +198,85 @@ def _project_work_dir(key: str) -> Path | None:
 IP_RE = re.compile(r"(?<![\d.])(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})(?![\d.])")
 FQDN_RE = re.compile(r"\b([A-Za-z][A-Za-z0-9-]{2,30})\.(?:[A-Za-z0-9-]+\.){1,5}[A-Za-z]{2,}\b")
 HOSTTOK_RE = re.compile(r"\b([A-Z][A-Z0-9-]*\d[A-Z0-9-]*)\b")
+# a line that pairs an address with a name holds one address (a table row) or two (a connection's ends)
+MAX_PAIRING_ADDRESSES = 3
+
+
+TIME_REF_RE = re.compile(r"ReferenceId:.*?\(source IP:\s*(\d{1,3}(?:\.\d{1,3}){3})\)")
+TIME_SOURCE_RE = re.compile(r"^\s*Source:\s*([A-Za-z][A-Za-z0-9-]{2,30})(?:\.[A-Za-z0-9.-]+)?\s*$")
+
+
+def time_source_pairs(text: str) -> list[tuple[str, str, int]]:
+    """(address, host name, line offset) from a w32tm status block: the ReferenceId line gives
+    the time source's address and the Source line, a few lines below in the same output, its
+    name. Both describe the same source, so the pairing is direct evidence. Sources that are
+    not host names ("Local CMOS Clock", "Free-running System Clock") never match."""
+    lines = text.splitlines()
+    out = []
+    for i, line in enumerate(lines):
+        ref = TIME_REF_RE.search(line)
+        if not ref:
+            continue
+        for j in range(i + 1, min(i + 4, len(lines))):
+            src = TIME_SOURCE_RE.match(lines[j])
+            if src and NAME_OK.match(src[1]) and not IP_RE.fullmatch(src[1]):
+                out.append((ref[1], src[1].upper(), j))
+                break
+    return out
+
+
+def time_source_addresses(con) -> dict:
+    """{ip: {"name", "cite", "conflict"}} for the time sources named in the captures' time status
+    output (03_time_status.txt). Only addresses that all captures agree on are named; an address
+    given two different names is left to the general search."""
+    found = defaultdict(lambda: defaultdict(set))
+    q = ("select f.rel_path, m.line_start, cc.c0 from chunks_content cc join chunk_map m on m.chunk_id = cc.id "
+         "join files f on f.file_id = m.file_id where f.status = 'indexed' and f.rel_path like '%time_status%'")
+    try:
+        chunks = con.execute(q).fetchall()
+    except sqlite3.OperationalError:      # an index without text chunks has no time status to read
+        return {}
+    for rel, start, text in chunks:
+        for ip, name, offset in time_source_pairs(text):
+            found[ip][name].add(f"{Path(rel).name} line {(start or 0) + offset}")
+    return {ip: {"name": next(iter(names)), "cite": sorted(next(iter(names.values())))[0], "conflict": []}
+            for ip, names in found.items() if len(names) == 1}
+
+
+DC_LINE_RE = re.compile(r"^\s*([A-Za-z][A-Za-z0-9-]{2,30})\.([A-Za-z0-9.-]+)\s+(\[PDC\])?\s*\[DS\]\s+Site:\s*(\S+)\s*$")
+
+
+def domain_controller_list(text: str) -> list[tuple[str, str, str, bool, int]]:
+    """(host, fqdn, AD site, holds the PDC role, line offset) from a `nltest /dclist` style listing:
+    ``NAME.domain [PDC]  [DS] Site: CODE``. Read-only domain controllers carry no [DS] site and are left out."""
+    out = []
+    for i, line in enumerate(text.splitlines()):
+        m = DC_LINE_RE.match(line)
+        if m and NAME_OK.match(m[1]):
+            out.append((m[1].upper(), f"{m[1]}.{m[2]}".lower(), m[4].upper(), bool(m[3]), i))
+    return out
+
+
+def domain_controllers(con) -> dict:
+    """{HOST: {"fqdn", "site", "pdc", "cite", "rel", "line"}} from the captures' domain controller listings
+    (55_domain_controller_discovery.txt, current captures only). A controller listed in two different
+    sites is left out rather than guessed."""
+    found = defaultdict(lambda: defaultdict(set))
+    q = ("select f.rel_path, m.line_start, cc.c0 from chunks_content cc join chunk_map m on m.chunk_id = cc.id "
+         "join files f on f.file_id = m.file_id where f.status = 'indexed' and f.archived = 0 "
+         "and f.rel_path like '%domain_controller_discovery%'")
+    try:
+        chunks = con.execute(q).fetchall()
+    except sqlite3.OperationalError:
+        return {}
+    info = {}
+    for rel, start, text in chunks:
+        for host, fqdn, site, pdc, offset in domain_controller_list(text):
+            found[host][site].add(rel)
+            i = info.setdefault(host, {"fqdn": fqdn, "pdc": False, "rel": rel, "line": (start or 0) + offset})
+            i["pdc"] = i["pdc"] or pdc
+    return {h: {**info[h], "site": next(iter(sites)), "cite": f"{Path(info[h]['rel']).name} line {info[h]['line']}"}
+            for h, sites in found.items() if len(sites) == 1}
 
 
 def name_addresses(con, ips: set, known: dict, trusted: list | None = None) -> dict:
@@ -190,9 +294,10 @@ def name_addresses(con, ips: set, known: dict, trusted: list | None = None) -> d
              "join files f on f.file_id = m.file_id where cc.c0 like ?")
         for rel, start, text in con.execute(q, (f"%{ip}%",)):
             for n, line in enumerate(text.splitlines()):
-                if ip not in IP_RE.findall(line):
-                    continue
-                others = {known.get(x) for x in IP_RE.findall(line) if x != ip}
+                line_ips = set(IP_RE.findall(line))
+                if ip not in line_ips or len(line_ips) > MAX_PAIRING_ADDRESSES:
+                    continue                  # a line listing many addresses is a list, not a pairing
+                others = {known.get(x) for x in line_ips if x != ip}
                 names = {m.upper() for m in FQDN_RE.findall(line)}
                 if not names:
                     names = {m for m in HOSTTOK_RE.findall(line) if len(m) >= 6 and not re.fullmatch(r"[A-F0-9-]+", m)}
@@ -229,7 +334,8 @@ def build(work_dir: Path) -> dict:
         return reg.setdefault(key, {"host": key, "fqdn": "", "ips": set(), "ou": "", "in_scope": "",
                                     "system": "", "role": "", "site": "", "capture": "", "sources": set(),
                                     "listening": set(), "captured_in": "",
-                                    "system_source": "", "role_source": "", "site_source": "", "conflicts": []})
+                                    "system_source": "", "role_source": "", "site_source": "", "conflicts": [],
+                                    "ad_site": ""})
 
     # 1. register from the project's inventory tables (roles.csv kind=inventory:
     #    match = table name, role = name column; other columns FQDN / IP Addresses / OUPath / In Scope)
@@ -370,8 +476,13 @@ def build(work_dir: Path) -> dict:
         if IP_RE.fullmatch(ra) and ra not in ip2host and not ra.startswith(("127.", "0.", "169.254.")):
             unknown.add(ra)
     ambiguous = {}
+    # time sources are named by the captures' own time status output (address and name in one block);
+    # the general search still sees them, so its "one name beside 3+ addresses" test is unchanged
+    time_hits = {ip: h for ip, h in time_source_addresses(con).items() if ip not in ip2host}
     for ip, hit in name_addresses(con, unknown, ip2host,
             [r["match"] for r in _roles(work_dir) if r["kind"] == "name_source" and r["reviewed"].lower() == "yes"]).items():
+        if ip in time_hits:
+            continue
         if not hit.get("name"):
             ambiguous[ip] = hit["ambiguous"]
             continue
@@ -383,6 +494,26 @@ def build(work_dir: Path) -> dict:
         if hit["conflict"]:
             e["conflicts"].append(f"name: {ip} is also named {', '.join(hit['conflict'][:3])} elsewhere")
         ip2host.setdefault(ip, hit["name"])
+    for ip, hit in time_hits.items():
+        e = entry(hit["name"])
+        if not e["in_scope"] and not e["capture"]:
+            e["in_scope"] = "peer"
+        e["ips"].add(ip)
+        e["sources"].add(f"address {ip} named in {hit['cite']}")
+        ip2host.setdefault(ip, e["host"])
+    # domain controllers are named, with their AD site, by the captures' own domain controller listing
+    for h, dc in domain_controllers(con).items():
+        e = entry(h)
+        if not e["in_scope"] and not e["capture"]:
+            e["in_scope"] = "peer"
+        e["fqdn"] = e["fqdn"] or dc["fqdn"]
+        e["ad_site"] = dc["site"]
+        e["sources"].add(f"domain controller listed in {dc['cite']}")
+        base = {"host": h, "record": f"{Path(dc['rel']).name}#domain_controllers#{dc['line']}", "listed_as": "capture",
+                "source": dc["rel"], "table": "domain_controllers", "line": dc["line"]}
+        facts.append({**base, "attribute": "domain_controllers: AD site", "value": dc["site"]})
+        if dc["pdc"]:
+            facts.append({**base, "attribute": "domain_controllers: PDC emulator", "value": "yes"})
     listening = defaultdict(set)
     for rel, host, t, line, d in _rows(con, "r.table_name = 'listening_ports' and f.host is not null"):
         if d.get("LocalPort"):
@@ -442,6 +573,7 @@ def build(work_dir: Path) -> dict:
                 for k in ("system", "role"):
                     if r[k] and not e[k]:
                         e[k], e[f"{k}_source"] = r[k], f"evidence: service '{r['match']}' running (services_inventory)"
+    fact_cache = {r["match"]: _fact_rows(con, r["match"]) for r in rules if r["kind"] in ("fact_role", "fact_site")}
     for h, e in reg.items():
         exes, plist = procs.get(h, (set(), ""))
         for r in (r for r in rules if r["kind"] == "process"):
@@ -449,6 +581,12 @@ def build(work_dir: Path) -> dict:
                 for k in ("system", "role"):
                     if r[k] and not e[k]:
                         e[k], e[f"{k}_source"] = r[k], f"evidence: {r['match']} running ({plist})"
+        for r in (r for r in rules if r["kind"] == "fact_role"):
+            for host, value, rel, line in fact_cache[r["match"]]:
+                if host == h and not e["role"]:
+                    e["role"], e["role_source"] = r["role"] or value, f"evidence: {r['match'].split(':')[-1]} '{value}' ({Path(rel).name} line {line})"
+                    if r["system"] and not e["system"]:
+                        e["system"], e["system_source"] = r["system"], e["role_source"]
         nets = set()
         for r in (r for r in rules if r["kind"] == "subnet" and r["site"]):
             try:
@@ -466,6 +604,13 @@ def build(work_dir: Path) -> dict:
             e["site"], e["site_source"] = site, f"evidence: address on {cidr}"
         elif nets:
             e["conflicts"].append("site: addresses on " + ", ".join(f"{c} ({s})" for s, c in sorted(nets)))
+        for r in (r for r in rules if r["kind"] == "fact_site" and r["site"]):
+            for host, value, rel, line in fact_cache[r["match"]]:
+                if host == h and _site_named(value, r["site"]):
+                    if e["site"] and e["site"] != r["site"] and e["site_source"].startswith("evidence: address"):
+                        e["conflicts"].append(f"site: {e['site_source'].split(' (')[0]} gives {e['site']}, "
+                                              f"{Path(rel).name} says {r['site']} (used)")
+                    e["site"], e["site_source"] = r["site"], f"evidence: {r['match'].split(':')[-1]} '{value}' ({Path(rel).name} line {line})"
         for r in (r for r in rules if r["kind"] == "name"):
             if re.search(r["match"], h, re.I):
                 if r["site"] and e["site"] and e["site"] != r["site"] and e["site_source"].startswith("evidence"):
@@ -498,14 +643,14 @@ def build(work_dir: Path) -> dict:
     with (out / "hosts.csv").open("w", encoding="utf-8", newline="") as fh:
         w = csv.writer(fh)
         w.writerow(["host", "in_scope", "system", "role", "site", "system_source", "role_source", "site_source",
-                    "conflicts", "fqdn", "ips", "ou", "capture", "captured_in", "listening", "sources"])
+                    "conflicts", "fqdn", "ips", "ou", "capture", "captured_in", "listening", "sources", "ad_site"])
         for h in sorted(reg):
             e = reg[h]
             w.writerow([h, e["in_scope"], e["system"], e["role"], e["site"], e["system_source"], e["role_source"],
                         e["site_source"], " | ".join(e["conflicts"]), e["fqdn"], ";".join(sorted(e["ips"])),
                         e["ou"], e["capture"], e["captured_in"],
                         ";".join(sorted(e["listening"], key=lambda x: int(x) if x.isdigit() else 0)),
-                        ";".join(sorted(e["sources"]))])
+                        ";".join(sorted(e["sources"])), e["ad_site"]])
     with (out / "host_facts.csv").open("w", encoding="utf-8", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=["host", "attribute", "value", "record", "listed_as", "source", "table", "line"])
         w.writeheader()
@@ -584,7 +729,11 @@ def show(work_dir: Path, host: str) -> dict:
 def _attr_match(want: str, attribute: str) -> bool:
     """`want` names a source column (e.g. "Software Update Group"); a host_facts attribute is
     "<sheet or table>: <column>". Compare with the column only, so a sheet called
-    "software update groups" does not make every one of its columns match."""
+    "software update groups" does not make every one of its columns match. A qualified
+    "<sheet or table>: <column>" matches that attribute exactly, for columns whose name is
+    shared by several sources (e.g. "Source")."""
+    if ": " in want:
+        return want.strip().lower() == attribute.strip().lower()
     col = attribute.split(": ", 1)[-1]
     return want.strip().lower() == col.strip().lower()
 
@@ -873,15 +1022,83 @@ def group_evidence(work_dir: Path, workspace: Path, attrs: list[str], system: st
          "claim": r["claim"][:160]} for r, w in zip(rows, written)]}
 
 
+def verify_roles(work_dir: Path, fix: bool = False) -> dict:
+    """Check every roles.csv rule against the current captures, so a rule is only marked
+    reviewed once the evidence behind it exists.
+
+    process / service / listening  VALID when at least one captured host matches (the hosts are
+                                   listed, so an over-broad rule shows), NO_MATCH when none does.
+    subnet                         NEEDS_SOURCE: which site a subnet belongs to needs a document.
+    name / collection              NOT_EVIDENCE: a host-name pattern is a fallback, not evidence.
+    name_source                    NEEDS_APPROVAL: trusted only after a person approves the source.
+    A rule marked reviewed=yes that matches nothing is a problem. With ``fix``, VALID rules are
+    marked reviewed=yes (with the date in ``basis``) and NO_MATCH rules reviewed=no; every other
+    rule is left as it is. Run ``build`` first: the check reads the built host register."""
+    path = work_dir / "hosts" / "roles.csv"
+    if not path.is_file() or not (work_dir / "hosts" / "hosts.csv").is_file():
+        return {"status": "NOT_FOUND", "message": "needs hosts/roles.csv and a built host register (csa hosts build)"}
+    con = _db(work_dir)
+    reg = {r["host"]: r for r in _read(work_dir, "hosts.csv")}
+    procs = _processes(work_dir, con)
+    running = defaultdict(set)
+    for _rel, host, _t, _l, d in _rows(con, "r.table_name = 'services_inventory' and f.host is not null"):
+        if str(d.get("State") or "").lower() == "running":
+            running[host.upper()].add((str(d.get("Name") or "") + " | " + str(d.get("DisplayName") or "")).lower())
+    with path.open(encoding="utf-8-sig", newline="") as fh:
+        reader = csv.DictReader(fh)
+        fields, rows = reader.fieldnames, list(reader)
+    today = datetime.now().strftime("%Y-%m-%d")
+    results, problems = [], 0
+    for row in rows:
+        kind, match = (row.get("kind") or "").strip().lower(), (row.get("match") or "").strip()
+        if not kind or not match or kind.startswith("#"):
+            continue
+        hosts = []
+        if kind == "process":
+            hosts = sorted(h for h, (exes, _p) in procs.items() if match.lower() in exes)
+        elif kind == "service":
+            hosts = sorted(h for h, sv in running.items() if any(match.lower() in x for x in sv))
+        elif kind == "listening":
+            hosts = sorted(h for h, e in reg.items() if e["capture"] and match in e["listening"].split(";"))
+        elif kind in ("fact_role", "fact_site"):
+            site = (row.get("site") or "").strip()
+            hosts = sorted({h for h, v, _r, _l in _fact_rows(con, match)
+                            if h in reg and (kind == "fact_role" or _site_named(v, site))})
+        if kind in ("process", "service", "listening", "fact_role", "fact_site"):
+            verdict = "VALID" if hosts else "NO_MATCH"
+        else:
+            verdict = {"subnet": "NEEDS_SOURCE", "name": "NOT_EVIDENCE", "collection": "NOT_EVIDENCE",
+                       "name_source": "NEEDS_APPROVAL"}.get(kind, "NOT_CHECKED")
+        reviewed = (row.get("reviewed") or "").strip().lower() in ("yes", "y")
+        problem = reviewed and verdict == "NO_MATCH"
+        problems += problem
+        if fix and verdict == "VALID" and not reviewed:
+            row["reviewed"] = "yes"
+            if "verified" not in (row.get("basis") or ""):
+                row["basis"] = f"{row.get('basis') or ''}; verified {today} against the latest captures".lstrip("; ")
+        elif fix and verdict == "NO_MATCH":
+            row["reviewed"] = "no"
+        results.append({"kind": kind, "match": match, "verdict": verdict, "hosts": hosts,
+                        "reviewed": row.get("reviewed") or "", "problem": problem})
+    if fix:
+        with path.open("w", encoding="utf-8", newline="") as fh:
+            writer = csv.DictWriter(fh, fieldnames=fields, lineterminator="\n")
+            writer.writeheader()
+            writer.writerows(rows)
+    counts = Counter(r["verdict"] for r in results)
+    return {"status": "PROBLEMS" if problems else "OK", "rules": len(results), "verdicts": dict(counts),
+            "problems": problems, "fixed": fix, "results": results}
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="csa hosts", description=__doc__.split("\n\n")[0])
-    ap.add_argument("cmd", choices=["build", "list", "show", "links", "group", "graph", "unresolved", "system", "evidence"])
+    ap.add_argument("cmd", choices=["build", "list", "show", "links", "group", "graph", "unresolved", "system", "evidence", "roles"])
     ap.add_argument("--question", default="")
     ap.add_argument("--name", default="system", help="system layer name (system command)")
     ap.add_argument("--project-key", default="")
     ap.add_argument("--workspace", help="project root (graph: where the matrix and graph store live)")
     ap.add_argument("--dry-run", action="store_true")
-    ap.add_argument("--fix", action="store_true", help="graph: reject stale/out-of-scope/mis-cited items csa hosts created, then re-add them")
+    ap.add_argument("--fix", action="store_true", help="graph: reject stale/out-of-scope/mis-cited items csa hosts created, then re-add them; roles: mark verified rules reviewed=yes and failing ones no")
     ap.add_argument("host", nargs="?")
     ap.add_argument("--work-dir", required=True)
     ap.add_argument("--system")
@@ -898,6 +1115,8 @@ def main(argv=None) -> int:
         res = group_evidence(wd, Path(a.workspace or wd.parent), a.attr, a.system, a.question, a.dry_run)
     elif a.cmd == "system":
         res = system_layer(wd, a.name, a.project_key or wd.parent.name)
+    elif a.cmd == "roles":
+        res = verify_roles(wd, a.fix)
     elif a.cmd == "unresolved":
         res = unresolved(wd)
     elif a.cmd == "graph":
@@ -917,12 +1136,12 @@ def main(argv=None) -> int:
         if not a.attr:
             ap.error("group needs at least one --attr")
         res = group(wd, a.attr, a.system, a.all)
-    if a.json or a.cmd in ("build", "show", "group", "graph", "system", "evidence"):
+    if a.json or a.cmd in ("build", "show", "group", "graph", "system", "evidence", "roles"):
         print(json.dumps(res, indent=1, default=list))
     else:
         for r in res:
             print("  ".join(f"{v}" for v in r.values()))
-    return 0 if not (isinstance(res, dict) and res.get("status") == "NOT_FOUND") else 1
+    return 0 if not (isinstance(res, dict) and res.get("status") in ("NOT_FOUND", "PROBLEMS")) else 1
 
 
 if __name__ == "__main__":

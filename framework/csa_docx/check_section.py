@@ -19,7 +19,7 @@ from pathlib import Path
 from csa_docx import section_file
 from csa_docx.check_change import EID_RE, MARKDOWN_RE, STABLE_ID_RE, finding, lint_findings
 
-BLOCKS = ("domain", "executive-summary", "governance", "migration", "glossary", "coverage")
+BLOCKS = ("domain", "executive-summary", "governance", "migration", "glossary", "coverage", "discovery-required")
 BLOCKS_JSON = (Path(__file__).resolve().parents[2]
                / "skills" / "csa-document-template" / "references" / "template-blocks.json")
 
@@ -43,6 +43,7 @@ REQUIRED_SECTIONS = {
     "governance": ["Actions"],
     "glossary": ["Terms"],
     "coverage": ["Hosts"],
+    "discovery-required": ["Items"],
     "migration": [],  # every subsection section is optional; Table/Findings shape below
 }
 
@@ -53,6 +54,7 @@ TABLE_SECTIONS = {
     "migration": {"Table"},
     "coverage": {"Hosts"},
     "glossary": {"Terms"},
+    "discovery-required": {"Items"},
 }
 
 
@@ -78,6 +80,8 @@ def _heading_for(blocks: dict, block: str) -> str | None:
         return blocks.get("glossary", {}).get("heading")
     if block == "coverage":
         return blocks.get("coverage", {}).get("heading")
+    if block == "discovery-required":
+        return blocks.get("discovery_required", {}).get("heading")
     if block == "migration":
         for m in blocks.get("migration", []):
             if m.get("heading"):
@@ -122,7 +126,9 @@ def _expected_columns(blocks: dict, block: str, heading: str, name: str) -> int 
         cov = blocks.get("coverage", {})
         return len(cov.get("columns") or []) or None
     if block == "glossary" and name == "Terms":
-        return len((blocks.get("glossary", {}).get("columns") or []) or None)
+        return len((blocks.get("glossary", {}).get("columns") or [])) or None
+    if block == "discovery-required" and name == "Items":
+        return len(blocks.get("discovery_required", {}).get("columns") or []) or None
     return None
 
 

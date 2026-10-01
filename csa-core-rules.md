@@ -58,10 +58,13 @@ Every agent and skill in `.agents/` follows these rules. Where a line in an agen
 
 ## Subsections
 
-A section too big for one run can be worked one subsection at a time: `csa author 6.4`, `csa approve 6.4`, `csa apply 6.4 --until-done`, `csa review 6.4`, `csa cleanup 6.4`, `csa status 6.4`, `csa pipeline 6.4`.
+A section too big for one run can be worked one subsection at a time: `csa author 6.4` (applies its change file when it finishes), `csa apply 6.4 --until-done`, `csa review 6.4`, `csa cleanup 6.4`, `csa status 6.4`, `csa pipeline 6.4`.
 
-- The number is the stable-ID numbering (`@H6.4`, as `csa lookup` prints it), not the number printed in the document.
-- When the prompt has `SUBSECTION=<n.m>`, work only on that heading and everything under it (stable IDs starting `@H<n.m>`). Other subsections of the section are out of scope; a finding for one of them is an open question, not an edit.
+- The command number is the number printed in the document. The CLI resolves it against the live manifest and passes
+  the separate `STABLE_SUBTREE` (for example visible `5.3` may resolve to `@H6.4`). Never derive one identity from the
+  other or replace the visible command number with the structural stable-ID path.
+- When the prompt has `SUBSECTION=<n.m>`, work only on that visible heading and everything under the separately supplied
+  `STABLE_SUBTREE`. Other subsections are out of scope; a finding for one of them is an open question, not an edit.
 - The change file is the labelled file in `CHANGE_FILE`: `reviews/ChangesCSA_<App>_Section<N>_<n-m>.md` (dots as dashes). Header: `**Section:** <N> - <section title> (subsection <n.m> <subsection title>)`.
 - Edit IDs stay `S<N>-E<n>` and number on from every change file of section N, labelled or not, so IDs never collide.
 - Run-state is per change file (`run-state/current-state-assessment-document-section-<N>_<n-m>.md`); the authoring run-state is `csa-change-authoring-section-<N>_<n-m>.md`.

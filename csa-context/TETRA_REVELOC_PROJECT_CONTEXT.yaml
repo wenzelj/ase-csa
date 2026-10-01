@@ -1,0 +1,80 @@
+# REVELOC TETRA CSA on template v1.5 (folder "TETRA/06 REVELOC TETRA", created 30 Sep 2026).
+# A new CSA built with the build lane; the existing CSA in "TETRA/05 Revloc Tetra" is not touched.
+# Scope comes from the Radlink Scope of Work "OT Infrastructure Migration Support" (Requirements/).
+# Only facts confirmed by project documentation or the project owner are populated. Blank fields are
+# intentionally unfilled: do not guess owners, servers, architecture, network zones, versions, controls,
+# dates, or dependencies.
+project:
+  assessment_name: "REVELOC TETRA Current State Assessment (template v1.5)"
+  assessment_type: "Current State Assessment"
+  program: "OT 3.5 Migration Program"
+  environment: ""
+  application: "REVELOC TETRA"
+  # From the Document Information table of the existing CSA (NetSeg_Current_State_Assessment_REVELOC_TETRA.docx).
+  organisation: "Aurizon Network Pty Ltd"
+  as_of_date: ""
+  scope_in:
+    # Radlink SoW section 3: in-scope systems and solutions.
+    - "DAMM TETRAFLEX solution"
+    - "REVELOC solution"
+    - "RevBroadcast solution"
+    - "TGoIP solution"
+    - "Associated infrastructure and devices: USB over IP devices, IPR400 units, IP-to-serial media converters, radio over IP / voice over IP devices, supporting network appliances, virtual machines, standalone, application and database servers"
+    # Radlink SoW sections 1, 2 and 4: what the assessment must be able to answer.
+    - "Impact of the new OT Active Directory domain (new domain controllers, dedicated OT domain name, user accounts) on the in-scope systems"
+    - "Impact of the new OT DNS service on the in-scope systems"
+    - "Impact of the new OT NTP service on the in-scope systems"
+    - "Domain membership, DNS resolution, time synchronisation, service account and authentication dependencies of every in-scope server and device"
+    - "Traffic flows of the in-scope systems: source, destination, IP address, protocol, port, service dependency, authentication mechanism"
+    - "Applications, services, scheduled tasks, backup processes and dependencies of the in-scope solutions"
+  scope_out:
+    # Radlink SoW section 8.
+    - "Implementation of the new Active Directory domain, NTP and DNS services"
+    - "Modification of firewall rules"
+    - "IP address redesign or renumbering"
+    - "Network architecture redesign"
+    - "Upgrade or replacement of application software"
+    - "Hardware refresh or procurement"
+    - "Development of new applications or system functionality"
+  planned_changes:
+    # Radlink SoW section 2. Status as written in the SoW; items 1-3 are unresolved there ("planned / completed").
+    - "New OT Active Directory environment: new domain controllers, dedicated OT domain name, user accounts (status unconfirmed)"
+    - "New NTP service in the OT network (status unconfirmed)"
+    - "New DNS service in the OT network (status unconfirmed)"
+    - "Firewall rule updates if required (planned; contradicts SoW assumptions and out-of-scope list)"
+    - "Application server settings updated to the new DNS, domain and NTP services (planned)"
+    - "No IP address changes for application servers"
+  authoritative_sources:
+    # Paths relative to this project's root ("TETRA/06 REVELOC TETRA"); data is read in place.
+    - path: "../05 Revloc Tetra/01 Current State AS Built"
+      role: "evidence data (RevLoc discovery script results, system matrix, flow workbooks, design documents)"
+      confirmed_by: "project owner instruction, 2026-09-30"
+    - path: "../../Requirements/Radlink Scope of Work - OT Infrastructure Migration Support.docx"
+      role: "scope"
+      confirmed_by: "project owner instruction, 2026-09-30"
+    - path: "../05 Revloc Tetra/02 Current State Assessment/NetSeg_Current_State_Assessment_REVELOC_TETRA.docx"
+      role: "evidence: previous CSA (pre-template), indexed via index_extra_sources; cite it by section heading"
+      confirmed_by: "project owner instruction, 2026-09-30"
+  terminology: {}
+  known_constraints:
+    - "New CSA on template v1.5, version 0.1 built with the build lane (`csa place` / `csa build`). Evidence matrix and discovery index start empty in this project's csa-work."
+    - "The previous CSA counts as evidence (project owner, 2026-09-30); where it conflicts with the discovery script results, the discovery data is newer and wins unless the project owner says otherwise."
+    - "Content from the previous CSA is carried into the template by distilling it into each domain, not by copying; the template has no Recommendations subsection."
+    - "The previous CSA is marked [SEC=PROTECTED]; confirm the classification marking for the new document."
+    - "RevLoc discovery results are .zip files; they are indexed only once extracted alongside (discovery index skips .zip)."
+  stakeholders: []
+  required_deliverables:
+    # Radlink SoW section 6. The CSA feeds deliverables 1-4; 5-8 are later Radlink deliverables.
+    - detailed_current_state_assessment
+    - consumable_summary
+    - asset_discovery_report
+    - application_and_service_dependency_matrix
+    - network_traffic_flow_matrix
+    - impact_assessment_report
+
+working_preferences:
+  evidence_only_factual_claims: true
+  expand_abbreviations_on_first_use: true
+  explain_ot_concepts_separately: true
+  preserve_existing_document_structure: true
+  do_not_design_future_state_unless_requested: true

@@ -94,7 +94,7 @@ agents:
     group: analysis
     tier: local
     arg: SECTION
-    inputs: SECTION*, MODE=EVIDENCE
+    inputs: SECTION*, MODE=EVIDENCE, BRIEF
     locks: section
     instruction: Build or update the evidence set for the requested section.
     skill: csa-evidence-investigator-agent
@@ -130,7 +130,7 @@ agents:
     group: analysis
     tier: frontier
     arg: SECTION
-    inputs: SECTION*, MODE=SECTION, OUTPUT=section-file
+    inputs: SECTION*, MODE=SECTION, OUTPUT=section-file, BRIEF
     locks: section
     instruction: Draft or revise the requested section from approved evidence.
     skill: csa-writer-agent

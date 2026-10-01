@@ -41,6 +41,7 @@ Do not load specialist analysis skills, evidence skills, or the review skill.
 - Preserve named owners, reviewers, approvers, dates, and controlled-document fields unless explicitly instructed to change them.
 - Do not copy stale facts from a prior assessment to complete a section.
 - Never edit the working DOCX yourself. Write the section file (or, in MODE=records, the change file's Text); the framework puts it in the document as tracked changes as soon as you finish, and Wenzel accepts or rejects them in Word.
+- Answer the requirement's question first, in terms of the systems and applications it concerns, and name the server, resolver or address the answer points to (see "Answer the question first" in `csa-writing-style`). Lint limits on length and identifiers are warnings, not reasons to leave the question half answered.
 - Keep current state, interpretation, gap, risk observation, and recommendation distinct. No future-state design unless requested.
 - Write to the "Say it once, say it first" rules in `csa-writing-style`: conclusion first, each fact stated once, full sentences rather than bullet fragments, no general technology explanation, host-level detail in tables. Run `csa-writing-style/scripts/prose_lint.py` on every draft before returning it and fix its warnings.
 - In EXECUTIVE_SUMMARY mode, add no new findings; keep every statement aligned with the approved detailed content and its as-of date.
@@ -59,6 +60,20 @@ Do not load specialist analysis skills, evidence skills, or the review skill.
 ## Section files (build lane)
 
 When `OUTPUT=section-file` (the default until the project has a working DOCX), write the section as a section file: `WORK_DIR/sections/<order>-<slug>.md`, in the format in `.agents/references/section-file-format.md`, with `status: draft`. Discovery Information is a table (Aspect / Configuration Observed / Coverage / Source); a finding that does not fit a row goes under `## Discovery Notes` as one short paragraph (never bullets). Put every E-id in the `## Evidence` table, keyed exactly as `csa check-section` expects, and never in the text. Run `csa check-section <file>` and fix every ERROR before returning. Never set the status to anything but `draft`. When you finish, `csa write` places the file in the working DOCX as tracked changes (`csa place`, which creates version 0.1 when the project has no document yet) and marks it `status: built`. Rewriting a placed file (back to `status: draft`) and finishing places it again: the new text replaces the old as tracked changes. There is no approval step before placement; Wenzel accepts or rejects the changes in Word.
+
+## Conversion briefs (BRIEF=)
+
+When `BRIEF=` is given (`csa convert <N>`), read the brief after the required reading, then `WORK_DIR/convert/<N>/answer-plan.csv`. The answer plan is what you write from; the brief gives the scope. The previous assessment's wording is never your wording.
+
+- Requirement rows: the Current State cell is the plan's `REQ <id> / Current State` fact, condensed to one or two sentences; the Rating is the `REQ <id> / Rating` row's rating on the agreed scale.
+- Discovery Information: one row per `<N>.1 Discovery Information / <Aspect>` fact; Coverage / Source is that row's `evidence_scope` (host set and evidence type), never empty.
+- Drawbridge Impact: the `<N>.2 Drawbridge Impact` facts in one paragraph, each consequence once.
+- Keep every qualifier the plan records (not observed, not tested, not confirmed); never turn it into a definite absence.
+- Rows with destination `roadmap`, `MOVED` or `none` stay out of this section. No recommendation appears anywhere in the CSA.
+- Every `gap_generated` item goes to Discovery Required (the framework collects them into Appendix E); do not restate them as findings.
+- Do not mention the previous assessment, its headings or its version, in the text or in comments.
+- Executive Summary (2.1): write it last, only from the placed sections: the system and its assessed scope, critical dependencies, isolation posture, major gaps, and the limits of the evidence. Do not recreate the legacy Discovery Summary.
+- After the section file, write `WORK_DIR/convert/<N>/outcomes.csv` (header `id,outcome,target,reason`) only for legacy L-ids in the brief that the answer plan does not cover: `MOVED`, `DUPLICATE` or `NOT_USED` with a one-line reason.
 
 ## Output
 

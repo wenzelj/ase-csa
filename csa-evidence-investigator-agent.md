@@ -37,6 +37,21 @@ Do not load any other skill. If the task needs technical interpretation, return 
 - Reproduce sensitive values (addresses, hostnames, account names) only as far as the authorised deliverable needs.
 - Read-only with respect to source documents, including the working DOCX.
 
+## Conversion mode (MODE=convert)
+
+`csa convert <N>` runs this mode with `BRIEF=<WORK_DIR>/convert/<N>/brief.md`. The framework has already split the previous assessment into facts, given each a requirement ID, and added one evidence row per fact (`gap_or_action` starts `legacy L-nnnn`). Your job is the answer plan: `WORK_DIR/convert/<N>/answer-plan.csv`. The test for every requirement: does the selected evidence answer it accurately, concisely and with the correct uncertainty?
+
+1. Read the brief only; do not open the previous assessment. Work requirement by requirement (`### SEP-...`).
+2. Move facts, not narratives. For each candidate cluster decide one row: the fact in one plain sentence, its `statement_type` (`observed`, `scope`, `assessment`, `gap`, `consequence`, `recommendation`, `evidence-ref`), the `destination` field, `confidence`, and the `transformation` you applied.
+3. Check each fact against the captures (matrix first, then `csa index`, then raw files). Put the actual host set and evidence type in `evidence_scope` (for example `All 12 captured hosts; 14_resolver`). Correct legacy scope claims to what the captures show (for example `all twelve` when only five hosts were tested). When a capture disagrees, add a CONFLICTING evidence row and use the capture's value.
+4. Consolidate repeated observations into one row with all their L-ids in `legacy_ids`.
+5. Keep qualifiers such as not observed, not tested and not confirmed. A legacy absolute ("no X exists") becomes "no X was evidenced" with `qualify` in `transformation`, unless a capture proves absence (`verified absence`).
+6. Recommendations never go to a current-state field: their destination is `roadmap (convert/parked.md)`; turn their factual basis into its own `observed` or `gap` row. Legacy readiness scores are not carried: write the `REQ <id> / Rating` row from the evidence on the agreed scale (Met, Partially Met, Not Met, Not Applicable).
+7. Every requirement gets a `REQ <id> / Current State` row and a `REQ <id> / Rating` row. Every point the evidence cannot answer gets a `gap` row with `gap_generated` = `DR-<AREA>-nn <what to confirm>`; do not manufacture a conclusion.
+7a. Before you write a `gap` row, look for the answer: `python3 -m csa_docx.gap_lookup check --workspace WORKSPACE --dr DR-<AREA>-nn --text "<what to confirm>"` searches the evidence matrix and then the discovery index and adds what it finds to the matrix (UNCONFIRMED rows that quote their source). `plan-check` runs the same lookup and stops on `GAP_HAS_EVIDENCE`. Read what it found. If it answers the question, record a VERIFIED row and write an `observed` row instead of the gap. If it does not, run `python3 -m csa_docx.gap_lookup confirm ... --considered E-..,E-.. --ask "who to ask"`: it rejects the candidate rows and records the NOT_FOUND row with the scope searched.
+8. Facts under `Facts that belong elsewhere`, and candidates the requirement's `Not evidence for` excludes, get `MOVED <subsection>` or `none` with the reason in `transformation`.
+9. Run `python3 -m csa_docx.answer_plan WORK_DIR/convert/<N>/answer-plan.csv --target <N>` and fix every ERROR. Never infer. Stop after reporting the rows per requirement and the Discovery Required items.
+
 ## Output
 
 Evidence mode: updated evidence matrix rows, with a short summary of counts by status and the questions still open. Gap mode: gap register and a short request list, per the skill. Stop after reporting.

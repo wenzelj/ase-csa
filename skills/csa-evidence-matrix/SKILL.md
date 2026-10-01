@@ -112,7 +112,7 @@ One atomic claim per row. Put the host and capture date in the claim so it can b
 | `inference_reason` | required for `INFERRED` |
 | `confidence` | `high`, `medium`, `low` or empty. Nothing else - put gaps in `gap_or_action` |
 | `gap_or_action` | what is missing or who must confirm. Required for `NOT_FOUND`, `UNCONFIRMED`, `CONFLICTING` |
-| `review_state` | leave empty; the tool sets `pending`. Only a human changes review state |
+| `review_state` | leave empty; the tool sets `pending`. A VERIFIED row is approved by the source check, never by its author (see "Source check") |
 
 The tool assigns the next `E-nnn`, backs the matrix up to `csa-work/backups/` before each write, keeps the file's BOM and CRLF format, skips exact duplicates, rejects bad rows as a batch, and logs every write to `csa-work/evidence-matrix-audit.jsonl`.
 
@@ -167,6 +167,17 @@ Example `rows.json` (illustrative values - always use what you actually found):
 - If you searched Discovery Data, append what you found.
 - The matrix is a working evidence file, not source evidence or the DOCX; appending to it does not breach the review agent's read-only rule.
 
+## Source check: approval comes from the evidence
+
+A row is approved by what its source shows, not by the person or agent who wrote it.
+
+- **On append:** every VERIFIED row is checked against the file(s) it cites in `source_title`. The check looks each file up in the discovery index (following duplicates to the file that holds the text) and confirms that every ` | ` part of `evidence_excerpt` appears in a cited file, and that every cited file holds at least one part. A row that fails is rejected with the reason: quote lines that are in the named file. A row that passes is written and recorded as `reviewed` by `csa source check (automated)`, with the files it matched in the note.
+- **Naming the source:** `source_title` must name the capture folder (`<host>_<timestamp>`) and the file, for example `REVELOC_discovery_ROKPRDOPS110_20260607T214201Z: 03_time_status.txt`. A row citing several captures must quote at least one line from each cited file, so a row cannot cite a file that does not support it.
+- **Not approved by the check:** INFERRED, NOT_FOUND, UNCONFIRMED and CONFLICTING rows rest on reasoning or a search scope, not on one quoted line. They stay `pending` until a person decides them. Never mark them reviewed to clear the queue.
+- **Existing rows:** `check-sources [E-nnn ...] [--dry-run] [--all]` checks rows already in the matrix and approves those the source proves. It never rejects a row: a failing row stays pending and is listed with the reason.
+- **Escape hatch:** `append --no-source-check` skips the check, for a source that is not in the discovery index. The row then stays `pending`.
+- **Corrections:** rows are append-only. If a row fails the check, append a corrected row, name the earlier E-id in `gap_or_action`, and leave the old row pending.
+
 ## Concurrency and safety
 
 Writes take an exclusive file lock, so two agents can append at the same time without colliding. IDs are assigned under the lock. Each write makes a timestamped backup under `csa-work/backups/`.
@@ -175,4 +186,5 @@ Writes take an exclusive file lock, so two agents can append at the same time wi
 
 `verify` currently reports 6 legacy rows (E-006, E-007, E-008, E-009, E-011, E-014) whose `confidence` column holds gap text instead of high/medium/low. They are read normally and left untouched (append-only); a human can clean them.
 
-- `review E-nnn ... --by "<name>"` - records a review in `csa-work/evidence-reviews.jsonl`.
+- `review E-nnn ... --by "<name>"` - records a person's review in `csa-work/evidence-reviews.jsonl` (for rows the source check cannot settle).
+- `check-sources` - the automated source check described above; its reviews go in the same log.

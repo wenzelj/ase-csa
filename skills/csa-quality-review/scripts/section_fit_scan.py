@@ -70,29 +70,15 @@ def norm(t: str) -> str:
 
 
 def load_scope(path: Path) -> list[Domain]:
-    domains: list[Domain] = []
-    cur: Domain | None = None
-    for line in path.read_text(encoding="utf-8").splitlines():
-        m = re.match(r"^###\s+(\d+\.\d+)\s+(.+?)\s*$", line)
-        if m:
-            cur = Domain(m.group(1), m.group(2), [], [])
-            domains.append(cur)
-            continue
-        if cur is None:
-            continue
-        m = re.match(r"^-\s+\*\*Legacy headings:\*\*\s*(.*)$", line)
-        if m:
-            cur.legacy = [x.strip() for x in m.group(1).split(",") if x.strip()]
-        m = re.match(r"^-\s+\*\*Signal terms:\*\*\s*(.*)$", line)
-        if m:
-            cur.terms = [x.strip().lower() for x in m.group(1).split(",") if x.strip()]
-    for d in domains:
-        if d.terms:
-            alts = sorted((re.escape(t).replace(r"\ ", r"[\s-]+") for t in d.terms), key=len, reverse=True)
-            d.term_re = re.compile(r"(?<![\w-])(?:" + "|".join(alts) + r")(?![\w-])", re.IGNORECASE)
-    if not domains:
+    if str(FRAMEWORK) not in sys.path:
+        sys.path.insert(0, str(FRAMEWORK))
+    from csa_docx import scope_map
+    try:
+        entries = scope_map.load(path)
+    except ValueError:
         sys.exit(f"no domains parsed from {path}")
-    return domains
+    return [Domain(num=k, name=e["title"], legacy=e["legacy_headings"],
+                   terms=e["signal_terms"], term_re=e["term_re"]) for k, e in entries.items()]
 
 
 def similar(a: str, b: str) -> float:

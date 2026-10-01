@@ -3,6 +3,8 @@
 # WORK_DIR were not given explicitly. Add a new block here whenever a new CSA project is placed
 # under /Users/wenzel/Work/ASE/CurrentStateAssessments/ -- nothing else in the shared framework
 # needs to change.
+# Optional per-project key: legacy_docx: "<absolute path to an old-format CSA .docx>" -- the document
+# `csa convert` moves into the CSA template one subsection at a time (read-only; never edited).
 
 projects:
   - key: iamps
@@ -34,3 +36,12 @@ projects:
     project_context: "/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-context/IAMPS_08_PROJECT_CONTEXT.yaml"
     work_dir: "/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/08 IAMPS/csa-work"
     default_source_set: "/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS/01 Current State AS Built/IAMPS Discovery Data"
+
+  - key: tetra-reveloc
+    label: "REVELOC TETRA (template v1.5)"
+    project_root: "/Users/wenzel/Work/ASE/CurrentStateAssessments/TETRA/06 REVELOC TETRA"
+    project_context: "/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-context/TETRA_REVELOC_PROJECT_CONTEXT.yaml"
+    work_dir: "/Users/wenzel/Work/ASE/CurrentStateAssessments/TETRA/06 REVELOC TETRA/csa-work"
+    default_source_set: "/Users/wenzel/Work/ASE/CurrentStateAssessments/TETRA/05 Revloc Tetra/01 Current State AS Built"
+    index_extra_sources: "/Users/wenzel/Work/ASE/CurrentStateAssessments/TETRA/05 Revloc Tetra/02 Current State Assessment"
+    legacy_docx: "/Users/wenzel/Work/ASE/CurrentStateAssessments/TETRA/05 Revloc Tetra/02 Current State Assessment/NetSeg_Current_State_Assessment_REVELOC_TETRA.docx"

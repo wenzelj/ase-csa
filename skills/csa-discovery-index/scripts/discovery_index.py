@@ -61,7 +61,7 @@ def _host_from_summary(folder):
                 host = m.group(1).strip().upper()
     _summary_host_cache[folder] = host
     return host
-ARCHIVE_PARTS = {"archive", "z_archive", "_to_delete", "old", "superseded"}
+ARCHIVE_PARTS = {"archive", "archived", "z_archive", "_to_delete", "old", "superseded"}
 DERIVED_PARTS = {"discovery_consolidated"}
 # "01 Final Version" holds the CSA itself (working DOCX, reviews/, run-state/, backups): never evidence.
 SKIP_DIRS = {".git", "__MACOSX", ".pytest_cache", "__pycache__", "csa-work", "csa-authoring-active",

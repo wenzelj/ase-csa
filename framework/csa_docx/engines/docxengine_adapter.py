@@ -14,7 +14,7 @@ if VENDOR_DIR.exists() and str(VENDOR_DIR) not in sys.path:
     sys.path.insert(0, str(VENDOR_DIR))
 
 from csa_docx.bookmarks import add_bookmark_at_anchor, find_bookmark
-from csa_docx.comment_text import build_comment_text
+from csa_docx.comment_text import build_comment_text, comments_enabled
 from csa_docx.models import ChangeRecord, EditResult
 from csa_docx.stable_ids import extract_stable_id, build_id_map
 from csa_docx.ooxml import (
@@ -183,7 +183,10 @@ def _serialize_part_preserving(root: ET.Element, original: bytes) -> bytes:
     return out[: new_tag.start()] + old + out[new_tag.end():]
 
 
-_CURRENTLY_RE = re.compile(r"currently:\s*[\"\u201c](.+?)[\"\u201d]\s*$", re.S)
+# A Where clause may carry its own stable-ID anchor before the quote
+# (e.g. "@H4.2.2-P1 (currently: "...")"), so the quote must be found
+# anywhere in the clause and may not be pinned to the end of the string.
+_CURRENTLY_RE = re.compile(r'currently:\s*["\u201c](.+?)["\u201d]', re.S)
 
 
 def _norm_text(t: str) -> str:
@@ -1699,6 +1702,8 @@ class DocxEngineEditor:
         return matches[0].anchor if len(matches) == 1 else None
 
     def _add_comment(self, anchor: str, record: ChangeRecord, author: str, initials: str) -> str | None:
+        if not comments_enabled():
+            return None
         self._ensure_comment_namespaces()
         comment_text = build_comment_text(record)  # author and initials are comment metadata, not text
         result = self.doc.comment("add", anchor=anchor, text=comment_text, author=author)

@@ -10,6 +10,14 @@ Entry format:
 
 ## Entries
 
+## 2026-10-01 - Exclude localhost from DNS-zone generalisations
+Trigger: DNS query-test captures included `localhost` alongside names in the assessed domain, making an unqualified all-names statement inaccurate.
+Rule: when describing zones resolved from DNS query tests, inspect loopback targets separately and qualify the domain statement; `41_dns_query_tests.txt` provides the deciding evidence.
+
+## 2026-10-01 - Correct pending content through a new bounded record
+Trigger: a targeted factual correction was requested while the live DOCX still contained applied, unreviewed tracked changes from an earlier section-placement run.
+Rule: resolve anchors against the refreshed live manifest, quote the intended current wording from the authoritative section source when revision text is fragmented, and author the correction as new sequential edits without modifying the earlier change file.
+
 ## 2026-09-28 - Integration claims: check both ends and every site
 Trigger: a subsection said all integrations terminate "at the same hosts per site" and cited captures from the peer servers, which were held in another project; only one site showed sessions.
 Rule: confirm a cross-system flow from the evidence this project holds (listener-side process mapping, network monitoring exports), check each site separately, and treat "no domain authentication on the flow" as different from "unauthenticated".
@@ -25,3 +33,11 @@ Trigger: a displayed date was transcribed as 7 January 2017 even though Excel se
 Rule: for indexed workbook dates, reconcile the displayed string with the Excel serial and use Australian day-month ordering; retain the workbook-date/current-state gap separately.
 
 - 2026-09-29 Host-centred evidence -> `csa hosts build/show/group/links` (hosts/*.csv from the discovery index). Workbook rows keyed by collection/row ID must be regrouped by host; MECM maintenance windows match by DeviceName, not collection ID; expand CONTROLLER70 / 73 shorthand before citing. Tables keyed by source IDs were rejected by Wenzel twice (6.4).
+
+## 2026-09-29 - Stable subsection IDs can differ from requirement-domain labels
+Trigger: a template subsection request named stable `@H3.2`, while the domain scope helper interpreted `3.2` as the Identity & Authentication requirement domain at a different stable path.
+Rule: when the user explicitly supplies a stable-ID scope, verify it against the live manifest and use that unit; record the helper mismatch rather than authoring into a different subsection.
+
+## 2026-09-29 - Do not author an executive summary from unreviewed placeholders
+Trigger: the executive-summary placeholders were ready for text, but every detailed requirement-domain section was still blank.
+Rule: leave the executive summary unchanged until reviewed body sections support its scope, overall position, principal gaps and isolation outcome; do not introduce orphan facts directly from the evidence matrix.
