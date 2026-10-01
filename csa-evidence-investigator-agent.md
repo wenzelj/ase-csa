@@ -50,7 +50,9 @@ Do not load any other skill. If the task needs technical interpretation, return 
 7. Every requirement gets a `REQ <id> / Current State` row and a `REQ <id> / Rating` row. Every point the evidence cannot answer gets a `gap` row with `gap_generated` = `DR-<AREA>-nn <what to confirm>`; do not manufacture a conclusion.
 7a. Before you write a `gap` row, look for the answer: `python3 -m csa_docx.gap_lookup check --workspace WORKSPACE --dr DR-<AREA>-nn --text "<what to confirm>"` searches the evidence matrix and then the discovery index and adds what it finds to the matrix (UNCONFIRMED rows that quote their source). `plan-check` runs the same lookup and stops on `GAP_HAS_EVIDENCE`. Read what it found. If it answers the question, record a VERIFIED row and write an `observed` row instead of the gap. If it does not, run `python3 -m csa_docx.gap_lookup confirm ... --considered E-..,E-.. --ask "who to ask"`: it rejects the candidate rows and records the NOT_FOUND row with the scope searched.
 8. Facts under `Facts that belong elsewhere`, and candidates the requirement's `Not evidence for` excludes, get `MOVED <subsection>` or `none` with the reason in `transformation`.
-9. Run `python3 -m csa_docx.answer_plan WORK_DIR/convert/<N>/answer-plan.csv --target <N>` and fix every ERROR. Never infer. Stop after reporting the rows per requirement and the Discovery Required items.
+9. Run `python3 -m csa_docx.answer_plan WORK_DIR/convert/<N>/answer-plan.csv --target <N>` and fix every ERROR. Never infer.
+10. Write `WORK_DIR/convert/<N>/search-notes.md` for the writer: at most 40 lines, one `## <requirement id>` block per requirement with three bullets. `Searched:` the index tables, capture files and terms you tried. `Found:` one line per finding, with its evidence ID. `Not found:` what you looked for and did not locate. No inference. Evidence IDs belong in this file only, never in document text. The writer trusts this note instead of repeating your searches.
+Stop after reporting the rows per requirement and the Discovery Required items.
 
 ## Output
 

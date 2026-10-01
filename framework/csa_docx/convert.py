@@ -16,6 +16,7 @@ import json
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from csa_docx import (answer_plan, check_section, convert_brief, convert_evidence, convert_ledger,
@@ -238,6 +239,9 @@ def _plan_check(workspace: Path, section: str, legacy_docx: Path | None = None) 
                 f"{m.group(1)}: the evidence already holds {', '.join(look['evidence_ids'])}. Read them: if one answers it, "
                 "restate the row with that evidence; if none does, reject each with `evidence_matrix.py review --state "
                 "rejected` and rerun")})
+    if not (work / "convert" / section / "search-notes.md").is_file():
+        findings.append({"level": "WARNING", "code": "NO_SEARCH_NOTES", "message": (
+            "the evidence agent left no convert/%s/search-notes.md; the writer will repeat its searches" % section)})
     errors = [f for f in findings if f["level"] == "ERROR"]
     return {"status": "ERROR" if errors else "OK", "errors": len(errors),
             "warnings": len(findings) - len(errors), "findings": findings}
@@ -258,6 +262,23 @@ def convertOldTemplateToNew(section: str, *, workspace: Path, legacy_docx: Path,
     wanted = STAGES if stage is None else (stage,)
     stages: dict[str, dict] = {}
     pending = False
+    timing: dict[str, float] = {}
+
+    def timed(key: str, fn):
+        """Run an agent stage and record its wall time in convert/<N>/timing.json."""
+        start = time.perf_counter()
+        out = fn()
+        if run_agent is not None:
+            timing[key] = round(time.perf_counter() - start, 1)
+            path = work / "convert" / section / "timing.json"
+            try:
+                old = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+            except ValueError:
+                old = {}
+            old.update(timing)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(old, indent=2) + "\n", encoding="utf-8")
+        return out
 
     def result(status: str, **extra) -> dict:
         return {"status": status, "section": section, "stages": stages, **extra}
@@ -277,7 +298,8 @@ def convertOldTemplateToNew(section: str, *, workspace: Path, legacy_docx: Path,
             files = _brief_files(work, section)
             if not files:
                 return result("EMPTY")
-            runs = [_agent_stage("evidence", [section, "MODE=convert", f"BRIEF={f}"], run_agent) for f in files]
+            runs = timed("evidence_s", lambda: [
+                _agent_stage("evidence", [section, "MODE=convert", f"BRIEF={f}"], run_agent) for f in files])
             failed = next((r for r in runs if r["status"] == "FAILED"), None)
             stages[name] = failed or {
                 "status": "PENDING" if run_agent is None else "OK",
@@ -300,7 +322,7 @@ def convertOldTemplateToNew(section: str, *, workspace: Path, legacy_docx: Path,
             files = _brief_files(work, section)
             if not files:
                 return result("EMPTY")
-            res = _agent_stage("write", [section, "BRIEF=" + ";".join(files)], run_agent)
+            res = timed("write_s", lambda: _agent_stage("write", [section, "BRIEF=" + ";".join(files)], run_agent))
             stages[name] = res
             if res["status"] == "FAILED":
                 return result("FAILED", stage=name)

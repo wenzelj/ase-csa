@@ -63,7 +63,7 @@ When `OUTPUT=section-file` (the default until the project has a working DOCX), w
 
 ## Conversion briefs (BRIEF=)
 
-When `BRIEF=` is given (`csa convert <N>`), read the brief after the required reading, then `WORK_DIR/convert/<N>/answer-plan.csv`. The answer plan is what you write from; the brief gives the scope. The previous assessment's wording is never your wording.
+When `BRIEF=` is given (`csa convert <N>`), read the brief after the required reading, then `WORK_DIR/convert/<N>/answer-plan.csv`. The answer plan is what you write from; the brief gives the scope. Then read `WORK_DIR/convert/<N>/search-notes.md`, the evidence agent's record of what it searched. Do not repeat a search the note records as done. A `Not found:` line is a Discovery Required item unless the answer plan already lists it. The previous assessment's wording is never your wording.
 
 - Requirement rows: the Current State cell is the plan's `REQ <id> / Current State` fact, condensed to one or two sentences; the Rating is the `REQ <id> / Rating` row's rating on the agreed scale.
 - Discovery Information: one row per `<N>.1 Discovery Information / <Aspect>` fact; Coverage / Source is that row's `evidence_scope` (host set and evidence type), never empty.
