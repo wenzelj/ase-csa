@@ -200,13 +200,16 @@ def place_prepare(root: Path, section_path, *, system_name: str, source: str,
             "scaffold": scaffolded, **out}
 
 
-def place_apply(root: Path, sections: list, *, system_name: str, docx: str, change_files: dict | None = None) -> dict:
+def place_apply(root: Path, sections: list, *, system_name: str, docx: str, change_files: dict | None = None,
+                plain: bool = False) -> dict:
     """Placement, step 2 of 2: apply the section change files (``{N: path}`` from
     :func:`place_prepare`) as tracked changes, each edit with its evidence comment,
-    until every section is complete."""
+    until every section is complete. ``plain`` applies them as normal text in the real
+    document instead: no tracked changes, no evidence comments, no preview archive."""
     applied = build_apply.apply_build_records(Path(root).resolve(), [str(s) for s in sections], app=system_name,
                                               track_changes=True, build_id="place", docx=Path(docx),
-                                              change_files={str(k): v for k, v in (change_files or {}).items()})
+                                              change_files={str(k): v for k, v in (change_files or {}).items()},
+                                              plain=plain)
     return {"applied": applied["sections"], "docx": docx}
 
 

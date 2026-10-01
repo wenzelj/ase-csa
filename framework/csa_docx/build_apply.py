@@ -212,8 +212,51 @@ def _strip_comments(docx: Path) -> None:
         raise
 
 
+def _comment_ids(docx: Path) -> set[str]:
+    """The ids of the Word comments in the DOCX (empty when it has none)."""
+    with zipfile.ZipFile(docx) as z:
+        if "word/comments.xml" not in z.namelist():
+            return set()
+        return set(re.findall(r'<w:comment\b[^>]*?\bw:id="(\d+)"', z.read("word/comments.xml").decode("utf-8")))
+
+
+def _strip_new_comments(docx: Path, keep: set[str]) -> None:
+    """Remove the Word comments whose id is not in ``keep`` (their anchors and comment
+    parts), leaving every other comment untouched. Rewrites the DOCX in place."""
+    with zipfile.ZipFile(docx) as z:
+        names = z.namelist()
+        parts = {n: z.read(n) for n in names}
+    if "word/comments.xml" not in parts:
+        return
+    drop = _comment_ids(docx) - keep
+    if not drop:
+        return
+    xml = parts["word/document.xml"].decode("utf-8")
+    ids = "|".join(sorted(drop))
+    xml = re.sub(r'<w:r(?:\s[^>]*)?>(?:(?!</w:r>).)*?<w:commentReference\b[^>]*\bw:id="(?:%s)"[^>]*/>\s*</w:r>' % ids,
+                 "", xml, flags=re.S)
+    xml = re.sub(r'<w:commentReference\b[^>]*\bw:id="(?:%s)"[^>]*/>' % ids, "", xml)
+    xml = re.sub(r'<w:commentRange(?:Start|End)\b[^>]*\bw:id="(?:%s)"[^>]*/>' % ids, "", xml)
+    parts["word/document.xml"] = xml.encode("utf-8")
+    cx = parts["word/comments.xml"].decode("utf-8")
+    cx = re.sub(r'<w:comment\b[^>]*?\bw:id="(?:%s)"[^>]*?(?:/>|>.*?</w:comment>)' % ids, "", cx, flags=re.S)
+    parts["word/comments.xml"] = cx.encode("utf-8")
+    fd, tmp_name = tempfile.mkstemp(dir=str(docx.parent), suffix=".tmp")
+    os.close(fd)
+    tmp = Path(tmp_name)
+    try:
+        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as out:
+            for name in names:
+                out.writestr(name, parts[name])
+        os.replace(tmp, docx)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
 def apply_build_records(workspace, sections, *, app: str, track_changes: bool, build_id: str,
-                        docx: Path | None = None, change_files: dict | None = None) -> dict:
+                        docx: Path | None = None, change_files: dict | None = None,
+                        plain: bool = False) -> dict:
     """Apply the written change files for each framework section.
 
     ``app`` is the system name used by :func:`write_build_records` to name
@@ -237,6 +280,12 @@ def apply_build_records(workspace, sections, *, app: str, track_changes: bool, b
     # touches the project's real folders.
     docx_dir = fv
     fixed_docx = Path(docx) if docx else None
+    if plain:
+        # Plain placement: untracked edits in the real document, no evidence comments, no archive.
+        track_changes = False
+        if fixed_docx is None:
+            raise RuntimeError("plain placement needs the working DOCX")
+        comments_before = _comment_ids(fixed_docx)
     applied_by_section = {}
     for section in sections:
         # Pass the change file and DOCX explicitly (layout fixed by build.prepare).
@@ -273,7 +322,9 @@ def apply_build_records(workspace, sections, *, app: str, track_changes: bool, b
         completed = read_completed_ids(state)
         applied_by_section[str(section)] = len(completed)
 
-    if not track_changes:
+    if plain:
+        _strip_new_comments(docx, comments_before)
+    elif not track_changes:
         if docx is None:
             raise RuntimeError("no working DOCX recorded by the apply step")
         _strip_comments(docx)

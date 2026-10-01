@@ -1070,6 +1070,7 @@ def cmd_place(a):
     """Put section files straight into the working document as tracked changes (version 0.1 is created
     from the template on the first placement). No approval step: Wenzel approves in Word."""
     p = project(a.project); banner(p)
+    plain = getattr(a, "plain", False)
     root = local_path(p["project_root"])
     fv = root / "01 Current State AS Built" / "01 Final Version"
     existing = sorted(d for d in fv.glob("*.docx") if not d.name.startswith("~$"))
@@ -1100,10 +1101,12 @@ def cmd_place(a):
                         if x.is_file() and x.name not in before:
                             x.unlink(missing_ok=True)
                 die(f"could not place {f.name}: {res.get('message')}")
-            for sec, cf in res["change_files"].items():
-                record_approval(p, Path(cf), sec, f"csa place {f.name}", "csa place")
+            if not plain:
+                for sec, cf in res["change_files"].items():
+                    record_approval(p, Path(cf), sec, f"csa place {f.name}", "csa place")
             applied = _fw_module_call("build", "place_apply", str(root), res["sections"],
-                                      system_name=system_name, docx=res["docx"], change_files=res["change_files"])
+                                      system_name=system_name, docx=res["docx"], change_files=res["change_files"],
+                                      plain=plain)
             new = [e for ids in res["new_edits"].values() for e in ids]
             if applied.get("status") == "ERROR":
                 metric(p, "place", f.name, status="BLOCKED", edits=new)
@@ -1112,10 +1115,14 @@ def cmd_place(a):
                     f"{res['sections'][0]} --agent` to let the document agent resolve it.")
             _mark_placed(f)
             metric(p, "place", f.name, status="PLACED", edits=new, created=res["created"])
+            if plain:
+                print(f"{C['g']}PLACED (plain){C['0']} {f.name}")
+                continue
             print(f"{C['g']}PLACED{C['0']} {f.name} -> {Path(res['docx']).name}"
                   + (" (created version 0.1)" if res["created"] else "")
                   + (f": {len(new)} tracked change(s), {new[0]}..{new[-1]}" if new else ""))
-    print(f"{C['d']}Accept or reject the tracked changes in Word, then csa review <N> and csa cleanup <N>.{C['0']}")
+    if not plain:
+        print(f"{C['d']}Accept or reject the tracked changes in Word, then csa review <N> and csa cleanup <N>.{C['0']}")
     return 0
 
 
@@ -2680,6 +2687,7 @@ def main(argv=None) -> int:
     s.add_argument("--prepared-for", help="default: project context organisation"); s.add_argument("--prepared-by")
     s.add_argument("--doc-version", help="default 0.1"); s.add_argument("--status")
     s.add_argument("--keep-open", action="store_true", help="do not save and close the document in Word when it is open")
+    s.add_argument("--plain", action="store_true", help="place as normal text: no tracked changes, no evidence comments, no approval record")
     s = sp("apply", cmd_apply, help="framework-first apply; --agent for the LLM document agent")
     s.add_argument("section"); s.add_argument("--limit", type=int); s.add_argument("--edit", help="apply only this edit ID")
     s.add_argument("--until-done", action="store_true", help="keep running batches until complete, blocked or no progress")
