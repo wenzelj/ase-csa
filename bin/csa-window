@@ -1,0 +1,28 @@
+#!/bin/zsh
+# csa-window <command> [args...]
+# Runs the command in a new Terminal window so you can watch the agent work, and waits until it finishes.
+# The exit code of the command is returned, so `csa convert`, `csa pipeline` and `csa fleet` carry on as usual.
+# CSA_NO_WINDOW=1 runs the command in place instead (no window).
+if [[ -n "$CSA_NO_WINDOW" || "$(uname)" != "Darwin" ]]; then
+  exec "$@"
+fi
+dir=$(mktemp -d "${TMPDIR:-/tmp}/csa-window.XXXXXX") || exit 1
+{
+  print -r -- "#!/bin/zsh"
+  print -r -- "cd ${(q)PWD}"
+  print -r -- "${(@q)@}"
+  print -r -- "rc=\$?"
+  print -r -- "print -r -- \$rc > ${(q)dir}/rc"
+  print -r -- "print; print -- \"csa-window: finished (exit \$rc). You can close this window.\""
+} > "$dir/run.sh"
+chmod +x "$dir/run.sh"
+osascript >/dev/null <<EOF
+tell application "Terminal"
+  activate
+  do script "clear; zsh '$dir/run.sh'"
+end tell
+EOF
+while [[ ! -f "$dir/rc" ]]; do sleep 2; done
+rc=$(<"$dir/rc")
+rm -rf "$dir"
+exit ${rc:-1}

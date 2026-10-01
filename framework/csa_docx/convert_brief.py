@@ -284,14 +284,15 @@ def _requirement_brief(work_dir: Path, target: str, budget_tokens: int, domain: 
 
 
 def build_brief(work_dir: Path, target: str, *, budget_tokens: int = 6000,
-                domains: dict | None = None) -> dict:
+                domains: dict | None = None, block_mode: bool = False) -> dict:
+    """``block_mode`` forces the block brief (the old blocks as they stand) even when facts exist; `csa move` uses it."""
     work_dir = Path(work_dir)
     if domains is None:
         try:
             domains = scope_map.load()
         except (ValueError, OSError):
             domains = {}
-    facts = _load_facts(work_dir)
+    facts = [] if block_mode else _load_facts(work_dir)
     if domains.get(target) and any("req_ids" in f for f in facts):
         reqs = [r for r in requirement_assign.load_requirements() if r["domain"] == target]
         if reqs:

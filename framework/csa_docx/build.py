@@ -20,6 +20,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from .section_file import parse_section_file
+from .check_section import normalise_heading
 from . import build_apply, build_plan, tools
 
 
@@ -200,16 +202,48 @@ def place_prepare(root: Path, section_path, *, system_name: str, source: str,
             "scaffold": scaffolded, **out}
 
 
+def plain_blocker(root: Path, section_path, *, system_name: str) -> str | None:
+    """Why ``csa place --plain`` must not replace this section file's text, or ``None``.
+
+    Plain mode may only replace text that has no unaccepted tracked changes. The section's
+    part of the document runs from the heading named by the section file's ``heading:`` to the
+    next heading of the same or a higher level; any ``w:ins`` / ``w:del`` / move mark in it
+    blocks the placement."""
+    import re
+    import zipfile
+    docx = working_document(Path(root).resolve(), system_name)
+    if docx is None:
+        return None
+    heading = parse_section_file(Path(section_path))["heading"]
+    with zipfile.ZipFile(docx) as z:
+        xml = z.read("word/document.xml").decode("utf-8")
+    heads = []
+    for m in re.finditer(r"<w:p\b(?:(?!</w:p>).)*?</w:p>", xml, re.S):
+        lvl = re.search(r'<w:pStyle\s+w:val="Heading\s?(\d)"', m[0])
+        if lvl:
+            text = "".join(re.findall(r"<w:t(?:\s[^>]*)?>([^<]*)</w:t>", re.sub(r"<w:delText.*?</w:delText>", "", m[0], flags=re.S)))
+            heads.append((m.start(), int(lvl[1]), text))
+    for i, (start, level, text) in enumerate(heads):
+        if normalise_heading(text) != normalise_heading(heading):
+            continue
+        end = next((h[0] for h in heads[i + 1:] if h[1] <= level), len(xml))
+        if re.search(r"<w:(?:ins|del|moveFrom|moveTo)\b", xml[start:end]):
+            return "accept or reject the tracked changes of this section in Word first"
+    return None
+
+
 def place_apply(root: Path, sections: list, *, system_name: str, docx: str, change_files: dict | None = None,
-                plain: bool = False) -> dict:
+                plain: bool = False, new_edits: dict | None = None, new_files: list | None = None) -> dict:
     """Placement, step 2 of 2: apply the section change files (``{N: path}`` from
     :func:`place_prepare`) as tracked changes, each edit with its evidence comment,
     until every section is complete. ``plain`` applies them as normal text in the real
-    document instead: no tracked changes, no evidence comments, no preview archive."""
+    document instead: no tracked changes, no evidence comments, no preview archive, and no
+    edit records left in the change file or run-state (``new_edits`` and ``new_files`` come
+    from :func:`place_prepare`)."""
     applied = build_apply.apply_build_records(Path(root).resolve(), [str(s) for s in sections], app=system_name,
                                               track_changes=True, build_id="place", docx=Path(docx),
                                               change_files={str(k): v for k, v in (change_files or {}).items()},
-                                              plain=plain)
+                                              plain=plain, new_edits=new_edits, new_files=new_files)
     return {"applied": applied["sections"], "docx": docx}
 
 

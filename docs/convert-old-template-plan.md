@@ -1,3 +1,4 @@
+> For populating the new document use docs/move-old-template-plan.md. This requirement-led design is for the rework phase.
 # Plan: `convertOldTemplateToNew` — move a pre-template CSA into the CSA template, one subsection at a time
 
 Status: PLANNED, stories S186-S202 in `improvements/` (30 Sep 2026). Decisions D1-D4 settled (section 10). Pilot project: `tetra-reveloc` (old: `TETRA/05 Revloc Tetra/02 Current State Assessment/NetSeg_Current_State_Assessment_REVELOC_TETRA.docx`; new: `TETRA/06 REVELOC TETRA/01 Current State AS Built/01 Final Version/Current State Assessment - REVELOC TETRA.docx`).

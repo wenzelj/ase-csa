@@ -18,7 +18,7 @@ comments: off
 # one argument, never through a shell). interactive = you stay in the session;
 # headless = runs to completion and exits (used by --headless and `csa pipeline`).
 codex_interactive: codex {prompt}
-codex_headless: codex exec --profile evo-x3-qwen --skip-git-repo-check {prompt}
+codex_headless: /Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/bin/csa-window codex exec --profile evo-x3-qwen --skip-git-repo-check {prompt}
 claude_interactive: claude {prompt}
 claude_headless: claude -p {prompt}
 # Hermes has no "start interactive with a prompt" flag; both run the prompt as one query.

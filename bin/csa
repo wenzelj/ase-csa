@@ -1092,6 +1092,12 @@ def cmd_place(a):
                 if not close_in_word(docx):
                     die(f"{docx.name} is open in Word; close it and run `csa place {f.name}` again.")
             before = {x.name for x in fv.glob("*.docx")} | {x.name for x in fv.glob("reviews/*")} | {x.name for x in fv.glob("run-state/*")}
+            if plain:
+                blocked = _fw_module_call("build", "plain_blocker", str(root), str(f), system_name=system_name)
+                if isinstance(blocked, dict) and blocked.get("status") == "ERROR":
+                    die(f"could not check {f.name} for tracked changes: {blocked.get('message')}")
+                if blocked:
+                    die(f"cannot place {f.name} plain: {blocked}")
             res = _fw_module_call("build", "place_prepare", str(root), str(f), system_name=system_name, source=f.name,
                                   prepared_for=prepared_for, prepared_by=a.prepared_by,
                                   doc_version=a.doc_version, status=a.status)
@@ -1106,7 +1112,7 @@ def cmd_place(a):
                     record_approval(p, Path(cf), sec, f"csa place {f.name}", "csa place")
             applied = _fw_module_call("build", "place_apply", str(root), res["sections"],
                                       system_name=system_name, docx=res["docx"], change_files=res["change_files"],
-                                      plain=plain)
+                                      plain=plain, new_edits=res["new_edits"], new_files=res["new_files"])
             new = [e for ids in res["new_edits"].values() for e in ids]
             if applied.get("status") == "ERROR":
                 metric(p, "place", f.name, status="BLOCKED", edits=new)
@@ -1114,7 +1120,7 @@ def cmd_place(a):
                     f"Fix the section file and run `csa place {f.name}` again, or run `csa apply "
                     f"{res['sections'][0]} --agent` to let the document agent resolve it.")
             _mark_placed(f)
-            metric(p, "place", f.name, status="PLACED", edits=new, created=res["created"])
+            metric(p, "place", f.name, status="PLACED", edits=new, created=res["created"], **({"plain": True} if plain else {}))
             if plain:
                 print(f"{C['g']}PLACED (plain){C['0']} {f.name}")
                 continue
@@ -1146,6 +1152,8 @@ def _after_agent(p: dict, verb: str, args: list[str], started: float, a) -> int:
                                 agent_on_block=False, cli=getattr(a, "cli", None), headless=getattr(a, "headless", False),
                                 print=False, keep_open=False)
         return cmd_apply(ns)
+    if verb == "write" and values.get("MODE", "").lower() == "move":
+        return 0        # csa move places the section as plain text, then records it
     if verb in ("write", "summary") and values.get("OUTPUT", "section-file") == "section-file":
         sd = local_path(p["work_dir"]) / "sections"
         fresh = [x.name for x in sorted(sd.glob("*.md")) if x.stat().st_mtime >= started - 1] if sd.is_dir() else []
@@ -1770,6 +1778,9 @@ def _fleet_tasks(p: dict, a) -> list[dict]:
         if verb == "convert":
             tasks.extend(_fleet_convert_tasks(p, a, i, text, args, verbs, len(tasks) + 1))
             continue
+        if verb == "move":
+            tasks.extend(_fleet_move_tasks(p, a, i, text, args, verbs, len(tasks) + 1))
+            continue
         no_apply = "--no-apply" in args and verb != "apply"
         args = [x for x in args if x != "--no-apply"] if no_apply else args
         if verb == "place":
@@ -1842,6 +1853,48 @@ def _fleet_convert_tasks(p: dict, a, i: int, text: str, args: list[str], verbs: 
     return out
 
 
+def _fleet_move_tasks(p: dict, a, i: int, text: str, args: list[str], verbs: dict, n0: int) -> list[dict]:
+    """`move N` in a fleet: the brief runs now (framework, no slot); the writer (MODE=move) becomes an
+    ordinary task on the section lock, then `place N --plain` follows it and the records are written
+    in-process after that. Targets 7, 5.1 and 8 are framework only: a plain `place` task."""
+    if not args or args[0].startswith("-"):
+        die(f"task {i} '{text}': move needs a subsection, e.g. \"move 3.4\"")
+    target = args[0]
+    ld = _convert_legacy(p)
+    dry = bool(a.dry_run or a.print)
+    if target in ("7", "5.1", "8"):
+        spec = target
+        if not dry:
+            res = _move_generate(p, ld, target)
+            if res.get("status") not in ("OK", "PLACE") or not res.get("file"):
+                print(f"{C['y']}move {target}: {res.get('message') or 'nothing to place'}; no tasks added{C['0']}")
+                return []
+            spec = Path(res["file"]).name
+        t = _fleet_task(n0, f"place {spec} --plain", "place", [spec, "--plain"],
+                        {"docx", f"section:{_norm_section(spec)}"}, None)
+        t["move"] = target
+        return [t]
+    work = local_path(p["work_dir"])
+    if dry:
+        files = [str(work / "move" / target / "brief.md")]
+    else:
+        res = _move_call(p, ld, target, "brief")
+        if res.get("status") == "EMPTY":
+            print(f"{C['y']}nothing mapped to {target}; no tasks added{C['0']}")
+            return []
+        if res.get("status") == "ERROR":
+            die(f"task {i} '{text}': {res.get('message')}")
+        files = res["stages"]["brief"]["files"]
+    vargs = [target, "MODE=move", "BRIEF=" + ";".join(files)]
+    r = verbs["write"]
+    fcli = settings().get("fleet_cli", "codex")
+    prompt = build_prompt(p, r, vargs, local=local_launch(settings().get(f"{fcli}_fleet", "")))
+    t = _fleet_task(n0, f"write {' '.join(vargs)}", "write", vargs, task_locks(r, task_values(r, vargs)), prompt)
+    t["no_apply"] = False
+    t["move"] = target
+    return [t]
+
+
 def _fleet_task(n: int, text: str, verb: str, args: list[str], locks: set[str], prompt: str | None) -> dict:
     return {"n": n, "text": text, "verb": verb, "args": args, "locks": locks,
             "prompt": prompt, "status": "queued", "slot": None, "rc": None, "note": "",
@@ -1860,6 +1913,11 @@ def _fleet_follow_up(t: dict, n: int) -> dict | None:
     if t["verb"] == "author" or (t["verb"] == "write" and values.get("MODE", "").lower() == "records"):
         return _fleet_task(n, f"apply {spec} --until-done", "apply", [spec, "--until-done"],
                            task_locks(agent("apply"), {"SECTION": spec}), None)
+    if t["verb"] == "write" and values.get("MODE", "").lower() == "move":
+        fu = _fleet_task(n, f"place {spec} --plain", "place", [spec, "--plain"],
+                         {"docx", f"section:{_norm_section(spec)}"}, None)
+        fu["move"] = t.get("move") or spec
+        return fu
     if t["verb"] in ("write", "summary") and values.get("OUTPUT", "section-file") == "section-file":
         fu = _fleet_task(n, f"place {spec}", "place", [spec], {"docx", f"section:{_norm_section(spec)}"}, None)
         if t.get("convert"):
@@ -1995,6 +2053,13 @@ def cmd_fleet(a):
                 skip_dependents(t)
             else:
                 say(f"{C['c']}plan-check{C['0']} {t['convert']}: OK")
+        elif t["verb"] == "place" and t.get("move"):
+            if t["move"] in ("7", "5.1", "8"):
+                say(f"{C['c']}moved{C['0']} {t['move']}")
+            else:
+                rec = _move_call(p, _convert_legacy(p), t["move"], "record").get("stages", {}).get("record", {})
+                say(f"{C['c']}record{C['0']} {t['move']}: {rec.get('status')} {rec.get('blocks', 0)} block(s), "
+                    f"{rec.get('open_items', 0)} open item(s)")
         elif t["verb"] == "place" and t.get("convert"):
             led = _convert_call(p, _convert_legacy(p), t["convert"], "ledger").get("stages", {}).get("ledger", {})
             say(f"{C['c']}ledger{C['0']} {t['convert']}: {led.get('status')} {json.dumps(led.get('counts', {}))}"
@@ -2340,6 +2405,7 @@ Pipeline    csa author N  (applies its change file straight away) | csa review N
 Build lane  csa write <sec>  (places its section file in the document straight away) | csa place <file|sec>
             csa sections | csa check-section <file> | csa build [--preview] [--sections ..]   (spec: docs/build-lane-spec.md)
             --no-apply on author/write stops after the agent. The one approval is yours, in Word.
+Move       csa move --prepare | N [--stage S] [--print] | --all | --status   (old-format CSA -> template as plain text)
 Convert    csa convert --prepare | --map [N] | N [--stage S] [--print] | --status | --parked   (old-format CSA -> template)
 Audit      csa audit | csa audit --status | csa audit-section SECTION=next | csa audit --report   (what the document is missing; read-only)
 Parallel    csa fleet "author 6" "evidence 7" [-f tasks.txt] [--dry-run] [--print] [--timeout MIN]
@@ -2625,6 +2691,186 @@ def cmd_convert(a):
     return _convert_run(p, a, ld, a.target)
 
 
+# ---------------------------------------------------------------- move (old-format CSA -> template, plain text)
+MOVE_STAGES = ("brief", "write", "insert", "record")
+MOVE_GENERATED = ("7", "5.1", "8")          # no writer agent: generated from the map or the open items
+
+
+def _move_call(p: dict, ld: Path, target: str, stage: str | None = None) -> dict:
+    return _fw_module_call("move", "move", target, workspace=_ws(p), legacy_docx=str(ld), stage=stage)
+
+
+def _move_generate(p: dict, ld: Path, target: str) -> dict:
+    """The section file of target 7 (glossary), 5.1 (coverage) or 8 (Discovery Required, from the open items)."""
+    if target == "8":
+        return _fw_module_call("move_record", "section8", _ws(p))
+    res = _move_call(p, ld, target, "write")
+    w = res.get("stages", {}).get("write", {})
+    return {"status": res.get("status") if res.get("status") != "OK" else w.get("status", "OK"),
+            "file": w.get("file"), "message": res.get("message", "")}
+
+
+def _move_place(p: dict, a, name: str) -> int:
+    """Insert one section file as plain text (same checks as `csa place`)."""
+    return cmd_place(argparse.Namespace(project=a.project, targets=[name], system_name=None, prepared_for=None,
+                                        prepared_by=None, doc_version=None, status=None,
+                                        keep_open=getattr(a, "keep_open", False), plain=True))
+
+
+def _move_print(p: dict, target: str) -> int:
+    work = local_path(p["work_dir"])
+    brief = work / "move" / target / "brief.md"
+    print(f"{C['b']}csa move {target}{C['0']}  (plan only; nothing is run or written)")
+    if target in MOVE_GENERATED:
+        what = {"7": "the glossary from the mapped old terms", "5.1": "Discovery Coverage from the discovery index",
+                "8": "Discovery Required from csa-work/move/open-items.csv"}[target]
+        print(f"  1. write      framework   {what}; no agent")
+        print(f"  2. insert     framework   csa place <section file> --plain")
+        if target != "8":
+            print(f"  3. record     framework   moved.csv, open-items.csv, convert/parked.md")
+        return 0
+    print(f"  1. brief      framework   python -m csa_docx.move --section {target} --stage brief   -> {brief}")
+    print(f"  2. write      agent       csa write {target} MODE=move BRIEF={brief} --headless --no-apply   (writes the section file)")
+    print(f"  3. insert     framework   csa place <section file> --plain   (structure check, plain text, Rating left empty)")
+    print(f"  4. record     framework   {work / 'move' / 'moved.csv'}, {work / 'move' / 'open-items.csv'}, {work / 'convert' / 'parked.md'}")
+    print(f"{C['d']}A split brief lists all its files in BRIEF=. Section 8 is built from the open items by `csa move 8`.{C['0']}")
+    return 0
+
+
+def _move_run(p: dict, a, ld: Path, target: str, stage: str | None) -> int:
+    if stage is not None and stage not in MOVE_STAGES:
+        die(f"unknown stage {stage!r}; use one of {', '.join(MOVE_STAGES)}")
+    wanted = MOVE_STAGES if stage is None else (stage,)
+    work = local_path(p["work_dir"])
+
+    if target in MOVE_GENERATED:
+        res = _move_generate(p, ld, target) if "write" in wanted else {"status": "OK"}
+        if "write" in wanted:
+            if res.get("status") == "EMPTY":
+                print(f"nothing mapped to {target}")
+                return 0
+            print(f"{C['b']}[write]{C['0']} {res.get('status')}  {res.get('file') or ''}")
+            if res.get("status") not in ("OK", "PLACE") or not res.get("file"):
+                print(res.get("message", ""), file=sys.stderr)
+                return 2
+        if "insert" in wanted:
+            name = Path(res["file"]).name if res.get("file") else None
+            if not name:
+                found = _fw_module_call("move_record", "section_path", _ws(p), target)
+                name = Path(found).name if found else None
+            if not name:
+                die(f"no section file for {target}; run `csa move {target} --stage write`")
+            rc = _move_place(p, a, name)
+            if rc:
+                return rc
+        if "record" in wanted and target != "8":
+            rec = _move_call(p, ld, target, "record").get("stages", {}).get("record", {})
+            print(f"{C['b']}[record]{C['0']} {rec.get('blocks', 0)} block(s), {rec.get('open_items', 0)} open item(s)")
+        return 0
+
+    briefs: list[str] = []
+    for name in wanted:
+        if name == "brief":
+            res = _move_call(p, ld, target, "brief")
+            if res.get("status") == "ERROR":
+                die(res.get("message", "brief failed"))
+            b = res.get("stages", {}).get("brief", {})
+            if res.get("status") == "EMPTY":
+                print(f"nothing mapped to {target}")
+                return 0
+            briefs = b.get("files", [])
+            print(f"{C['b']}[brief]{C['0']} {b.get('blocks', 0)} block(s)  {', '.join(briefs)}")
+        elif name == "write":
+            if not briefs:
+                briefs = sorted(str(f) for f in (work / "move" / target).glob("brief*.md")) or \
+                    _move_call(p, ld, target, "brief").get("stages", {}).get("brief", {}).get("files", [])
+            if not briefs:
+                print(f"nothing mapped to {target}")
+                return 0
+            rc = _convert_agent(p, a, "write", [target, "MODE=move", "BRIEF=" + ";".join(briefs), "--no-apply"])
+            if rc:
+                print(f"{C['r']}[write] failed (exit {rc}); stopping{C['0']}")
+                return rc
+            print(f"{C['b']}[write]{C['0']} done")
+        elif name == "insert":
+            found = _fw_module_call("move_record", "section_path", _ws(p), target)
+            if not found:
+                die(f"no section file for {target}; run `csa move {target} --stage write`")
+            rc = _move_place(p, a, Path(found).name)
+            if rc:
+                return rc
+        elif name == "record":
+            res = _move_call(p, ld, target, "record")
+            rec = res.get("stages", {}).get("record", {})
+            if res.get("status") != "OK":
+                print(f"{C['r']}[record] {res.get('message') or res.get('status')}{C['0']}", file=sys.stderr)
+                return 2
+            print(f"{C['b']}[record]{C['0']} {rec.get('blocks', 0)} block(s) moved, {rec.get('open_items', 0)} open item(s)")
+    return 0
+
+
+def _move_all(p: dict, a, ld: Path) -> int:
+    work = local_path(p["work_dir"])
+    targets = _fw_module_call("move", "order", _ws(p))
+    if not isinstance(targets, list) or not targets:
+        print("nothing mapped yet; run `csa move --prepare`")
+        return 0
+    queue = [t for t in targets if t not in ("8", "2.1")] + ["8"] + (["2.1"] if "2.1" in targets else [])
+    done = 0
+    for t in queue:
+        print(f"\n{C['b']}=== csa move {t} ==={C['0']}")
+        if t == "8" and not _convert_csv(work / "move" / "open-items.csv"):
+            print("no open items: Section 8 not needed")
+            continue
+        try:
+            rc = _move_run(p, a, ld, t, None)
+        except SystemExit as e:
+            rc = e.code if isinstance(e.code, int) else 1
+        if rc:
+            print(f"{C['r']}csa move {t} failed (exit {rc}); stopping. Fix it, then `csa move {t}` and `csa move --all` again.{C['0']}")
+            return rc
+        done += 1
+    items = _convert_csv(work / "move" / "open-items.csv")
+    print(f"\n{C['g']}moved {done} subsection(s){C['0']}; {len(items)} open item(s) in {work / 'move' / 'open-items.csv'}")
+    return 0
+
+
+def cmd_move(a):
+    p = project(a.project); banner(p)
+    if a.print and a.target:
+        return _move_print(p, a.target)
+    chosen = [bool(a.prepare), bool(a.all), bool(a.status), bool(a.target)]
+    if sum(chosen) != 1:
+        die("usage: csa move --prepare | N [--stage S] [--print] | --all | --status")
+    ld = _convert_legacy(p)
+    work = local_path(p["work_dir"])
+    if a.prepare:
+        res = _fw_module_call("move", "move_prepare", _ws(p), str(ld))
+        if res.get("status") != "OK":
+            print(res.get("message", res), file=sys.stderr)
+            return 2
+        m = res["map"]
+        print(f"{C['g']}prepared{C['0']} {ld.name}: {m['blocks']} blocks, {m['mapped']} mapped, {m['unmapped']} unmapped, "
+              f"{m['low_confidence']} low confidence; {res['parked']} parked, {res['figures']} figures")
+        print(f"  map report: {work / 'legacy' / 'map-report.md'}")
+        print(f"  overrides:  {work / 'legacy' / 'legacy-map.csv'}  (checked before the defaults)")
+        return 0
+    if not (work / "legacy" / "map.csv").is_file():
+        die("no map yet; run `csa move --prepare`")
+    if a.status:
+        rows = _fw_module_call("move", "status", _ws(p))
+        if not isinstance(rows, list) or not rows:
+            print("nothing mapped yet; run `csa move --prepare`")
+            return 0
+        print(f"{'target':<8}{'blocks':>7}  {'section file':<14}{'placed':<18}{'open items':>10}")
+        for r in rows:
+            print(f"{r['target']:<8}{r['blocks']:>7}  {r['section_file'] or '-':<14}{r['placed'] or '-':<18}{r['open_items']:>10}")
+        return 0
+    if a.all:
+        return _move_all(p, a, ld)
+    return _move_run(p, a, ld, a.target, a.stage)
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="csa", description="CSA agents, skills and framework.", epilog=HELP,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -2728,6 +2974,15 @@ def main(argv=None) -> int:
     s.add_argument("--stage", choices=CONVERT_STAGES); s.add_argument("--no-apply", action="store_true")
     s.add_argument("--cli", choices=["codex", "claude", "hermes"])
     s.add_argument("--print", action="store_true", help="show the stages and agent commands; run and write nothing")
+    s = sp("move", cmd_move, help="move an old-format CSA into the template as plain text, one subsection at a time")
+    s.add_argument("target", nargs="?", help="subsection to move, e.g. 3.4, 5.3, 7 (Glossary), 8 (Discovery Required), 5.1, 2.1")
+    s.add_argument("--prepare", action="store_true", help="extract and map the old document (no facts, no audit)")
+    s.add_argument("--all", action="store_true", help="every mapped subsection in order, then Section 8, then 2.1; stops on the first failure")
+    s.add_argument("--status", action="store_true")
+    s.add_argument("--stage", choices=MOVE_STAGES)
+    s.add_argument("--cli", choices=["codex", "claude", "hermes"])
+    s.add_argument("--keep-open", action="store_true", help="do not save and close the document in Word when it is open")
+    s.add_argument("--print", action="store_true", help="show the stages and the agent command; run and write nothing")
     s = sp("lint", cmd_lint); s.add_argument("section", nargs="?", type=int); s.add_argument("--path"); s.add_argument("--heading")
     s.add_argument("rest", nargs=argparse.REMAINDER)
     s = sp("check", cmd_check); s.add_argument("--final", action="store_true"); s.add_argument("--docx"); s.add_argument("rest", nargs=argparse.REMAINDER)

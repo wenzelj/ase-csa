@@ -21,6 +21,7 @@ section 5, steps 4 and 5.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -31,7 +32,7 @@ import zipfile
 from pathlib import Path
 
 from . import tools
-from .run_state import read_completed_ids, state_path
+from .run_state import read_completed_ids, remove_edit_ids, state_path
 
 #: Comment markup the build's apply step removes for a preview (S60), copied
 #: from the new_csa.py script so this module stays importable without it.
@@ -142,13 +143,15 @@ def append_place_records(workspace, records: dict, app: str, source: str) -> dic
     Report`` block (the apply engine rewrites everything from its
     ``## Changes Report`` on). Every file is checked with ``check_change``.
 
-    Returns ``{"change_files": {N: path}, "new_edits": {N: [edit ids]}}``.
+    Returns ``{"change_files": {N: path}, "new_edits": {N: [edit ids]}, "new_files": [paths this
+    call created]}``.
     """
     workspace = Path(workspace).resolve()
     reviews = workspace / "01 Current State AS Built" / "01 Final Version" / "reviews"
     reviews.mkdir(parents=True, exist_ok=True)
     files: dict[str, str] = {}
     new_edits: dict[str, list[str]] = {}
+    new_files: list[str] = []
     for section in sorted(records, key=int):
         existing = sorted(f for f in reviews.glob(f"ChangesCSA_*_Section{section}.md"))
         change_file = existing[0] if existing else reviews / f"ChangesCSA_{app}_Section{section}.md"
@@ -158,6 +161,8 @@ def append_place_records(workspace, records: dict, app: str, source: str) -> dic
             record["edit_id"] = f"S{section}-E{n}"
             ids.append(record["edit_id"])
         block = "\n".join(part for record in records[section] for part in (_record_md(record), "---", ""))
+        if not change_file.is_file():
+            new_files.append(str(change_file))
         if change_file.is_file():
             text = change_file.read_text(encoding="utf-8")
             m = _REPORT_HEADING_RE.search(text)
@@ -180,25 +185,44 @@ def append_place_records(workspace, records: dict, app: str, source: str) -> dic
         _check_file(change_file)
         files[section] = str(change_file)
         new_edits[section] = ids
-    return {"change_files": files, "new_edits": new_edits}
+    return {"change_files": files, "new_edits": new_edits, "new_files": new_files}
 
 
-def _strip_comments(docx: Path) -> None:
-    """Remove every Word comment from the DOCX in place (write to a temp
-    file, then replace): delete the comment-reference runs and the
-    ``w:commentRangeStart``/``w:commentRangeEnd`` marks from
-    ``word/document.xml``, and write an empty ``<w:comments>`` root to
-    ``word/comments.xml``."""
+def _strip_comments(docx: Path, only_ids: set[str] | None = None) -> None:
+    """Remove Word comments from the DOCX in place (write to a temp file, then replace).
+
+    Without ``only_ids`` every comment goes: the comment-reference runs and the
+    ``w:commentRangeStart``/``w:commentRangeEnd`` marks leave ``word/document.xml`` and
+    ``word/comments.xml`` becomes an empty ``<w:comments>`` root. With ``only_ids`` only
+    the comments with those ids go (their reference runs, range marks and entries), and
+    every other comment stays exactly as it was."""
     with zipfile.ZipFile(docx) as z:
         names = z.namelist()
         parts = {n: z.read(n) for n in names}
     xml = parts["word/document.xml"].decode("utf-8")
-    xml = _COMMENT_REF_RUN_RE.sub("", xml)
-    xml = _COMMENT_REF_SIMPLE_RE.sub("", xml)
-    xml = _COMMENT_RANGE_RE.sub("", xml)
+    if only_ids is None:
+        xml = _COMMENT_REF_RUN_RE.sub("", xml)
+        xml = _COMMENT_REF_SIMPLE_RE.sub("", xml)
+        xml = _COMMENT_RANGE_RE.sub("", xml)
+        if "word/comments.xml" in names:
+            parts["word/comments.xml"] = b'<w:comments xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>'
+    else:
+        if not only_ids or "word/comments.xml" not in names:
+            return
+        ids = "|".join(sorted(only_ids))
+        xml = re.sub(r'<w:r(?:\s[^>]*)?>(?:(?!</w:r>).)*?<w:commentReference\b[^>]*\bw:id="(?:%s)"[^>]*/>\s*</w:r>' % ids,
+                     "", xml, flags=re.S)
+        xml = re.sub(r'<w:commentReference\b[^>]*\bw:id="(?:%s)"[^>]*/>' % ids, "", xml)
+        xml = re.sub(r'<w:commentRange(?:Start|End)\b[^>]*\bw:id="(?:%s)"[^>]*/>' % ids, "", xml)
+        cx = parts["word/comments.xml"].decode("utf-8")
+        parts["word/comments.xml"] = re.sub(
+            r'<w:comment\b[^>]*?\bw:id="(?:%s)"[^>]*?(?:/>|>.*?</w:comment>)' % ids, "", cx, flags=re.S).encode("utf-8")
     parts["word/document.xml"] = xml.encode("utf-8")
-    if "word/comments.xml" in names:
-        parts["word/comments.xml"] = b'<w:comments xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>'
+    _write_parts(docx, names, parts)
+
+
+def _write_parts(docx: Path, names: list[str], parts: dict[str, bytes]) -> None:
+    """Rewrite the DOCX in place from ``parts`` (write to a temp file, then replace)."""
     fd, tmp_name = tempfile.mkstemp(dir=str(docx.parent), suffix=".tmp")
     os.close(fd)
     tmp = Path(tmp_name)
@@ -210,6 +234,31 @@ def _strip_comments(docx: Path) -> None:
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
+
+
+def _strip_edit_bookmarks(docx: Path, edit_ids) -> None:
+    """Remove the ``CSA_<edit id>`` bookmarks the apply step leaves on the paragraphs it edited.
+    A plain placement keeps no edit records, so a bookmark left behind would capture the next
+    edit that is given the same ID."""
+    from .bookmarks import sanitise_bookmark_name
+    names = {sanitise_bookmark_name(e) for e in edit_ids}
+    if not names:
+        return
+    with zipfile.ZipFile(docx) as z:
+        zip_names = z.namelist()
+        parts = {n: z.read(n) for n in zip_names}
+    xml = parts["word/document.xml"].decode("utf-8")
+    ids = {m[1] for m in re.finditer(r'<w:bookmarkStart\b[^>]*?\bw:id="(\d+)"[^>]*?\bw:name="([^"]*)"[^>]*/>', xml)
+           if m[2] in names}
+    ids |= {m[2] for m in re.finditer(r'<w:bookmarkStart\b[^>]*?\bw:name="([^"]*)"[^>]*?\bw:id="(\d+)"[^>]*/>', xml)
+            if m[1] in names}
+    if not ids:
+        return
+    alt = "|".join(sorted(ids))
+    xml = re.sub(r'<w:bookmarkStart\b[^>]*\bw:id="(?:%s)"[^>]*/>' % alt, "", xml)
+    xml = re.sub(r'<w:bookmarkEnd\b[^>]*\bw:id="(?:%s)"[^>]*/>' % alt, "", xml)
+    parts["word/document.xml"] = xml.encode("utf-8")
+    _write_parts(docx, zip_names, parts)
 
 
 def _comment_ids(docx: Path) -> set[str]:
@@ -220,43 +269,57 @@ def _comment_ids(docx: Path) -> set[str]:
         return set(re.findall(r'<w:comment\b[^>]*?\bw:id="(\d+)"', z.read("word/comments.xml").decode("utf-8")))
 
 
-def _strip_new_comments(docx: Path, keep: set[str]) -> None:
-    """Remove the Word comments whose id is not in ``keep`` (their anchors and comment
-    parts), leaving every other comment untouched. Rewrites the DOCX in place."""
-    with zipfile.ZipFile(docx) as z:
-        names = z.namelist()
-        parts = {n: z.read(n) for n in names}
-    if "word/comments.xml" not in parts:
-        return
-    drop = _comment_ids(docx) - keep
+_ID_LIST_RE = re.compile(r"^((?:[A-Za-z ]+: )?)(S\d+-[EA]\d+(?:, S\d+-[EA]\d+)*)$")
+
+
+def _without_ids(line: str, drop: set[str]) -> str | None:
+    """``line`` without ``drop`` in it when it is a comma-separated list of edit IDs (optionally
+    after a ``Label: `` prefix, ``None`` standing for an empty list); ``None`` for the result line
+    of a dropped edit. Other lines are returned as is."""
+    r = re.match(r"^- (S\d+-[EA]\d+): ", line)
+    if r:
+        return None if r[1] in drop else line
+    m = _ID_LIST_RE.match(line)
+    if not m:
+        return line
+    kept = [i for i in m[2].split(", ") if i not in drop]
+    return m[1] + (", ".join(kept) if kept else "None")
+
+
+def _drop_plain_records(change_file: Path, docx: Path, section: str, edit_ids: list[str]) -> None:
+    """Leave no trace of a plain placement: remove its edit records from the change file (and
+    the per-edit hashes of its ``.approval.json``) and its IDs from the section's run-state.
+    Earlier edits and their run-state entries stay as they were."""
+    drop = set(edit_ids)
     if not drop:
         return
-    xml = parts["word/document.xml"].decode("utf-8")
-    ids = "|".join(sorted(drop))
-    xml = re.sub(r'<w:r(?:\s[^>]*)?>(?:(?!</w:r>).)*?<w:commentReference\b[^>]*\bw:id="(?:%s)"[^>]*/>\s*</w:r>' % ids,
-                 "", xml, flags=re.S)
-    xml = re.sub(r'<w:commentReference\b[^>]*\bw:id="(?:%s)"[^>]*/>' % ids, "", xml)
-    xml = re.sub(r'<w:commentRange(?:Start|End)\b[^>]*\bw:id="(?:%s)"[^>]*/>' % ids, "", xml)
-    parts["word/document.xml"] = xml.encode("utf-8")
-    cx = parts["word/comments.xml"].decode("utf-8")
-    cx = re.sub(r'<w:comment\b[^>]*?\bw:id="(?:%s)"[^>]*?(?:/>|>.*?</w:comment>)' % ids, "", cx, flags=re.S)
-    parts["word/comments.xml"] = cx.encode("utf-8")
-    fd, tmp_name = tempfile.mkstemp(dir=str(docx.parent), suffix=".tmp")
-    os.close(fd)
-    tmp = Path(tmp_name)
-    try:
-        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as out:
-            for name in names:
-                out.writestr(name, parts[name])
-        os.replace(tmp, docx)
-    except BaseException:
-        tmp.unlink(missing_ok=True)
-        raise
+    if change_file.is_file():
+        text = change_file.read_text(encoding="utf-8")
+        for edit_id in sorted(drop):
+            m = re.search(rf"^#{{2,4}}\s+(?:REJECTED\s+)?{re.escape(edit_id)}\b.*$", text, re.M)
+            while m:
+                nxt = re.search(r"^#{1,3}\s", text[m.end():], re.M)
+                end = m.end() + nxt.start() if nxt else len(text)
+                text = text[:m.start()] + text[end:]
+                m = re.search(rf"^#{{2,4}}\s+(?:REJECTED\s+)?{re.escape(edit_id)}\b.*$", text, re.M)
+        m = _REPORT_HEADING_RE.search(text)
+        if m:   # the apply engine's report lists every edit it applied, plain ones included
+            text = text[:m.start()] + "\n".join(
+                l for l in (_without_ids(line, drop) for line in text[m.start():].split("\n")) if l is not None)
+        change_file.write_text(text, encoding="utf-8")
+    approval = change_file.parent / (change_file.stem + ".approval.json")
+    if approval.is_file():
+        data = json.loads(approval.read_text(encoding="utf-8"))
+        data["hashes"] = {k: v for k, v in (data.get("hashes") or {}).items() if k not in drop}
+        data["rejected"] = [k for k in (data.get("rejected") or []) if k not in drop]
+        approval.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    remove_edit_ids(state_path(docx.parent, section), drop)
 
 
 def apply_build_records(workspace, sections, *, app: str, track_changes: bool, build_id: str,
                         docx: Path | None = None, change_files: dict | None = None,
-                        plain: bool = False) -> dict:
+                        plain: bool = False, new_edits: dict | None = None,
+                        new_files: list | None = None) -> dict:
     """Apply the written change files for each framework section.
 
     ``app`` is the system name used by :func:`write_build_records` to name
@@ -272,6 +335,12 @@ def apply_build_records(workspace, sections, *, app: str, track_changes: bool, b
     comments and the change files in place for ``csa review`` and
     ``csa cleanup``. Returns ``{"sections": {N: applied_count}, "records":
     total}``.
+
+    ``plain`` (``csa place --plain``) applies the edits untracked to the real document,
+    removes only the evidence comments this call added, and leaves no records behind:
+    ``new_edits`` (``{N: [edit ids]}``) are taken out of the change file, its approval
+    record and the run-state, and a change file listed in ``new_files`` (made by this
+    placement) is deleted when no edits are left in it.
     """
     workspace = Path(workspace).resolve()
     fv = workspace / "01 Current State AS Built" / "01 Final Version"
@@ -287,6 +356,7 @@ def apply_build_records(workspace, sections, *, app: str, track_changes: bool, b
             raise RuntimeError("plain placement needs the working DOCX")
         comments_before = _comment_ids(fixed_docx)
     applied_by_section = {}
+    plain_files: dict[str, Path] = {}
     for section in sections:
         # Pass the change file and DOCX explicitly (layout fixed by build.prepare).
         given = (change_files or {}).get(str(section))
@@ -296,6 +366,8 @@ def apply_build_records(workspace, sections, *, app: str, track_changes: bool, b
                 f"section {section}: no change file in {fv / 'reviews'} "
                 f"(expected ChangesCSA_*_Section{section}.md)")
         change_file = matches[0]
+        if plain:
+            plain_files[str(section)] = change_file
         docx = fixed_docx or docx_dir / f"Current State Assessment - {app}.docx"
         applied = 0
         while True:
@@ -323,7 +395,14 @@ def apply_build_records(workspace, sections, *, app: str, track_changes: bool, b
         applied_by_section[str(section)] = len(completed)
 
     if plain:
-        _strip_new_comments(docx, comments_before)
+        _strip_comments(docx, _comment_ids(docx) - comments_before)
+        _strip_edit_bookmarks(docx, [e for ids in (new_edits or {}).values() for e in ids])
+        for section, change_file in plain_files.items():
+            _drop_plain_records(change_file, docx, section, list((new_edits or {}).get(section) or []))
+            if (str(change_file) in {str(f) for f in (new_files or [])} and change_file.is_file()
+                    and not re.search(r"^#{2,4}\s+(?:REJECTED\s+)?S\d+-E\d+\b", change_file.read_text(encoding="utf-8"), re.M)):
+                change_file.unlink()
+                (change_file.parent / (change_file.stem + ".approval.json")).unlink(missing_ok=True)
     elif not track_changes:
         if docx is None:
             raise RuntimeError("no working DOCX recorded by the apply step")

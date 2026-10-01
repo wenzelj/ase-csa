@@ -242,9 +242,12 @@ def _resolve_section_file(workspace: Path, path: Path) -> dict:
             if di is None:
                 raise ValueError(f"no Heading 3 {_DISCOVERY_HEADING!r} under {heading_entry['id']}")
             di_sp = di["section_path"]
+            # Only the first table under the heading is the Discovery table; 3.1 and 3.2 have a second
+            # table (hosts, accounts) under the same heading whose rows must not count as free rows.
             rows = [e for e in entries
                     if e.get("kind") == "table_row"
-                    and (e.get("section_path") or "") == di_sp]
+                    and (e.get("section_path") or "") == di_sp
+                    and "-T1-R" in (e.get("id") or "")]
             data = rows[1:]  # first row is the header row
             sc = _scaffold_entry(entries, "rows", _DISCOVERY_HEADING, len(cells_lists), di) if len(cells_lists) != len(data) else None
             _fill_items(entries, items, data, _DISCOVERY_HEADING, cells_lists, sc)

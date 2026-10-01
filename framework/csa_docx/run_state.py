@@ -36,6 +36,28 @@ def read_completed_ids(path: Path) -> set[str]:
     return completed
 
 
+def remove_edit_ids(path: Path, edit_ids) -> None:
+    """Drop ``edit_ids`` from a run-state file: the edit inventory, the completed / iteration /
+    blocked / unresolved / skipped lists, the next edit ID and the per-edit result lines.
+    Every other edit and line is left as it was."""
+    drop = set(edit_ids)
+    if not drop or not path.exists():
+        return
+    lines = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        m = re.match(r"^(- (?:Full edit inventory|Current iteration edit IDs|Completed edit IDs|Already applied edit IDs"
+                     r"|Blocked edit IDs|Unresolved edit IDs|Skipped edit IDs)): (.*)$", line)
+        if m:
+            kept = [v.strip() for v in m[2].split(",") if v.strip() and v.strip() != "None" and v.strip() not in drop]
+            line = f"{m[1]}: {', '.join(kept) or 'None'}"
+        elif re.match(r"^- Next edit ID: (.*)$", line) and line.split(":", 1)[1].strip() in drop:
+            line = "- Next edit ID: None"
+        elif (r := re.match(r"^- (S\d+-[EA]\d+): ", line)) and r[1] in drop:
+            continue
+        lines.append(line)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def write_state(path: Path, records: list[ChangeRecord], summary: ApplySummary) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     inventory = ", ".join(record.edit_id for record in records) or "None"

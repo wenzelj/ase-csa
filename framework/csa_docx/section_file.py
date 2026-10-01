@@ -95,6 +95,21 @@ def _content_kind(content: list[str]) -> str:
     return "prose"
 
 
+def _open_items(content: list[str]) -> list[dict]:
+    """The ``- <requirement id or aspect>: <what is unknown>`` lines of an ``open_items`` block."""
+    items = []
+    for line in content:
+        s = line.strip()
+        if not s.startswith("- "):
+            continue
+        ref, sep, text = s[2:].partition(":")
+        if sep and text.strip():
+            items.append({"ref": ref.strip(), "text": text.strip()})
+        elif s[2:].strip():
+            items.append({"ref": "", "text": s[2:].strip()})
+    return items
+
+
 def _split_row(line: str) -> list[str]:
     """Cells of a pipe table row, with the leading/trailing pipes removed."""
     s = line.strip()
@@ -130,6 +145,8 @@ def parse_section_file(path) -> dict:
         "heading": heading,
         "status": meta.get("status") or "draft",
         "meta": meta,
+        "mode": meta.get("mode", ""),
+        "open_items": [],
         "requirements": [],
         "bullets": {},
         "paragraphs": {},
@@ -140,6 +157,9 @@ def parse_section_file(path) -> dict:
     }
 
     for name, content in _sections(body):
+        if result["mode"] == "move" and name.lower().replace(" ", "_") == "open_items":
+            result["open_items"] += _open_items(content)
+            continue
         result["order"].append(name)
         kind = _content_kind(content)
 

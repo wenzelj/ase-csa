@@ -75,6 +75,25 @@ When `BRIEF=` is given (`csa convert <N>`), read the brief after the required re
 - Executive Summary (2.1): write it last, only from the placed sections: the system and its assessed scope, critical dependencies, isolation posture, major gaps, and the limits of the evidence. Do not recreate the legacy Discovery Summary.
 - After the section file, write `WORK_DIR/convert/<N>/outcomes.csv` (header `id,outcome,target,reason`) only for legacy L-ids in the brief that the answer plan does not cover: `MOVED`, `DUPLICATE` or `NOT_USED` with a one-line reason.
 
+## Move mode (MODE=move)
+
+When `MODE=move` (`csa move <N>`), write one subsection straight from the old content in `BRIEF=`. Read the brief after the required reading and nothing else: no evidence matrix, no discovery index, no research. The document is reworked afterwards, so speed and fidelity to the brief matter more than checking. Do not edit the Word document.
+
+- Facts, not narrative; each fact once; full sentences.
+- No recommendations (they go to `parked.md`).
+- Keep qualifiers: "not tested", "not observed", "not confirmed".
+- Never mention the previous assessment, its headings or version.
+- Do not carry old readiness scores. Leave the Rating cell empty on every requirement row.
+- Every requirement row of the subsection is present, even when its Current State is `Not stated in previous assessment`. Write that same text for a Discovery Information aspect the brief does not cover.
+- Where the old content gives no Drawbridge Impact, write one sentence that the effect has not been established (for example "The effect on X if Y becomes unreachable has not been established."). Do not refer to the previous assessment in prose; `Not stated in previous assessment` is for table cells only.
+- Content belonging to another subsection is left out (it stays in `moved.csv` under its mapped target).
+- No IP addresses in prose; host detail goes in the table.
+- Put `mode: move` in the front matter, with `status: draft`. No Evidence table and no E-ids are needed.
+- A domain that has a second table (3.1 hosts and roles, 3.2 accounts, groups and service accounts) needs it as its own `##` section named exactly as the template names it, with the template's columns. Fill it with one row per account, group or host the brief states; never leave placeholder rows. Do not repeat these rows in Discovery Information.
+- End the file with an `## open_items` block: one line `- <requirement id or aspect>: <what is unknown>` for each open question the old content leaves. `csa move` collects these into Section 8.
+- Run `csa check-section <file>` and fix every ERROR and every MISSING_TABLE warning before returning. In move mode an empty Rating is not an error.
+- Stop there. Write only the section file: do not run `csa place`, `csa move --stage insert` or `--stage record`, and do not edit the Word document. `csa move` inserts and records the section afterwards.
+
 ## Output
 
 The drafted section (or executive summary) written to `WORK_DIR/drafts/`, plus the brief change record required by the skill. Stop after reporting.
