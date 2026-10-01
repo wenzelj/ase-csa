@@ -64,10 +64,34 @@ def _manifest_entries(workspace: Path) -> tuple[Path, list[dict]]:
     return target.docx, payload.get("entries") or []
 
 
-def _framework_section(section_path: str) -> str:
-    """Framework section number of an entry: the Heading 1 ordinal, i.e. the
-    number after ``@H`` in the heading ID minus 1 (``@H4.5`` gives ``"3"``)."""
-    return str(int(section_path.split(".")[0]) - 1)
+# Visible (framework) section number of each Heading 1, by heading text. This is the number people type
+# (`csa author 3.4`, `csa place`), the same table bin/csa uses to resolve visible numbers; stable-ID ordinals
+# differ from it when a template has unnumbered or extra Heading 1s.
+_H1_VISIBLE = {
+    "document control": "1",
+    "executive overview": "2",
+    "requirement domain assessments": "3",
+    "governance note and next steps": "4",
+    "migration discovery": "5",
+    "ot 3.5 destination boundary reference table": "6",
+    "glossary and acronyms": "7",
+    "discovery required": "8",
+    "appendix e: discovery required": "8",
+}
+
+
+def _framework_section(section_path: str, entries: list[dict] | None = None) -> str:
+    """Framework section number of an entry: the visible number of its Heading 1 (``Requirement Domain
+    Assessments`` is always ``"3"``, whatever its stable-ID ordinal). When the Heading 1 is not one of the
+    template's, fall back to the ordinal minus 1 (the old layout, where ``@H4.5`` gives ``"3"``)."""
+    ordinal = section_path.split(".")[0]
+    for e in entries or ():
+        if e.get("kind") == "heading" and e.get("level") == 1 and str(e.get("section_path")) == ordinal:
+            known = _H1_VISIBLE.get(_norm(e.get("text") or "").casefold())
+            if known:
+                return known
+            break
+    return str(int(ordinal) - 1)
 
 
 def _norm(text: str) -> str:
@@ -574,16 +598,17 @@ def plan_records(workspace, section_paths) -> dict[str, list[dict]]:
     :class:`ValueError` naming the statement; run the scaffold step first.
     """
     workspace = Path(workspace).resolve()
+    _, all_entries = _manifest_entries(workspace)
     grouped: dict[str, list[dict]] = {}
     for path in section_paths:
         path = Path(path)
         resolved = _resolve_section_file(workspace, path)
         for entry, key, text, _scaffold in resolved["items"]:
             if resolved["block"] == "discovery-required":
-                # Appendix E is keyed by the template's own section number, not the H1 ordinal - 1.
+                # Appendix E is keyed by the template's own section number.
                 section_no = str(_load_template_blocks().get("discovery_required", {}).get("number", "8"))
             else:
-                section_no = _framework_section(entry["section_path"])
+                section_no = _framework_section(entry["section_path"], all_entries)
             grouped.setdefault(section_no, []).append(
                 _record(resolved, entry, key, text, path.name)
             )

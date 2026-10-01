@@ -299,7 +299,8 @@ def framework_python() -> str:
         exe = shutil.which(os.environ["CSA_PYTHON"]) or os.environ["CSA_PYTHON"]
         return exe
     cands = settings().get("python", "python3")
-    for c in [x.strip() for x in cands.split(",") if x.strip()]:
+    venv = AGENTS_DIR / ".venv" / "bin" / "python"          # the framework's own environment (has pytest) comes first
+    for c in [str(venv)] + [x.strip() for x in cands.split(",") if x.strip()]:
         exe = c if os.path.isabs(c) and os.path.exists(c) else shutil.which(c)
         if not exe:
             continue
@@ -386,7 +387,8 @@ def _archived(path: Path, root: Path) -> bool:
         parts = path.relative_to(root).parts[:-1]
     except ValueError:
         parts = path.parts[:-1]
-    return any("archive" in x.lower() or x.lower().lstrip().startswith("old") or x == "_to_delete" for x in parts)
+    return any("archive" in x.lower() or x.lower().lstrip().startswith("old") or x == "_to_delete"
+               or x.lower().startswith("backup") for x in parts)
 
 
 def all_change_files(p: dict) -> dict[str, list[Path]]:
@@ -1221,7 +1223,13 @@ def cmd_passthrough(name):
 
 
 def cmd_test(a):
-    return subprocess.call([framework_python(), "-m", "pytest", "-q", str(FRAMEWORK / "csa_docx/tests"), *a.rest], cwd=str(FRAMEWORK))
+    py = framework_python()
+    if subprocess.run([py, "-c", "import pytest"], capture_output=True).returncode != 0:
+        die(f"pytest is not installed for {py}. Set it up once:\n"
+            f"  python3 -m venv \"{AGENTS_DIR / '.venv'}\" && \"{AGENTS_DIR / '.venv' / 'bin' / 'pip'}\" install pytest\n"
+            "then run `csa test` again (csa uses .agents/.venv automatically).")
+    return subprocess.call([py, "-m", "pytest", "-q", "-p", "no:cacheprovider", str(FRAMEWORK / "csa_docx/tests"), *a.rest],
+                           cwd=str(FRAMEWORK))
 
 
 def cmd_mcp(a):

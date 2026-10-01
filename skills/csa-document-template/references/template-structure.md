@@ -1,6 +1,6 @@
 # CSA template structure reference
 
-Template: `CSA Template/CSA_Template_v<highest>.dotx` (v1.7 at time of writing; v1.5 structure and colours with refined spacing and landscape Appendix E). Its own `README.md` is the human guide; this file is the agent-facing map. Stable-ID prefixes below are illustrative: always resolve IDs with `lookupStableId` or the CLI's visible-section resolver, never derive them from printed numbering.
+Template: `CSA Template/CSA_Template_v<highest>.dotx` (v1.5 at time of writing; the current template and landscape Appendix E). Its own `README.md` is the human guide; this file is the agent-facing map. Stable-ID prefixes below are illustrative: always resolve IDs with `lookupStableId` or the CLI's visible-section resolver, never derive them from printed numbering.
 
 ## Section skeleton (every H1 is a framework "Section N" and starts a new page)
 
@@ -66,7 +66,7 @@ The template carries 14 Word comments by author `CSA Template` (contents list, c
 
 ## What the framework can and cannot do to a template CSA (tested 21 Sep 2026, Python 3.10 on Linux, framework as vendored)
 
-Works, and keeps styles: replace a requirement row's Current State and Rating (`Observed:` / `Assessment:` lines, positional columns 3 and 4); replace a whole table row with a pipe row; replace a placeholder bullet or paragraph (List Bullet style and numbering are kept; tracked change); prepareDocument and lookupStableId (in v1.7 Appendix A, Appendix B and Appendix E resolve as framework Sections 6, 7 and 8, with Discovery Required at `@H8`).
+Works, and keeps styles: replace a requirement row's Current State and Rating (`Observed:` / `Assessment:` lines, positional columns 3 and 4); replace a whole table row with a pipe row; replace a placeholder bullet or paragraph (List Bullet style and numbering are kept; tracked change); prepareDocument and lookupStableId (in v1.5 Appendix A, Appendix B and Appendix E resolve as framework Sections 6, 7 and 8, with Discovery Required at `@H8`).
 
 Does not work or loses formatting: `Replace the table content` cannot target a table by stable ID (BLOCKED: "Could not locate table caption"); a multi-bullet `Text:` block (`- a` / `- b`) creates List Paragraph paragraphs **without** bullet numbering, and a leading `- ` can survive as literal text; `Insert after` a bullet creates a plain paragraph with no bullet. Adding or removing table rows, bullets, headings or sections is out of the framework's scope. Hence `scaffold_csa.py`: set the number of placeholder rows/bullets first, then replace each placeholder by ID.
 
