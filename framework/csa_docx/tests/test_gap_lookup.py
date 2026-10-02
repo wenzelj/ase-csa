@@ -85,3 +85,28 @@ def test_a_confirmed_gap_lists_what_was_considered_and_is_not_offered_again(tmp_
     run, _ = _fake_run([row], [], [])
     monkeypatch.setattr(gl, "_run", run)
     assert gl.lookup_gap(tmp_path, "DR-X-01", "Where are the domain controllers")["verdict"] == "NOT_FOUND"
+
+
+def test_a_hit_must_be_about_the_gap_not_just_share_a_generic_word():
+    dns02 = ("Confirm the network zone of the domain controllers used as resolvers and the names of the IPT resolvers. "
+             "The network zone of the site domain controllers used as resolvers is not established by the captures.")
+    junk = [
+        "Description : Maintains date and time synchronization on all clients and servers in the network. If this service is stopped",
+        "Profile : Domain, Public | DisplayName : Network Discovery (UPnP-In) | DisplayName : Network Discovery (UPnP-Out)",
+        "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Microsoft SQL Server\\160 | HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Microsoft SQL Server\\160\\Bootstrap",
+        "Detailed Zones and Conduits | Analyse network policies to enable enforcement of OT35 authentication and access requirements",
+    ]
+    assert not any(gl.relevant(x, dns02) for x in junk)
+    good = "Resolvers for the site domain controllers: the IPT resolvers sit in the OT network zone and are named IPTPRDDNS01."
+    assert gl.relevant(good, dns02)
+    # a host named in the gap ties the hit to the gap
+    assert gl.relevant("ROKPRDOPS110 RevViewer Jump Host RDP to OT only", "Role of ROKPRDOPS110")
+    assert not gl.relevant("MOTPRDREV101 Reveloc application", "Role of ROKPRDOPS110")
+
+
+def test_hits_that_are_not_about_the_gap_are_not_added_to_the_matrix(tmp_path, monkeypatch):
+    off = dict(HIT, evidence_excerpt="Profile : Domain, Public | DisplayName : Network Discovery (UPnP-In) | DisplayName : x")
+    run, calls = _fake_run([], [off], ["E-100"])
+    monkeypatch.setattr(gl, "_run", run)
+    res = gl.lookup_gap(tmp_path, "DR-DNS-02", "Confirm the network zone of the domain controllers used as resolvers")
+    assert res["verdict"] == "NOT_FOUND" and not [c for c in calls if "append" in c]

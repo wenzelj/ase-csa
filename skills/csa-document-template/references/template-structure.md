@@ -1,6 +1,6 @@
 # CSA template structure reference
 
-Template: `CSA Template/CSA_Template_v<highest>.dotx` (v1.5 at time of writing; the current template and landscape Appendix E). Its own `README.md` is the human guide; this file is the agent-facing map. Stable-ID prefixes below are illustrative: always resolve IDs with `lookupStableId` or the CLI's visible-section resolver, never derive them from printed numbering.
+Template: `CSA Template/CSA_Template_v<highest>.dotx` (v1.6 at time of writing: v1.5 plus a hidden `_csa_<KEY>` identity bookmark on every heading, which the document spec (`csa spec`) uses instead of numbers; the content, styles and landscape Appendix E are v1.5's). Its own `README.md` is the human guide; this file is the agent-facing map. Stable-ID prefixes below are illustrative: always resolve IDs with `lookupStableId` or the CLI's visible-section resolver, never derive them from printed numbering.
 
 ## Section skeleton (every H1 is a framework "Section N" and starts a new page)
 

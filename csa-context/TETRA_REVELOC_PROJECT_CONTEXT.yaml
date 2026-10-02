@@ -72,6 +72,10 @@ project:
     - network_traffic_flow_matrix
     - impact_assessment_report
 
+# Application knowledge skills every content agent loads (csa-core-rules.md).
+application_skills:
+  - reveloc-csa-skill
+
 working_preferences:
   evidence_only_factual_claims: true
   expand_abbreviations_on_first_use: true

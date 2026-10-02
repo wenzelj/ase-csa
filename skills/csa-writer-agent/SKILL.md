@@ -13,7 +13,7 @@ The agent definition is authoritative. Read it in full and follow it; do not wor
 /Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-writer-agent.md
 ```
 
-Inputs: `SECTION*`, `MODE=SECTION`, `OUTPUT=section-file` (`*` = required, `NAME=value` = default).
+Inputs: `SECTION*`, `MODE=SECTION`, `OUTPUT=section-file`, `BRIEF` (`*` = required, `NAME=value` = default).
 
 ## Project
 

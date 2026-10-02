@@ -122,6 +122,69 @@ def brief_findings(text: str, records) -> list[dict]:
     return out
 
 
+BRIEF_CODES = ("NO_BRIEF", "BRIEF_NO_QUESTIONS", "UNTAGGED_FACT", "BRIEF_ITEM_UNANSWERED")
+
+
+def strict_brief(findings: list[dict]) -> list[dict]:
+    """The brief rules as errors: a change is applied only when its brief is there, every fact names the question it
+    answers, and every question is answered somewhere (a fact, an open question or an unchanged note)."""
+    for f in findings:
+        if f["code"] in BRIEF_CODES and f["level"] == "WARN":
+            f["level"] = "ERROR"
+    return findings
+
+
+def notes_findings(records, notes: Path | None) -> list[dict]:
+    """The author's search note (`WORK_DIR/author/<N>/search-notes.md`) is what the Writer trusts instead of repeating searches."""
+    prose = [r for r in records if (r.text or "").strip() and not _is_table_text(r.text) and r.action.lower().startswith(("replace", "insert"))]
+    if notes is None or not prose or Path(notes).is_file():
+        return []
+    return [finding("WARN", "NO_SEARCH_NOTES", f"no {Path(notes).name} at {notes}: the Writer cannot tell which searches were done")]
+
+
+_ASSESS_RE = re.compile(r"^\s*>?\s*Assessment:\s*(.+?)\s*$", re.M)
+_OBSERVED_RE = re.compile(r"^\s*>?\s*Observed:\s*(.*)$", re.M)
+_SEP_RE = re.compile(r"\bSEP-[A-Z]+-\d+\b")
+
+
+def node_findings(records, node: dict | None) -> list[dict]:
+    """Check records against the section as the document defines it (csa_docx.doc_spec): ratings come from the
+    document's own Rating dropdown, Not Applicable needs a justification, requirement IDs belong to this section,
+    and every anchor sits under the section's heading."""
+    if not node:
+        return []
+    out = []
+    ratings = node.get("ratings") or ["Met", "Partially Met", "Not Met", "Not Applicable"]
+    own = {r["id"] for p in node.get("parts", []) for r in p.get("requirements", [])}
+    hid = node.get("hid", "")
+    for r in records:
+        text = r.text or ""
+        for m in _ASSESS_RE.finditer(text):
+            if m.group(1) not in ratings:
+                out.append(finding("ERROR", "RATING_INVALID", f"rating '{m.group(1)}' is not one of {', '.join(ratings)}", r.edit_id))
+            if m.group(1) == "Not Applicable":
+                obs = _OBSERVED_RE.search(text)
+                if not obs or len(obs.group(1).split()) < 5:
+                    out.append(finding("ERROR", "NA_NO_JUSTIFICATION", "Not Applicable needs a current state that says why", r.edit_id))
+        req_tables = {p_["table"] for p_ in node.get("parts", []) if p_.get("kind") == "requirement" and p_.get("table")}
+        wm = re.search(r"(@H[\d.]+-T\d+)-R\d+", r.where or "")
+        if wm and wm.group(1) in req_tables and not _ASSESS_RE.search(text):
+            cells = [c.strip() for c in text.strip().lstrip(">").split("|")]
+            if len(cells) == 2 and cells[1] not in ratings:
+                out.append(finding("ERROR", "RATING_INVALID", f"'{cells[1]}' is not one of {', '.join(ratings)} "
+                                   "(a requirement row is '<current state> | <rating>' or Observed:/Assessment: lines)", r.edit_id))
+            elif len(cells) not in (2, 4):
+                out.append(finding("ERROR", "REQ_ROW_SHAPE", "a requirement row is '<current state> | <rating>', the full row, "
+                                   "or Observed:/Assessment: lines", r.edit_id))
+        foreign = sorted(set(_SEP_RE.findall((r.facts or "") + " " + text)) - own) if own else []
+        if foreign:
+            out.append(finding("WARN", "REQ_NOT_IN_SECTION", f"{', '.join(foreign)} are not requirements of {node.get('title')}", r.edit_id))
+        m = re.search(r"@H[\d.]+(?:-[A-Z]\d+(?:-R\d+)?)?", r.where or "")
+        if hid and m and not (m.group(0) == hid or m.group(0).startswith(hid + ".") or m.group(0).startswith(hid + "-")):
+            out.append(finding("WARN", "WHERE_OUTSIDE_SECTION", f"{m.group(0)} is not under {hid} ({node.get('title')})", r.edit_id))
+    return out
+
+
 def section_fit_findings(text: str, records) -> list[dict]:
     """Signal terms in each prose record against the domain the brief's requirement IDs name.
     Uses the section scope map and the quality reviewer's scanner, so the rules live in one place."""
@@ -243,7 +306,8 @@ def lint_findings(records) -> list[dict]:
 
 
 def check(path: Path, workspace: str | None = None, anchors: bool = True, lint: bool = True,
-          evidence: str | None = None, sites: str | None = None) -> dict:
+          evidence: str | None = None, sites: str | None = None, notes: str | None = None, strict: bool = False,
+          node: dict | None = None) -> dict:
     text = path.read_text(encoding="utf-8")
     records = parse_change_records(text)
     findings = structure_findings(path, text, records)
@@ -253,7 +317,10 @@ def check(path: Path, workspace: str | None = None, anchors: bool = True, lint: 
         else:
             findings.append(finding("INFO", "ANCHOR_CHECK_SKIPPED", "no --workspace given"))
     findings += hygiene_findings(records)
-    findings += brief_findings(text, records)
+    brief = brief_findings(text, records)
+    findings += strict_brief(brief) if strict else brief
+    findings += notes_findings(records, Path(notes) if notes else None)
+    findings += node_findings(records, node)
     findings += section_fit_findings(text, records)
     findings += subject_findings(records)
     from csa_docx.fact_checks import fact_findings, load_matrix, parse_sites
@@ -279,8 +346,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--no-lint", action="store_true")
     ap.add_argument("--evidence", help="evidence-matrix.csv (default: <workspace>/csa-work/evidence-matrix.csv)")
     ap.add_argument("--sites", help="site prefixes for scope checks, e.g. ROK=Rockhampton,MKY=Mackay")
+    ap.add_argument("--notes", help="the author's search-notes.md; a warning when it is missing")
+    ap.add_argument("--strict", action="store_true", help="brief findings are errors (used when the change is applied)")
+    ap.add_argument("--node", help="the section as the document defines it (csa spec show N --json)")
     a = ap.parse_args(argv)
-    res = check(Path(a.path), a.workspace, anchors=not a.no_anchors, lint=not a.no_lint, evidence=a.evidence, sites=a.sites)
+    node = json.loads(Path(a.node).read_text(encoding="utf-8")) if a.node and Path(a.node).is_file() else None
+    res = check(Path(a.path), a.workspace, anchors=not a.no_anchors, lint=not a.no_lint, evidence=a.evidence, sites=a.sites,
+                notes=a.notes, strict=a.strict, node=node)
     if a.json:
         print(json.dumps(res, indent=2))
     else:

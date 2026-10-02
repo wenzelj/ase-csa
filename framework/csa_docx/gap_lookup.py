@@ -48,6 +48,22 @@ either neither both none nor may might must shall the and for you your our out o
 _NOISE_PATHS = ("89_output_file_inventory", ".ps1", "preflight")
 _MAX_QUERIES = 12
 _MAX_CANDIDATES = 6
+_MIN_TOPIC_COVERAGE = 0.5   # share of the gap's topic words a hit must contain when no host ties it to the gap
+
+
+def relevant(excerpt: str, text: str) -> bool:
+    """A hit is only a candidate when it is about the gap. A host named in the gap and found in the hit ties it
+    to the gap. Otherwise the hit must hold at least two of the gap's topic words and half of them, so a page
+    that happens to say "network" and "time" is not offered as the answer to a question about resolver zones."""
+    low = (excerpt or "").lower()
+    hosts = [h.lower() for h in hosts_in(text)]
+    if hosts and any(h in low for h in hosts):
+        return True
+    words = topic_words(text, limit=8)
+    if not words:
+        return not hosts        # a host-only gap needs the host in the hit; with neither there is nothing to judge by
+    hit = sum(1 for w in words if w[:5] in low)
+    return hit >= 2 and hit / len(words) >= _MIN_TOPIC_COVERAGE
 _ANSWER_SCORE, _ANSWER_COVERAGE = 0.6, 0.75
 
 
@@ -140,7 +156,7 @@ def _index_stage(workspace: Path, text: str, exclude: tuple[str, ...]) -> tuple[
             key = (rel, h.get("page_or_location"))
             if key in seen or any(n in rel for n in _NOISE_PATHS) or any(e and e in rel for e in exclude):
                 continue
-            if len(h.get("evidence_excerpt", "")) < 20:
+            if len(h.get("evidence_excerpt", "")) < 20 or not relevant(h.get("evidence_excerpt", ""), text):
                 continue
             seen.add(key)
             hits.append(h)

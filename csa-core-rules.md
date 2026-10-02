@@ -14,6 +14,12 @@ Every agent and skill in `.agents/` follows these rules. Where a line in an agen
 - Stop on `WORKSPACE_NOT_REGISTERED`, on `NOT_READY`, and when a framework response's `project.key` differs from the project you were given. Do not retry with another path.
 - Project facts live in the project's context file and evidence, never in shared agent or skill files.
 
+## Application knowledge skills
+
+- Some applications have a knowledge skill under `.agents/skills/` (for example `reveloc-csa-skill` for Epiroc/Radlink Reveloc / RevelocPlus and its TETRA context). The project context lists them in `application_skills`. Every agent that searches, analyses, writes, edits or reviews CSA content loads each listed skill alongside its own skills, after `australian-it-ot-terminology`.
+- Also load one when the evidence clearly concerns that application but the project context does not list it, and say so in your final report so the context file can be updated.
+- They supply terminology and a functional model for reading evidence. They never replace the CSA workflow, writing standard or terminology skill, and vendor capability in them is general knowledge: it is never written as deployed, enabled or configured unless project evidence shows it (see Evidence). Their evidence checklists feed `csa gaps`, not the document.
+
 ## Evidence
 
 - Classes: `VERIFIED`, `INFERRED`, `UNCONFIRMED`, `CONFLICTING`, `NOT_FOUND`. Never upgrade an inference because it is plausible. "Not observed in the evidence searched" is never written as "does not exist".

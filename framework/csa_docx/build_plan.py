@@ -80,7 +80,70 @@ _H1_VISIBLE = {
 }
 
 
-def _framework_section(section_path: str, entries: list[dict] | None = None) -> str:
+def spec_mode() -> str:
+    """off | shadow | on. `csa` sets CSA_SPEC_MODE from cli.yaml / the project. shadow: the old number logic decides
+    and every difference with the document spec is logged; on: the document spec decides."""
+    import os
+    return (os.environ.get("CSA_SPEC_MODE") or "shadow").strip().lower()
+
+
+def shadow_log(workspace, what: str, old, new, **ctx) -> None:
+    """Append one difference between the number path and the document-spec path to csa-work/spec/shadow.log."""
+    import json
+    import os
+    import time
+    try:
+        root = Path(os.environ.get("CSA_WORK_DIR") or Path(workspace) / "csa-work")
+        log = root / "spec" / "shadow.log"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        with log.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"time": time.strftime("%Y-%m-%d %H:%M:%S"), "what": what, "old": old, "new": new, **ctx}) + "\n")
+    except OSError:
+        pass
+
+
+_SPEC_CACHE: dict[str, dict] = {}
+
+
+def _doc_spec(workspace) -> dict | None:
+    """The document spec of the working document, read once per run."""
+    try:
+        target = tools._resolve_shared_document(Path(workspace), None)
+    except Exception:  # noqa: BLE001 - no working document: the spec path does not apply
+        return None
+    key = str(target.docx)
+    if key not in _SPEC_CACHE:
+        from . import doc_spec
+        _SPEC_CACHE[key] = doc_spec.read(target.docx)
+    return _SPEC_CACHE[key]
+
+
+def _spec_section(section_path: str, workspace) -> str | None:
+    """The number Word shows for the Heading 1 at this stable path, from the document spec."""
+    spec = _doc_spec(workspace) if workspace is not None else None
+    if not spec:
+        return None
+    ordinal = section_path.split(".")[0]
+    for n in spec["nodes"]:
+        if n["level"] == 1 and n["path"] == ordinal:
+            return n["number"] or None
+    return None
+
+
+def _framework_section(section_path: str, entries: list[dict] | None = None, workspace=None) -> str:
+    old = _framework_section_by_number(section_path, entries)
+    mode = spec_mode()
+    if mode == "off" or workspace is None:
+        return old
+    new = _spec_section(section_path, workspace)
+    if mode == "on" and new:
+        return new
+    if new and new != old:
+        shadow_log(workspace, "framework_section", old, new, section_path=section_path)
+    return old
+
+
+def _framework_section_by_number(section_path: str, entries: list[dict] | None = None) -> str:
     """Framework section number of an entry: the visible number of its Heading 1 (``Requirement Domain
     Assessments`` is always ``"3"``, whatever its stable-ID ordinal). When the Heading 1 is not one of the
     template's, fall back to the ordinal minus 1 (the old layout, where ``@H4.5`` gives ``"3"``)."""
@@ -234,6 +297,24 @@ def _resolve_section_file(workspace: Path, path: Path) -> dict:
     parsed = parse_section_file(path)
     _, entries = _manifest_entries(workspace)
     heading_text = parsed["heading"].strip()
+    key = (parsed.get("meta") or {}).get("key", "").strip()
+    if key and spec_mode() != "off":
+        # a section file may name its section by key: the live heading text comes from the document spec,
+        # so a renamed or moved heading is still found
+        spec = _doc_spec(workspace)
+        node = None
+        if spec:
+            from . import doc_spec
+            try:
+                node = doc_spec.resolve(spec, key)
+            except doc_spec.ResolveError:
+                node = None
+        live = node["title"] if node else None
+        if live and normalise_heading(live) != normalise_heading(heading_text):
+            if spec_mode() == "on":
+                heading_text = live
+            else:
+                shadow_log(workspace, "section_file_heading", heading_text, live, file=Path(path).name, key=key)
     block = parsed["block"]
     items: list[tuple[dict, str, str | None, dict | None]] = []
 
@@ -608,7 +689,7 @@ def plan_records(workspace, section_paths) -> dict[str, list[dict]]:
                 # Appendix E is keyed by the template's own section number.
                 section_no = str(_load_template_blocks().get("discovery_required", {}).get("number", "8"))
             else:
-                section_no = _framework_section(entry["section_path"], all_entries)
+                section_no = _framework_section(entry["section_path"], all_entries, workspace)
             grouped.setdefault(section_no, []).append(
                 _record(resolved, entry, key, text, path.name)
             )

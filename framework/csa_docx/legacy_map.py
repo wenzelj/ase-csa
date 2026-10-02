@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 
 from csa_docx import scope_map
+from csa_docx import targets  # noqa: E402
 
 DEFAULT_MAP = (Path(__file__).resolve().parents[2] / "skills" / "csa-document-template"
                / "references" / "legacy-map-default.csv")
@@ -105,6 +106,8 @@ def map_blocks(blocks: list[dict], *, project_rules=(), default_rules=None,
         if rule:
             job = rule["job"] or "convert"
             target, conf = rule["target"], "high"
+            if target and target != "signal" and targets.spec_mode() == "on":
+                target = targets.canonical(target)     # a map may name its target by key or heading
             if target == "signal":
                 key, sc, tie = scope_map.best_by_terms(signal_text, all_keys, domains)
                 if not key or sc == 0:

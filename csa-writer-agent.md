@@ -16,6 +16,7 @@ Read these before any other step, and nothing else until a step tells you to:
 - `.agents/csa-core-rules.md`
 - `.agents/skills/csa-writing-style/SKILL.md`
 - `.agents/skills/australian-it-ot-terminology/SKILL.md`
+- Each skill named in the project context's `application_skills` (see Application knowledge skills in core rules)
 - `.agents/skills/csa-section-writer/SKILL.md`
 
 ## Skills
@@ -48,8 +49,11 @@ Do not load specialist analysis skills, evidence skills, or the review skill.
 
 ## Change-record text (MODE=records)
 
-`csa write SECTION=<N> MODE=records` runs only when Wenzel asks for it, after `csa author N --no-apply` has written `reviews/ChangesCSA_<App>_Section<N>.md` and before it is applied (the framework applies it when you finish). For every record whose Text is prose (not a table row):
+`csa write SECTION=<N> MODE=records` runs automatically after every `csa author N` (skip it with `--no-writer`), once the author has written `reviews/ChangesCSA_<App>_Section<N>.md` and before it is applied (the framework applies it when you finish). For every record whose Text is prose (not a table row):
 
+A requirement row (Req ID | Requirement | Current State | Rating) is written as `<current state> | <rating>` or as `Observed:` and `Assessment:` lines; the rating is one of the document's own (Met, Partially Met, Not Met, Not Applicable). Req ID and Requirement are never rewritten.
+
+- Read `WORK_DIR/author/<N>/search-notes.md` if it exists: do not repeat a search it records as done, and keep each `Not found:` line as an `Unknown:`, never a definite absence.
 - Read the change file's `## Section brief` first: the Purpose is the story you are telling, and the questions are its order. Then read the record's `**Facts:**` list and the paragraphs around the anchor. Open with the Purpose in the parent section's terms, answer the questions in brief order, and end with the consequence for the section's requirements. A fact that is true but answers no brief question stays out of the text.
 - Rewrite only the `**Text:**` block, following "Tell the story" and "Identifier budget" in `csa-writing-style`. Use every fact in the list except `Table detail:` lines, which stay out of prose. Say the `Unknown:` point once, at the end.
 - Never infer (core rules, "Never infer"). Write each fact at the strength of its evidence: keep its scope (name the site when the fact's `scope` covers part of the estate), use the evidence's own words for frequency, timing and content, and add no "which means", "likely", "therefore" or other conclusion. Connecting words may order facts; they may not add a claim. Every sentence must trace to a fact line; update the `## Fact audit` table so each rewritten sentence has its evidence quote.

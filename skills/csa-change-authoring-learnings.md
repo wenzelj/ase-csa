@@ -30,10 +30,14 @@ Rule: for indexed workbook dates, reconcile the displayed string with the Excel 
 
 - 2026-09-29 Host-centred evidence: use `csa hosts build/show/group/links`. Regroup workbook rows by host; match MECM maintenance windows by DeviceName; expand CONTROLLER70 / 73 shorthand before citing. Tables keyed by source IDs were rejected twice (6.4).
 
-## 2026-09-29 - Stable subsection IDs can differ from requirement-domain labels
-Trigger: a template subsection request named stable `@H3.2`, while the domain scope helper interpreted `3.2` as the Identity & Authentication requirement domain at a different stable path.
-Rule: when the user explicitly supplies a stable-ID scope, verify it against the live manifest and use that unit; record the helper mismatch rather than authoring into a different subsection.
-
 ## 2026-09-29 - Do not author an executive summary from unreviewed placeholders
 Trigger: the executive-summary placeholders were ready for text, but every detailed requirement-domain section was still blank.
 Rule: leave the executive summary unchanged until reviewed body sections support its scope, overall position, principal gaps and isolation outcome; do not introduce orphan facts directly from the evidence matrix.
+
+## 2026-10-01 - PROSE_UNSUPPORTED and PROSE_LINT have distinct mechanics
+Trigger: `check-change` flagged `PROSE_UNSUPPORTED` for gap sentences and `PROSE_LINT` for long sentences; both needed different fixes.
+Rule: `PROSE_UNSUPPORTED` (fact_checks.py) exempts sentences matching `GAP_RE` (e.g. "not found", "not captured", "was not"); use that vocabulary for gap statements. `PROSE_LINT` (prose_lint.py) enforces `MAX_SENTENCE_WORDS=35` and `MAX_AVG_SENTENCE_WORDS=24` as hard caps; check both before drafting.
+
+## 2026-10-02 - Evidence-to-topic mapping for Network / Segmentation requirement rows
+Trigger: subsection 3.6 (SEP-NET-01/02/03) requirement rows were empty templates and each rating needed an evidenced basis; check-change rejected `basis: not found` and a 3-cell row.
+Rule: map each requirement to its evidence topic before drafting - zone placement to the discovery target host map captures, inter-zone conduits to the expected flow map + design zone/conduit tables, and boundary-control enforcement to "not found" in the current sources. A requirement row must be exactly `<current state> | <rating>` (2 cells, rating last and in the dropdown set). Gap statements go on an `Unknown:` fact line (skips the basis gate) using GAP_RE vocabulary ("not found", "not captured"), never `{basis: not found}` (FACT_INFERRED) and never an inference word like "therefore" (PROSE_LINT).

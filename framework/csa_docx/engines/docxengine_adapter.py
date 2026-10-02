@@ -879,6 +879,10 @@ class DocxEngineEditor:
                 start_index = 0
             elif row_cell_count == len(cells) + 1:
                 start_index = 1
+            elif _is_requirement_row(row_ref.headers, row_ref.cell_texts) and len(cells) == 2:
+                # A requirement row: Req ID and Requirement are fixed checklist text, so two values are
+                # Current State and Rating (`<current state> | <rating>`).
+                start_index = row_cell_count - 2
             else:
                 return EditResult(
                     record.edit_id,
@@ -1759,6 +1763,13 @@ def _result_anchor(result: dict[str, object]) -> str | None:
 
 def _is_heading(paragraph) -> bool:
     return _heading_level(paragraph) is not None
+
+
+def _is_requirement_row(headers, cell_texts) -> bool:
+    """A row of a requirement table (Req ID | Requirement | Current State | Rating) whose first cell is a requirement ID."""
+    hs = [str(h or "").strip().lower() for h in (headers or [])]
+    first = str((cell_texts or [""])[0] or "").strip()
+    return hs[-2:] == ["current state", "rating"] and bool(re.match(r"^[A-Z]+-[A-Z]+-\d+$", first))
 
 
 def _heading_level(paragraph) -> int | None:

@@ -53,7 +53,7 @@ def _is_archived(path: Path, workspace: Path) -> bool:
         relative_parts = path.parts
     for part in relative_parts[:-1]:  # exclude the filename itself
         lowered = part.lower()
-        if "archive" in lowered or lowered.startswith("old") or lowered.startswith(" old"):
+        if "archive" in lowered or lowered.startswith("old") or lowered.startswith(" old") or "backup" in lowered:
             return True
     return False
 

@@ -22,6 +22,7 @@ from pathlib import Path
 from csa_docx import (answer_plan, check_section, convert_brief, convert_evidence, convert_ledger,
                       discovery_required, gap_lookup, legacy_extract, legacy_facts, legacy_map, requirement_assign,
                       requirement_audit, section_file)
+from csa_docx import targets  # noqa: E402
 
 STAGES = ("brief", "prepass", "evidence", "plan-check", "write", "ledger")
 
@@ -207,7 +208,7 @@ def _requirement_mode(work: Path, section: str) -> bool:
     path = work / "legacy" / "facts.jsonl"
     if not path.is_file() or not requirement_assign.load_requirements():
         return False
-    if not any(r["domain"] == section for r in requirement_assign.load_requirements()):
+    if not any(targets.requirement_in(r, section) for r in requirement_assign.load_requirements()):
         return False
     with path.open(encoding="utf-8") as fh:
         first = fh.readline()

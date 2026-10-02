@@ -13,6 +13,7 @@ Read these before any other step, and nothing else until a step tells you to:
 
 - `.agents/csa-core-rules.md`
 - `.agents/skills/australian-it-ot-terminology/SKILL.md`
+- Each skill named in the project context's `application_skills` (see Application knowledge skills in core rules)
 
 ## Skills (loaded one task at a time)
 

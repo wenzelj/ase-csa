@@ -134,8 +134,73 @@ def _live_manifest(p: dict) -> Path | None:
     return max(manifests, key=lambda x: x.stat().st_mtime)
 
 
+def _fw_env() -> dict:
+    """Environment for framework subprocesses: the framework first on PYTHONPATH, anything already there kept."""
+    return dict(os.environ, PYTHONPATH=os.pathsep.join(x for x in (str(FRAMEWORK), os.environ.get("PYTHONPATH", "")) if x))
+
+
+def spec_mode(p: dict | None = None) -> str:
+    """How sections are identified: off (numbers only), shadow (numbers decide, every difference with the document
+    spec is logged to csa-work/spec/shadow.log), on (the document spec decides: keys and the numbers Word shows).
+    Per project `spec_mode:` in PROJECTS.yaml wins over `spec_mode:` in cli.yaml; default shadow."""
+    m = str((p or {}).get("spec_mode") or settings().get("spec_mode") or "shadow").split("#")[0].strip().lower()
+    return m if m in ("off", "shadow", "on") else "shadow"
+
+
+def shadow_log(p: dict, what: str, old, new, **ctx) -> None:
+    try:
+        log = local_path(p["work_dir"]) / "spec" / "shadow.log"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        with log.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"time": time.strftime("%Y-%m-%d %H:%M:%S"), "what": what, "old": old, "new": new,
+                                 **ctx}, default=str) + "\n")
+    except (OSError, KeyError):
+        pass
+
+
+_RESOLVE_CACHE: dict[tuple, dict] = {}
+
+
+def spec_resolve(p: dict, target: str) -> dict:
+    """resolve_target, cached for the run."""
+    k = (p["key"], str(target))
+    if k not in _RESOLVE_CACHE:
+        _RESOLVE_CACHE[k] = resolve_target(p, str(target))
+    return _RESOLVE_CACHE[k]
+
+
+def _resolve_visible_spec(p: dict, visible: str) -> dict | None:
+    res = spec_resolve(p, visible)
+    if res.get("status") != "OK":
+        return None
+    return {"visible": res["number"] or visible, "heading": res["title"], "stable_path": res["path"], "key": res["key"]}
+
+
 def resolve_visible_section(p: dict, spec: str) -> dict:
-    """Resolve a user-visible section number against the live manifest.
+    """A section the user named -> its heading and live stable path. The number path (template numbering) and the
+    document-spec path (what Word shows, keys) both run in shadow mode; spec_mode decides which answer is used."""
+    mode = spec_mode(p)
+    if mode == "off":
+        return _resolve_visible_by_number(p, spec)
+    try:
+        old = _resolve_visible_by_number(p, spec)
+    except SystemExit:
+        old = {"visible": str(spec), "heading": None, "stable_path": None, "error": "SECTION_MAPPING_ERROR"}
+        if mode != "on":
+            raise
+    new = _resolve_visible_spec(p, spec) if working_docx(p) else None
+    if mode == "on":
+        if new is None:
+            die(f"SECTION_MAPPING_ERROR: the document has no section {spec}; `csa spec` lists the sections")
+        return new
+    if new is not None and (old.get("stable_path") != new["stable_path"]):
+        shadow_log(p, "resolve", {k: old.get(k) for k in ("heading", "stable_path")},
+                   {k: new.get(k) for k in ("heading", "stable_path", "key")}, target=str(spec))
+    return old
+
+
+def _resolve_visible_by_number(p: dict, spec: str) -> dict:
+    """Resolve a user-visible section number against the live manifest (template numbering).
 
     Returns both identities; callers must retain the visible number for change
     files/edit IDs and use ``stable_path`` only to scope document content.
@@ -234,7 +299,7 @@ def metric(p: dict, event: str, section=None, **data) -> None:
         pass
 
 C = {"b": "\033[1m", "d": "\033[2m", "r": "\033[31m", "g": "\033[32m", "y": "\033[33m", "c": "\033[36m", "0": "\033[0m"}
-if not sys.stdout.isatty() or os.environ.get("NO_COLOR"):
+if not (sys.stdout.isatty() and sys.stderr.isatty()) or os.environ.get("NO_COLOR"):
     C = {k: "" for k in C}
 
 
@@ -347,6 +412,8 @@ def project(explicit: str | None = None, required: bool = True) -> dict | None:
         die(f"no active project. Run `csa use <key>` ({keys}) or pass --project.")
     for p in projects():
         if key.lower() in (p["key"].lower(), p.get("label", "").lower()):
+            os.environ["CSA_SPEC_MODE"] = spec_mode(p)          # the framework (build_plan) reads it
+            os.environ["CSA_WORK_DIR"] = str(local_path(p["work_dir"]))
             return p
     die(f"unknown project '{key}'. Registered: {', '.join(p['key'] for p in projects())}")
 
@@ -444,8 +511,47 @@ def _block(text: str, heading: str) -> str:
     return text[m.end(): m.end() + nxt.start()] if nxt else text[m.end():]
 
 
+SECTION_KEY_RE = re.compile(r"^\*\*Section key:\*\*\s*(\S+)", re.M)
+
+
+def change_file_key(cf: Path) -> str | None:
+    """The section key a change file records (`**Section key:** TIME`), or None for an unmigrated file."""
+    try:
+        m = SECTION_KEY_RE.search(Path(cf).read_text(encoding="utf-8", errors="ignore")[:4000])
+    except OSError:
+        return None
+    return m.group(1) if m else None
+
+
+def change_file_by_key(p: dict, key: str) -> Path | None:
+    for files in all_change_files(p).values():
+        for f in files:
+            if change_file_key(f) == key:
+                return f
+    return None
+
+
 def pick_change_file(p: dict, section: str, file: str | None) -> Path | None:
-    """The section's main change file, or with ``file`` the labelled one whose name or label matches."""
+    """The section's main change file, or with ``file`` the labelled one whose name or label matches.
+    With spec_mode on, a subsection is found by the key its change file records, so a renumbered section keeps
+    its change file; shadow mode logs where the two answers differ."""
+    if file and SUBSECTION_LABEL_RE.match(file) and spec_mode(p) != "off" and working_docx(p):
+        res = spec_resolve(p, label_display(str(int(section)), file))
+        by_key = change_file_by_key(p, res["key"]) if res.get("status") == "OK" else None
+        by_name = _pick_change_file_by_name(p, section, file, quiet=True)
+        if by_name is not None and change_file_key(by_name) not in (None, res.get("key")):
+            by_name_key = change_file_key(by_name)
+        else:
+            by_name_key = None
+        if spec_mode(p) == "on" and res.get("status") == "OK":
+            return by_key if by_key else (None if by_name_key else by_name)
+        if (by_key and by_name and by_key != by_name) or by_name_key:
+            shadow_log(p, "change_file", str(by_name.name) if by_name else None, str(by_key.name) if by_key else None,
+                       target=label_display(str(int(section)), file), key=res.get("key"))
+    return _pick_change_file_by_name(p, section, file)
+
+
+def _pick_change_file_by_name(p: dict, section: str, file: str | None, quiet: bool = False) -> Path | None:
     files = all_change_files(p).get(str(int(section)), [])
     if not file:
         return files[0] if files else None
@@ -453,7 +559,7 @@ def pick_change_file(p: dict, section: str, file: str | None) -> Path | None:
         m = CHANGE_FILE_RE.match(f.name)
         if file in (f.name, f.stem, m["label"] or ""):
             return f
-    if SUBSECTION_LABEL_RE.match(file):
+    if SUBSECTION_LABEL_RE.match(file) or quiet:
         return None          # a subsection that has not been authored yet
     die(f"section {section} has no change file matching {file!r}: {', '.join(f.name for f in files) or 'none'}")
 
@@ -473,8 +579,14 @@ def section_state(p: dict, section: str, file: str | None = None) -> dict:
         st["stage"], st["next"] = "not authored", f"csa author {n}"
         return st
     text = cf.read_text(encoding="utf-8")
-    m = re.search(r"^\*\*Section:\*\*\s*\d+\s*(?:[-\u2013]\s*)?(.*)$", text, re.M)
+    m = re.search(r"^\*\*Section:\*\*[ \t]*\d+[ \t]*(?:[-\u2013][ \t]*)?(.*)$", text, re.M)
     st["title"] = re.sub(r"\s*\(.*$", "", m[1]).strip() if m else ""
+    sub = re.search(r"\(subsection\s+[\d.]+\s+([^,)]+)", m[1]) if m else None
+    if label and sub:
+        st["title"] = sub.group(1).strip()          # a subsection's change file: its own heading, not the section's
+    if not st["title"] and spec_mode(p) != "off" and working_docx(p):
+        res = spec_resolve(p, n)
+        st["title"] = res.get("title", "") if res.get("status") == "OK" else ""
     st["edits"] = list(dict.fromkeys(EDIT_HEADING_RE.findall(text)))
     m = STATUS_LINE_RE.search(text)
     st["status_line"] = m[1].strip() if m else None
@@ -587,6 +699,11 @@ def cmd_status(a):
             print(f"     {C['d']}+ {len(s['other_change_files'])} other change file(s): "
                   f"{', '.join(Path(x).name for x in s['other_change_files'])}{C['0']}")
     print(f"{C['d']}Only sections with a change file are listed; `csa author <N>` starts another.{C['0']}")
+    if spec_mode(p) != "off" and working_docx(p):
+        r = spec_call(p, "next")
+        if r.returncode == 0 and r.stdout.strip():
+            print(f"\n{C['b']}Still to answer, in document order (csa spec):{C['0']}")
+            print(r.stdout.rstrip())
 
 
 def cmd_report(a):
@@ -631,6 +748,14 @@ def cmd_next(a):
         return print(json.dumps([{"section": s["section"], "stage": s["stage"], "next": s["next"]} for s in todo], indent=2))
     banner(p)
     if not todo:
+        if spec_mode(p) != "off" and working_docx(p):
+            rows = json.loads(spec_call(p, "--json", "next").stdout or "[]")
+            if rows:
+                r0 = rows[0]
+                print(f"{r0['number']} {r0['title']} - {r0['open']} open item(s), from the document\n  -> {C['g']}{r0['command']}{C['0']}")
+                if len(rows) > 1:
+                    print(f"{C['d']}then: " + "; ".join(f"{r['number'] or r['key']}: {r['command']}" for r in rows[1:6]) + C["0"])
+                return
         return print("Nothing pending. Every known section is done or clean.")
     s = todo[0]
     print(f"Section {s['section']} {s['title']} - {s['stage']}\n  -> {C['g']}{s['next']}{C['0']}")
@@ -686,8 +811,69 @@ def cmd_refresh(a):
     return _emit(fw_call("refresh_manifest", workspace=_ws(p)), a)
 
 
-def run_check_change(p: dict, cf: Path, a) -> int:
+def author_dir(p: dict, section: str, label: str | None = None) -> Path:
+    """WORK_DIR/author/<KEY>/ (spec_mode on) or author/<3-1>/: the author's brief, search notes, report and timing."""
+    num = label_display(section, label)
+    slug = re.sub(r"[^0-9A-Za-z]+", "-", num).strip("-")
+    base = local_path(p["work_dir"]) / "author"
+    if spec_mode(p) == "off" or not working_docx(p):
+        return base / slug
+    res = spec_resolve(p, num)
+    if res.get("status") != "OK":
+        return base / slug
+    if spec_mode(p) == "on":
+        return base / res["key"]
+    if (base / res["key"]).is_dir() and not (base / slug).is_dir():
+        shadow_log(p, "author_dir", slug, res["key"], target=num)
+    return base / slug
+
+
+def spec_call(p: dict, *args, capture: bool = True) -> subprocess.CompletedProcess:
+    """csa_docx.spec_cli on the project's working document (or its template when there is none yet)."""
+    docx = working_docx(p)
+    argv = [framework_python(), "-m", "csa_docx.spec_cli", "--work-dir", str(local_path(p["work_dir"]))]
+    if docx:
+        argv += ["--docx", str(docx)]
+    return subprocess.run(argv + [str(x) for x in args], cwd=str(FRAMEWORK), capture_output=capture, text=True,
+                          env=_fw_env())
+
+
+def resolve_target(p: dict, target: str) -> dict:
+    """A section target (visible number, heading, requirement family or stamp key) -> {'number', 'key', 'title'},
+    read from the live document. Never a guess: an unknown target comes back with the headings the document has."""
+    r = spec_call(p, "resolve", target)
+    try:
+        return json.loads(r.stdout)
+    except ValueError:
+        return {"status": "ERROR", "message": (r.stderr or r.stdout or "no output")[-600:]}
+
+
+def section_arg(p: dict, target: str) -> str:
+    """The visible number for a target given by number, heading, family or key; dies with the document's headings."""
+    if re.fullmatch(r"\d+(\.\d+)*", str(target)):
+        return str(target)
+    res = resolve_target(p, target)
+    if res.get("status") != "OK":
+        die(res.get("message", f"cannot resolve '{target}'"))
+    print(f"{C['d']}{target} -> {res['number']} {res['title']} ({res['key']}){C['0']}", file=sys.stderr)
+    return res["number"]
+
+
+def run_check_change(p: dict, cf: Path, a, strict: bool = False, section: str | None = None, label: str | None = None) -> int:
     argv = [framework_python(), "-m", "csa_docx.check_change", str(cf), "--workspace", str(local_path(p["project_root"]))]
+    if strict:
+        argv.append("--strict")
+    if section and p.get("work_dir"):
+        argv += ["--notes", str(author_dir(p, section, label) / "search-notes.md")]
+        if label:                                  # the subsection as the document defines it (csa spec)
+            r = spec_call(p, "--json", "show", label_display(section, label))
+            if r.returncode == 0 and r.stdout.strip().startswith("{"):
+                nf = local_path(p["work_dir"]) / "spec" / f"node-{label}.json"
+                nf.parent.mkdir(parents=True, exist_ok=True)
+                node = json.loads(r.stdout)
+                node.setdefault("ratings", None)
+                nf.write_text(json.dumps(node), encoding="utf-8")
+                argv += ["--node", str(nf)]
     if p.get("work_dir"):
         argv += ["--evidence", str(local_path(p["work_dir"]) / "evidence-matrix.csv")]
     if p.get("sites"):
@@ -755,12 +941,32 @@ def cmd_comments(a):
     return subprocess.run(argv, cwd=str(FRAMEWORK)).returncode
 
 
+def author_report(p: dict, cf: Path, section: str, label: str | None, summary_only: bool = False) -> int:
+    """Set the change file's brief against its records (csa_docx.author_report); saved beside the brief."""
+    out = author_dir(p, section, label) / "report.md"
+    argv = [framework_python(), "-m", "csa_docx.author_report", str(cf), "--out", str(out)]
+    if summary_only:
+        argv.append("--summary")
+    rc = subprocess.run(argv, cwd=str(FRAMEWORK), env=_fw_env()).returncode
+    if rc == 0 and summary_only:
+        print(f"{C['d']}full report: {out} (`csa author-report {label_display(section, label)}`){C['0']}")
+    return rc
+
+
+def cmd_author_report(a):
+    p = project(a.project); banner(p)
+    st = section_state(p, a.section, getattr(a, "file", None))
+    if not st["change_file"]:
+        die(f"section {label_display(a.section, getattr(a, 'file', None))} has no change file.")
+    return author_report(p, Path(st["change_file"]), a.section, getattr(a, "file", None))
+
+
 def cmd_check_change(a):
     p = project(a.project); banner(p)
     st = section_state(p, a.section, getattr(a, "file", None))
     if not st["change_file"]:
         die(f"section {label_display(a.section, getattr(a, 'file', None))} has no change file.")
-    rc = run_check_change(p, Path(st["change_file"]), a)
+    rc = run_check_change(p, Path(st["change_file"]), a, section=a.section, label=getattr(a, "file", None))
     metric(p, "check_change", a.section, exit=rc)
     return rc
 
@@ -944,7 +1150,8 @@ def cmd_apply(a):
     if st["edits"] and (not st["approved"] or approval_problems(cf)):
         # No human step between authoring and apply: check the file, record what is applied, apply it.
         # Wenzel approves the result in Word (accept / reject), then `csa review` and `csa cleanup`.
-        if not a.allow_unapproved and run_check_change(p, cf, argparse.Namespace()) != 0:
+        if not a.allow_unapproved and run_check_change(p, cf, argparse.Namespace(), strict=True, section=a.section,
+                                                      label=getattr(a, "file", None)) != 0:
             die(f"csa check-change found errors in {cf.name} (above). Fix the change file; it is applied as written."
                 " (--allow-unapproved skips this check.)")
         record_approval(p, cf, a.section, f"csa apply ({settings().get('comment_author', os.environ.get('USER', 'unknown'))})",
@@ -1148,6 +1355,7 @@ def _after_agent(p: dict, verb: str, args: list[str], started: float, a) -> int:
         cf = Path(st["change_file"]) if st["change_file"] else None
         if not cf or not st["edits"] or cf.stat().st_mtime < started - 1:
             return 0
+        author_report(p, cf, sec, label, summary_only=True)
         print(f"{C['b']}Applying {cf.name} now (tracked changes; you approve in Word).{C['0']}")
         ns = argparse.Namespace(project=a.project, section=sec, file=label, allow_unapproved=False, agent=False, set=None,
                                 limit=None, until_done=True, max_batches=50, edit=None, json=False,
@@ -1287,6 +1495,316 @@ def cmd_scope(a):
     return 0
 
 
+def cmd_brief(a):
+    """The section brief skeleton for an author run: requirements and questions from the scope map, reviewer comments
+    from the working document. Written to csa-work/author/<section>/brief.md and printed."""
+    p = project(a.project); banner(p)
+    docx = working_docx(p)
+    num = section_arg(p, a.section)
+    sec, label = split_section(num)
+    out = author_dir(p, sec, label) / "brief.md"
+    argv = [framework_python(), "-m", "csa_docx.author_brief", num, "--out", str(out)]
+    if docx:
+        argv += ["--docx", str(docx)]
+    rc = subprocess.run(argv, cwd=str(FRAMEWORK), env=_fw_env()).returncode
+    if rc == 0:
+        print(f"{C['d']}written to {out}{C['0']}", file=sys.stderr)
+    return rc
+
+
+def cmd_spec(a):
+    """csa spec status | show <target> | resolve <target> | lint | stamp [--confirm] [--dry-run] | propose"""
+    p = project(a.project); banner(p)
+    if not a.rest:
+        a.rest = ["status"]
+    if a.rest[0] == "propose":
+        return _spec_propose(p, a)
+    if a.rest[0] == "shadow":
+        return _spec_shadow(p, a.rest[1:])
+    if a.rest[0] == "migrate":
+        return _spec_migrate(p, "--dry-run" in a.rest)
+    if a.rest[0] == "blocks":
+        tmpl = _project_template(p)
+        argv = [framework_python(), "-m", "csa_docx.spec_blocks", str(tmpl)] + (["--write"] if "--write" in a.rest else [])
+        return subprocess.call(argv, cwd=str(FRAMEWORK), env=_fw_env())
+    return spec_call(p, *a.rest, capture=False).returncode
+
+
+def _project_template(p: dict) -> Path:
+    r = subprocess.run([framework_python(), "-c", "import sys;from csa_docx import spec_cli;print(spec_cli.find_template(None if sys.argv[1]=='-' else __import__('pathlib').Path(sys.argv[1])) or '')",
+                        str(working_docx(p).parent) if working_docx(p) else "-"], cwd=str(FRAMEWORK), capture_output=True, text=True,
+                       env=_fw_env())
+    t = r.stdout.strip()
+    if not t:
+        die("no CSA template found")
+    return Path(t)
+
+
+def _fw_snippet(code: str, *args) -> dict | list:
+    r = subprocess.run([framework_python(), "-c", code, *[str(x) for x in args]], cwd=str(FRAMEWORK), capture_output=True, text=True,
+                       env=_fw_env())
+    try:
+        return json.loads(r.stdout)
+    except ValueError:
+        return {"error": (r.stderr or r.stdout)[-600:]}
+
+
+def _quiet_old(p: dict, num: str) -> dict | None:
+    """The number path's answer, or None when it cannot resolve (its error message is not printed)."""
+    import contextlib
+    import io
+    with contextlib.redirect_stderr(io.StringIO()):
+        try:
+            return _resolve_visible_by_number(p, num)
+        except SystemExit:
+            return None
+
+
+def _spec_shadow(p: dict, rest: list[str]) -> int:
+    """Compare the number path with the document-spec path for everything that names a section, without changing
+    anything. Writes csa-work/spec/shadow-report.md and .json. Exit 0 when nothing would change meaning."""
+    docx = working_docx(p)
+    if not docx:
+        die("no working document; nothing to compare")
+    work = local_path(p["work_dir"])
+    rows: list[dict] = []   # {area, item, old, new, verdict}
+
+    def add(area, item, old, new, verdict=None):
+        verdict = verdict or ("same" if old == new else "differs")
+        rows.append({"area": area, "item": item, "old": old, "new": new, "verdict": verdict})
+
+    spec = json.loads(spec_call(p, "--json", "status").stdout or "{}")
+    nodes = spec.get("nodes", [])
+    # 1. what a typed number means
+    numbers = sorted(set(_template_visible_headings()) | {n["number"] for n in nodes if n["level"] <= 2 and n["number"]},
+                     key=lambda s: [int(x) for x in s.split(".")])
+    for num in numbers:
+        old = _quiet_old(p, num)
+        o = f"{old.get('heading')} @H{old.get('stable_path')}" if old and old.get("stable_path") else None
+        n = next((x for x in nodes if x["number"] == num), None)
+        nw = f"{n['title']} {n['hid']}" if n else None
+        if o is None and nw:
+            add("number", num, o, nw, "old fails")
+        elif nw is None and o:
+            add("number", num, o, nw, "new fails")
+        elif o is not None:
+            add("number", num, o, nw, "same" if o.split(" @H")[-1] == nw.split(" @H")[-1] else "differs")
+    # 2. change files: the section each file was written for
+    by_path = {n["path"]: n for n in nodes}
+    for files in all_change_files(p).values():
+        for f in files:
+            m = CHANGE_FILE_RE.match(f.name)
+            if not m["label"] or not SUBSECTION_LABEL_RE.match(m["label"]):
+                continue
+            num = label_display(m["section"], m["label"])
+            old = _quiet_old(p, num)
+            on = by_path.get(str(old.get("stable_path"))) if old else None
+            key = change_file_key(f)
+            kn = next((x for x in nodes if x["key"] == key), None) if key else None
+            if key:
+                add("change file", f.name, on["key"] if on else None, key, "same" if (on and on["key"] == key) else "differs")
+            else:
+                add("change file", f.name, on["key"] if on else None, None, "not migrated")
+    # 3. author folders
+    adir = work / "author"
+    for d in sorted(adir.iterdir()) if adir.is_dir() else []:
+        if d.is_dir() and re.fullmatch(r"\d+(-\d+)*", d.name):
+            res = spec_resolve(p, d.name.replace("-", "."))
+            add("author folder", d.name, d.name, res.get("key"), "not migrated" if res.get("status") == "OK" else "new fails")
+    # 4. framework section numbers used by place/build
+    fs = _fw_snippet("""import sys,json
+from pathlib import Path
+from csa_docx import build_plan as b
+ws=Path(sys.argv[1])
+try:
+    _, e = b._manifest_entries(ws)
+except Exception as x:
+    print(json.dumps({"error": str(x)})); raise SystemExit
+out=[]
+for x in e:
+    if x.get("kind")=="heading" and x.get("level")==1:
+        out.append([x["section_path"], x.get("text"), b._framework_section_by_number(x["section_path"], e), b._spec_section(x["section_path"], ws)])
+print(json.dumps(out))""", _ws(p))
+    if isinstance(fs, dict):
+        add("framework section", "manifest", fs.get("error"), None, "new fails")
+    else:
+        for path, text, old, new in fs:
+            add("framework section", f"@H{path} {text}", old, new)
+    # 5. template-level maps (shared by every project)
+    tmpl = _project_template(p)
+    tl = _fw_snippet("""import sys,json,csv
+from pathlib import Path
+from csa_docx import spec_blocks as sb, doc_spec, targets, legacy_map, requirement_assign
+spec=doc_spec.read(sys.argv[1]); targets.template_spec.cache_clear()
+cur=json.loads(sb.BLOCKS.read_text(encoding="utf-8")); out={"blocks": sb.diff(cur, sb.generate(spec, cur)), "req": [], "legacy": []}
+nodes={n["key"]: n for n in spec["nodes"]}
+for r in requirement_assign.load_requirements():
+    k=targets.requirement_key(r); num=nodes[k]["number"] if k in nodes else None
+    out["req"].append([r["req_id"], r["domain"], num])
+with open(legacy_map.DEFAULT_MAP if hasattr(legacy_map,"DEFAULT_MAP") else Path(legacy_map.__file__).resolve().parents[2]/"skills"/"csa-document-template"/"references"/"legacy-map-default.csv", encoding="utf-8") as fh:
+    for row in csv.DictReader(fh):
+        t=row.get("target","")
+        if t and t!="signal":
+            out["legacy"].append([t, targets.canonical(t), bool(targets.target_key(t))])
+print(json.dumps(out))""", tmpl)
+    if "error" in tl:
+        add("template", "maps", tl["error"], None, "new fails")
+    else:
+        add("template blocks", tmpl.name, "file", "generated", "same" if not tl["blocks"] else "differs")
+        for d in tl["blocks"]:
+            add("template blocks", d[:60], d, None, "differs")
+        for rid, dom, num in tl["req"]:
+            add("requirement map", rid, dom, num)
+        for t_, canon, ok in tl["legacy"]:
+            add("legacy map", t_, t_, canon if ok else None, "same" if ok and canon == t_ else ("new fails" if not ok else "differs"))
+    counts: dict[str, int] = {}
+    for r in rows:
+        counts[r["verdict"]] = counts.get(r["verdict"], 0) + 1
+    out = work / "spec"
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "shadow-report.json").write_text(json.dumps({"counts": counts, "rows": rows}, indent=1), encoding="utf-8")
+    lines = [f"# Shadow report: {p.get('label', p['key'])}", "", f"Document: {docx.name}. Mode: {spec_mode(p)}.", "",
+             "Verdicts: same (both paths agree); differs (the number path and the document spec name different "
+             "sections); old fails / new fails (one path cannot resolve it); not migrated (no section key recorded yet).", "",
+             "| Area | Item | Number path | Document spec | Verdict |", "| --- | --- | --- | --- | --- |"]
+    lines += [f"| {r['area']} | {r['item']} | {r['old']} | {r['new']} | {r['verdict']} |" for r in rows if r["verdict"] != "same"]
+    lines += ["", "Counts: " + ", ".join(f"{k} {v}" for k, v in sorted(counts.items()))]
+    (out / "shadow-report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    log = out / "shadow.log"
+    logged = len(log.read_text(encoding="utf-8").splitlines()) if log.is_file() else 0
+    print(f"{C['b']}Shadow report{C['0']} ({docx.name}, mode {spec_mode(p)}): " + ", ".join(f"{k} {v}" for k, v in sorted(counts.items()))
+          + f"; {logged} difference(s) logged during runs")
+    for r in rows:
+        if r["verdict"] in ("differs", "new fails"):
+            print(f"  {r['verdict']:<10} {r['area']:<18} {r['item']}: {r['old']} | {r['new']}")
+    print(f"{C['d']}{out / 'shadow-report.md'}{C['0']}")
+    blocking = counts.get("differs", 0) + counts.get("new fails", 0)
+    return 0 if not blocking else 1
+
+
+def _spec_migrate(p: dict, dry_run: bool) -> int:
+    """Record the section key in every labelled change file (from the section it was written for), move
+    csa-work/author/<3-4>/ to author/<KEY>/, and write csa-work/spec/migrate-report.md. Backs up first.
+    The evidence matrix is append-only: its rows are not rewritten (cards match them by section title)."""
+    docx = working_docx(p)
+    if not docx:
+        die("no working document")
+    work = local_path(p["work_dir"])
+    spec = json.loads(spec_call(p, "--json", "status").stdout or "{}")
+    by_path = {n["path"]: n for n in spec.get("nodes", [])}
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    backup = work / "backups" / f"migrate-{stamp}"
+    report = [f"# Migrate to section keys: {p.get('label', p['key'])}", "", f"{'Dry run. ' if dry_run else ''}Backup: {backup}", "",
+              "| Item | Section | Key | Action |", "| --- | --- | --- | --- |"]
+    changed = 0
+    for files in all_change_files(p).values():
+        for f in files:
+            m = CHANGE_FILE_RE.match(f.name)
+            if not m["label"] or not SUBSECTION_LABEL_RE.match(m["label"]):
+                continue
+            if change_file_key(f):
+                report.append(f"| {f.name} | {label_display(m['section'], m['label'])} | {change_file_key(f)} | already recorded |")
+                continue
+            num = label_display(m["section"], m["label"])
+            old = _quiet_old(p, num)                         # the file was named under the number path
+            if not old:
+                report.append(f"| {f.name} | {num} | - | not resolvable; left as is |")
+                continue
+            node = by_path.get(str(old.get("stable_path")))
+            if not node:
+                report.append(f"| {f.name} | {num} | - | heading not in the document; left as is |")
+                continue
+            text = f.read_text(encoding="utf-8")
+            line = f"**Section key:** {node['key']}"
+            mm = re.search(r"^\*\*Section:\*\*.*$", text, re.M)
+            new = (text[:mm.end()] + "\n" + line + text[mm.end():]) if mm else (line + "\n\n" + text)
+            if not dry_run:
+                backup.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(f, backup / f.name)
+                f.write_text(new, encoding="utf-8")
+            changed += 1
+            report.append(f"| {f.name} | {num} | {node['key']} | {'would record' if dry_run else 'recorded'} |")
+    adir = work / "author"
+    for d in sorted(adir.iterdir()) if adir.is_dir() else []:
+        if not (d.is_dir() and re.fullmatch(r"\d+(-\d+)*", d.name)):
+            continue
+        num = d.name.replace("-", ".")
+        old = _quiet_old(p, num)
+        node = by_path.get(str(old.get("stable_path"))) if old else None
+        if not node:
+            report.append(f"| author/{d.name} | {num} | - | not resolvable; left as is |")
+            continue
+        dest = adir / node["key"]
+        if dest.exists():
+            report.append(f"| author/{d.name} | {num} | {node['key']} | author/{node['key']} exists; left as is |")
+            continue
+        if not dry_run:
+            d.rename(dest)
+        changed += 1
+        report.append(f"| author/{d.name} | {num} | {node['key']} | {'would move' if dry_run else 'moved'} to author/{node['key']} |")
+    report += ["", "The evidence matrix is append-only and is not rewritten; section cards match its rows by section title.",
+               "Next: `csa spec shadow` (expect no 'not migrated'), then set `spec_mode: on` for this project in PROJECTS.yaml."]
+    out = work / "spec" / "migrate-report.md"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("\n".join(report) + "\n", encoding="utf-8")
+    print(f"{C['b']}{'Would change' if dry_run else 'Changed'} {changed} item(s).{C['0']} {out}")
+    for line in report[6:]:
+        if line.startswith("| "):
+            print("  " + line)
+    return 0
+
+
+def _spec_propose(p: dict, a) -> int:
+    """Sections the rules cannot classify or identify go to the answer agent (MODE=propose) as a proposal card.
+    The proposals are written to csa-work/cards/proposals.answer.md for Wenzel to read; nothing is applied."""
+    lint = json.loads(spec_call(p, "--json", "lint").stdout or "[]")
+    stamp = json.loads(spec_call(p, "--json", "stamp", "--dry-run").stdout or "{}")
+    status = json.loads(spec_call(p, "--json", "status").stdout or "{}")
+    items = [f for f in lint if f["code"] in ("NO_FILLABLE_CONTENT", "NO_REQUIREMENT_TABLE", "MIXED_FAMILIES", "EMPTY_REQUIREMENT_TABLE")]
+    asks = stamp.get("ask", [])
+    if not items and not asks:
+        print("Nothing to propose: every section is classified and identified.")
+        return 0
+    cards = local_path(p["work_dir"]) / "cards"
+    cards.mkdir(parents=True, exist_ok=True)
+    card = cards / "proposals.md"
+    keys = sorted({n["key"] for n in status.get("nodes", [])} | {r["key"] for r in status.get("removed", [])})
+    lines = ["# Proposal card", "", "Mode: propose. For each item give the kind it most likely is and the questions that",
+             "kind implies, or the template key it most likely came from, with a one-line reason.", "", "## Items", ""]
+    lines += [f"- {f['message']} ({f['code']})" for f in items]
+    lines += [f"- {x['number']} {x['title']}: no stamp; derived key {x['key']} ({x['reason']})" for x in asks]
+    lines += ["", "## Keys the template and document already use", "", ", ".join(keys)]
+    card.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    out = cards / "proposals.answer.md"
+    rc = launch(p, agent("answer"), ["MODE=propose", f"CARD={card}", f"SHEET={out}"], a)
+    if out.is_file():
+        print(f"{C['b']}Proposals in {out}. Nothing was changed; confirm a stamp with `csa spec stamp --confirm`.{C['0']}")
+    return rc
+
+
+def cmd_card(a):
+    """csa card <target> [--no-evidence] [--search B3=terms]: the section card the answer agent works from."""
+    p = project(a.project); banner(p)
+    if not a.rest:
+        die("usage: csa card <section|heading|family> [--no-evidence] [--search B3='terms']")
+    res = resolve_target(p, a.rest[0])
+    if res.get("status") != "OK":
+        die(res.get("message", "cannot resolve the section"))
+    work = local_path(p["work_dir"])
+    out = work / "cards" / f"{res['key']}.md"
+    argv = [framework_python(), "-m", "csa_docx.section_card", res["number"], "--workspace", str(local_path(p["project_root"])),
+            "--work-dir", str(work), "--out", str(out)]
+    docx = working_docx(p)
+    if docx:
+        argv += ["--docx", str(docx)]
+    if legacy_docx(p):
+        argv += ["--exclude", legacy_docx(p).name]
+    rc = subprocess.run(argv + a.rest[1:], cwd=str(FRAMEWORK), env=_fw_env()).returncode
+    if rc == 0:
+        print(f"{C['d']}written to {out}{C['0']}", file=sys.stderr)
+    return rc
+
+
 def cmd_budget(a):
     """Tokens each agent loads before it starts (csa_docx.context_budget). No project needed."""
     argv = ([a.verb] if a.verb else []) + (["--max", str(a.max)] if a.max is not None else []) + (["--json"] if a.json else [])
@@ -1406,8 +1924,9 @@ def build_prompt(p: dict, r: dict, args: list[str], local: bool | None = None) -
     resolved = resolve_visible_section(p, label_display(sec, label)) if str(requested_section).strip() else {}
     if label:
         values["SECTION"], values["SUBSECTION"] = sec, label_display(sec, label)
-        cf = pick_change_file(p, sec, label)
-        values["CHANGE_FILE"] = str(cf) if cf else f"reviews/ChangesCSA_<App>_Section{sec}_{label}.md (create it)"
+        if r.get("verb") != "answer":            # the answer agent writes a sheet, never a change file
+            cf = pick_change_file(p, sec, label)
+            values["CHANGE_FILE"] = str(cf) if cf else f"reviews/ChangesCSA_<App>_Section{sec}_{label}.md (create it)"
     if resolved.get("stable_path"):
         values["STABLE_SUBTREE"] = "@H" + resolved["stable_path"]
         values["DOCUMENT_HEADING"] = resolved["heading"]
@@ -1422,7 +1941,10 @@ def build_prompt(p: dict, r: dict, args: list[str], local: bool | None = None) -
     for k in order:
         if values.get(k):
             lines.append(f"{k}={values[k]}")
-    if values.get("SUBSECTION"):
+    if values.get("SUBSECTION") and r.get("verb") == "answer":
+        lines.append(f"\nThe card is for visible document subsection {values['SUBSECTION']} ({values.get('DOCUMENT_HEADING')}). "
+                     "Write only the answer sheet at SHEET.")
+    elif values.get("SUBSECTION"):
         stable = values.get("STABLE_SUBTREE")
         if not stable:
             die(f"SECTION_MAPPING_ERROR: visible subsection {values['SUBSECTION']} has no live stable-ID mapping; "
@@ -1440,9 +1962,20 @@ def build_prompt(p: dict, r: dict, args: list[str], local: bool | None = None) -
     return "\n".join(lines)
 
 
+def task_cli(verb: str) -> str | None:
+    """`task_cli:` in cli.yaml, e.g. `answer: claude, write: codex`: the CLI for one agent verb."""
+    pairs = [x.split(":", 1) for x in str(settings().get("task_cli", "") or "").split(",") if ":" in x]
+    return {k.strip(): v.strip() for k, v in pairs}.get(verb)
+
+
 def launch(p: dict, r: dict, args: list[str], a) -> int:
-    cli = getattr(a, "cli", None) or os.environ.get("CSA_CLI") or settings().get("default_cli", "codex")
+    cli = getattr(a, "cli", None) or os.environ.get("CSA_CLI") or task_cli(r.get("verb", "")) or settings().get("default_cli", "codex")
     mode = "headless" if getattr(a, "headless", False) else "interactive"
+    if mode == "interactive" and not getattr(a, "print", False) and not (sys.stdin.isatty() and sys.stdout.isatty()):
+        # An interactive CLI draws a full-screen UI (title, cursor and screen control codes). With no terminal
+        # (output captured or redirected, run by another agent or a script) those codes land in the log as text.
+        mode = "headless"
+        print("csa: no terminal here, so the agent runs headless (no interactive UI)", file=sys.stderr)
     tmpl = settings().get(f"{cli}_{mode}")
     prompt = build_prompt(p, r, args, local=local_launch(tmpl or ""))
     if getattr(a, "print", False):
@@ -1493,14 +2026,241 @@ The working document had no tracked revisions at {stamp}; the signed-off changes
     return True
 
 
+def writer_pass_wanted(args: list[str], no_writer: bool = False) -> bool:
+    """An author run is followed by the writer pass (`csa write N MODE=records`) unless it is switched off or the
+    run is an editorial concision pass, whose edits are already final prose."""
+    if no_writer:
+        return False
+    return task_values(agent("author"), args).get("EDIT_MODE", "evidence").lower() != "editorial"
+
+
+def _writer_pass(p: dict, args: list[str], started: float, a) -> int:
+    """Run the writer over the change file the author just wrote: it rewrites each prose Text from its Facts."""
+    values = task_values(agent("author"), args)
+    sec, label = split_section(values.get("SECTION", ""))
+    if not sec or not str(sec).isdigit():
+        return 0
+    st = section_state(p, sec, label)
+    cf = Path(st["change_file"]) if st["change_file"] else None
+    if not cf or not st["edits"] or cf.stat().st_mtime < started - 1:
+        return 0
+    print(f"{C['b']}Writer pass: rewriting the prose in {cf.name} from its Facts.{C['0']}")
+    return launch(p, agent("write"), [values["SECTION"], "MODE=records"], a)
+
+
+def _record_author_run(p: dict, args: list[str], **data) -> None:
+    """Merge stage times and the answer counts into WORK_DIR/author/<N>/timing.json, so runs can be compared."""
+    try:
+        sec, label = split_section(task_values(agent("author"), args).get("SECTION", ""))
+        if not sec:
+            return
+        path = author_dir(p, sec, label) / "timing.json"
+        old = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+        old.update(data)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(old, indent=2) + "\n", encoding="utf-8")
+    except (OSError, ValueError):
+        pass
+
+
+def _record_author_counts(p: dict, args: list[str]) -> None:
+    sec, label = split_section(task_values(agent("author"), args).get("SECTION", ""))
+    if not sec or not str(sec).isdigit():
+        return
+    st = section_state(p, sec, label)
+    if not st["change_file"]:
+        return
+    r = subprocess.run([framework_python(), "-m", "csa_docx.author_report", str(st["change_file"]), "--json"], cwd=str(FRAMEWORK),
+                       env=_fw_env(), capture_output=True, text=True)
+    try:
+        d = json.loads(r.stdout)
+    except ValueError:
+        return
+    c = d["counts"]
+    _record_author_run(p, args, questions=d["questions"], answered=c["ANSWERED"], open=c["OPEN"], unanswered=c["UNANSWERED"],
+                       untagged_facts=d["untagged"], records=d["records"])
+
+
+def _app_name(p: dict, reviews: Path) -> str:
+    for f in sorted(reviews.glob("ChangesCSA_*_Section*.md")):
+        m = re.match(r"ChangesCSA_(.+?)_Section\d", f.name)
+        if m:
+            return m.group(1)
+    return p.get("label") or p["key"]
+
+
+def _fw_json(module: str, *args) -> dict:
+    r = subprocess.run([framework_python(), "-m", module, *[str(x) for x in args]], cwd=str(FRAMEWORK), capture_output=True,
+                       text=True, env=_fw_env())
+    try:
+        return json.loads(r.stdout)
+    except ValueError:
+        return {"status": "ERROR", "message": (r.stderr or r.stdout or "no output")[-800:]}
+
+
+def _matrix_ids(work: Path) -> set[str]:
+    import csv
+    f = work / "evidence-matrix.csv"
+    if not f.is_file():
+        return set()
+    with f.open(newline="", encoding="utf-8-sig") as fh:
+        return {r["evidence_id"] for r in csv.DictReader(fh)}
+
+
+def _author_cards(p: dict, a) -> int:
+    """csa author N --cards: the framework builds the section card (questions from the document, evidence
+    gathered per question), the answer agent writes the answer sheet, the framework checks it (one search round
+    and one fix round at most), renders the change file with anchors from the document spec, then the writer pass,
+    check-change and apply run as for any author run."""
+    target = next((x for x in a.args if "=" not in x), None)
+    if not target:
+        die("usage: csa author <section|heading|family> --cards")
+    res = resolve_target(p, target)
+    if res.get("status") != "OK":
+        die(res.get("message", "cannot resolve the section"))
+    number, key = res["number"], res["key"]
+    sec, label = split_section(number)
+    docx = working_docx(p)
+    if not docx:
+        die("no working DOCX; the card path revises an existing document (use csa write for a first draft)")
+    work = local_path(p["work_dir"])
+    cards = work / "cards"
+    cards.mkdir(parents=True, exist_ok=True)
+    card_md, sheet, errs = cards / f"{key}.md", cards / f"{key}.answer.md", cards / f"{key}.errors.md"
+    card_json = card_md.with_suffix(".json")
+    matrix = work / "evidence-matrix.csv"
+    started = time.time()
+    before = _matrix_ids(work)
+
+    def build(searches: list[tuple[str, str]] = ()) -> None:
+        argv = [number, "--docx", docx, "--workspace", local_path(p["project_root"]), "--work-dir", work, "--out", card_md, "--json"]
+        if legacy_docx(p):
+            argv += ["--exclude", legacy_docx(p).name]
+        for qid, terms in searches:
+            argv += ["--search", f"{qid}={terms}"]
+        out = _fw_json("csa_docx.section_card", *argv)
+        if out.get("status") != "OK":
+            die(f"the section card could not be built: {out.get('message', out)}")
+        print(f"{C['b']}Card {card_md.name}: {len(out['questions'])} question(s), about {out['tokens']} tokens.{C['0']}")
+
+    def answer(extra: list[str]) -> int:
+        if sheet.exists():
+            sheet.replace(sheet.with_suffix(".prev.md"))
+        t0 = time.time()
+        rc = launch(p, agent("answer"), [number, f"CARD={card_md}", f"SHEET={sheet}", *extra], a)
+        timing["answer_s"] = round(timing.get("answer_s", 0) + time.time() - t0, 1)
+        return rc
+
+    def check() -> dict:
+        if not sheet.is_file():
+            return {"status": "ERROR", "findings": [{"level": "ERROR", "code": "NO_SHEET", "question": None,
+                                                     "message": f"the answer agent wrote no {sheet.name}"}], "searches": {}}
+        return _fw_json("csa_docx.answer_sheet", "validate", sheet, "--card", card_json, "--matrix", matrix,
+                        "--new-ids", ",".join(sorted(_matrix_ids(work) - before)))
+
+    timing: dict = {}
+    build()
+    if getattr(a, "print", False):
+        return launch(p, agent("answer"), [number, f"CARD={card_md}", f"SHEET={sheet}"], a)
+    if answer([]) != 0:
+        return 2
+    res2, searched, fixed = check(), False, False
+    while res2.get("status") != "OK":
+        if res2.get("status") == "NEEDS_SEARCH" and not searched:
+            searched = True
+            asks = [(q, t) for q, ts in res2.get("searches", {}).items() for t in ts]
+            print(f"{C['b']}The answer asked for {len(asks)} search(es); adding the results to the card once.{C['0']}")
+            build(asks)
+            rc = answer([])
+        elif not fixed:
+            fixed = True
+            lines = [f"- {f['level']} {f['code']} {f.get('question') or ''}: {f['message']}" for f in res2.get("findings", [])]
+            if res2.get("status") == "NEEDS_SEARCH":
+                lines.append("- ERROR SEARCH_USED: the one search round is used; answer with the evidence on the card, or Unknown:")
+            errs.write_text("Fix these in the answer sheet and write it again:\n\n" + "\n".join(lines) + "\n", encoding="utf-8")
+            print(f"{C['y']}The answer sheet has {res2.get('errors', len(lines))} problem(s); one fix round.{C['0']}")
+            rc = answer([f"ERRORS={errs}"])
+        else:
+            for f in res2.get("findings", []):
+                print(f"  {f['level']} {f['code']} {f.get('question') or ''}: {f['message']}", file=sys.stderr)
+            _record_author_run(p, [number], cards=True, sheet_status=res2.get("status"), search_round=searched, fix_round=fixed, **timing)
+            die(f"the answer sheet still fails after the fix round; nothing was applied. Sheet: {sheet}")
+        if rc != 0:
+            return 2
+        res2 = check()
+    if getattr(a, "check_answers", False):
+        # advisory: a second look at whether each block answers its question; never a gate
+        chk = cards / f"{key}.check.md"
+        launch(p, agent("answer"), [number, f"CARD={card_md}", f"SHEET={chk}", "MODE=check", f"ANSWER={sheet}"], a)
+        if chk.is_file():
+            verdicts = re.findall(r"^\s*[-*]?\s*([BC]\d+)\s*:\s*(answered|partly|not answered)", chk.read_text(encoding="utf-8"), re.M | re.I)
+            counts = {v: sum(1 for _, x in verdicts if x.lower() == v) for v in ("answered", "partly", "not answered")}
+            timing["answer_check"] = counts
+            print(f"{C['d']}answer check (advisory): {counts['answered']} answered, {counts['partly']} partly, "
+                  f"{counts['not answered']} not answered; {chk.name}{C['0']}")
+    reviews = Path(docx).parent / "reviews"
+    st = section_state(p, sec, label)
+    cf = Path(st["change_file"]) if st["change_file"] else reviews / f"ChangesCSA_{_app_name(p, reviews)}_Section{sec}{'_' + label if label else ''}.md"
+    for attempt in (1, 2):
+        out = _fw_json("csa_docx.answer_sheet", "render", sheet, "--card", card_json, "--docx", docx, "--section", sec,
+                       "--change-file", cf, "--app", _app_name(p, reviews))
+        if out.get("status") == "ERROR":
+            die(f"render failed: {out.get('message')}")
+        if not out.get("scaffold") or attempt == 2:
+            break
+        scaffold = SKILLS / "csa-document-template" / "scripts" / "scaffold_csa.py"
+        for s in out["scaffold"]:
+            cmd = [framework_python(), str(scaffold), s["kind"], "--docx", str(docx), "--heading", s["heading"],
+                   "--heading-occurrence", str(s.get("occurrence", 1)), "--set-count", str(s["set_count"])]
+            if s["kind"] == "rows":
+                cmd += ["--table", str(s.get("table", 1))]
+            print(f"{C['d']}scaffold: {s['heading']} -> {s['set_count']} {s['kind']}{C['0']}")
+            if subprocess.run(cmd, capture_output=True, text=True).returncode not in (0,):
+                die(f"scaffold refused for {s['heading']}; nothing was applied")
+        fw_call("prepareDocument", workspace=_ws(p), force_regenerate=True)
+    if out.get("scaffold"):
+        die("the document still lacks rows for the answer after scaffolding; nothing was applied")
+    print(f"{C['b']}{cf.name}: {out['records']} record(s) {out['change_set']}, {out['open']} open question(s).{C['0']}")
+    _record_author_run(p, [number], cards=True, sheet_status="OK", search_round=searched, fix_round=fixed, **timing)
+    if getattr(a, "no_apply", False):
+        return 0
+    if writer_pass_wanted([number], getattr(a, "no_writer", False)):
+        wstart = time.time()
+        if _writer_pass(p, [number], started, a) != 0:
+            print(f"{C['r']}The writer pass failed; the change file was not applied.{C['0']}", file=sys.stderr)
+            return 2
+        _record_author_run(p, [number], write_s=round(time.time() - wstart, 1))
+    _record_author_counts(p, [number])
+    return _after_agent(p, "author", [number], started, a)
+
+
+SECTION_VERBS = ("author", "write", "review", "cleanup", "answer")
+
+
 def cmd_agent(a):
     p = project(a.project); banner(p)
+    if a.verb in SECTION_VERBS and a.args and "=" not in a.args[0] and not re.fullmatch(r"\d+(\.\d+)*", a.args[0]):
+        a.args = [section_arg(p, a.args[0])] + a.args[1:]
+    if a.verb == "author" and getattr(a, "cards", False):
+        return _author_cards(p, a)
     if a.verb == "cleanup" and not getattr(a, "print", False) and _cleanup_not_needed(p, a.args):
         return 0
     started = time.time()
     rc = launch(p, agent(a.verb), a.args, a)
+    if a.verb == "author" and not getattr(a, "print", False):
+        _record_author_run(p, a.args, author_s=round(time.time() - started, 1))
     if rc != 0 or getattr(a, "print", False) or getattr(a, "no_apply", False):
         return rc
+    if a.verb == "author" and writer_pass_wanted(a.args, getattr(a, "no_writer", False)):
+        wstart = time.time()
+        rc = _writer_pass(p, a.args, started, a)
+        _record_author_run(p, a.args, write_s=round(time.time() - wstart, 1))
+        if rc != 0:
+            print(f"{C['r']}The writer pass failed; the change file was not applied. Fix it, or run "
+                  f"`csa author {a.args[0] if a.args else 'N'} --no-writer` to apply the author's own text.{C['0']}", file=sys.stderr)
+            return rc
+    if a.verb == "author":
+        _record_author_counts(p, a.args)
     return _after_agent(p, a.verb, a.args, started, a)
 
 
@@ -1675,7 +2435,11 @@ def cmd_pipeline(a):
             print("Nothing left to do for this section.")
             return 0
         if nxt.startswith("csa author"):
+            started = time.time()
             if launch(p, agent("author"), [d], a) != 0:
+                return 2
+            if writer_pass_wanted([d], getattr(a, "no_writer", False)) and _writer_pass(p, [d], started, a) != 0:
+                print("The writer pass failed; stopping before apply.")
                 return 2
             continue                             # the change file is applied next, without an approval step
         if "approve" in nxt:
@@ -1791,6 +2555,8 @@ def _fleet_tasks(p: dict, a) -> list[dict]:
             continue
         no_apply = "--no-apply" in args and verb != "apply"
         args = [x for x in args if x != "--no-apply"] if no_apply else args
+        no_writer = "--no-writer" in args
+        args = [x for x in args if x != "--no-writer"]
         if verb == "place":
             if not args:
                 die(f"task {i} '{text}': place needs a section file or number, e.g. \"place 3.4\"")
@@ -1814,6 +2580,7 @@ def _fleet_tasks(p: dict, a) -> list[dict]:
             prompt = build_prompt(p, r, args, local=local_launch(settings().get(f"{fcli}_fleet", "")))  # dies on a missing required input
         tasks.append(_fleet_task(len(tasks) + 1, text, verb, args, task_locks(r, values), prompt))
         tasks[-1]["no_apply"] = no_apply
+        tasks[-1]["no_writer"] = no_writer
     return tasks
 
 
@@ -1909,7 +2676,7 @@ def _fleet_task(n: int, text: str, verb: str, args: list[str], locks: set[str], 
             "start": None, "end": None, "log": None, "last": None}
 
 
-def _fleet_follow_up(t: dict, n: int) -> dict | None:
+def _fleet_follow_up(t: dict, n: int, p: dict | None = None) -> dict | None:
     """The framework step that changes the document after an agent task: an author task's change file
     is applied, a writer's section file is placed. None when the task changes nothing in the document."""
     if t["verb"] in ("apply", "place"):
@@ -1918,6 +2685,15 @@ def _fleet_follow_up(t: dict, n: int) -> dict | None:
     spec = values.get("SECTION", "")
     if not spec or t.get("no_apply"):
         return None
+    if t["verb"] == "author" and writer_pass_wanted(t["args"], t.get("no_writer", False)):
+        # the writer rewrites the prose from the author's Facts; its own follow-up is the apply
+        wargs = [spec, "MODE=records"]
+        r = agent("write")
+        prompt = None
+        if p is not None:
+            fcli = settings().get("fleet_cli", "codex")
+            prompt = build_prompt(p, r, wargs, local=local_launch(settings().get(f"{fcli}_fleet", "")))
+        return _fleet_task(n, f"write {spec} MODE=records", "write", wargs, task_locks(r, task_values(r, wargs)), prompt)
     if t["verb"] == "author" or (t["verb"] == "write" and values.get("MODE", "").lower() == "records"):
         return _fleet_task(n, f"apply {spec} --until-done", "apply", [spec, "--until-done"],
                            task_locks(agent("apply"), {"SECTION": spec}), None)
@@ -1976,7 +2752,8 @@ def cmd_fleet(a):
                   + (t["prompt"] or f"(framework, no LLM) {shlex.join(_fleet_argv(p, t, slots[0], cli)[2:])}"))
     if any(_fleet_follow_up(t, 0) for t in tasks if t["verb"] not in ("apply", "place")):
         print(f"{C['d']}After each write/summary task the fleet places its section file in the document (place N); "
-              f"after each author task it applies the change file (apply N). No approval step: you approve in Word.{C['0']}")
+              f"after each author task the writer rewrites its prose (write N MODE=records, skip with --no-writer), then the change file is applied (apply N). "
+              f"No approval step: you approve in Word.{C['0']}")
     if a.dry_run or a.print:
         return 0
 
@@ -2073,7 +2850,7 @@ def cmd_fleet(a):
             say(f"{C['c']}ledger{C['0']} {t['convert']}: {led.get('status')} {json.dumps(led.get('counts', {}))}"
                 + (f" missing {', '.join(led.get('missing', [])[:10])}" if led.get("missing") else ""))
         elif t["verb"] not in ("apply", "place"):
-            fu = _fleet_follow_up(t, max(x["n"] for x in tasks) + 1)
+            fu = _fleet_follow_up(t, max(x["n"] for x in tasks) + 1, p)
             if fu:
                 stem = f"{fu['n']:02d}-" + re.sub(r"[^A-Za-z0-9._-]+", "-", fu["text"]).strip("-")[:60]
                 fu["log"], fu["last"] = run_dir / f"{stem}.log", run_dir / f"{stem}.last.md"
@@ -2401,6 +3178,7 @@ def cmd_build(a):
 # ---------------------------------------------------------------- main
 PASSTHROUGH = {
     "ev": cmd_ev, "appendix": cmd_appendix, "graph": cmd_graph, "index": cmd_index, "test": cmd_test,
+    "spec": cmd_spec, "card": cmd_card,
     **{n: cmd_passthrough(n) for n in ("new", "scaffold", "table", "diagram", "dry-run", "cross-check", "findings")},
 }
 
@@ -2419,7 +3197,7 @@ Audit      csa audit | csa audit --status | csa audit-section SECTION=next | csa
 Parallel    csa fleet "author 6" "evidence 7" [-f tasks.txt] [--dry-run] [--print] [--timeout MIN]
             (one headless worker per slot in cli.yaml; DOCX steps never overlap)
 Analysis    csa ask <section> | evidence | gaps | analyse <skill> [SECTION=..] | write | summary | qa
-Framework   csa prepare | csa lookup "<text>" | csa validate N | csa refresh | csa test | csa mcp
+Framework   csa prepare | csa lookup "<text>" | csa validate N | csa refresh | csa brief N | csa author-report N | csa test | csa mcp
 Integrate   csa sync [--codex-prompts]   (wrapper skills, /csa-* slash commands, AGENTS.md from registry.yaml)
 Scripts     csa ev lookup "<q>" | csa index rows|search|hosts|tables|build ... | csa graph ... | csa lint [N] | csa check [--final] | csa new ... | csa scaffold ...
             csa table ... | csa diagram ... | csa dry-run ... | csa appendix [--out f.md]
@@ -2629,8 +3407,23 @@ def _convert_next(row: dict) -> str:
     return f"csa convert {t}"
 
 
+def template_target(t: str) -> str:
+    """A convert/move target given as a heading, requirement family or key -> the template number (folders keep it)."""
+    if not t or re.fullmatch(r"\d+(\.\d+)*", str(t)):
+        return t
+    r = subprocess.run([framework_python(), "-c", "import sys;from csa_docx import targets as T;print(T.canonical(sys.argv[1]))", t],
+                       cwd=str(FRAMEWORK), capture_output=True, text=True, env=_fw_env())
+    out = r.stdout.strip()
+    if r.returncode or not re.fullmatch(r"\d+(\.\d+)*", out):
+        die(f"no template section matches '{t}'")
+    print(f"{C['d']}{t} -> {out}{C['0']}", file=sys.stderr)
+    return out
+
+
 def cmd_convert(a):
     p = project(a.project); banner(p)
+    if getattr(a, "target", None):
+        a.target = template_target(a.target)
     if a.print and a.target:
         return _convert_print(p, a.target)
     chosen = [bool(a.prepare), a.map is not None, bool(a.status), bool(a.parked), bool(a.audit), bool(a.target)]
@@ -2845,6 +3638,8 @@ def _move_all(p: dict, a, ld: Path) -> int:
 
 def cmd_move(a):
     p = project(a.project); banner(p)
+    if getattr(a, "target", None):
+        a.target = template_target(a.target)
     if a.print and a.target:
         return _move_print(p, a.target)
     chosen = [bool(a.prepare), bool(a.all), bool(a.status), bool(a.target)]
@@ -2902,6 +3697,7 @@ def main(argv=None) -> int:
     sp("agents", cmd_agents)
     s = sp("scope", cmd_scope, help="one domain's entry from the section scope map"); s.add_argument("key")
     s.add_argument("--json", action="store_true")
+    s = sp("brief", cmd_brief, help="the section brief skeleton for an author run (scope map + reviewer comments)"); s.add_argument("section")
     s = sp("budget", cmd_budget, help="tokens each agent loads before it starts"); s.add_argument("verb", nargs="?")
     s.add_argument("--max", type=int, default=None); s.add_argument("--json", action="store_true")
     s = sp("doctor", cmd_doctor); s.add_argument("--no-tests", dest="tests", action="store_false", help="skip the framework test run")
@@ -2925,6 +3721,8 @@ def main(argv=None) -> int:
     s = sp("check-change", cmd_check_change, help="check a section's change file before approval")
     s.add_argument("section"); s.add_argument("--no-anchors", action="store_true"); s.add_argument("--file", help="a labelled change file for this section, e.g. story for ChangesCSA_<App>_Section<N>_story.md")
     s.add_argument("--no-lint", action="store_true"); s.add_argument("--json", action="store_true")
+    s = sp("author-report", cmd_author_report, help="each brief question, what answers it and the sentence that says it (no model)")
+    s.add_argument("section"); s.add_argument("--file", help="a labelled change file for this section")
     s = sp("check-section", cmd_check_section, help="check a build-lane section file before approval")
     s.add_argument("file"); s.add_argument("--no-lint", action="store_true"); s.add_argument("--json", action="store_true")
     s = sp("sections", cmd_sections, help="list build-lane section files, their review verdict, and whether they are ready to build")
@@ -3008,6 +3806,12 @@ def main(argv=None) -> int:
         s.add_argument("args", nargs="*", help="positional value and KEY=VALUE overrides"); agent_opts(s)
         s.add_argument("--no-apply", action="store_true",
                        help="author/write/summary: stop after the agent instead of changing the document")
+        s.add_argument("--no-writer", action="store_true",
+                       help="author: skip the writer pass (the author's own Text is applied as drafted)")
+        s.add_argument("--cards", action="store_true",
+                       help="author: card -> answer agent -> check -> render -> writer -> apply (csa card, answer sheet)")
+        s.add_argument("--check-answers", action="store_true",
+                       help="author --cards: an advisory answer check after the sheet passes (shown in the author report)")
 
     argv = list(sys.argv[1:] if argv is None else argv)
     glob_project = None
@@ -3032,7 +3836,9 @@ def main(argv=None) -> int:
     if isinstance(getattr(a, "section", None), str):
         sec, label = split_section(a.section)
         if label:
-            if a.cmd in ("validate", "prepare"):
+            if a.cmd == "brief":
+                pass                             # takes the visible number as given (3.1, 3.1.2)
+            elif a.cmd in ("validate", "prepare"):
                 a.section = sec                  # document-level checks: the whole section
             elif hasattr(a, "file") or a.cmd in ("status", "pipeline"):
                 a.section = sec

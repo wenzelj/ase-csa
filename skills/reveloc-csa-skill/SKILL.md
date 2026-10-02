@@ -1,5 +1,5 @@
 ---
-name: reveloc-current-state
+name: reveloc-csa-skill
 description: >
   Application-specific knowledge for analysing and writing Current State Assessments
   for Epiroc/Radlink Reveloc or RevelocPlus deployments, including TETRA-connected

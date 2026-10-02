@@ -149,3 +149,23 @@ Confirm every review iteration writes durable evidence: reviewed DOCX path, curr
 - Risk observed: Treating every historical record or cumulative Applied entry as approved can create a false failure when rejected wording is absent from the live accepted view.
 - Corrected approach: Build the verification inventory from the current approval status and record headings first. Review only approved IDs; report a rejected ID in the Applied list as a report-accuracy note, not as a missing approved edit.
 - Validation next time: Reconcile the status line, `REJECTED` headings, current-iteration IDs and detailed edit results before selecting the review batch or granting cleanup sign-off.
+
+## 2026-10-01 — Backup change files can block manifest preparation
+
+- Context: A section review's mandatory preparation gate found the live approved change file and an identically named copy under a project backup directory.
+- Risk observed: Recursive change-file discovery treated a recoverable backup as a second live record and refused to trust the stable-ID manifest.
+- Corrected review approach: Stop before DOCX inspection, preserve the backup, record a P0 preparation blocker, and require the framework's discovery scope to exclude backup directories.
+- Validation next time: Run `csa prepare` first and confirm exactly one live section change file resolves before selecting anchors or reviewing comments.
+## 2026-10-02 - Discovery Required table: `NOT_FOUND`/`pending` evidence is correct, not a finding
+
+- **Context:** REVELOC TETRA Section 8 (Discovery Required), 8 edits S8-E18-S8-E25, all evidence E-ids in the matrix are `NOT_FOUND`/`pending`.
+- **Issue or risk observed:** A reviewer seeing 8 consecutive `NOT_FOUND`/`pending` rows could misread this as an evidence gap and escalate it as a P2/P3 finding, when it is the expected and correct state for a Discovery Required table. The evidence rows document what was searched and not found; the "discovery" is the open question the table itself raises.
+- **Evidence used:** `csa ev get E-134 --brief` through `csa ev get E-060 --brief` — all 8 return `status: NOT_FOUND`, `review_state: pending`, with the `claim` field describing the exact question the table row asks. The matrix rows are well-formed and the `source` field shows the searches that were run.
+- **Improved review approach:** For any section titled "Discovery Required" or whose approved text is an open question (not an assertion of fact), treat `NOT_FOUND`/`pending` evidence as the correct and expected state. Report it as a transparency note in the `Evidence` column, not as a finding. Only escalate to P3/P2 if the `claim` in the matrix row contradicts what the table row actually asks.
+- **Validation next time:** Check the section title and the nature of the approved text (open question vs. factual assertion) before interpreting evidence status. A `NOT_FOUND` row for a factual assertion is a P3 note; a `NOT_FOUND` row for an open question is correct.
+
+## 2026-10-02 - REVELOC TETRA Section 3.6: comment generation regression between apply and review
+
+- **Situation:** Implementation report claimed comment ID 94 added for S3-E18 and passed comment validation; the current DOCX (modified 12 minutes after the documented apply run, with no new backup) contained no S3-E16/17/18 comments, no tracked changes at all, and a *different generation* of the comment set (S8 section-file comments 74-91 and Section 3.1 comments 9-11 lost; IDs 25/26/53-65 not present in the pre-edit backup). Body text for the batch edits was correct.
+- **Improved review approach:** A `SECTION_COMPLETE` report that claims comments added must be checked against `word/comments.xml` comment IDs and their Note text (Ref S<n>-E<m>), never just the count or relations. To detect a comment-set generation change, diff the sorted comment-ID sets of the pre-edit backup against the current DOCX and classify lost/added IDs - a mix of both directions is a red flag that an unauthorised or out-of-sequence operation rewrote the file. Also check `w:ins`/`w:del` counts in both files: zero tracked changes in the current file while the backup carried the batch's tracked-change pairs means the edits were accepted or re-applied destructively, which removes the human review step and is a P1 finding on its own.
+- **Validation next time:** Before finalising a FAIL, establish the DOCX mtime against the apply-run backup mtime and list every file newer than the backup; if the DOCX is newer with no new backup, the review baseline itself is in question and the report should name the suspected regression (restore from the documented backup, re-apply lost work, then re-review) rather than just listing comment losses.

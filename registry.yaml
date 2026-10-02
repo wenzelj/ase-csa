@@ -35,7 +35,19 @@ agents:
     locks: section
     instruction: Draft change proposals for the requested section using the agent defaults.
     skill: csa-change-authoring-agent
-    summary: Step 1 - draft ChangesCSA_*.md for one section from Discovery Data evidence, then apply it as tracked changes (EDIT_MODE=editorial for a concision pass; --no-apply to stop after drafting).
+    summary: Step 1 - draft ChangesCSA_*.md for one section from Discovery Data evidence, then the Writer rewrites its prose from the Facts (--no-writer skips that), then apply it as tracked changes (EDIT_MODE=editorial for a concision pass; --no-apply to stop after drafting).
+
+  - verb: answer
+    file: csa-answer-agent.md
+    title: CSA Answer Agent
+    group: pipeline
+    tier: frontier
+    arg: SECTION
+    inputs: SECTION, CARD*, SHEET*, MODE=answer, ERRORS, ANSWER
+    locks: section
+    instruction: Answer the section card in CARD and write the answer sheet to SHEET, in the shape of the card's example (MODE=check grades ANSWER against the card; MODE=propose proposes kinds for unclassified sections).
+    skill: csa-answer-agent
+    summary: Answer one section card (csa card N) as an answer sheet; csa author N --cards runs it, checks the sheet and renders the change file.
 
   - verb: apply
     file: current-state-assessment-document.md

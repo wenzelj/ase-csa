@@ -25,6 +25,14 @@ claude_headless: claude -p {prompt}
 hermes_interactive: hermes chat -q {prompt}
 hermes_headless: hermes chat -q {prompt}
 
+# How sections are identified: off (numbers only), shadow (numbers decide, differences with the document spec are
+# logged to csa-work/spec/shadow.log), on (keys and the numbers Word shows). A project's spec_mode: in PROJECTS.yaml wins.
+spec_mode: shadow
+
+# Per-verb CLI, used when --cli is not given: e.g. the answer sheet on the strong model, prose on the local one.
+#   task_cli: answer: claude, write: codex
+task_cli:
+
 # `csa fleet`: run independent tasks side by side. One worker per slot; each task starts a
 # fresh headless CLI in a free slot and the process exits when the task is done. For codex,
 # each slot name is a Codex profile ({profile}); {last} is the file that gets the final message.

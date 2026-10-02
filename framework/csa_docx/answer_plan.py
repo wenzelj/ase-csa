@@ -16,6 +16,7 @@ import json
 import re
 import sys
 from pathlib import Path
+from csa_docx import targets  # noqa: E402
 
 COLUMNS = ["legacy_ids", "req_id", "statement_type", "fact", "evidence_scope", "destination",
            "confidence", "transformation", "gap_generated"]
@@ -138,7 +139,7 @@ def gaps(rows) -> list[dict]:
 def requirement_ids(target: str, path: Path | None = None) -> list[str]:
     """Requirement IDs of the target's domain, from requirement-map.csv."""
     with Path(path or REQUIREMENT_MAP).open(newline="", encoding="utf-8") as fh:
-        return [r["req_id"] for r in csv.DictReader(fh) if r["domain"] == target]
+        return [r["req_id"] for r in csv.DictReader(fh) if targets.requirement_in(r, target)]
 
 
 def main(argv: list[str] | None = None) -> int:

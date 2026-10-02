@@ -29,6 +29,8 @@ projects:
     project_context: "/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-context/IAMPS_V12_PROJECT_CONTEXT.yaml"
     work_dir: "/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/07 IAMPS v1.2 build/csa-work"
     default_source_set: "/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS/01 Current State AS Built/IAMPS Discovery Data"
+    # sections by key and the numbers Word shows (csa spec shadow: no differences, 2 Oct 2026)
+    spec_mode: on
 
   - key: iamps-08
     label: "IAMPS (template v1.3)"
@@ -45,3 +47,6 @@ projects:
     default_source_set: "/Users/wenzel/Work/ASE/CurrentStateAssessments/TETRA/05 Revloc Tetra/01 Current State AS Built"
     index_extra_sources: "/Users/wenzel/Work/ASE/CurrentStateAssessments/TETRA/05 Revloc Tetra/02 Current State Assessment"
     legacy_docx: "/Users/wenzel/Work/ASE/CurrentStateAssessments/TETRA/05 Revloc Tetra/02 Current State Assessment/NetSeg_Current_State_Assessment_REVELOC_TETRA.docx"
+
+    # sections by key and the numbers Word shows (csa spec shadow: no differences, 2 Oct 2026)
+    spec_mode: on

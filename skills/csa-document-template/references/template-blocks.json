@@ -28,7 +28,8 @@
         "placeholder_rows": 2
       },
       "drawbridge_paragraphs": 1,
-      "discovery_note_paragraphs": 1
+      "discovery_note_paragraphs": 1,
+      "key": "GEN"
     },
     {
       "number": "3.2",
@@ -58,7 +59,8 @@
         "placeholder_rows": 2
       },
       "drawbridge_paragraphs": 1,
-      "discovery_note_paragraphs": 1
+      "discovery_note_paragraphs": 1,
+      "key": "ID"
     },
     {
       "number": "3.3",
@@ -77,7 +79,8 @@
         "placeholder_rows": 2
       },
       "drawbridge_paragraphs": 1,
-      "discovery_note_paragraphs": 1
+      "discovery_note_paragraphs": 1,
+      "key": "PKI"
     },
     {
       "number": "3.4",
@@ -95,7 +98,8 @@
         "placeholder_rows": 2
       },
       "drawbridge_paragraphs": 1,
-      "discovery_note_paragraphs": 1
+      "discovery_note_paragraphs": 1,
+      "key": "TIME"
     },
     {
       "number": "3.5",
@@ -113,7 +117,8 @@
         "placeholder_rows": 2
       },
       "drawbridge_paragraphs": 1,
-      "discovery_note_paragraphs": 1
+      "discovery_note_paragraphs": 1,
+      "key": "DNS"
     },
     {
       "number": "3.6",
@@ -133,7 +138,8 @@
         "placeholder_rows": 2
       },
       "drawbridge_paragraphs": 1,
-      "discovery_note_paragraphs": 1
+      "discovery_note_paragraphs": 1,
+      "key": "NET"
     },
     {
       "number": "3.7",
@@ -153,7 +159,8 @@
         "placeholder_rows": 2
       },
       "drawbridge_paragraphs": 1,
-      "discovery_note_paragraphs": 1
+      "discovery_note_paragraphs": 1,
+      "key": "STOR"
     },
     {
       "number": "3.8",
@@ -172,7 +179,8 @@
         "placeholder_rows": 2
       },
       "drawbridge_paragraphs": 1,
-      "discovery_note_paragraphs": 1
+      "discovery_note_paragraphs": 1,
+      "key": "MGT"
     },
     {
       "number": "3.9",
@@ -192,7 +200,8 @@
         "placeholder_rows": 2
       },
       "drawbridge_paragraphs": 1,
-      "discovery_note_paragraphs": 1
+      "discovery_note_paragraphs": 1,
+      "key": "MON"
     },
     {
       "number": "3.10",
@@ -211,7 +220,8 @@
         "placeholder_rows": 2
       },
       "drawbridge_paragraphs": 1,
-      "discovery_note_paragraphs": 1
+      "discovery_note_paragraphs": 1,
+      "key": "PATCH"
     },
     {
       "number": "3.11",
@@ -230,7 +240,8 @@
         "placeholder_rows": 2
       },
       "drawbridge_paragraphs": 1,
-      "discovery_note_paragraphs": 1
+      "discovery_note_paragraphs": 1,
+      "key": "BAK"
     },
     {
       "number": "3.12",
@@ -249,7 +260,8 @@
         "placeholder_rows": 2
       },
       "drawbridge_paragraphs": 1,
-      "discovery_note_paragraphs": 1
+      "discovery_note_paragraphs": 1,
+      "key": "ISO"
     },
     {
       "number": "3.13",
@@ -269,7 +281,8 @@
         "placeholder_rows": 2
       },
       "drawbridge_paragraphs": 1,
-      "discovery_note_paragraphs": 1
+      "discovery_note_paragraphs": 1,
+      "key": "PERIM"
     },
     {
       "number": "3.14",
@@ -288,7 +301,8 @@
         "placeholder_rows": 2
       },
       "drawbridge_paragraphs": 1,
-      "discovery_note_paragraphs": 1
+      "discovery_note_paragraphs": 1,
+      "key": "VULN"
     },
     {
       "number": "3.15",
@@ -306,7 +320,8 @@
         "placeholder_rows": 2
       },
       "drawbridge_paragraphs": 1,
-      "discovery_note_paragraphs": 1
+      "discovery_note_paragraphs": 1,
+      "key": "INFRA"
     },
     {
       "number": "3.16",
@@ -324,7 +339,8 @@
         "placeholder_rows": 2
       },
       "drawbridge_paragraphs": 1,
-      "discovery_note_paragraphs": 1
+      "discovery_note_paragraphs": 1,
+      "key": "SUPPLY"
     },
     {
       "number": "3.17",
@@ -343,17 +359,20 @@
         "placeholder_rows": 2
       },
       "drawbridge_paragraphs": 1,
-      "discovery_note_paragraphs": 1
+      "discovery_note_paragraphs": 1,
+      "key": "INET"
     }
   ],
   "executive_summary": {
     "heading": "Executive Summary",
-    "paragraphs": 3
+    "paragraphs": 3,
+    "key": "EXECUTIVE_SUMMARY"
   },
   "migration": [
     {
       "number": "5.2",
       "heading": "Installed Applications",
+      "key": "INSTALLED_APPLICATIONS",
       "intro_paragraphs": 1,
       "table": {
         "columns": [
@@ -368,11 +387,13 @@
     {
       "number": "5.3",
       "heading": "Failover and Replication Behaviour",
+      "key": "FAILOVER_REPLICATION_BEHAVIOUR",
       "bullets": 1
     },
     {
       "number": "5.4",
       "heading": "Patch and Update Tooling",
+      "key": "PATCH_UPDATE_TOOLING",
       "intro_paragraphs": 1,
       "table": {
         "columns": [
@@ -390,6 +411,7 @@
     {
       "number": "5.5",
       "heading": "Group Policy Observations",
+      "key": "GROUP_POLICY_OBSERVATIONS",
       "intro_paragraphs": 1,
       "table": {
         "columns": [
@@ -406,6 +428,7 @@
     {
       "number": "5.6",
       "heading": "File Transfer and Local Storage",
+      "key": "FILE_TRANSFER_LOCAL_STORAGE",
       "bullets": 1
     }
   ],
@@ -416,7 +439,8 @@
       "Term",
       "Definition"
     ],
-    "standard_rows": 10
+    "standard_rows": 10,
+    "key": "GLOSSARY_ACRONYMS"
   },
   "coverage": {
     "number": "5.1",
@@ -428,7 +452,8 @@
       "Discovery Script Run",
       "Notes"
     ],
-    "placeholder_rows": 3
+    "placeholder_rows": 3,
+    "key": "DISCOVERY_COVERAGE"
   },
   "ratings": [
     "Met",
@@ -441,11 +466,13 @@
     "number": "4",
     "heading": "Governance Note and Next Steps",
     "standard_bullets": 3,
-    "placeholder_bullets": 1
+    "placeholder_bullets": 1,
+    "key": "GOVERNANCE_NOTE_NEXT_STEPS"
   },
   "migration_intro": {
     "heading": "Migration Discovery",
-    "paragraphs": 1
+    "paragraphs": 1,
+    "key": "MIGRATION_DISCOVERY"
   },
   "boundary_appendix": {
     "number": "6",
@@ -455,7 +482,8 @@
       "Target Destination IP / Parameter",
       "Native Configuration File Layer"
     ],
-    "standard_rows": 4
+    "standard_rows": 4,
+    "key": "OT_3_5_DESTINATION_BOUNDARY"
   },
   "discovery_required": {
     "number": "8",
@@ -470,6 +498,8 @@
       "How to obtain",
       "Status"
     ],
-    "placeholder_rows": 1
-  }
+    "placeholder_rows": 1,
+    "key": "DISCOVERY_REQUIRED"
+  },
+  "_generated_from": "CSA_Template_v1.6.dotx"
 }

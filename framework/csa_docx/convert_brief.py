@@ -18,6 +18,7 @@ import sys
 from pathlib import Path
 
 from csa_docx import requirement_assign, requirement_audit, scope_map
+from csa_docx import targets  # noqa: E402
 
 BLOCKS_JSON = (Path(__file__).resolve().parents[2] / "skills" / "csa-document-template"
                / "references" / "template-blocks.json")
@@ -221,7 +222,7 @@ def _elsewhere_part(target: str, facts: list[dict], reqs_by_id: dict[str, dict],
         if not (f.get("old_target") == target or target in scope_map.legacy_hosts(first_part, domains)):
             continue
         req = reqs_by_id.get(ids[0])
-        if req and req["domain"] != target:
+        if req and not targets.requirement_in(req, target):
             counts[ids[0]] = counts.get(ids[0], 0) + 1
     return [f"- {rid} ({reqs_by_id[rid]['domain']}): {n}" for rid, n in counts.items()] or ["None."]
 
@@ -294,7 +295,7 @@ def build_brief(work_dir: Path, target: str, *, budget_tokens: int = 6000,
             domains = {}
     facts = [] if block_mode else _load_facts(work_dir)
     if domains.get(target) and any("req_ids" in f for f in facts):
-        reqs = [r for r in requirement_assign.load_requirements() if r["domain"] == target]
+        reqs = [r for r in requirement_assign.load_requirements() if targets.requirement_in(r, target)]
         if reqs:
             return _requirement_brief(work_dir, target, budget_tokens, domains[target], domains, facts, reqs)
 

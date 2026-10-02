@@ -20,6 +20,7 @@ from pathlib import Path
 from csa_docx import answer_plan, requirement_assign, scope_map, section_file
 from csa_docx.check_section import normalise_heading
 from csa_docx.convert_brief import _template_title
+from csa_docx import targets  # noqa: E402
 
 LEDGER_COLUMNS = ["id", "path", "outcome", "evidence_ids", "target", "reason", "req_id", "kind"]
 _OPEN_OUTCOMES = ("MISSING", "REQ_INCOMPLETE", "FACT_UNACCOUNTED")
@@ -119,7 +120,7 @@ def _requirement_ledger(work_dir: Path, target: str, parsed: dict | None) -> tup
         if _valid_outcome(o) and o["outcome"].strip().upper() == "MOVED":
             moved.append((o["id"].strip(), o["target"].strip()))
 
-    reqs = [r for r in requirement_assign.load_requirements() if r["domain"] == target]
+    reqs = [r for r in requirement_assign.load_requirements() if targets.requirement_in(r, target)]
     rows: list[dict] = []
 
     section_reqs = {r["req_id"]: r for r in (parsed or {}).get("requirements", [])}

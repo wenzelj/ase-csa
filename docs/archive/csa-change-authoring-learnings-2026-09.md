@@ -404,3 +404,8 @@ Validation:
 - Useful evidence patterns: `20_listening_ports.txt` plus `32_services_inventory.csv` for service exposure; `67_installed_software.csv` and Edge Update logs for browser currency and policy; `68_certificates_localmachine_my.csv` for certificate expiry and subject names; `31_firewall_profiles.txt` plus `33_firewall_rules.csv` for host-firewall posture; Vantage/Nozomi exports for public egress; `65_local_security_policy_export.txt` for the sampled CIS comparison.
 - Caveat: keep sample boundaries explicit. A service observed on six full captures, a lifecycle condition observed on twelve lightweight captures, and network-level traffic across eight exports are different evidence populations and must not be collapsed into one fleet-wide claim.
 - Existing analysis: `security-posture-analysis.md` efficiently identified gaps, but the completed authoring pass narrowed several statements to the host or capture where the matrix directly supported them.
+
+## 2026-09-29 - Stable subsection IDs can differ from requirement-domain labels
+Trigger: a template subsection request named stable `@H3.2`, while the domain scope helper interpreted `3.2` as the Identity & Authentication requirement domain at a different stable path.
+Resolved 2 Oct 2026 (S240, S252): sections resolve by key from the document, so a typed number and the stable path cannot disagree.
+Rule: when the user explicitly supplies a stable-ID scope, verify it against the live manifest and use that unit; record the helper mismatch rather than authoring into a different subsection.
