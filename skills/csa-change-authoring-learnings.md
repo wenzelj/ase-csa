@@ -41,3 +41,18 @@ Rule: `PROSE_UNSUPPORTED` (fact_checks.py) exempts sentences matching `GAP_RE` (
 ## 2026-10-02 - Evidence-to-topic mapping for Network / Segmentation requirement rows
 Trigger: subsection 3.6 (SEP-NET-01/02/03) requirement rows were empty templates and each rating needed an evidenced basis; check-change rejected `basis: not found` and a 3-cell row.
 Rule: map each requirement to its evidence topic before drafting - zone placement to the discovery target host map captures, inter-zone conduits to the expected flow map + design zone/conduit tables, and boundary-control enforcement to "not found" in the current sources. A requirement row must be exactly `<current state> | <rating>` (2 cells, rating last and in the dropdown set). Gap statements go on an `Unknown:` fact line (skips the basis gate) using GAP_RE vocabulary ("not found", "not captured"), never `{basis: not found}` (FACT_INFERRED) and never an inference word like "therefore" (PROSE_LINT).
+
+## 2026-10-03 - Storage & Data Transfer requirement rows: evidence map + NOT_FOUND prose rule
+Trigger: subsection 3.7 (SEP-STOR-01/02/03) requirement rows were empty templates; check-change kept flagging `PROSE_UNSUPPORTED` on any prose sentence whose only support was a NOT_FOUND row, even when the sentence used GAP_RE vocabulary ("was found in the sources").
+Rule: map each requirement to its evidence topic before drafting - OT-resident storage and IT-file-share independence to the SQL cluster services capture and the local-shares inventory, the controlled file-transfer pattern to the expected flow map plus a "not found" proxy/AV control search, and the push-only direction to the expected flow map's outbound flows. A NOT_FOUND row does not satisfy the prose fact gate: keep the document Text cell positive/evidenced and carry the "not found" point on an `Unknown:` fact line (which skips the basis gate) instead of a body sentence.
+
+## 2026-10-03 -- Section 3.8 Management & Administrative Access (REVELOC TETRA)
+
+- **Topic:** jump host role and zone, OT-domain admin group membership, PAM tooling absence
+- **Answered by:** system_matrix.xlsx (jump host role), 01_reveloc_target_host_map.txt (zone), 60_gpresult_user.txt (group membership), previous CSA (PAM absence, RD Users)
+- **Caveat:** E-140 (gpresult IT domain groups on SQL cluster) is UNCONFIRMED; E-152 (OT_Reveloc_Administrators on jump hosts) was appended this run as VERIFIED after direct verification of the raw gpresult file. The gpresult user section shows group membership of the *captured user*, not the full group membership list -- the full list of who is in OT_Reveloc_Administrators is not captured.
+- **No analysis or draft file helped for this topic.**
+
+## 2026-10-03 - UNCONFIRMED rows: carry as Unknown fact lines, not observed facts
+Trigger: a change file for 3.8 cited E-140 (UNCONFIRMED) as an `observed` fact ("member of IT domain groups") and listed E-140 in a Why section where the finding was actually backed by E-152 (VERIFIED). `check-change` does not flag either case - it only checks review_state for EVIDENCE_PENDING - so both slipped through.
+Rule: before citing an evidence row as a fact, check its `status` column, not just its existence. If a row is UNCONFIRMED/CONFLICTING/INFERRED, carry it on an `Unknown:` fact line (GAP_RE vocabulary) and name the confirming owner; do not write the claim as established in the document Text. And when a fact's support comes from one VERIFIED row, cite that row in Why - do not let a related UNCONFIRMED row drift into the Why of a different record and into the Word comment's evidence list.

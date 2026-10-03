@@ -827,12 +827,107 @@ def to_graph(work_dir: Path, workspace: Path, domain: str = "3.6 Network / Segme
         parts = sorted({f"{l['dst_host']} on TCP/{l['dst_port']}" for l in new})
         cap = Path(new[0]["source"].split(" line ")[0]).parent.name
         q = f"Which captured hosts does {src} hold established sessions to?" + ("" if not claims[src] else " (further verified links)")
+        # Excerpt: verbatim capture lines joined with " | " so the matrix source check
+        # can confirm each part in the cited file.  The captures record IP:port pairs,
+        # not host names; the host link itself is what the evidence claim asserts.
+        # The cited file may no longer sit at its original source-set path (the source
+        # set was reorganised): fall back to the discovery index, the same store the
+        # source check reads, matched on the capture folder + file name.
+        ip_map = {h: sorted(ip for ip in (r.get("ips") or "").split(";") if ip) for h, r in reg.items()}
+        _lines_cache = {}
+        def _file_lines(rel: str, line_no: str):
+            def at_line(ls):
+                return ls, (max(0, min(int(line_no) - 1, len(ls) - 1)) if line_no.isdigit() else 0)
+            c = workspace / rel
+            if c.is_file():
+                try:
+                    ls = c.read_text(encoding="utf-8", errors="replace").splitlines()
+                except OSError:
+                    ls = []
+                if ls:
+                    return at_line(ls)
+            if rel in _lines_cache:
+                return at_line(_lines_cache[rel])
+            try:
+                con = _db(work_dir)
+            except SystemExit:
+                return None
+            segs = [s for s in rel.split("/") if s and s != ".."]
+            name, cap = segs[-1], (segs[-2] if len(segs) >= 2 else None)
+            if cap:
+                row = con.execute(
+                    "select coalesce(f.dup_of, f.file_id) from files f where f.rel_path like ? and f.rel_path like ? "
+                    "order by f.dup_of is null desc, f.file_id desc limit 1",
+                    (f"%{cap}%", f"%{name}")).fetchone()
+            else:
+                row = con.execute("select coalesce(f.dup_of, f.file_id) from files f where f.rel_path like ? "
+                                  "order by f.dup_of is null desc, f.file_id desc limit 1",
+                                  (f"%{name}",)).fetchone()
+            if not row:
+                return None
+            chunks = con.execute(
+                "select cc.c0, m.line_start from chunks_content cc join chunk_map m on m.chunk_id=cc.id "
+                "where m.file_id=? order by m.line_start", (row[0],)).fetchall()
+            ls = []
+            for text, start in chunks:
+                if text is None:
+                    continue
+                pos = max(0, int(start or 1) - 1)
+                if len(ls) < pos:
+                    ls.extend([""] * (pos - len(ls)))
+                for offset, value in enumerate(str(text).splitlines()):
+                    target = pos + offset
+                    if target < len(ls):
+                        ls[target] = value
+                    else:
+                        ls.append(value)
+            if not ls:
+                return None
+            _lines_cache[rel] = ls
+            return at_line(ls)
+        def _line_for(link):
+            ips, port = ip_map.get(link["dst_host"], ()), link["dst_port"].strip()
+            if not ips:
+                return ""
+            rel, line_no = link["source"].rsplit(" line ", 1)
+            got = _file_lines(rel, line_no)
+            if not got:
+                return ""
+            ls, idx = got
+            # rows.line_no is the first line of the PowerShell record; the
+            # RemoteAddress and RemotePort fields follow it.
+            seg = " ".join(ls[max(0, idx - 1):idx + 7])
+            if any(ip in seg for ip in ips) and port in seg:
+                return " ".join(x for x in (l.strip() for l in ls[max(0, idx - 1):idx + 7]) if x)
+            return ""
+        def _listener_line(link):
+            capture = (reg.get(link["dst_host"], {}).get("capture") or "").strip()
+            if not capture:
+                return ""
+            con = _db(work_dir)
+            row = con.execute(
+                "select f.rel_path, r.line_no from rows r join files f on f.file_id=r.file_id "
+                "where f.host=? and r.table_name='listening_ports' and f.rel_path like ? "
+                "and cast(json_extract(r.data, '$.LocalPort') as text)=? "
+                "order by f.file_id, r.line_no limit 1",
+                (link["dst_host"], f"%{capture}%", link["dst_port"].strip())).fetchone()
+            if not row:
+                return ""
+            got = _file_lines(str(row[0]), str(row[1]))
+            if not got:
+                return ""
+            ls, idx = got
+            line = ls[idx].strip()
+            return line if link["dst_port"].strip() in line else ""
+        quoted = [x for l in new for x in (_line_for(l), _listener_line(l)) if x]
+        excerpt = " | ".join(quoted)[:1200] if quoted else \
+                  "; ".join(f"{l['dst_host']}:{l['dst_port']} ({l['source'].split('/')[-1]})" for l in new)[:1200]
         rows.append({"csa_area": "network_and_connectivity", "question": q,
                      "claim": f"{src} holds established sessions to {', '.join(parts)}; each destination listens on that port "
                               f"({'; '.join(sorted({l['basis'].replace('dst listens on port', '').strip(' ()') or 'own capture' for l in new}))}).",
                      "status": "VERIFIED", "source_title": "21_established_connections_raw.txt; 20_listening_ports.txt",
                      "source_version": cap, "section": "established connections", "page_or_location": new[0]["source"],
-                     "evidence_excerpt": "; ".join(f"{l['dst_host']}:{l['dst_port']} ({l['source'].split('/')[-1]})" for l in new)[:1200],
+                     "evidence_excerpt": excerpt,
                      "confidence": "high", "gap_or_action": "Sessions at capture time only; not a full flow record."})
     res = {"evidence_new": len(rows)}
     if rows:

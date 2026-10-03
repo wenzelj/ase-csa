@@ -1390,6 +1390,30 @@ def cmd_index(a):
     return run_script("index", ["--project", p["key"], *a.rest])
 
 
+def cmd_browse(a):
+    """Run the loopback-only CSA Evidence Workspace."""
+    p = project(a.project); banner(p)
+    app_dir = AGENTS_DIR / "evidence-browser"
+    dist = app_dir / "frontend" / "dist"
+    if not (app_dir / "pyproject.toml").is_file():
+        die(f"evidence workspace is not installed at {app_dir}")
+    if not dist.is_dir():
+        die(f"evidence workspace frontend is not built; run `npm install && npm run build` in {app_dir / 'frontend'}")
+    aliases = {"iamps-08": "iamps", "iamps": "iamps", "utcdtc": "utcdtc",
+               "tetra-reveloc": "tetra", "tetra": "tetra"}
+    selected = aliases.get(p["key"])
+    if not selected:
+        die(f"project {p['key']!r} is not exposed in the evidence workspace")
+    command = [sys.executable, "-m", "backend.server",
+               "--project", selected, "--port", str(a.port), "--agents-dir", str(AGENTS_DIR)]
+    if a.no_open:
+        command.append("--no-open")
+    try:
+        return subprocess.call(command, cwd=app_dir)
+    except KeyboardInterrupt:
+        return 130
+
+
 def cmd_graph(a):
     p = project(a.project); banner(p)
     return run_script("graph", ["--workspace", _ws(p), *a.rest])
@@ -3762,6 +3786,9 @@ def main(argv=None) -> int:
     s.add_argument("--name", help="system layer name for `csa hosts system` (e.g. tcs)")
     s.add_argument("--fix", action="store_true", help="graph: reject stale/out-of-scope/mis-cited items csa hosts created, then re-add")
     s.add_argument("--question", help="evidence: the question the host-group rows answer")
+    s = sp("browse", cmd_browse, help="open the local CSA Evidence Workspace in a browser")
+    s.add_argument("--port", type=int, default=8765)
+    s.add_argument("--no-open", action="store_true", help="start the server without opening the browser")
     s = sp("fleet", cmd_fleet, help="run independent tasks in parallel, one headless worker per slot")
     s.add_argument("tasks", nargs="*", help='quoted tasks, e.g. "author 6" "analyse infrastructure-analysis SECTION=5"')
     s.add_argument("--file", "-f", help="task file, one task per line (# comments allowed)")

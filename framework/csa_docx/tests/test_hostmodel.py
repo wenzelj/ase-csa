@@ -62,6 +62,58 @@ def test_build_show_group_links(tmp_path):
     assert [(l["src_host"], l["dst_host"], l["dst_port"]) for l in links] == [("HMA1", "HMB1", "6010")]
 
 
+def test_graph_quotes_indexed_duplicate_sources_and_listener(tmp_path, monkeypatch):
+    work = tmp_path / "csa-work"
+    hosts = work / "hosts"
+    hosts.mkdir(parents=True)
+    (hosts / "hosts.csv").write_text(
+        "host,in_scope,role,role_source,site,site_source,ips,capture\n"
+        "SRCA01,Yes,,,,,10.0.0.1,CAP_SRCA01_20260101T000000Z\n"
+        "DSTA01,Yes,,,,,10.0.0.2,CAP_DSTA01_20260101T000000Z\n", encoding="utf-8")
+    (hosts / "host_links.csv").write_text(
+        "src_host,dst_host,dst_port,sessions,basis,source\n"
+        "SRCA01,DSTA01,6010,1,dst listens on port,old/CAP_SRCA01_20260101T000000Z/21_established_connections_raw.txt line 1\n",
+        encoding="utf-8")
+    (work / "evidence-matrix.csv").write_text(
+        "evidence_id,question,claim,review_state\n", encoding="utf-8")
+    con = sqlite3.connect(work / "discovery-index.sqlite")
+    con.executescript("""
+      create table files(file_id integer, rel_path text, host text, dup_of integer);
+      create table rows(file_id integer, table_name text, line_no integer, data text);
+      create table chunk_map(chunk_id integer, file_id integer, line_start integer);
+      create table chunks_content(id integer, c0 text);
+    """)
+    established = ("LocalAddress  : 10.0.0.1\nLocalPort     : 55000\n"
+                   "RemoteAddress : 10.0.0.2\nRemotePort    : 6010\nOwningProcess : 42\n")
+    listening = "0.0.0.0           6010           42\n"
+    files = [
+        (1, "new/CAP_SRCA01_20260101T000000Z/21_established_connections_raw.txt", "SRCA01", None),
+        (2, "new/CAP_DSTA01_20260101T000000Z/20_listening_ports.txt", "DSTA01", None),
+        (101, "copy/CAP_SRCA01_20260101T000000Z/21_established_connections_raw.txt", "SRCA01", 1),
+        (102, "copy/CAP_DSTA01_20260101T000000Z/20_listening_ports.txt", "DSTA01", 2),
+    ]
+    con.executemany("insert into files values (?,?,?,?)", files)
+    con.execute("insert into rows values (1,'established_connections_raw',1,?)",
+                (json.dumps({"RemoteAddress": "10.0.0.2", "RemotePort": "6010"}),))
+    con.execute("insert into rows values (2,'listening_ports',1,?)",
+                (json.dumps({"LocalAddress": "0.0.0.0", "LocalPort": "6010"}),))
+    con.executemany("insert into chunk_map values (?,?,1)", [(1, 1), (2, 2)])
+    con.executemany("insert into chunks_content values (?,?)", [(1, established), (2, listening)])
+    con.commit()
+    captured = []
+    def fake_script(name, workspace, *args, payload=None):
+        captured.extend(payload or [])
+        return {"would_write": [{"evidence_id": "E-101"} for _ in (payload or [])]}
+    monkeypatch.setattr(hm, "_script", fake_script)
+    result = hm.to_graph(work, tmp_path, dry_run=True)
+    assert result["status"] == "DRY_RUN" and result["evidence_new"] == 1
+    excerpt = captured[0]["evidence_excerpt"]
+    assert "RemoteAddress : 10.0.0.2" in excerpt
+    assert "RemotePort    : 6010" in excerpt
+    assert "0.0.0.0           6010" in excerpt
+    assert "DSTA01:6010" not in excerpt
+
+
 def test_name_addresses_trusted_and_spread(tmp_path):
     con = sqlite3.connect(tmp_path / "t.sqlite")
     con.executescript("""create table files(file_id integer, rel_path text);
