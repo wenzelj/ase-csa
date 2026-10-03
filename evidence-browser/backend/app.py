@@ -194,13 +194,51 @@ def source_roots(project: dict[str, str]) -> list[Path]:
     return [Path(p.strip()).expanduser().resolve() for p in raw if p.strip()]
 
 
+def resolve_indexed_path(project: dict[str, str], rel_path: str) -> Path:
+    """Resolve an indexed path, including indexes copied between CSA workspaces.
+
+    IAMPS 08 deliberately reuses the IAMPS 06 discovery index. Its stored paths
+    are relative to the IAMPS 06 project root, while the active registry project
+    is IAMPS 08. Rebase at the configured source folder name before declaring the
+    source missing; never search outside the registered evidence roots.
+    """
+    relative = Path(rel_path)
+    direct = (Path(project["project_root"]) / relative).resolve()
+    roots = source_roots(project)
+    candidates = [direct]
+    parts = relative.parts
+    for root in roots:
+        matches = [i for i, part in enumerate(parts) if part.casefold() == root.name.casefold()]
+        if matches:
+            candidates.append((root / Path(*parts[matches[-1] + 1:])).resolve())
+    for candidate in candidates:
+        if candidate.is_file() and any(candidate == root or root in candidate.parents for root in roots):
+            return candidate
+    # Source folders sometimes get renamed after an index build (TETRA's
+    # `RevLoc` became `revloc-tetra`). A capture folder plus file name remains
+    # stable and is specific enough to recover the source without guessing.
+    capture = next((part for part in parts
+                    if re.search(r"_discovery_[A-Za-z0-9-]+_\d{8}T\d{6}Z$", part, re.I)), None)
+    recovered: list[Path] = []
+    for root in roots:
+        for match in root.rglob(relative.name):
+            resolved = match.resolve()
+            if capture and capture not in resolved.parts:
+                continue
+            recovered.append(resolved)
+    unique = list(dict.fromkeys(recovered))
+    if len(unique) == 1:
+        return unique[0]
+    return direct
+
+
 def safe_file(project: dict[str, str], file_id: int) -> tuple[sqlite3.Row, Path]:
     con = open_index(project)
     row = con.execute("SELECT * FROM files WHERE file_id=?", (file_id,)).fetchone()
     con.close()
     if row is None:
         raise HTTPException(404, "Indexed file was not found")
-    path = (Path(project["project_root"]) / row["rel_path"]).resolve()
+    path = resolve_indexed_path(project, row["rel_path"])
     allowed = source_roots(project)
     if not any(path == root or root in path.parents for root in allowed):
         raise HTTPException(403, "Indexed path is outside configured evidence sources")

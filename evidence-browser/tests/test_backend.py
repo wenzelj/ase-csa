@@ -85,6 +85,39 @@ def test_safe_file_rejects_indexed_path_outside_sources(tmp_path: Path, monkeypa
     assert caught.value.status_code == 403
 
 
+def test_safe_file_rebases_index_copied_from_older_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    project, sources = make_workspace(tmp_path, monkeypatch)
+    path = sources / "PROD" / "capture" / "03_time_status.txt"
+    path.parent.mkdir(parents=True)
+    path.write_text("Source: Local CMOS Clock", encoding="utf-8")
+    legacy_relative = f"01 Current State AS Built/{sources.name}/PROD/capture/03_time_status.txt"
+    db = sqlite3.connect(project / "csa-work" / "discovery-index.sqlite")
+    cursor = db.execute(
+        "INSERT INTO files(rel_path,capture_id,host,ext,size,mtime,status,reason,source_class,archived) VALUES(?,?,?,?,?,?,?,?,?,?)",
+        (legacy_relative, 1, "HOST01", ".txt", path.stat().st_size, path.stat().st_mtime, "indexed", "text", "capture", 0),
+    )
+    db.commit(); file_id = cursor.lastrowid; db.close()
+    _, resolved = workspace.safe_file(workspace.system_project("iamps"), file_id)
+    assert resolved == path.resolve()
+
+
+def test_safe_file_recovers_renamed_folder_by_capture_and_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    project, sources = make_workspace(tmp_path, monkeypatch)
+    capture = "REVELOC_discovery_HOST01_20261003T010203Z"
+    path = sources / "renamed-source" / "Script_Results" / capture / "03_time_status.txt"
+    path.parent.mkdir(parents=True)
+    path.write_text("Source: domain controller", encoding="utf-8")
+    stale_relative = f"source/OldName/Script_Results/{capture}/03_time_status.txt"
+    db = sqlite3.connect(project / "csa-work" / "discovery-index.sqlite")
+    cursor = db.execute(
+        "INSERT INTO files(rel_path,capture_id,host,ext,size,mtime,status,reason,source_class,archived) VALUES(?,?,?,?,?,?,?,?,?,?)",
+        (stale_relative, 1, "HOST01", ".txt", path.stat().st_size, path.stat().st_mtime, "indexed", "text", "capture", 0),
+    )
+    db.commit(); file_id = cursor.lastrowid; db.close()
+    _, resolved = workspace.safe_file(workspace.system_project("iamps"), file_id)
+    assert resolved == path.resolve()
+
+
 def test_text_preview_keeps_citation_line(tmp_path: Path) -> None:
     path = tmp_path / "evidence.txt"
     path.write_text("\n".join(f"line {i}" for i in range(1, 301)), encoding="utf-8")
@@ -126,4 +159,3 @@ def test_commit_requires_confirmation(tmp_path: Path, monkeypatch: pytest.Monkey
     with pytest.raises(HTTPException) as caught:
         workspace.commit_evidence("iamps", workspace.CommitRequest(draft=draft, confirmed=False))
     assert caught.value.status_code == 409
-
