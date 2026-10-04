@@ -66,6 +66,14 @@ def catalogue() -> list[dict[str, Any]]:
     return [operation.descriptor().model_dump() for operation in OPERATIONS.values()]
 
 
+def validation_operation(lane: str) -> Operation:
+    """The one authoritative validation gate for a framework section lane."""
+    key = {"revise": "check_change", "build": "check_section"}.get(lane)
+    if key is None:
+        raise HTTPException(409, "The section lane is unresolved")
+    return OPERATIONS[key]
+
+
 def _validate_identifier(value: str, kind: str) -> str:
     value = value.strip()
     if not value or ".." in value or "/" in value or "\\" in value:

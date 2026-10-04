@@ -19,7 +19,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import commands, documents, pipeline, proposals, sections
+from . import commands, documents, pipeline, proposals, sections, validation
 from .jobs import JobManager
 from .models import CommandRequest, JobCreateRequest
 
@@ -475,6 +475,11 @@ def get_section_proposal(system_key: str, section: str) -> dict[str, Any]:
 @app.put("/api/systems/{system_key}/sections/{section}/proposal")
 def save_section_proposal(system_key: str, section: str, payload: dict[str, Any]) -> dict[str, Any]:
     return proposals.save(agents_dir(), system_project(system_key), section, payload)
+
+
+@app.post("/api/systems/{system_key}/sections/{section}/validate")
+def validate_section_proposal(system_key: str, section: str, payload: dict[str, Any]) -> dict[str, Any]:
+    return validation.validate(agents_dir(), system_project(system_key), section, payload)
 
 
 @app.get("/api/systems/{system_key}/document")
