@@ -119,9 +119,12 @@ class JobManager:
             if job.project_key != project_key:
                 continue
             if job.state in {"queued", "running"}:
-                job.state = "interrupted"
+                job.state = "failed" if job.started_at is None else "interrupted"
                 job.finished_at = _now()
-                job.message = "The evidence workspace restarted before this job completed."
+                if job.started_at is None:
+                    job.message = "The evidence workspace restarted before this job started."
+                else:
+                    job.message = "The evidence workspace restarted before this job completed."
                 self._persist(project, job)
             with self._condition:
                 self._jobs[job.id] = job
@@ -138,7 +141,6 @@ class JobManager:
         )
         with self._condition:
             self._jobs[job.id] = job
-        self._persist(project, job)
         threading.Thread(target=self._run, args=(dict(project), job.id, operation, argv), daemon=True).start()
         return job.model_copy(deep=True)
 
@@ -151,6 +153,8 @@ class JobManager:
         with self._condition:
             job = self._jobs[job_id]
             resource = self._resource(job)
+        self._persist(project, job)
+        with self._condition:
             while resource is not None and resource in self._held:
                 self._condition.wait()
             if resource is not None:
