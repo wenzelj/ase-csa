@@ -19,7 +19,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import commands, documents, pipeline
+from . import commands, documents, pipeline, sections
 from .jobs import JobManager
 from .models import CommandRequest, JobCreateRequest
 
@@ -459,6 +459,12 @@ def get_pipeline(system_key: str, response: Response) -> dict[str, Any]:
     result = pipeline.snapshot(agents_dir(), system_project(system_key))
     response.headers["ETag"] = result.etag
     return result.model_dump()
+
+
+@app.get("/api/systems/{system_key}/sections/{section}")
+def get_section(system_key: str, section: str) -> dict[str, Any]:
+    project = system_project(system_key)
+    return sections.inspect(agents_dir(), project, section, matrix_rows(project))
 
 
 @app.get("/api/systems/{system_key}/document")

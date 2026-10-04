@@ -72,6 +72,26 @@ class Handler(BaseHTTPRequestHandler):
             match = re.fullmatch(r"/api/systems/([^/]+)/commands", path)
             if match:
                 return self.dispatch_result(api.command_catalogue(match.group(1)))
+            match = re.fullmatch(r"/api/systems/([^/]+)/pipeline", path)
+            if match:
+                project = api.system_project(match.group(1))
+                return self.dispatch_result(api.pipeline.snapshot(api.agents_dir(), project).model_dump())
+            match = re.fullmatch(r"/api/systems/([^/]+)/document", path)
+            if match:
+                return self.dispatch_result(api.get_document(match.group(1)))
+            match = re.fullmatch(r"/api/systems/([^/]+)/document/preview", path)
+            if match:
+                return self.dispatch_result(api.get_document_preview(
+                    match.group(1), scalar(query, "mode", "descriptor")))
+            match = re.fullmatch(r"/api/systems/([^/]+)/document/comments", path)
+            if match:
+                return self.dispatch_result(api.get_document_comments(match.group(1)))
+            match = re.fullmatch(r"/api/systems/([^/]+)/jobs", path)
+            if match:
+                return self.dispatch_result(api.list_jobs(match.group(1)))
+            match = re.fullmatch(r"/api/systems/([^/]+)/jobs/([^/]+)", path)
+            if match:
+                return self.dispatch_result(api.get_job(match.group(1), match.group(2)))
             match = re.fullmatch(r"/api/systems/([^/]+)/evidence", path)
             if match:
                 return self.dispatch_result(api.evidence(
@@ -110,12 +130,26 @@ class Handler(BaseHTTPRequestHandler):
             if match:
                 return self.dispatch_result(api.run_command(
                     match.group(1), match.group(2), api.CommandRequest.model_validate(payload)))
+            match = re.fullmatch(r"/api/systems/([^/]+)/jobs", parsed.path)
+            if match:
+                return self.dispatch_result(api.create_job(
+                    match.group(1), api.JobCreateRequest.model_validate(payload)))
             match = re.fullmatch(r"/api/systems/([^/]+)/evidence-drafts/validate", parsed.path)
             if match:
                 return self.dispatch_result(api.validate_evidence(match.group(1), api.EvidenceDraft.model_validate(payload)))
             match = re.fullmatch(r"/api/systems/([^/]+)/evidence-drafts/commit", parsed.path)
             if match:
                 return self.dispatch_result(api.commit_evidence(match.group(1), api.CommitRequest.model_validate(payload)))
+            self.send_json({"detail": "Route not found"}, 404)
+        except Exception as error:
+            self.fail(error)
+
+    def do_DELETE(self) -> None:
+        try:
+            path = unquote(urlparse(self.path).path)
+            match = re.fullmatch(r"/api/systems/([^/]+)/jobs/([^/]+)", path)
+            if match:
+                return self.dispatch_result(api.cancel_job(match.group(1), match.group(2)))
             self.send_json({"detail": "Route not found"}, 404)
         except Exception as error:
             self.fail(error)
