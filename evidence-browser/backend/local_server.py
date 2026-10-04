@@ -76,6 +76,10 @@ class Handler(BaseHTTPRequestHandler):
             if match:
                 project = api.system_project(match.group(1))
                 return self.dispatch_result(api.pipeline.snapshot(api.agents_dir(), project).model_dump())
+            match = re.fullmatch(r"/api/systems/([^/]+)/word-review", path)
+            if match:
+                project = api.system_project(match.group(1))
+                return self.dispatch_result(api.word_review.build_review(api.agents_dir(), project))
             match = re.fullmatch(r"/api/systems/([^/]+)/document", path)
             if match:
                 return self.dispatch_result(api.get_document(match.group(1)))
@@ -137,9 +141,18 @@ class Handler(BaseHTTPRequestHandler):
             match = re.fullmatch(r"/api/systems/([^/]+)/evidence-drafts/validate", parsed.path)
             if match:
                 return self.dispatch_result(api.validate_evidence(match.group(1), api.EvidenceDraft.model_validate(payload)))
-            match = re.fullmatch(r"/api/systems/([^/]+)/evidence-drafts/commit", parsed.path)
+            match = re.fullmatch(r"/api/systems/([^/]+)/evidence-drafts/commit", path)
             if match:
                 return self.dispatch_result(api.commit_evidence(match.group(1), api.CommitRequest.model_validate(payload)))
+            match = re.fullmatch(r"/api/systems/([^/]+)/word-review/open", parsed.path)
+            if match:
+                return self.dispatch_result(api.word_review.open_authoritative(api.system_project(match.group(1))))
+            match = re.fullmatch(r"/api/systems/([^/]+)/word-review/operator-note", parsed.path)
+            if match:
+                return self.dispatch_result(api.record_operator_note(match.group(1), payload))
+            match = re.fullmatch(r"/api/systems/([^/]+)/word-review/refresh", parsed.path)
+            if match:
+                return self.dispatch_result(api.word_review.refresh_gate(api.agents_dir(), api.system_project(match.group(1))))
             self.send_json({"detail": "Route not found"}, 404)
         except Exception as error:
             self.fail(error)

@@ -76,6 +76,25 @@ class PipelineDocument(BaseModel):
     modified_at: str | None = None
 
 
+class WordSectionReview(BaseModel):
+    number: str
+    heading: str
+    change_count: int
+    comment_count: int
+    status: str  # "pending" | "decided" | "has_comments"
+    last_activity: str | None = None
+
+
+class WordReview(BaseModel):
+    document: str
+    modified_at: str | None
+    section_count: int
+    pending_count: int
+    comment_count: int
+    sections: list[WordSectionReview]
+    generated_at: str
+
+
 class PipelineSection(BaseModel):
     visible_number: str
     stable_key: str

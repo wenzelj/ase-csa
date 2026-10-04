@@ -19,7 +19,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import apply_workflow, commands, documents, pipeline, proposals, sections, validation
+from . import apply_workflow, commands, documents, pipeline, proposals, sections, validation, word_review
 from .jobs import JobManager
 from .models import CommandRequest, JobCreateRequest
 
@@ -459,6 +459,34 @@ def get_pipeline(system_key: str, response: Response) -> dict[str, Any]:
     result = pipeline.snapshot(agents_dir(), system_project(system_key))
     response.headers["ETag"] = result.etag
     return result.model_dump()
+
+
+@app.get("/api/systems/{system_key}/word-review")
+def get_word_review(system_key: str) -> dict[str, Any]:
+    return word_review.build_review(agents_dir(), system_project(system_key))
+
+
+@app.post("/api/systems/{system_key}/word-review/open")
+def open_word_review(system_key: str) -> dict[str, Any]:
+    return word_review.open_authoritative(system_project(system_key))
+
+
+@app.post("/api/systems/{system_key}/word-review/operator-note")
+def record_operator_note(system_key: str, payload: dict) -> dict[str, Any]:
+    note = str(payload.get("note", "")).strip()
+    if not note:
+        return {"state": "rejected", "reason": "note required"}
+    return word_review.record_operator_note(agents_dir(), system_project(system_key), note)
+
+
+@app.post("/api/systems/{system_key}/word-review/refresh")
+def refresh_word_review(system_key: str) -> dict[str, Any]:
+    return word_review.refresh_gate(agents_dir(), system_project(system_key))
+
+
+@app.get("/api/systems/{system_key}/word-review/integrity")
+def check_integrity(system_key: str, expected_hash: str | None = None) -> dict[str, Any]:
+    return word_review.check_document_integrity(system_project(system_key), expected_hash)
 
 
 @app.get("/api/systems/{system_key}/sections/{section}")

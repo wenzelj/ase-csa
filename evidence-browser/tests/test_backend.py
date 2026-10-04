@@ -8,6 +8,8 @@ import pytest
 from fastapi import HTTPException
 
 from backend import app as workspace
+from backend import word_review
+from backend.models import PipelineDocument, PipelineIssue, PipelineSection, PipelineSnapshot
 
 
 def make_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
@@ -205,3 +207,200 @@ def test_commit_requires_confirmation(tmp_path: Path, monkeypatch: pytest.Monkey
     with pytest.raises(HTTPException) as caught:
         workspace.commit_evidence("iamps", workspace.CommitRequest(draft=draft, confirmed=False))
     assert caught.value.status_code == 409
+
+
+def _make_doc(path: Path) -> None:
+    """Create a minimal valid DOCX at the given path."""
+    import zipfile
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("[Content_Types].xml",
+            '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+            '<Default Extension="xml" ContentType="application/xml"/>'
+            '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+            '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+            "</Types>")
+        zf.writestr("word/_rels/document.xml.rels",
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>')
+        zf.writestr("word/document.xml",
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+            '<w:body><w:p><w:r><w:t>Test document</w:t></w:r></w:p></w:body></w:document>')
+        zf.writestr("word/comments.xml",
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<w:comments xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>')
+
+
+def test_word_review_returns_document_and_sections(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    project, _ = make_workspace(tmp_path, monkeypatch)
+
+    # Create a real DOCX + change file where documents.candidates() will find it
+    version_dir = project / "versions" / "v1"
+    version_dir.joinpath("reviews").mkdir(parents=True)
+    version_dir.joinpath("reviews", "ChangesCSA_01.md").write_text("# Change\n", encoding="utf-8")
+    _make_doc(version_dir / "Assessment.docx")
+
+    # Build a fake pipeline snapsho...[truncated]
+    fake_snap = PipelineSnapshot(
+        project_key="iamps",
+        project_label="IA MPS",
+        spec_mode="spec",
+        word_locked=False,
+        document=PipelineDocument(path="doc.docx", size=1024,
+                                  modified_at="2026-10-01T00:00:00Z"),
+        etag='"test-etag"',
+        sections=[
+            PipelineSection(visible_number="1.", stable_key="1", heading="Introduction",
+                            lane="revise", change_file="1-intro.md",
+                            applied_state="complete", validation_result="valid",
+                            open_comments=0, last_activity="2026-10-03T00:00:00Z"),
+            PipelineSection(visible_number="2.", stable_key="2", heading="Security",
+                            lane="build", change_file=None,
+                            applied_state="unknown", validation_result="unknown",
+                            open_comments=2, last_activity="2026-10-02T00:00:00Z"),
+        ],
+        issues=[],
+    )
+
+    def fake_snapshot(agents_dir, proj, *, runner=None):
+        return fake_snap
+
+    monkeypatch.setattr("backend.pipeline.snapshot", fake_snapshot)
+    review = word_review.build_review(
+        tmp_path / ".agents", workspace.system_project("iamps"),
+        snapshot_runner=lambda _: "ok",
+    )
+    assert review["gate"] in ("approval", "awaiting_first_decision", "word_locked")
+    assert review["authoritative_path"]
+    assert review["sha256"]
+    assert review["size"] > 0
+    assert review["generated_at"]
+    for sec in review["sections"]:
+        assert sec["number"]
+        assert sec["status"] in ("pending", "decided", "has_comments")
+        assert sec["comment_count"] >= 0
+
+
+def test_word_review_pending_counts_when_no_changes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    project, _ = make_workspace(tmp_path, monkeypatch)
+
+    # Create a real DOCX + change file
+    version_dir = project / "versions" / "v1"
+    version_dir.joinpath("reviews").mkdir(parents=True)
+    version_dir.joinpath("reviews", "ChangesCSA_01.md").write_text("# Change\n", encoding="utf-8")
+    _make_doc(version_dir / "Assessment.docx")
+
+    # No sections in the snapshot → all pending
+    fake_snap = PipelineSnapshot(
+        project_key="iamps",
+        project_label="IA MPS",
+        spec_mode="spec",
+        word_locked=False,
+        document=PipelineDocument(path="doc.docx", size=512,
+                                  modified_at="2026-10-01T00:00:00Z"),
+        etag='"test-etag"',
+        sections=[],
+        issues=[],
+    )
+
+    def fake_snapshot(agents_dir, proj, *, runner=None):
+        return fake_snap
+
+    monkeypatch.setattr("backend.pipeline.snapshot", fake_snapshot)
+    review = word_review.build_review(
+        tmp_path / ".agents", workspace.system_project("iamps"),
+        snapshot_runner=lambda _: "ok",
+    )
+    assert review["section_count"] == 0
+    assert review["pending_count"] == 0
+    assert review["gate"] == "awaiting_first_decision"
+
+
+def test_word_review_blocked_when_no_document(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Set up project registry WITHOUT a document
+    agents = tmp_path / ".agents"
+    context = agents / "csa-context"
+    context.mkdir(parents=True)
+    project = tmp_path / "IAMPS"
+    work = project / "csa-work"
+    work.mkdir(parents=True)
+    context.joinpath("PROJECTS.yaml").write_text(
+        "projects:\n"
+        "  - key: iamps-08\n"
+        "    label: \"IAMPS\"\n"
+        f"    project_root: \"{project}\"\n"
+        f"    work_dir: \"{work}\"\n"
+        f"    default_source_set: \"{tmp_path / 'sources'}\"\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CSA_AGENTS_DIR", str(agents))
+    review = word_review.build_review(
+        agents, workspace.system_project("iamps")
+    )
+    assert review["gate"] == "blocked"
+    assert "reason" in review
+
+
+def test_word_review_open_uses_registered_path_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    project, _ = make_workspace(tmp_path, monkeypatch)
+
+    # Create a real DOCX where documents.resolve() can find it
+    version_dir = project / "versions" / "v1"
+    version_dir.joinpath("reviews").mkdir(parents=True)
+    version_dir.joinpath("reviews", "ChangesCSA_01.md").write_text("# Change\n", encoding="utf-8")
+    _make_doc(version_dir / "Assessment.docx")
+    expected_path = (version_dir / "Assessment.docx").resolve()
+
+    captured = {}
+
+    def fake_open(path):
+        captured["path"] = str(path)
+        return {"state": "opened"}
+
+    result = word_review.open_authoritative(
+        workspace.system_project("iamps"), document_opener=fake_open
+    )
+    assert result["state"] == "opened"
+    assert result["authoritative_path"] == str(expected_path)
+    assert captured["path"] == str(expected_path)
+
+
+def test_word_review_operator_note_written(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    project, _ = make_workspace(tmp_path, monkeypatch)
+
+    # Create a real DOCX where documents.resolve() can find it
+    version_dir = project / "versions" / "v1"
+    version_dir.joinpath("reviews").mkdir(parents=True)
+    version_dir.joinpath("reviews", "ChangesCSA_01.md").write_text("# Change\n", encoding="utf-8")
+    _make_doc(version_dir / "Assessment.docx")
+
+    work_dir = project / "csa-work"
+    result = word_review.record_operator_note(
+        tmp_path / ".agents", workspace.system_project("iamps"), "Approved by reviewer"
+    )
+    assert result["state"] == "recorded"
+    audit_path = work_dir / "operator-decisions.jsonl"
+    assert audit_path.exists()
+    content = audit_path.read_text(encoding="utf-8")
+    assert "Approved by reviewer" in content
+    assert "operator_record" in content
+
+
+def test_word_review_refresh_recomputes_lock(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    project, _ = make_workspace(tmp_path, monkeypatch)
+
+    # Create a real DOCX where documents.resolve() can find it
+    version_dir = project / "versions" / "v1"
+    version_dir.joinpath("reviews").mkdir(parents=True)
+    version_dir.joinpath("reviews", "ChangesCSA_01.md").write_text("# Change\n", encoding="utf-8")
+    _make_doc(version_dir / "Assessment.docx")
+
+    def fake_lock_check(proj):
+        return {"owner": "jdoe", "since": "2026-10-04T00:00:00Z"}
+
+    review = word_review.build_review(
+        tmp_path / ".agents", workspace.system_project("iamps"),
+        word_lock_check=fake_lock_check,
+    )
+    assert review["gate"] == "word_locked"
+    assert review["word_lock"]["owner"] == "jdoe"
