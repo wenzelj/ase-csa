@@ -19,7 +19,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import commands, pipeline
+from . import commands, documents, pipeline
 from .jobs import JobManager
 from .models import CommandRequest, JobCreateRequest
 
@@ -459,6 +459,30 @@ def get_pipeline(system_key: str, response: Response) -> dict[str, Any]:
     result = pipeline.snapshot(agents_dir(), system_project(system_key))
     response.headers["ETag"] = result.etag
     return result.model_dump()
+
+
+@app.get("/api/systems/{system_key}/document")
+def get_document(system_key: str) -> dict[str, Any]:
+    return documents.metadata(system_project(system_key))
+
+
+@app.get("/api/systems/{system_key}/document/preview")
+def get_document_preview(system_key: str, mode: str = "descriptor"):
+    project = system_project(system_key)
+    if mode == "revisions":
+        return documents.revision_view(project)
+    if mode == "pdf":
+        path, fingerprint, _ = documents.render_pdf(project)
+        return FileResponse(path, media_type="application/pdf", content_disposition_type="inline",
+                            headers={"ETag": f'"{fingerprint}"'})
+    if mode != "descriptor":
+        raise HTTPException(400, "Preview mode must be descriptor, pdf or revisions")
+    return documents.preview_descriptor(project, system_key)
+
+
+@app.get("/api/systems/{system_key}/document/comments")
+def get_document_comments(system_key: str) -> dict[str, Any]:
+    return {"comments": documents.document_comments(system_project(system_key))}
 
 
 @app.get("/api/systems/{system_key}/summary")
