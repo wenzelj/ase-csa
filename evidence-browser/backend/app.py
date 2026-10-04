@@ -14,13 +14,14 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import commands
-from .models import CommandRequest
+from . import commands, pipeline
+from .jobs import JobManager
+from .models import CommandRequest, JobCreateRequest
 
 
 APP_ROOT = Path(__file__).resolve().parents[1]
@@ -408,6 +409,7 @@ def render_office(path: Path) -> Path:
 
 
 app = FastAPI(title="CSA Evidence Workspace", version="0.1.0")
+job_manager = JobManager(agents_dir())
 
 
 @app.get("/api/systems")
@@ -427,6 +429,36 @@ def command_catalogue(system_key: str) -> dict[str, Any]:
 def run_command(system_key: str, operation_key: str, request: CommandRequest) -> dict[str, Any]:
     project = system_project(system_key)
     return commands.execute(agents_dir(), project, operation_key, request).model_dump()
+
+
+@app.post("/api/systems/{system_key}/jobs", status_code=202)
+def create_job(system_key: str, request: JobCreateRequest) -> dict[str, Any]:
+    project = system_project(system_key)
+    command = CommandRequest(target=request.target, options=request.options)
+    return job_manager.submit(project, request.operation, command).model_dump()
+
+
+@app.get("/api/systems/{system_key}/jobs")
+def list_jobs(system_key: str) -> dict[str, Any]:
+    project = system_project(system_key)
+    return {"jobs": [job.model_dump() for job in job_manager.list(project)]}
+
+
+@app.get("/api/systems/{system_key}/jobs/{job_id}")
+def get_job(system_key: str, job_id: str) -> dict[str, Any]:
+    return job_manager.get(system_project(system_key), job_id).model_dump()
+
+
+@app.delete("/api/systems/{system_key}/jobs/{job_id}")
+def cancel_job(system_key: str, job_id: str) -> dict[str, Any]:
+    return job_manager.cancel(system_project(system_key), job_id).model_dump()
+
+
+@app.get("/api/systems/{system_key}/pipeline")
+def get_pipeline(system_key: str, response: Response) -> dict[str, Any]:
+    result = pipeline.snapshot(agents_dir(), system_project(system_key))
+    response.headers["ETag"] = result.etag
+    return result.model_dump()
 
 
 @app.get("/api/systems/{system_key}/summary")
