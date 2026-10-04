@@ -160,7 +160,10 @@ def check(path: Path, workspace: str | None = None, lint: bool = True) -> dict:
     blocks = _load_blocks()
     block = parsed["block"]
     heading = parsed["heading"]
-    max_words = blocks.get("max_current_state_words", 50)
+    from csa_docx.prose_budget import budgets
+    budget = budgets(path.parent, workspace)
+    # A size in the template spec wins; otherwise the guide follows the host register.
+    max_words = blocks.get("max_current_state_words") or budget["current_state_words"]
     ratings = set(blocks.get("ratings", []))
     # mode: move (csa move): old content copied into the template. Every structural ERROR stays;
     # an empty Rating and a missing Evidence table are allowed, and the Evidence checks are skipped.
@@ -328,7 +331,7 @@ def check(path: Path, workspace: str | None = None, lint: bool = True) -> dict:
     if lint:
         # Reuse check_change's lint runner by giving it record-like objects.
         records = [type("R", (), {"edit_id": k, "text": t})() for k, t in section_file.rendered_statements(parsed)]
-        findings += lint_findings(records)
+        findings += lint_findings(records, budget["section_words"])
 
     return {
         "file": str(path),

@@ -26,7 +26,7 @@ Before drafting, read the section's entry in the section scope map (`.agents/ski
 
 Template domain blocks (CSA template v1.x):
 
-- **Requirement table, Current State cell:** one or two sentences stating the condition against the requirement. No lists. Aim for 50 words or fewer. **Rating:** `Met`, `Partially Met`, `Not Met` or `Not Applicable`, as the evidence supports.
+- **Requirement table, Current State cell:** a short paragraph stating the condition against the requirement. No lists. Usually under 100 words; use more when the system needs it. **Rating:** `Met`, `Partially Met`, `Not Met` or `Not Applicable`, as the evidence supports.
 - **Discovery Information:** the observed facts only, as a short table or up to five parallel bullets. No interpretation.
 - **Drawbridge Impact** (isolation consequence): one paragraph covering what fails, whether it fails immediately or degrades, and what keeps working. Do not restate the discovery facts.
 
@@ -43,7 +43,7 @@ Legacy structures (Design and functionality expected / Observed / Findings / Dra
 
 When a subsection would only restate another, reduce it to one sentence that points to the owning subsection, and raise the merge as a structural suggestion under Open questions.
 
-**Length:** aim for 600 words of prose or fewer per domain section, excluding tables; one finding paragraph is 120 words or fewer. These are targets, not reasons to drop evidenced facts.
+**Length:** proportional to the system. The section must fully describe the application and the systems around it (components, interfaces, dependencies, data flows). The length guide is worked out from the host register (`python3 -m csa_docx.prose_budget <work_dir>`: in-scope hosts, roles and links); `csa check-change` and `check-section` report it as `PROSE_BUDGET`. Cut restatement and textbook material, never evidenced description. A finding paragraph should still make one point.
 
 ## Rules
 

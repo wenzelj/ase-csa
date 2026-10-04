@@ -137,7 +137,7 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
             if fact["basis"] not in BASES:
                 findings.append(_f("ERROR", "BAD_BASIS", qid, f"basis must be one of {', '.join(BASES)}: {fact['line'][:90]}"))
             if q["kind"] in ("requirement", "narrative", "findings") and _IP.search(fact["text"]):
-                findings.append(_f("WARN", "IP_IN_PROSE", qid, f"an address in a prose fact belongs in a table: {fact['text'][:80]}"))
+                findings.append(_f("WARN", "IP_IN_PROSE", qid, f"address in a prose fact: use the host name if one is known (fine where none was found): {fact['text'][:80]}"))
         cited = {i.upper() for fact in b["facts"] for i in fact["ids"]}
         cited |= {i.upper() for row in b["rows"] for c in row for i in _EID.findall(c)}
         cited |= {i.upper() for x in b["bullets"] for i in _EID.findall(x)}

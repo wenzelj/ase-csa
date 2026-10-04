@@ -15,7 +15,7 @@ You are moving the old-format content mapped to subsection **{SECTION}** of proj
 
 Write `csa-work/sections/<order>-<slug>.md` with `mode: move` in the front matter:
 
-- One row per requirement of {SECTION}. Current State: one or two sentences from the old content. Rating: **leave empty**.
+- One row per requirement of {SECTION}. Current State: a short paragraph from the old content. Rating: **leave empty**.
 - Discovery Information rows (Aspect / Configuration Observed / Coverage / Source) from what the old content states. Coverage / Source names the hosts and says `previous assessment`.
 - One Drawbridge Impact paragraph, only if the old content supports it.
 - Where the old content says nothing for a requirement or aspect: `Not stated in previous assessment`.
@@ -28,7 +28,7 @@ Write `csa-work/sections/<order>-<slug>.md` with `mode: move` in the front matte
 - Never mention the previous assessment, its headings or its version in the text.
 - Do not copy old readiness scores or ratings.
 - Content that belongs to another subsection is left out.
-- No IP addresses in prose; host detail goes in the table.
+- Use host names in prose; use the IP address where no name was found. Long host and address lists go in the table.
 
 ## Finish
 

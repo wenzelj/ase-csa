@@ -57,9 +57,9 @@ A requirement row (Req ID | Requirement | Current State | Rating) is written as 
 - Read the change file's `## Section brief` first: the Purpose is the story you are telling, and the questions are its order. Then read the record's `**Facts:**` list and the paragraphs around the anchor. Open with the Purpose in the parent section's terms, answer the questions in brief order, and end with the consequence for the section's requirements. A fact that is true but answers no brief question stays out of the text.
 - Rewrite only the `**Text:**` block, following "Tell the story" and "Identifier budget" in `csa-writing-style`. Use every fact in the list except `Table detail:` lines, which stay out of prose. Say the `Unknown:` point once, at the end.
 - Never infer (core rules, "Never infer"). Write each fact at the strength of its evidence: keep its scope (name the site when the fact's `scope` covers part of the estate), use the evidence's own words for frequency, timing and content, and add no "which means", "likely", "therefore" or other conclusion. Connecting words may order facts; they may not add a claim. Every sentence must trace to a fact line; update the `## Fact audit` table so each rewritten sentence has its evidence quote.
-- Do not add a fact that is not in the list, and do not change `Where`, `Do`, `Facts`, `Why` or `Note`. If the facts cannot be told clearly in one paragraph, say so in your report rather than cramming them in.
+- Do not add a fact that is not in the list, and do not change `Where`, `Do`, `Facts`, `Why` or `Note`. If the facts need more than one paragraph to tell clearly, use more than one.
 - Leave applied records alone (a record in the run-state's completed list is in the document; a correction is a new record).
-- Run `csa check-change <N>` and fix every ERROR and every PROSE_LINT warning, then report which records you rewrote.
+- Run `csa check-change <N>` and fix every ERROR. Fix PROSE_LINT warnings about structure (fragments, lead-ins, evidence as subject, repetition). Treat length, sentence-size and identifier notes as advice: never drop or blur a fact that describes the system to meet them. Report which records you rewrote.
 
 ## Section files (build lane)
 
@@ -69,7 +69,7 @@ When `OUTPUT=section-file` (the default until the project has a working DOCX), w
 
 When `BRIEF=` is given (`csa convert <N>`), read the brief after the required reading, then `WORK_DIR/convert/<N>/answer-plan.csv`. The answer plan is what you write from; the brief gives the scope. Then read `WORK_DIR/convert/<N>/search-notes.md`, the evidence agent's record of what it searched. Do not repeat a search the note records as done. A `Not found:` line is a Discovery Required item unless the answer plan already lists it. The previous assessment's wording is never your wording.
 
-- Requirement rows: the Current State cell is the plan's `REQ <id> / Current State` fact, condensed to one or two sentences; the Rating is the `REQ <id> / Rating` row's rating on the agreed scale.
+- Requirement rows: the Current State cell is the plan's `REQ <id> / Current State` fact, condensed to a short paragraph (usually under 100 words); the Rating is the `REQ <id> / Rating` row's rating on the agreed scale.
 - Discovery Information: one row per `<N>.1 Discovery Information / <Aspect>` fact; Coverage / Source is that row's `evidence_scope` (host set and evidence type), never empty.
 - Drawbridge Impact: the `<N>.2 Drawbridge Impact` facts in one paragraph, each consequence once.
 - Keep every qualifier the plan records (not observed, not tested, not confirmed); never turn it into a definite absence.
@@ -91,7 +91,7 @@ When `MODE=move` (`csa move <N>`), write one subsection straight from the old co
 - Every requirement row of the subsection is present, even when its Current State is `Not stated in previous assessment`. Write that same text for a Discovery Information aspect the brief does not cover.
 - Where the old content gives no Drawbridge Impact, write one sentence that the effect has not been established (for example "The effect on X if Y becomes unreachable has not been established."). Do not refer to the previous assessment in prose; `Not stated in previous assessment` is for table cells only.
 - Content belonging to another subsection is left out (it stays in `moved.csv` under its mapped target).
-- No IP addresses in prose; host detail goes in the table.
+- Use host names in prose; use the IP address where no name was found. Long host and address lists go in the table.
 - Put `mode: move` in the front matter, with `status: draft`. No Evidence table and no E-ids are needed.
 - A domain that has a second table (3.1 hosts and roles, 3.2 accounts, groups and service accounts) needs it as its own `##` section named exactly as the template names it, with the template's columns. Fill it with one row per account, group or host the brief states; never leave placeholder rows. Do not repeat these rows in Discovery Information.
 - End the file with an `## open_items` block: one line `- <requirement id or aspect>: <what is unknown>` for each open question the old content leaves. `csa move` collects these into Section 8.

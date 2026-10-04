@@ -92,10 +92,12 @@ HEDGE_RE = re.compile(r"\b(?:not (?:been )?(?:established|observed|confirmed|ver
 INFERENCE_RE = re.compile(r"\b(?:which means|this means|this suggests|suggests? that|implies|implying|presumably|probably|likely|"
                           r"we assume|assumed|is expected to|in practice|typically|usually|generally|normally|"
                           r"therefore|it follows|would be)\b", re.IGNORECASE)
-MAX_SENTENCE_WORDS = 35
-MAX_AVG_SENTENCE_WORDS = 24
-MAX_IDENTIFIERS_PER_PARA = 3
-MAX_PORTS_PER_PARA = 1
+# Readability guides. They are reported as advisory notes and never fail --strict: describing a large system
+# fully matters more than meeting a count. Only structural problems (fragments, evidence-as-subject, ...) are warnings.
+MAX_SENTENCE_WORDS = 45
+MAX_AVG_SENTENCE_WORDS = 28
+MAX_IDENTIFIERS_PER_PARA = 6
+MAX_PORTS_PER_PARA = 3
 MAX_HEDGES_PER_PARA = 2
 
 # ---------------------------------------------------------------- model
@@ -281,22 +283,23 @@ def analyse(sec: Section, max_words: int) -> dict:
 
     share = (len(bullets) / len(prose)) if prose else 0.0
     warns = []
+    notes = []  # advisory: shown in the report, never a failure
     if inferred:
         warns.append(f"inference wording ({', '.join(sorted(set(inferred)))}); state what the evidence shows, or move the conclusion to an open question")
     if ips:
-        warns.append(f"{len(ips)} IP addresses or subnets in prose; move them to the discovery table or appendix")
+        notes.append(f"{len(ips)} IP addresses in prose; fine where no host name was found, otherwise use the name (long address lists belong in a table)")
     if dense_paras:
-        warns.append(f"{len(dense_paras)} paragraphs name more than {MAX_IDENTIFIERS_PER_PARA} identifiers (hosts, addresses, ports); name components by role and put the detail in a table")
+        notes.append(f"{len(dense_paras)} paragraphs name more than {MAX_IDENTIFIERS_PER_PARA} identifiers (hosts, addresses, ports); name components by role and put the detail in a table")
     if porty_paras:
-        warns.append(f"{len(porty_paras)} paragraphs give more than {MAX_PORTS_PER_PARA} port number; keep a port only where it is the point")
+        notes.append(f"{len(porty_paras)} paragraphs give more than {MAX_PORTS_PER_PARA} port number; keep a port only where it is the point")
     if long_sents:
-        warns.append(f"{len(long_sents)} sentences over {MAX_SENTENCE_WORDS} words; split them")
+        notes.append(f"{len(long_sents)} sentences over {MAX_SENTENCE_WORDS} words; split where it reads better, keep every fact")
     if avg_sent > MAX_AVG_SENTENCE_WORDS:
-        warns.append(f"average sentence is {avg_sent:.0f} words (target {MAX_AVG_SENTENCE_WORDS} or fewer)")
+        notes.append(f"average sentence is {avg_sent:.0f} words (target {MAX_AVG_SENTENCE_WORDS} or fewer)")
     if hedgy_paras:
         warns.append(f"{len(hedgy_paras)} paragraphs carry more than {MAX_HEDGES_PER_PARA} hedges; state what is unknown once, at the end")
     if prose_words > max_words:
-        warns.append(f"prose is {prose_words} words (budget {max_words}); cut restatement first")
+        notes.append(f"prose is {prose_words} words (guide {max_words}); cut restatement only, never evidenced facts")
     if share > 0.40 and len(prose) >= 8:
         warns.append(f"{share:.0%} of prose paragraphs are bullets (limit 40%)")
     if nested:
@@ -345,6 +348,7 @@ def analyse(sec: Section, max_words: int) -> dict:
         "avg_sentence_words": round(avg_sent, 1),
         "dense_paragraphs": dense_paras[:5],
         "warnings": warns,
+        "notes": notes,
         "status": "WARN" if warns else "PASS",
     }
 
@@ -380,11 +384,13 @@ def print_report(path: Path, results: list[dict], dwarns: list[str]) -> None:
         print(f"{r['section']:>3}  {r['prose_words']:>5}  {r['bullet_share']*100:>3.0f}%  {r['nested_bullets']:>4}  "
               f"{len(r['connectors']):>4}  {len(r['repeated_identifiers']):>3}  {r['status']:<6}  {r['title'][:60]}")
     for r in results:
-        if not r["warnings"]:
+        if not r["warnings"] and not r["notes"]:
             continue
         print(f"\n[Section {r['section']}] {r['title']}")
         for w in r["warnings"]:
             print(f"  - {w}")
+        for n in r["notes"]:
+            print(f"  - (advisory) {n}")
         if r["connectors"]:
             print("    connectors: " + ", ".join(f"'{c}' x{n}" for c, n in r["connectors"][:6]))
         if r["repeated_identifiers"]:
@@ -402,7 +408,7 @@ def main() -> int:
     ap.add_argument("path")
     ap.add_argument("--section", type=int)
     ap.add_argument("--heading", help="select the Heading 1 section whose title starts with this text (case-insensitive); safer than --section when the document has empty or hidden Heading 1s")
-    ap.add_argument("--max-words", type=int, default=900)
+    ap.add_argument("--max-words", type=int, default=1500)
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--strict", action="store_true")
     a = ap.parse_args()

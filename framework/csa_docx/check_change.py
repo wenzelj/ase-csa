@@ -245,7 +245,7 @@ def hygiene_findings(records) -> list[dict]:
         if r.action.lower().startswith(("replace", "delete")) and not re.search(r"currently:\s*[\"\u201c]", r.where or "") and "-T" not in (r.where or ""):
             out.append(finding("WARN", "NO_CURRENTLY", "Where has no 'currently: \"...\"' quote; apply uses it to confirm the stable ID still points at the right paragraph", r.edit_id))
         if IP_RE.search(t) and not _is_table_text(t):
-            out.append(finding("ERROR", "IP_IN_TEXT", "IP address or subnet in prose Text; put it in the discovery table or appendix and name the component by role", r.edit_id))
+            out.append(finding("WARN", "IP_IN_TEXT", "IP address in prose Text: use the host name if the evidence gives one; an address is fine where no name was found", r.edit_id))
         if t.strip() and r.action.lower().startswith(("replace", "insert")) and not (r.facts or "").strip() and not _is_table_text(t):
             out.append(finding("WARN", "NO_FACTS", "no **Facts:** list; the Writer should write Text from the authoring agent's fact list", r.edit_id))
         for w in comment_warnings(r):
@@ -283,7 +283,7 @@ def subject_findings(records) -> list[dict]:
     return out
 
 
-def lint_findings(records) -> list[dict]:
+def lint_findings(records, max_words: int | None = None) -> list[dict]:
     texts = [(r.edit_id, r.text) for r in records if (r.text or "").strip()]
     if not texts:
         return []
@@ -296,7 +296,10 @@ def lint_findings(records) -> list[dict]:
             if not script.is_file():
                 out.append(finding("WARN", code, f"lint script missing: {script}"))
                 continue
-            r = subprocess.run([sys.executable, str(script), str(md), "--strict"], capture_output=True, text=True)
+            args = [sys.executable, str(script), str(md), "--strict"]
+            if max_words and code == "PROSE_LINT":
+                args += ["--max-words", str(max_words)]
+            r = subprocess.run(args, capture_output=True, text=True)
             if r.returncode != 0:
                 detail = "\n".join(line for line in r.stdout.splitlines() if line.strip())
                 out.append(finding("WARN", code, detail[-1500:]))
@@ -327,7 +330,10 @@ def check(path: Path, workspace: str | None = None, anchors: bool = True, lint: 
     ev = Path(evidence) if evidence else (Path(workspace) / "csa-work" / "evidence-matrix.csv" if workspace else None)
     findings += fact_findings(records, load_matrix(ev), parse_sites(sites), finding)
     if lint:
-        findings += lint_findings(records)
+        from csa_docx.prose_budget import budgets
+        b = budgets(path.parent, workspace)
+        findings.append(finding("INFO", "PROSE_BUDGET", f"section guide {b['section_words']} words ({b['basis']})"))
+        findings += lint_findings(records, b["section_words"])
     return {
         "file": str(path),
         "records": len(records),

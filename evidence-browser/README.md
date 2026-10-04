@@ -25,6 +25,9 @@ The server accepts loopback connections only. Add `--no-open` for a server-only 
 During frontend development, run the backend and Vite separately:
 
 ```sh
+cd /Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/evidence-browser
+uv run python -m backend.server
+
 cd .agents/evidence-browser
 uv run python -m backend.server --no-open
 cd frontend

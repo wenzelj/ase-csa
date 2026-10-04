@@ -36,7 +36,7 @@ Fact extraction, requirement assignment and clustering; the requirement audit; t
 - Do not carry old readiness scores. Leave Rating empty.
 - Every requirement row of the subsection is present, even when its Current State is `Not stated in previous assessment`.
 - Content belonging to another subsection is left out (it stays in `moved.csv` under its mapped target).
-- No IP addresses in prose; host detail goes in the table.
+- Use host names in prose; use the IP address where no name was found. Long host and address lists go in the table.
 
 ## 6. Check relaxations (`mode: move` in the section-file front matter)
 

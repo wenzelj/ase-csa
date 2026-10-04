@@ -77,6 +77,6 @@ Document Control (1.1) and the cover come from the document properties, which `n
 - `block:` is one of the kinds above, and `heading:` exists in the template for that kind (from `template-blocks.json`; straight and curly quotes match).
 - Every required `##` section is present, no unknown or repeated `##` section appears, and every table has exactly the template's column count.
 - `## Discovery Notes` and `## Notes` are exactly one paragraph: no bullets, no table, not several paragraphs.
-- Domain: every Req ID of the domain appears exactly once, and no others; Rating is one of `Met`, `Partially Met`, `Not Met`, `Not Applicable`; Current State is at most 50 words (a warning).
+- Domain: every Req ID of the domain appears exactly once, and no others; Rating is one of `Met`, `Partially Met`, `Not Met`, `Not Applicable`; Current State is at most 100 words (a warning).
 - Every rendered statement has a row in `## Evidence` with at least one E-id that exists in the evidence matrix (coverage files cite captures instead). Unused Evidence rows and a missing matrix are warnings.
 - Rendered text is free of E-ids, `@H` IDs, Markdown emphasis and backticks (errors), and `prose_lint.py` / `term_lint.py` run over it (warnings).

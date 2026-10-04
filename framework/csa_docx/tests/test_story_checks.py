@@ -26,8 +26,8 @@ def _codes(text, facts="**Facts:**\n- A fact (E-001)\n\n"):
     return {f["code"]: f["level"] for f in hygiene_findings(recs)}
 
 
-def test_ip_in_prose_is_error():
-    assert _codes("The historian at 10.20.4.11 collects the data.")["IP_IN_TEXT"] == "ERROR"
+def test_ip_in_prose_is_warning_not_error():
+    assert _codes("The historian at 10.20.4.11 collects the data.")["IP_IN_TEXT"] == "WARN"
 
 
 def test_ip_in_table_row_is_allowed():

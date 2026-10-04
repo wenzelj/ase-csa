@@ -33,13 +33,13 @@ The reader asked a question of a system: where does its time come from, which re
 
 ### Identifier budget
 
-- **No IP addresses or subnets in prose.** They go in the discovery table, the observed-state table or the appendix. `csa check-change` rejects an IP address in an edit's prose text.
-- **At most one port number per paragraph**, and only where the port is the point (for example, the one inbound port a firewall must allow).
-- **Name hosts by role**, and give a host name only where the reader needs it to act or to find the host in a table. Never list more than two host names in a sentence.
-- **Average sentence 24 words or fewer; no sentence over 35 words.** Split any sentence that carries more than one fact about more than one component.
+- **Name first, address when there is no name.** Refer to a host by its name or role. When the evidence gives only an IP address (no host name in the discovery data, DNS records or host register), use the address in prose: describing the system matters more than hiding the address. Do not give both name and address in prose, and put long lists of addresses in a table.
+- **Ports where they matter.** Give a port where it explains how components connect; put full port lists in a table.
+- **Name hosts by role**, and give a host name only where the reader needs it to act or to find the host in a table. When a sentence would list many hosts, group them by role and put the list in a table.
+- **Readable sentences.** Aim for an average around 25 words and split sentences over about 45 words where that reads better. Never drop a fact to shorten a sentence.
 - **One hedge per point.** Put the unknown once, at the end ("Whether the second site is used only on failover is still to be confirmed with the operations team."), not in every sentence.
 
-`prose_lint.py` measures each of these.
+`prose_lint.py` reports these as advisory notes. They guide the writing; they are not pass/fail rules.
 
 ### Example
 
@@ -64,12 +64,12 @@ A Current State Assessment (CSA) gives decision-makers an evidenced baseline: wh
 - **Sentences, not fragments.** Write full sentences in paragraphs. Use a bullet list only for three or more parallel items a reader will scan (hosts, services, requirements). Never split one sentence across a lead-in line and bullets ("Loss of:" followed by "- ongoing time synchronisation"). No nested bullets.
 - **No textbook material.** Do not explain what DNS, NTP, Kerberos, a firewall or an endpoint agent is, or why such services matter in general. Say what it does in this system and why that matters here. If a reader needs background, it goes in a labelled `Technical explanation` note (`technical-explainer`), not in the finding.
 - **Findings, not log lines.** Never paste raw log or command output into the body. State what it shows and give a short source reference (file name and date); the raw lines stay in the evidence.
-- **Detail lives in tables and appendices.** Per-host lists, IP addresses, ports, capture dates and evidence file names belong in the observed-state or discovery table, or the evidence appendix. Prose carries what the detail means ("all eight captured hosts", "both production sites").
+- **Detail lives in tables and appendices.** Per-host lists, address lists, port lists, capture dates and evidence file names belong in the observed-state or discovery table, or the evidence appendix. Prose carries what the detail means ("all eight captured hosts", "both production sites").
 - **State the evidence basis once.** How evidence was gathered, and what it could not see, is stated once in Scope and Methodology. Do not tag headings or sentences with "(Script Evidence)", "(Evidence-Based)" or "(Script Confirmed)". A limitation that affects one finding is stated once, precisely, in that finding ("not confirmed on six of eight hosts, whose captures did not include service inventories").
 - **Findings run condition, criteria, consequence.** Each finding is one short paragraph with a headline sentence that could stand alone: what is (condition), what the design or reference standard expects (criteria), and what it means for operations, including under the isolation scenario (consequence). Add the cause only when the evidence shows it. Recommendations sit separately and refer back to the finding.
 - **Rank by consequence.** Order findings by operational consequence, not by the order discovery happened.
 - **One term per thing.** Define a term once (for example the isolation scenario's name) and use only that term afterwards.
-- **Proportion.** A domain with one finding reads in well under a page. When a draft is longer than its facts justify, cut restatement before cutting facts.
+- **Proportion.** Length follows the system: a domain with one finding reads in well under a page, while a large application with many components, interfaces and dependencies needs as much as it takes to describe them. When a draft is longer than its facts justify, cut restatement before cutting facts.
 
 Flow comes from order (conclusion, support, consequence) and from linking sentences by their content, not from connector words. When two points relate, say how in one clause: "Unlike the DNS dependency, loss of time synchronisation degrades gradually."
 
