@@ -1,304 +1,121 @@
 import { FormEvent, useEffect, useState } from "react";
 
 type System = { key: string; label: string; project_key: string; available: boolean };
-type Summary = {
-  label: string; project_key: string; built_at_utc?: string; index_complete: boolean;
-  captures: number; current_captures: number; files_by_status: Record<string, number>;
-  evidence_rows: number; families: string[];
-  coverage: { host: string; families: Record<string, number> }[];
-};
+type Summary = { label: string; built_at_utc?: string; index_complete: boolean; current_captures: number; files_by_status: Record<string, number>; evidence_rows: number; families: string[]; coverage: { host: string; families: Record<string, number> }[] };
 type EvidenceRow = Record<string, string>;
-type FileRow = {
-  file_id: number; rel_path: string; host?: string; ext: string; size: number;
-  status: string; reason?: string; source_class: string; current: number;
-};
-type IndexHit = {
-  file_id?: number; source_title: string; source_version: string; page_or_location: string;
-  evidence_excerpt: string; rel_path: string; host?: string; source_class: string; superseded: boolean;
-};
-type SearchStage = { kind: "matrix" | "index"; verdict?: string; matches?: EvidenceRow[]; results?: IndexHit[]; count?: number };
+type FileRow = { file_id: number; rel_path: string; host?: string; ext: string; size: number; status: string; reason?: string; source_class: string; current: number };
+type IndexHit = { file_id?: number; source_title: string; source_version: string; page_or_location: string; evidence_excerpt: string; rel_path: string; host?: string; superseded: boolean };
+type SearchStage = { kind: "matrix" | "index"; verdict?: string; matches?: EvidenceRow[]; results?: IndexHit[] };
 type SearchResponse = { query: string; stages: SearchStage[] };
-type TableInfo = { table: string; format: string; rows: number; hosts: number; columns: string[] };
-type Preview = {
-  kind: string; name: string; rel_path: string; lines?: { number: number; text: string }[];
-  highlight?: [number, number]; rows?: string[][]; row_start?: number; highlight_row?: number;
-  sheet?: string; sheets?: string[]; pdf_url?: string; raw_url?: string; reason?: string;
+type TableInfo = { table: string; rows: number; hosts: number; columns: string[] };
+type Preview = { kind: string; name: string; rel_path: string; lines?: { number: number; text: string }[]; highlight?: [number, number]; rows?: string[][]; row_start?: number; highlight_row?: number; pdf_url?: string; raw_url?: string; reason?: string };
+type Draft = { csa_area: string; question: string; claim: string; status: string; source_title: string; source_version: string; section: string; page_or_location: string; evidence_excerpt: string; inference_reason: string; confidence: string; gap_or_action: string; review_state: string };
+type Area = { key: string; label: string; state: string; total: number; counts: Record<string, number>; pending_review: number; claims: EvidenceRow[]; decisions: EvidenceRow[] };
+type Portrait = {
+  application: { name: string; system: string; project_key: string; scope: string };
+  assessment: { total: number; status_counts: Record<string, number>; review_counts: Record<string, number> };
+  areas: Area[]; attention: EvidenceRow[];
+  observed_hosts: { host: string; families: Record<string, number>; files: number; breadth: number }[];
+  source_health: { files: number; status_counts: Record<string, number>; skipped_reasons: { reason: string; count: number }[] };
+  disclaimer: string;
 };
-type Draft = {
-  csa_area: string; question: string; claim: string; status: string; source_title: string;
-  source_version: string; section: string; page_or_location: string; evidence_excerpt: string;
-  inference_reason: string; confidence: string; gap_or_action: string; review_state: string;
-};
-type View = "overview" | "evidence" | "files" | "tables";
+type View = "portrait" | "evidence" | "sources" | "tables";
 
-const EMPTY_DRAFT: Draft = {
-  csa_area: "", question: "", claim: "", status: "VERIFIED", source_title: "",
-  source_version: "", section: "", page_or_location: "", evidence_excerpt: "",
-  inference_reason: "", confidence: "high", gap_or_action: "", review_state: "pending",
-};
+const STATUSES = ["VERIFIED", "INFERRED", "UNCONFIRMED", "CONFLICTING", "NOT_FOUND"];
+const EMPTY_DRAFT: Draft = { csa_area: "", question: "", claim: "", status: "VERIFIED", source_title: "", source_version: "", section: "", page_or_location: "", evidence_excerpt: "", inference_reason: "", confidence: "high", gap_or_action: "", review_state: "pending" };
+const NAV: { id: View; title: string; note: string }[] = [
+  { id: "portrait", title: "Application portrait", note: "What the evidence says" },
+  { id: "evidence", title: "Claims and gaps", note: "What can be stated" },
+  { id: "sources", title: "Source coverage", note: "What was observed" },
+  { id: "tables", title: "Explore records", note: "Compare across hosts" },
+];
 
 async function api<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, init);
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const detail = typeof data.detail === "string" ? data.detail : data.detail?.message || `Request failed (${response.status})`;
-    throw new Error(detail);
-  }
+  const response = await fetch(url, init); const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(typeof data.detail === "string" ? data.detail : data.detail?.message || `Request failed (${response.status})`);
   return data as T;
 }
-
-function formatBytes(bytes: number) {
-  if (bytes < 1000) return `${bytes} B`;
-  if (bytes < 1_000_000) return `${(bytes / 1000).toFixed(1)} KB`;
-  return `${(bytes / 1_000_000).toFixed(1)} MB`;
-}
-
-function Status({ value }: { value?: string }) {
-  const name = (value || "unknown").toLowerCase().replaceAll("_", " ");
-  return <span className={`status status-${name.replaceAll(" ", "-")}`}>{name}</span>;
-}
+function human(value = "") { return value.replaceAll("_", " ").replace(/\b\w/g, c => c.toUpperCase()); }
+function bytes(value: number) { return value < 1000 ? `${value} B` : value < 1e6 ? `${(value / 1000).toFixed(1)} KB` : `${(value / 1e6).toFixed(1)} MB`; }
+function Status({ value }: { value?: string }) { const name = (value || "unknown").toLowerCase().replaceAll("_", " "); return <span className={`status status-${name.replaceAll(" ", "-")}`}>{name}</span>; }
 
 export default function App() {
-  const initial = new URLSearchParams(location.search).get("system") || "iamps";
   const [systems, setSystems] = useState<System[]>([]);
-  const [system, setSystem] = useState(initial);
-  const [view, setView] = useState<View>("overview");
-  const [summary, setSummary] = useState<Summary | null>(null);
-  const [evidenceRows, setEvidenceRows] = useState<EvidenceRow[]>([]);
-  const [files, setFiles] = useState<FileRow[]>([]);
-  const [fileTotal, setFileTotal] = useState(0);
-  const [fileFacets, setFileFacets] = useState<{ statuses: string[]; extensions: string[]; source_classes: string[] }>({ statuses: [], extensions: [], source_classes: [] });
-  const [tables, setTables] = useState<TableInfo[]>([]);
-  const [searchText, setSearchText] = useState("");
-  const [search, setSearch] = useState<SearchResponse | null>(null);
-  const [preview, setPreview] = useState<Preview | null>(null);
-  const [previewOpen, setPreviewOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [draft, setDraft] = useState<Draft | null>(null);
-  const [draftResult, setDraftResult] = useState<Record<string, unknown> | null>(null);
-  const [sourceChoices, setSourceChoices] = useState<{ row: EvidenceRow; files: FileRow[] } | null>(null);
-  const [tableRows, setTableRows] = useState<Record<string, unknown>[] | null>(null);
-  const [fileFilter, setFileFilter] = useState("");
-  const [fileStatus, setFileStatus] = useState("");
-  const [fileExt, setFileExt] = useState("");
-  const [fileClass, setFileClass] = useState("");
-  const [includeHistory, setIncludeHistory] = useState(false);
+  const [system, setSystem] = useState(new URLSearchParams(location.search).get("system") || "iamps");
+  const [view, setView] = useState<View>("portrait"); const [summary, setSummary] = useState<Summary | null>(null); const [portrait, setPortrait] = useState<Portrait | null>(null);
+  const [evidence, setEvidence] = useState<EvidenceRow[]>([]); const [files, setFiles] = useState<FileRow[]>([]); const [fileTotal, setFileTotal] = useState(0);
+  const [facets, setFacets] = useState<{ statuses: string[]; extensions: string[]; source_classes: string[] }>({ statuses: [], extensions: [], source_classes: [] });
+  const [tables, setTables] = useState<TableInfo[]>([]); const [tableRows, setTableRows] = useState<Record<string, unknown>[] | null>(null); const [activeTable, setActiveTable] = useState("");
+  const [query, setQuery] = useState(""); const [search, setSearch] = useState<SearchResponse | null>(null); const [busy, setBusy] = useState(false); const [loading, setLoading] = useState(true); const [error, setError] = useState("");
+  const [preview, setPreview] = useState<Preview | null>(null); const [draft, setDraft] = useState<Draft | null>(null); const [draftResult, setDraftResult] = useState<Record<string, unknown> | null>(null);
+  const [choices, setChoices] = useState<{ row: EvidenceRow; files: FileRow[] } | null>(null);
+  const [fileQuery, setFileQuery] = useState(""); const [fileStatus, setFileStatus] = useState(""); const [fileExt, setFileExt] = useState(""); const [fileClass, setFileClass] = useState(""); const [history, setHistory] = useState(false);
 
   useEffect(() => { api<{ systems: System[] }>("/api/systems").then(x => setSystems(x.systems)).catch(e => setError(e.message)); }, []);
   useEffect(() => {
-    history.replaceState(null, "", `?system=${system}`);
-    setError(""); setSearch(null); setPreview(null); setDraft(null);
+    window.history.replaceState(null, "", `?system=${system}`); setLoading(true); setError(""); setSearch(null); setPreview(null);
     Promise.all([
-      api<Summary>(`/api/systems/${system}/summary`),
-      api<{ rows: EvidenceRow[] }>(`/api/systems/${system}/evidence?limit=250`),
-      api<{ files: FileRow[]; total: number; facets: typeof fileFacets }>(`/api/systems/${system}/files?limit=500`),
+      api<Summary>(`/api/systems/${system}/summary`), api<Portrait>(`/api/systems/${system}/portrait`),
+      api<{ rows: EvidenceRow[] }>(`/api/systems/${system}/evidence?limit=500`),
+      api<{ files: FileRow[]; total: number; facets: typeof facets }>(`/api/systems/${system}/files?limit=500`),
       api<{ tables: TableInfo[] }>(`/api/systems/${system}/tables`),
-    ]).then(([s, e, f, t]) => { setSummary(s); setEvidenceRows(e.rows); setFiles(f.files); setFileTotal(f.total); setFileFacets(f.facets); setTables(t.tables); })
-      .catch(e => setError(e.message));
+    ]).then(([s, p, e, f, t]) => { setSummary(s); setPortrait(p); setEvidence(e.rows); setFiles(f.files); setFileTotal(f.total); setFacets(f.facets); setTables(t.tables); })
+      .catch(e => setError(e.message)).finally(() => setLoading(false));
   }, [system]);
+  useEffect(() => { const timer = window.setTimeout(() => { const p = new URLSearchParams({ limit: "500", all_captures: String(history), include_archive: String(history) }); if (fileQuery) p.set("q", fileQuery); if (fileStatus) p.set("status", fileStatus); if (fileExt) p.set("ext", fileExt); if (fileClass) p.set("source_class", fileClass); api<{ files: FileRow[]; total: number; facets: typeof facets }>(`/api/systems/${system}/files?${p}`).then(x => { setFiles(x.files); setFileTotal(x.total); setFacets(x.facets); }).catch(e => setError(e.message)); }, 180); return () => clearTimeout(timer); }, [system, history, fileQuery, fileStatus, fileExt, fileClass]);
 
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      const params = new URLSearchParams({ limit: "500", all_captures: String(includeHistory), include_archive: String(includeHistory) });
-      if (fileFilter) params.set("q", fileFilter);
-      if (fileStatus) params.set("status", fileStatus);
-      if (fileExt) params.set("ext", fileExt);
-      if (fileClass) params.set("source_class", fileClass);
-      api<{ files: FileRow[]; total: number; facets: typeof fileFacets }>(`/api/systems/${system}/files?${params}`)
-        .then(x => { setFiles(x.files); setFileTotal(x.total); setFileFacets(x.facets); }).catch(e => setError(e.message));
-    }, 180);
-    return () => window.clearTimeout(timer);
-  }, [includeHistory, system, fileFilter, fileStatus, fileExt, fileClass]);
-
-  async function submitSearch(event: FormEvent) {
-    event.preventDefault();
-    if (!searchText.trim()) return;
-    setBusy(true); setError(""); setPreview(null); setDraft(null);
-    try {
-      const result = await api<SearchResponse>(`/api/systems/${system}/search`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: searchText }),
-      });
-      setSearch(result); setView("overview");
-    } catch (e) { setError((e as Error).message); }
-    finally { setBusy(false); }
-  }
-
-  async function openFile(fileId: number, anchor = "") {
-    setError("");
-    try {
-      const result = await api<Preview>(`/api/systems/${system}/files/${fileId}/preview?anchor=${encodeURIComponent(anchor)}`);
-      setPreview(result); setPreviewOpen(true);
-    } catch (e) { setError((e as Error).message); }
-  }
-
-  async function openEvidence(row: EvidenceRow) {
-    try {
-      const result = await api<{ sources: FileRow[]; state: string }>(`/api/systems/${system}/evidence/${row.evidence_id}/sources`);
-      if (result.sources.length === 1) await openFile(result.sources[0].file_id, row.page_or_location);
-      else if (!result.sources.length) setError("The cited source is not available in this discovery index.");
-      else setSourceChoices({ row, files: result.sources });
-    } catch (e) { setError((e as Error).message); }
-  }
-
-  function prepareEvidence(hit: IndexHit) {
-    setDraft({ ...EMPTY_DRAFT, question: search?.query || "", source_title: hit.source_title,
-      source_version: hit.source_version, page_or_location: hit.page_or_location,
-      evidence_excerpt: hit.evidence_excerpt });
-    setDraftResult(null);
-  }
-
-  async function validateDraft() {
-    if (!draft) return;
-    setError(""); setDraftResult(null);
-    try {
-      const result = await api<Record<string, unknown>>(`/api/systems/${system}/evidence-drafts/validate`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(draft),
-      });
-      setDraftResult(result);
-    } catch (e) { setError((e as Error).message); }
-  }
-
-  async function commitDraft() {
-    if (!draft || !draftResult || !confirm("Add this reviewed row to the append-only evidence matrix?")) return;
-    try {
-      const result = await api<Record<string, unknown>>(`/api/systems/${system}/evidence-drafts/commit`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ draft, confirmed: true }),
-      });
-      setDraftResult(result);
-      const refreshed = await api<{ rows: EvidenceRow[] }>(`/api/systems/${system}/evidence?limit=250`);
-      setEvidenceRows(refreshed.rows);
-    } catch (e) { setError((e as Error).message); }
-  }
-
-  async function openTable(name: string) {
-    try {
-      const result = await api<{ results: { row: Record<string, unknown> }[] }>(`/api/systems/${system}/tables?table=${encodeURIComponent(name)}&limit=100`);
-      setTableRows(result.results.map(x => x.row));
-    } catch (e) { setError((e as Error).message); }
-  }
-
-  const matrixStage = search?.stages.find(stage => stage.kind === "matrix");
-  const indexStage = search?.stages.find(stage => stage.kind === "index");
+  async function runSearch(text: string) { if (!text.trim()) return; setQuery(text); setBusy(true); setError(""); try { setSearch(await api<SearchResponse>(`/api/systems/${system}/search`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query: text }) })); } catch (e) { setError((e as Error).message); } finally { setBusy(false); } }
+  function submit(event: FormEvent) { event.preventDefault(); void runSearch(query); }
+  async function openFile(id: number, anchor = "") { try { setPreview(await api<Preview>(`/api/systems/${system}/files/${id}/preview?anchor=${encodeURIComponent(anchor)}`)); } catch (e) { setError((e as Error).message); } }
+  async function openEvidence(row: EvidenceRow) { try { const result = await api<{ sources: FileRow[] }>(`/api/systems/${system}/evidence/${row.evidence_id}/sources`); if (result.sources.length === 1) await openFile(result.sources[0].file_id, row.page_or_location); else if (!result.sources.length) setError(`Source unavailable for ${row.evidence_id}. The claim is recorded, but its cited file is not in the current index.`); else setChoices({ row, files: result.sources }); } catch (e) { setError((e as Error).message); } }
+  function byId(id: string) { return evidence.find(row => row.evidence_id === id) || { evidence_id: id }; }
+  function prepare(hit: IndexHit) { setDraft({ ...EMPTY_DRAFT, question: search?.query || "", source_title: hit.source_title, source_version: hit.source_version, page_or_location: hit.page_or_location, evidence_excerpt: hit.evidence_excerpt }); setDraftResult(null); }
+  async function validateDraft() { if (!draft) return; try { setDraftResult(await api(`/api/systems/${system}/evidence-drafts/validate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(draft) })); } catch (e) { setError((e as Error).message); } }
+  async function commitDraft() { if (!draft || !draftResult || !confirm("Add this reviewed claim to the append-only evidence matrix?")) return; try { setDraftResult(await api(`/api/systems/${system}/evidence-drafts/commit`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ draft, confirmed: true }) })); setEvidence((await api<{ rows: EvidenceRow[] }>(`/api/systems/${system}/evidence?limit=500`)).rows); } catch (e) { setError((e as Error).message); } }
+  async function openTable(name: string) { setActiveTable(name); try { setTableRows((await api<{ results: { row: Record<string, unknown> }[] }>(`/api/systems/${system}/tables?table=${encodeURIComponent(name)}&limit=100`)).results.map(x => x.row)); } catch (e) { setError((e as Error).message); } }
+  const matrix = search?.stages.find(x => x.kind === "matrix"); const index = search?.stages.find(x => x.kind === "index");
 
   return <div className="shell">
-    <header className="masthead">
-      <div className="product-mark"><span className="mark-lines" aria-hidden="true" /><div><b>CSA evidence</b><span>Source workspace</span></div></div>
-      <label className="system-picker">System<select value={system} onChange={e => setSystem(e.target.value)}>
-        {systems.map(item => <option key={item.key} value={item.key} disabled={!item.available}>{item.label}</option>)}
-      </select></label>
-      <form className="global-search" onSubmit={submitSearch}>
-        <input value={searchText} onChange={e => setSearchText(e.target.value)} placeholder="Search a host, service, setting or document" aria-label="Search evidence and captured data" />
-        <button disabled={busy}>{busy ? "Searching…" : "Search evidence"}</button>
-      </form>
+    <header className="masthead"><button className="product-mark" onClick={() => { setSearch(null); setView("portrait"); }}><span className="mark-lines" /><span><b>CSA evidence</b><small>Application assessment workspace</small></span></button>
+      <label className="system-picker"><span>Application</span><select value={system} onChange={e => setSystem(e.target.value)}>{systems.map(x => <option key={x.key} value={x.key} disabled={!x.available}>{x.label}</option>)}</select></label>
+      <form className="global-search" onSubmit={submit}><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Ask about the application, host, service or control" aria-label="Trace evidence" /><button disabled={busy}>{busy ? "Tracing…" : "Trace evidence"}</button></form>
     </header>
-
-    <aside className="rail" aria-label="Workspace sections">
-      {(["overview", "evidence", "files", "tables"] as View[]).map(item =>
-        <button key={item} className={view === item ? "active" : ""} onClick={() => { setView(item); setSearch(null); }}>
-          {item === "files" ? "Data library" : item[0].toUpperCase() + item.slice(1)}
-        </button>)}
-      <div className="rail-note"><span className={summary?.index_complete ? "lamp good" : "lamp"} />
-        {summary?.index_complete ? "Index ready" : "Index incomplete"}<small>{summary?.built_at_utc?.replace("T", " ").replace("Z", " UTC")}</small></div>
-    </aside>
-
-    <main className="workspace">
-      {error && <div className="error" role="alert"><b>Could not complete that action.</b><span>{error}</span><button onClick={() => setError("")} aria-label="Dismiss error">×</button></div>}
-      {search ? <SearchDesk matrix={matrixStage} index={indexStage} openFile={openFile} openEvidence={openEvidence} prepareEvidence={prepareEvidence} /> :
-       view === "overview" ? <Overview summary={summary} /> :
-       view === "evidence" ? <EvidenceLedger rows={evidenceRows} openEvidence={openEvidence} /> :
-       view === "files" ? <DataLibrary files={files} total={fileTotal} facets={fileFacets} filter={fileFilter} setFilter={setFileFilter} status={fileStatus} setStatus={setFileStatus} ext={fileExt} setExt={setFileExt} sourceClass={fileClass} setSourceClass={setFileClass} history={includeHistory} setHistory={setIncludeHistory} openFile={openFile} /> :
-       <Tables tables={tables} rows={tableRows} openTable={openTable} />}
-    </main>
-
-    {preview && <SourceReader preview={preview} open={previewOpen} close={() => setPreviewOpen(false)} />}
-    {draft && <DraftPanel draft={draft} setDraft={setDraft} result={draftResult} validate={validateDraft} commit={commitDraft} close={() => setDraft(null)} />}
-    {sourceChoices && <SourceChooser row={sourceChoices.row} files={sourceChoices.files} close={() => setSourceChoices(null)} choose={file => { setSourceChoices(null); openFile(file.file_id, sourceChoices.row.page_or_location); }} />}
+    <aside className="rail"><div className="rail-app"><span>Assessing</span><strong>{portrait?.application.name || summary?.label || "Application"}</strong><small>within {portrait?.application.system || "the selected system"}</small></div><nav>{NAV.map(x => <button key={x.id} className={view === x.id && !search ? "active" : ""} onClick={() => { setView(x.id); setSearch(null); }}><span>{x.title}</span><small>{x.note}</small></button>)}</nav><div className="rail-note"><i className={summary?.index_complete ? "lamp good" : "lamp"} /><div>{summary?.index_complete ? "Sources ready" : "Index incomplete"}<small>{summary?.built_at_utc ? `Indexed ${summary.built_at_utc.slice(0, 10)}` : "Build date unavailable"}</small></div></div></aside>
+    <main className="workspace">{error && <div className="error" role="alert"><div><b>Action needed</b><span>{error}</span></div><button onClick={() => setError("")}>×</button></div>}{loading ? <Loading /> : search ? <SearchDesk data={search} matrix={matrix} index={index} openFile={openFile} openEvidence={openEvidence} prepare={prepare} close={() => setSearch(null)} /> : view === "portrait" ? <ApplicationPortrait portrait={portrait} summary={summary} openEvidence={id => openEvidence(byId(id))} investigate={runSearch} navigate={setView} /> : view === "evidence" ? <EvidenceLedger rows={evidence} areas={portrait?.areas || []} openEvidence={openEvidence} investigate={runSearch} /> : view === "sources" ? <SourceCoverage summary={summary} portrait={portrait} files={files} total={fileTotal} facets={facets} controls={{ fileQuery, fileStatus, fileExt, fileClass, history, setFileQuery, setFileStatus, setFileExt, setFileClass, setHistory }} openFile={openFile} /> : <Tables tables={tables} rows={tableRows} active={activeTable} openTable={openTable} />}</main>
+    {preview && <SourceReader preview={preview} close={() => setPreview(null)} />}{draft && <DraftPanel draft={draft} setDraft={setDraft} result={draftResult} validate={validateDraft} commit={commitDraft} close={() => setDraft(null)} />}{choices && <SourceChooser row={choices.row} files={choices.files} close={() => setChoices(null)} choose={file => { const row = choices.row; setChoices(null); void openFile(file.file_id, row.page_or_location); }} />}
   </div>;
 }
 
-function Overview({ summary }: { summary: Summary | null }) {
-  if (!summary) return <Loading />;
-  return <section className="page">
-    <div className="page-heading"><div><h1>What this assessment can see</h1><p>Current capture coverage by host and evidence family. A blank cell means the index has no current file classified for that area.</p></div>
-      <dl className="context-strip"><div><dt>Current captures</dt><dd>{summary.current_captures}</dd></div><div><dt>Evidence rows</dt><dd>{summary.evidence_rows}</dd></div><div><dt>Indexed files</dt><dd>{summary.files_by_status.indexed || 0}</dd></div></dl></div>
-    <div className="coverage-wrap"><table className="coverage"><thead><tr><th>Host or source</th>{summary.families.map(f => <th key={f}>{f}</th>)}</tr></thead>
-      <tbody>{summary.coverage.map(row => <tr key={row.host}><th>{row.host}</th>{summary.families.map(f => <td key={f} className={row.families[f] ? "has-data" : ""}>{row.families[f] || ""}</td>)}</tr>)}</tbody></table></div>
-    <div className="index-ledger"><h2>Index ledger</h2>{Object.entries(summary.files_by_status).map(([key, value]) => <div key={key}><Status value={key} /><span>{value.toLocaleString()} files</span></div>)}</div>
+function ApplicationPortrait({ portrait, summary, openEvidence, investigate, navigate }: { portrait: Portrait | null; summary: Summary | null; openEvidence: (id: string) => void; investigate: (q: string) => void; navigate: (v: View) => void }) {
+  const [areaKey, setAreaKey] = useState(""); if (!portrait || !summary) return <Loading />; const active = portrait.areas.find(x => x.key === areaKey) || portrait.areas[0]; const total = Math.max(1, portrait.assessment.total); const verified = portrait.assessment.status_counts.VERIFIED || 0; const unresolved = total - verified; const pending = portrait.assessment.review_counts.pending || 0;
+  return <section className="page portrait-page"><header className="portrait-hero"><div className="application-core"><span>Application under assessment</span><h1>{portrait.application.name}</h1><p>{portrait.application.scope}</p><div><button onClick={() => navigate("evidence")}>Read supported claims</button><button className="quiet" onClick={() => navigate("sources")}>Inspect source coverage</button></div></div><div className="assessment-reading"><div className="reading-head"><div><span>What the evidence currently supports</span><strong>{verified} of {total} claims are verified</strong></div><Status value={unresolved ? "attention required" : "supported"} /></div><div className="evidence-composition">{STATUSES.map(s => { const value = portrait.assessment.status_counts[s] || 0; return value ? <i key={s} className={`segment segment-${s.toLowerCase().replaceAll("_", "-")}`} style={{ width: `${value / total * 100}%` }} title={`${human(s)}: ${value}`} /> : null; })}</div><dl><div><dt>Supported statements</dt><dd>{verified}</dd></div><div><dt>Need qualification</dt><dd>{unresolved}</dd></div><div><dt>Awaiting review</dt><dd>{pending}</dd></div><div><dt>Observed hosts</dt><dd>{portrait.observed_hosts.length}</dd></div></dl><p>Counts describe the evidence record, not application health or compliance.</p></div></header>
+    <div className="decision-banner"><div><strong>{portrait.attention.length}</strong><span><b>questions need an assessor’s decision</b><small>Resolve missing or conflicting evidence before using those statements.</small></span></div>{portrait.attention[0] && <button onClick={() => investigate(portrait.attention[0].question || portrait.attention[0].claim)}>Investigate the highest-priority question</button>}</div>
+    <div className="portrait-grid"><section className="area-map"><header><div><h2>How well can we describe the application?</h2><p>Choose an area to see supported statements and their limits.</p></div></header><div>{portrait.areas.map(area => <button key={area.key} className={active?.key === area.key ? "active" : ""} onClick={() => setAreaKey(area.key)}><i className={`area-signal signal-${area.state}`} /><span><strong>{area.label}</strong><small>{area.counts.VERIFIED || 0} verified · {area.total - (area.counts.VERIFIED || 0)} qualified or open</small></span><b>{area.total}</b></button>)}</div></section>
+      <section className="area-detail">{!active ? <Empty title="No claims recorded" text="Search the indexed sources and add reviewed evidence to begin the portrait." /> : <><header><div><span>Current-state narrative</span><h2>{active.label}</h2></div><Status value={active.state} /></header><div className="claim-thread">{active.claims.length ? active.claims.map(claim => <button key={claim.evidence_id} onClick={() => openEvidence(claim.evidence_id)}><span className="evidence-id">{claim.evidence_id}</span><span><strong>{claim.claim}</strong><small>Read the cited proof · {claim.source_title}</small></span></button>) : <p className="empty">No verified statement is recorded for this area.</p>}</div>{active.decisions.length > 0 && <div className="qualification"><strong>What limits this description</strong>{active.decisions.slice(0, 3).map(item => <div key={item.evidence_id}><Status value={item.status} /><span>{item.gap_or_action || item.question || item.claim}</span><button onClick={() => investigate(item.question || item.claim)}>Investigate</button></div>)}</div>}</>}</section></div>
+    <section className="estate-strip"><header><div><h2>Observed application estate</h2><p>Hosts with current indexed captures, ordered by evidence breadth.</p></div><span>{portrait.observed_hosts.length} hosts</span></header><div className="host-rack">{[...portrait.observed_hosts].sort((a, b) => b.breadth - a.breadth).slice(0, 24).map(host => <div key={host.host}><strong>{host.host}</strong><span>{summary.families.map(f => <i key={f} className={host.families[f] ? "seen" : ""} title={`${f}: ${host.families[f] || 0}`} />)}</span><small>{host.breadth} of {summary.families.length} evidence families</small></div>)}</div><p className="disclaimer">{portrait.disclaimer}</p></section>
   </section>;
 }
 
-function SearchDesk({ matrix, index, openFile, openEvidence, prepareEvidence }: {
-  matrix?: SearchStage; index?: SearchStage; openFile: (id: number, anchor?: string) => void;
-  openEvidence: (row: EvidenceRow) => void; prepareEvidence: (hit: IndexHit) => void;
-}) {
-  return <section className="page search-page">
-    <div className="page-heading"><div><h1>Search path</h1><p>The matrix was checked first. Captured data is searched only when the matrix does not settle the question.</p></div></div>
-    <div className="search-thread">
-      <div className="stage"><div className="stage-marker">1</div><div className="stage-body"><div className="stage-title"><h2>Evidence matrix</h2><Status value={matrix?.verdict} /></div>
-        {!matrix?.matches?.length ? <p className="empty">No matrix row answered this search.</p> : matrix.matches.map(row => <button className="evidence-row" key={row.evidence_id} onClick={() => openEvidence(row)}>
-          <span className="evidence-id">{row.evidence_id}</span><Status value={row.status} /><strong>{row.claim}</strong><small>{row.source_title} · {row.page_or_location}</small></button>)}</div></div>
-      <div className={`stage ${index ? "" : "muted"}`}><div className="stage-marker">2</div><div className="stage-body"><div className="stage-title"><h2>Discovery index</h2>{index ? <span>{index.results?.length || 0} results</span> : <span>Not searched</span>}</div>
-        {!index ? <p className="empty">The matrix likely answers the question, so the framework stopped here.</p> : !index.results?.length ? <p className="empty">No indexed source matched. Check the data library for unindexed file types and capture gaps.</p> : index.results.map((hit, i) => <article className="index-result" key={`${hit.rel_path}-${i}`}>
-          <div><span className="result-source">{hit.host || "Document source"}</span>{hit.superseded && <Status value="superseded" />}</div>
-          <p>{hit.evidence_excerpt}</p><small>{hit.rel_path}<br />{hit.page_or_location}</small>
-          <div className="row-actions"><button disabled={!hit.file_id} onClick={() => hit.file_id && openFile(hit.file_id, hit.page_or_location)}>Read source</button><button className="quiet" onClick={() => prepareEvidence(hit)}>Prepare evidence row</button></div>
-        </article>)}</div></div>
-    </div>
-  </section>;
+function SearchDesk({ data, matrix, index, openFile, openEvidence, prepare, close }: { data: SearchResponse; matrix?: SearchStage; index?: SearchStage; openFile: (id: number, a?: string) => void; openEvidence: (r: EvidenceRow) => void; prepare: (h: IndexHit) => void; close: () => void }) {
+  const answered = matrix?.verdict === "LIKELY_ANSWERED"; return <section className="page search-page"><header className="search-heading"><button onClick={close}>Back to portrait</button><span>Evidence question</span><h1>{data.query}</h1><p>{answered ? "The matrix contains a likely answer. Read the cited source before reusing the claim." : "The matrix did not settle the question, so the workspace continued into captured data."}</p></header><div className="search-thread"><div className="stage"><b className="stage-marker">1</b><div className="stage-body"><header><div><span>First authority</span><h2>Reviewed evidence matrix</h2></div><Status value={matrix?.verdict} /></header>{!matrix?.matches?.length ? <p className="empty">No recorded claim answered this question.</p> : matrix.matches.map(row => <button className="evidence-row" key={row.evidence_id} onClick={() => openEvidence(row)}><span className="evidence-id">{row.evidence_id}</span><Status value={row.status} /><span><strong>{row.claim}</strong><small>{row.source_title} · {row.page_or_location}</small></span><b>Read proof</b></button>)}</div></div><div className={`stage ${index ? "" : "muted"}`}><b className="stage-marker">2</b><div className="stage-body"><header><div><span>Source discovery</span><h2>Captured system data</h2></div><span>{index ? `${index.results?.length || 0} matches` : "Not needed"}</span></header>{!index ? <p className="empty">Search stopped because the matrix likely answers the question.</p> : !index.results?.length ? <p className="empty">No indexed source matched. Review source coverage before concluding the information is absent.</p> : index.results.map((hit, i) => <article className="index-result" key={`${hit.rel_path}-${i}`}><div><b>{hit.host || "Project document"}</b>{hit.superseded && <Status value="superseded" />}</div><blockquote>{hit.evidence_excerpt}</blockquote><small>{hit.rel_path}<br />{hit.page_or_location}</small><footer><button disabled={!hit.file_id} onClick={() => hit.file_id && openFile(hit.file_id, hit.page_or_location)}>Read in source</button><button className="quiet" onClick={() => prepare(hit)}>Prepare reviewed claim</button></footer></article>)}</div></div></div></section>;
 }
 
-function EvidenceLedger({ rows, openEvidence }: { rows: EvidenceRow[]; openEvidence: (row: EvidenceRow) => void }) {
-  const [query, setQuery] = useState("");
-  const visible = rows.filter(row => !query || `${row.evidence_id} ${row.claim} ${row.question} ${row.source_title}`.toLowerCase().includes(query.toLowerCase()));
-  return <section className="page"><div className="page-heading"><div><h1>Evidence ledger</h1><p>Atomic claims in the append-only matrix. Open a row to trace it back to its indexed source.</p></div><input className="filter" value={query} onChange={e => setQuery(e.target.value)} placeholder="Filter evidence" /></div>
-    <div className="ledger-head"><span>Evidence</span><span>Status</span><span>Claim and source</span></div>
-    <div className="ledger">{visible.map(row => <button key={row.evidence_id} onClick={() => openEvidence(row)}><span className="evidence-id">{row.evidence_id}</span><span><Status value={row.status} /><Status value={row.review_state} /></span><span><strong>{row.claim}</strong><small>{row.source_title} · {row.page_or_location}</small></span></button>)}</div>
-  </section>;
+function EvidenceLedger({ rows, areas, openEvidence, investigate }: { rows: EvidenceRow[]; areas: Area[]; openEvidence: (r: EvidenceRow) => void; investigate: (q: string) => void }) {
+  const [query, setQuery] = useState(""); const [status, setStatus] = useState(""); const [area, setArea] = useState(""); const visible = rows.filter(r => (!query || Object.values(r).join(" ").toLowerCase().includes(query.toLowerCase())) && (!status || r.status === status) && (!area || r.csa_area === area));
+  return <section className="page ledger-page"><div className="page-heading"><div><span>Assessment assertions</span><h1>Claims and gaps</h1><p>Use verified claims to describe the application. Treat every other status as a qualification or an action.</p></div><div className="ledger-summary"><strong>{visible.length}</strong><span>claims in this view</span></div></div><div className="evidence-controls"><label>Find a claim<input value={query} onChange={e => setQuery(e.target.value)} placeholder="Question, claim or source" /></label><label>Evidence state<select value={status} onChange={e => setStatus(e.target.value)}><option value="">All states</option>{STATUSES.map(x => <option key={x}>{x}</option>)}</select></label><label>Assessment area<select value={area} onChange={e => setArea(e.target.value)}><option value="">All areas</option>{areas.map(x => <option value={x.key} key={x.key}>{x.label}</option>)}</select></label></div><div className="claim-ledger">{visible.map(row => <article key={row.evidence_id}><div className="claim-state"><span className="evidence-id">{row.evidence_id}</span><Status value={row.status} /><Status value={row.review_state} /></div><div className="claim-copy"><span>{human(row.csa_area || "unclassified")}</span><h2>{row.claim || row.question}</h2>{row.claim && row.question && <p>{row.question}</p>}<small>{row.source_title || "No source recorded"}{row.page_or_location ? ` · ${row.page_or_location}` : ""}</small>{row.gap_or_action && <div className="claim-action"><b>Action:</b> {row.gap_or_action}</div>}</div><div className="claim-buttons"><button onClick={() => openEvidence(row)} disabled={!row.source_title}>Read source</button>{row.status !== "VERIFIED" && <button className="quiet" onClick={() => investigate(row.question || row.claim)}>Investigate</button>}</div></article>)}</div>{!visible.length && <Empty title="No claims match this view" text="Change the filters or trace a new question." />}</section>;
 }
 
-function DataLibrary({ files, total, facets, filter, setFilter, status, setStatus, ext, setExt, sourceClass, setSourceClass, history, setHistory, openFile }: { files: FileRow[]; total: number; facets: { statuses: string[]; extensions: string[]; source_classes: string[] }; filter: string; setFilter: (v: string) => void; status: string; setStatus: (v: string) => void; ext: string; setExt: (v: string) => void; sourceClass: string; setSourceClass: (v: string) => void; history: boolean; setHistory: (v: boolean) => void; openFile: (id: number) => void }) {
-  return <section className="page"><div className="page-heading"><div><h1>Data library</h1><p>Files known to the discovery index, including material that could not be searched.</p></div><div className="file-controls"><input className="filter" value={filter} onChange={e => setFilter(e.target.value)} placeholder="Filter path or host" /><label><input type="checkbox" checked={history} onChange={e => setHistory(e.target.checked)} /> Include superseded and archived</label></div></div>
-    <div className="facet-bar"><label>Index state<select value={status} onChange={e => setStatus(e.target.value)}><option value="">All states</option>{facets.statuses.map(x => <option key={x}>{x}</option>)}</select></label><label>File type<select value={ext} onChange={e => setExt(e.target.value)}><option value="">All types</option>{facets.extensions.map(x => <option key={x}>{x || "plain text"}</option>)}</select></label><label>Source class<select value={sourceClass} onChange={e => setSourceClass(e.target.value)}><option value="">All classes</option>{facets.source_classes.map(x => <option key={x}>{x}</option>)}</select></label><span>Showing {files.length.toLocaleString()} of {total.toLocaleString()}</span></div>
-    <div className="file-list"><div className="file-head"><span>Source</span><span>Type</span><span>Index state</span><span>Size</span></div>{files.map(file => <button key={file.file_id} onClick={() => openFile(file.file_id)}><span><strong>{file.rel_path.split("/").at(-1)}</strong><small>{file.host || "Project document"}<br />{file.rel_path}</small></span><code>{file.ext || "text"}</code><span><Status value={file.status} /><small>{file.reason}</small></span><span>{formatBytes(file.size)}</span></button>)}</div>
-  </section>;
+function SourceCoverage({ summary, portrait, files, total, facets, controls, openFile }: { summary: Summary | null; portrait: Portrait | null; files: FileRow[]; total: number; facets: { statuses: string[]; extensions: string[]; source_classes: string[] }; controls: any; openFile: (id: number) => void }) {
+  const [show, setShow] = useState(false); if (!summary || !portrait) return <Loading />; return <section className="page source-page"><div className="page-heading"><div><span>Observation boundary</span><h1>Source coverage</h1><p>Decide whether captures are sufficient before treating a gap as meaningful. Blank means “not observed”, not “does not exist”.</p></div><label className="history-toggle"><input type="checkbox" checked={controls.history} onChange={e => controls.setHistory(e.target.checked)} />Include superseded and archived</label></div><div className="source-health"><div><strong>{portrait.source_health.status_counts.indexed || 0}</strong><span>files can be searched</span></div><div><strong>{portrait.source_health.status_counts.skipped || 0}</strong><span>files were catalogued but not indexed</span></div><div><strong>{summary.current_captures}</strong><span>current captures define default scope</span></div></div>{portrait.source_health.skipped_reasons.length > 0 && <section className="skip-explainer"><header><h2>Why files were skipped</h2><p>Skipped files are known, but their content was not added to full-text search.</p></header><div>{portrait.source_health.skipped_reasons.map(x => <div key={x.reason}><span>{x.reason}</span><strong>{x.count}</strong></div>)}</div></section>}<section className="coverage-section"><header><div><h2>Host-by-evidence coverage</h2><p>Identify collection gaps before writing cross-host conclusions.</p></div><span>Current captures</span></header><div className="coverage-wrap"><table className="coverage"><thead><tr><th>Observed host</th>{summary.families.map(f => <th key={f}>{f}</th>)}</tr></thead><tbody>{summary.coverage.map(r => <tr key={r.host}><th>{r.host}</th>{summary.families.map(f => <td key={f} className={r.families[f] ? "has-data" : ""}>{r.families[f] || "—"}</td>)}</tr>)}</tbody></table></div></section><button className="disclosure" onClick={() => setShow(!show)}>{show ? "Hide individual files" : `Inspect ${total.toLocaleString()} files and index decisions`}</button>{show && <><div className="file-controls"><label>Find source<input value={controls.fileQuery} onChange={e => controls.setFileQuery(e.target.value)} /></label><label>Index state<select value={controls.fileStatus} onChange={e => controls.setFileStatus(e.target.value)}><option value="">All</option>{facets.statuses.map(x => <option key={x}>{x}</option>)}</select></label><label>File type<select value={controls.fileExt} onChange={e => controls.setFileExt(e.target.value)}><option value="">All</option>{facets.extensions.map(x => <option key={x}>{x || "text"}</option>)}</select></label><label>Source class<select value={controls.fileClass} onChange={e => controls.setFileClass(e.target.value)}><option value="">All</option>{facets.source_classes.map(x => <option key={x}>{x}</option>)}</select></label></div><div className="file-list">{files.map(file => <button key={file.file_id} onClick={() => openFile(file.file_id)}><span><strong>{file.rel_path.split("/").at(-1)}</strong><small>{file.host || "Project document"}<br />{file.rel_path}</small></span><code>{file.ext || "text"}</code><span><Status value={file.status} /><small>{file.reason}</small></span><b>{bytes(file.size)}</b></button>)}</div></>}</section>;
 }
 
-function Tables({ tables, rows, openTable }: { tables: TableInfo[]; rows: Record<string, unknown>[] | null; openTable: (name: string) => void }) {
-  const columns = rows?.length ? Object.keys(rows[0]) : [];
-  return <section className="page"><div className="page-heading"><div><h1>Structured tables</h1><p>Cross-host views extracted from repeated discovery files. Host counts expose the coverage boundary of each table.</p></div></div>
-    <div className="table-browser"><div className="table-index">{tables.map(t => <button key={t.table} onClick={() => openTable(t.table)}><strong>{t.table.replaceAll("_", " ")}</strong><span>{t.rows.toLocaleString()} rows · {t.hosts} hosts</span><small>{t.columns.slice(0, 5).join(", ")}</small></button>)}</div>
-      <div className="table-data">{!rows ? <p className="empty">Choose a table to inspect its first 100 rows.</p> : !rows.length ? <p className="empty">This table has no rows in the current scope.</p> : <div className="grid-scroll"><table><thead><tr>{columns.map(c => <th key={c}>{c}</th>)}</tr></thead><tbody>{rows.map((row, i) => <tr key={i}>{columns.map(c => <td key={c}>{String(row[c] ?? "")}</td>)}</tr>)}</tbody></table></div>}</div></div>
-  </section>;
+function Tables({ tables, rows, active, openTable }: { tables: TableInfo[]; rows: Record<string, unknown>[] | null; active: string; openTable: (n: string) => void }) {
+  const columns = rows?.length ? Object.keys(rows[0]) : []; return <section className="page tables-page"><div className="page-heading"><div><span>Cross-host comparison</span><h1>Explore structured records</h1><p>Use question-shaped datasets to compare services, software, ports, identities or controls across the observed estate.</p></div></div><div className="table-browser"><div className="table-index">{tables.map(t => <button className={active === t.table ? "active" : ""} key={t.table} onClick={() => openTable(t.table)}><strong>{human(t.table)}</strong><span>{t.rows.toLocaleString()} records · {t.hosts} hosts</span><small>{t.columns.slice(0, 5).map(human).join(", ")}</small></button>)}</div><div className="table-data">{!rows ? <Empty title="Choose a comparison" text="Structured rows become evidence only after source and scope are reviewed." /> : !rows.length ? <Empty title="No records in scope" text="The current table returned no rows." /> : <><header><h2>{human(active)}</h2><strong>First {rows.length} rows</strong></header><div className="grid-scroll"><table><thead><tr>{columns.map(c => <th key={c}>{human(c)}</th>)}</tr></thead><tbody>{rows.map((r, i) => <tr key={i}>{columns.map(c => <td key={c}>{String(r[c] ?? "")}</td>)}</tr>)}</tbody></table></div></>}</div></div></section>;
 }
 
-function SourceReader({ preview, open, close }: { preview: Preview; open: boolean; close: () => void }) {
-  return <aside className={`reader ${open ? "open" : ""}`} aria-label="Source reader"><div className="reader-head"><div><strong>{preview.name}</strong><small>{preview.rel_path}</small></div><button onClick={close} aria-label="Close source reader">×</button></div>
-    <div className="reader-tools">{preview.pdf_url && <a href={preview.pdf_url} target="_blank">Open rendered original</a>}{preview.raw_url && <a href={preview.raw_url} target="_blank">Open original</a>}</div>
-    <div className="reader-body">{preview.kind === "image" && preview.raw_url ? <img src={preview.raw_url} alt={preview.name} /> : preview.rows ? <table className="sheet"><tbody>{preview.rows.map((row, i) => <tr className={preview.row_start && i + preview.row_start === preview.highlight_row ? "highlight" : ""} key={i}><th>{(preview.row_start || 1) + i}</th>{row.map((cell, j) => <td key={j}>{cell}</td>)}</tr>)}</tbody></table> : preview.lines ? <div className="source-lines">{preview.lines.map(line => <div key={line.number} className={preview.highlight && line.number >= preview.highlight[0] && line.number <= preview.highlight[1] ? "highlight" : ""}><span>{line.number}</span><code>{line.text || " "}</code></div>)}</div> : <div className="unsupported"><h2>Preview unavailable</h2><p>{preview.reason || "This binary format cannot be safely rendered in the browser."}</p>{preview.raw_url && <a href={preview.raw_url} target="_blank">Open original file</a>}</div>}</div>
-  </aside>;
-}
+function SourceReader({ preview, close }: { preview: Preview; close: () => void }) { return <aside className="reader open"><header><div><span>Exact source</span><strong>{preview.name}</strong><small>{preview.rel_path}</small></div><button onClick={close}>×</button></header><nav>{preview.pdf_url && <a href={preview.pdf_url} target="_blank">Rendered document</a>}{preview.raw_url && <a href={preview.raw_url} target="_blank">Original file</a>}<span>Cited lines are highlighted</span></nav><div className="reader-body">{preview.kind === "image" && preview.raw_url ? <img src={preview.raw_url} /> : preview.rows ? <table className="sheet"><tbody>{preview.rows.map((r, i) => <tr className={preview.row_start && i + preview.row_start === preview.highlight_row ? "highlight" : ""} key={i}><th>{(preview.row_start || 1) + i}</th>{r.map((c, j) => <td key={j}>{c}</td>)}</tr>)}</tbody></table> : preview.lines ? <div className="source-lines">{preview.lines.map(line => <div key={line.number} className={preview.highlight && line.number >= preview.highlight[0] && line.number <= preview.highlight[1] ? "highlight" : ""}><span>{line.number}</span><code>{line.text || " "}</code></div>)}</div> : <Empty title="Preview unavailable" text={preview.reason || "This format cannot be rendered safely."} />}</div></aside>; }
 
-function DraftPanel({ draft, setDraft, result, validate, commit, close }: { draft: Draft; setDraft: (d: Draft) => void; result: Record<string, unknown> | null; validate: () => void; commit: () => void; close: () => void }) {
-  const set = (key: keyof Draft, value: string) => setDraft({ ...draft, [key]: value });
-  return <div className="scrim"><section className="draft-panel" role="dialog" aria-modal="true" aria-labelledby="draft-title"><header><div><h2 id="draft-title">Prepare evidence row</h2><p>Review the source wording, then state one reusable claim.</p></div><button onClick={close} aria-label="Close evidence draft">×</button></header>
-    <div className="draft-grid"><label>CSA area<input value={draft.csa_area} onChange={e => set("csa_area", e.target.value)} placeholder="network_and_connectivity" /></label><label>Status<select value={draft.status} onChange={e => set("status", e.target.value)}>{["VERIFIED", "INFERRED", "UNCONFIRMED", "CONFLICTING", "NOT_FOUND"].map(x => <option key={x}>{x}</option>)}</select></label>
-      <label className="wide">Question<input value={draft.question} onChange={e => set("question", e.target.value)} /></label><label className="wide">Atomic claim<textarea value={draft.claim} onChange={e => set("claim", e.target.value)} rows={3} /></label>
-      <label className="wide">Source title<input value={draft.source_title} onChange={e => set("source_title", e.target.value)} /></label><label>Source version<input value={draft.source_version} onChange={e => set("source_version", e.target.value)} /></label><label>Location<input value={draft.page_or_location} onChange={e => set("page_or_location", e.target.value)} /></label>
-      <label className="wide">Exact supporting excerpt<textarea value={draft.evidence_excerpt} onChange={e => set("evidence_excerpt", e.target.value)} rows={4} /></label><label>Confidence<select value={draft.confidence} onChange={e => set("confidence", e.target.value)}>{["", "high", "medium", "low"].map(x => <option key={x} value={x}>{x || "Not set"}</option>)}</select></label><label>Section<input value={draft.section} onChange={e => set("section", e.target.value)} /></label>
-      <label className="wide">Inference reason<input value={draft.inference_reason} onChange={e => set("inference_reason", e.target.value)} /></label><label className="wide">Gap or action<input value={draft.gap_or_action} onChange={e => set("gap_or_action", e.target.value)} /></label></div>
-    {result && <pre className="validation-result">{JSON.stringify(result, null, 2)}</pre>}
-    <footer><button className="quiet" onClick={close}>Cancel</button><button onClick={validate}>Validate draft</button><button className="commit" disabled={!result || result.status !== "DRY_RUN"} onClick={commit}>Add to evidence matrix</button></footer>
-  </section></div>;
-}
-
-function SourceChooser({ row, files, choose, close }: { row: EvidenceRow; files: FileRow[]; choose: (file: FileRow) => void; close: () => void }) {
-  return <div className="scrim"><section className="source-chooser" role="dialog" aria-modal="true" aria-labelledby="source-choice-title">
-    <header><div><h2 id="source-choice-title">Choose the cited source</h2><p>{row.evidence_id} names files found in more than one capture. Select the source you want to inspect.</p></div><button onClick={close} aria-label="Close source choices">×</button></header>
-    <div>{files.map(file => <button key={file.file_id} onClick={() => choose(file)}><strong>{file.rel_path.split("/").at(-1)}</strong><span>{file.host || "Project document"}</span><small>{file.rel_path}</small></button>)}</div>
-  </section></div>;
-}
-
-function Loading() { return <div className="loading">Reading the evidence index…</div>; }
+function DraftPanel({ draft, setDraft, result, validate, commit, close }: { draft: Draft; setDraft: (d: Draft) => void; result: Record<string, unknown> | null; validate: () => void; commit: () => void; close: () => void }) { const set = (k: keyof Draft, v: string) => setDraft({ ...draft, [k]: v }); return <div className="scrim"><section className="draft-panel"><header><div><span>Human review required</span><h2>Prepare an evidence claim</h2><p>Preserve the exact excerpt, then state one reusable claim.</p></div><button onClick={close}>×</button></header><div className="draft-grid"><label>Assessment area<input value={draft.csa_area} onChange={e => set("csa_area", e.target.value)} /></label><label>Evidence status<select value={draft.status} onChange={e => set("status", e.target.value)}>{STATUSES.map(x => <option key={x}>{x}</option>)}</select></label><label className="wide">Question<input value={draft.question} onChange={e => set("question", e.target.value)} /></label><label className="wide">Atomic claim<textarea rows={3} value={draft.claim} onChange={e => set("claim", e.target.value)} /></label><label className="wide">Source title<input value={draft.source_title} onChange={e => set("source_title", e.target.value)} /></label><label>Source version<input value={draft.source_version} onChange={e => set("source_version", e.target.value)} /></label><label>Exact location<input value={draft.page_or_location} onChange={e => set("page_or_location", e.target.value)} /></label><label className="wide">Supporting excerpt<textarea rows={4} value={draft.evidence_excerpt} onChange={e => set("evidence_excerpt", e.target.value)} /></label><label>Confidence<select value={draft.confidence} onChange={e => set("confidence", e.target.value)}>{["", "high", "medium", "low"].map(x => <option key={x}>{x}</option>)}</select></label><label>CSA section<input value={draft.section} onChange={e => set("section", e.target.value)} /></label><label className="wide">Inference reason<input value={draft.inference_reason} onChange={e => set("inference_reason", e.target.value)} /></label><label className="wide">Gap or action<input value={draft.gap_or_action} onChange={e => set("gap_or_action", e.target.value)} /></label></div>{result && <pre>{JSON.stringify(result, null, 2)}</pre>}<footer><button className="quiet" onClick={close}>Cancel</button><button onClick={validate}>Check claim</button><button disabled={!result || result.status !== "DRY_RUN"} onClick={commit}>Add reviewed claim</button></footer></section></div>; }
+function SourceChooser({ row, files, choose, close }: { row: EvidenceRow; files: FileRow[]; choose: (f: FileRow) => void; close: () => void }) { return <div className="scrim"><section className="source-chooser"><header><div><span>Source ambiguity</span><h2>Choose the cited capture</h2><p>{row.evidence_id} names a file in more than one capture.</p></div><button onClick={close}>×</button></header>{files.map(f => <button key={f.file_id} onClick={() => choose(f)}><strong>{f.rel_path.split("/").at(-1)}</strong><span>{f.host || "Project document"}</span><small>{f.rel_path}</small></button>)}</section></div>; }
+function Empty({ title, text }: { title: string; text: string }) { return <div className="empty-state"><strong>{title}</strong><p>{text}</p></div>; }
+function Loading() { return <div className="loading"><span /><strong>Building the application portrait from evidence…</strong></div>; }

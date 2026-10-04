@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import sqlite3
 from pathlib import Path
 
@@ -68,6 +69,32 @@ def test_summary_and_current_scope(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     assert result["current_captures"] == 1
     assert result["files_by_status"] == {"indexed": 1}
     assert result["coverage"][0]["families"]["Time"] == 1
+
+
+def test_application_portrait_explains_claims_and_decisions(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    project, _ = make_workspace(tmp_path, monkeypatch)
+    add_file(project, "source/03_time_status.txt")
+    fields = ["evidence_id", "csa_area", "question", "claim", "status", "source_title",
+              "source_version", "section", "page_or_location", "evidence_excerpt",
+              "inference_reason", "confidence", "gap_or_action", "review_state"]
+    with (project / "csa-work" / "evidence-matrix.csv").open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        writer.writerow({"evidence_id": "E-001", "csa_area": "network_and_connectivity",
+                         "question": "Which time source is used?", "claim": "HOST01 uses DC01.",
+                         "status": "VERIFIED", "source_title": "03_time_status.txt",
+                         "confidence": "high", "review_state": "pending"})
+        writer.writerow({"evidence_id": "E-002", "csa_area": "network_and_connectivity",
+                         "question": "Is the secondary peer intentional?", "claim": "A peer may be stale.",
+                         "status": "INFERRED", "confidence": "medium",
+                         "gap_or_action": "Confirm with the application owner.", "review_state": "pending"})
+    result = workspace.application_portrait("iamps")
+    assert result["application"]["name"] == "IAMPS"
+    assert result["assessment"]["status_counts"]["VERIFIED"] == 1
+    assert result["areas"][0]["label"] == "Network and connectivity"
+    assert result["areas"][0]["claims"][0]["claim"] == "HOST01 uses DC01."
+    assert result["areas"][0]["decisions"][0]["gap_or_action"] == "Confirm with the application owner."
+    assert result["observed_hosts"][0]["host"] == "HOST01"
 
 
 def test_safe_file_rejects_indexed_path_outside_sources(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -151,6 +178,25 @@ def test_search_continues_to_index_and_resolves_file_id(tmp_path: Path, monkeypa
     result = workspace.search("iamps", workspace.SearchRequest(query="NTP source"))
     assert [stage["kind"] for stage in result["stages"]] == ["matrix", "index"]
     assert result["stages"][1]["results"][0]["file_id"] == file_id
+
+
+def test_evidence_source_choices_are_limited_to_cited_captures(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    project, _ = make_workspace(tmp_path, monkeypatch)
+    first = add_file(project, "source/REVELOC_discovery_HOST01_20261001T010101Z/03_time_status.txt")
+    add_file(project, "source/REVELOC_discovery_HOST02_20261001T020202Z/03_time_status.txt")
+    fields = ["evidence_id", "csa_area", "question", "claim", "status", "source_title",
+              "source_version", "section", "page_or_location", "evidence_excerpt",
+              "inference_reason", "confidence", "gap_or_action", "review_state"]
+    with (project / "csa-work" / "evidence-matrix.csv").open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        writer.writerow({"evidence_id": "E-001", "csa_area": "network_and_connectivity",
+                         "question": "Which source?", "claim": "HOST01 uses DC01.", "status": "VERIFIED",
+                         "source_title": "REVELOC_discovery_HOST01_20261001T010101Z: 03_time_status.txt",
+                         "page_or_location": "03_time_status.txt lines 1-2", "review_state": "pending"})
+    result = workspace.evidence_sources("iamps", "E-001")
+    assert result["state"] == "found"
+    assert [row["file_id"] for row in result["sources"]] == [first]
 
 
 def test_commit_requires_confirmation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

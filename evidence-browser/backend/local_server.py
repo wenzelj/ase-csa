@@ -66,6 +66,12 @@ class Handler(BaseHTTPRequestHandler):
             match = re.fullmatch(r"/api/systems/([^/]+)/summary", path)
             if match:
                 return self.dispatch_result(api.get_summary(match.group(1)))
+            match = re.fullmatch(r"/api/systems/([^/]+)/portrait", path)
+            if match:
+                return self.dispatch_result(api.application_portrait(match.group(1)))
+            match = re.fullmatch(r"/api/systems/([^/]+)/commands", path)
+            if match:
+                return self.dispatch_result(api.command_catalogue(match.group(1)))
             match = re.fullmatch(r"/api/systems/([^/]+)/evidence", path)
             if match:
                 return self.dispatch_result(api.evidence(
@@ -100,6 +106,10 @@ class Handler(BaseHTTPRequestHandler):
             match = re.fullmatch(r"/api/systems/([^/]+)/search", parsed.path)
             if match:
                 return self.dispatch_result(api.search(match.group(1), api.SearchRequest.model_validate(payload)))
+            match = re.fullmatch(r"/api/systems/([^/]+)/commands/([^/]+)", parsed.path)
+            if match:
+                return self.dispatch_result(api.run_command(
+                    match.group(1), match.group(2), api.CommandRequest.model_validate(payload)))
             match = re.fullmatch(r"/api/systems/([^/]+)/evidence-drafts/validate", parsed.path)
             if match:
                 return self.dispatch_result(api.validate_evidence(match.group(1), api.EvidenceDraft.model_validate(payload)))

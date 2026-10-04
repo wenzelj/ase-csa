@@ -19,13 +19,31 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from . import commands
+from .models import CommandRequest
+
 
 APP_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_AGENTS_DIR = Path(__file__).resolve().parents[2]
 SYSTEMS = {
-    "iamps": {"label": "IAMPS", "project_key": "iamps-08"},
-    "utcdtc": {"label": "UTC DTC", "project_key": "utcdtc"},
-    "tetra": {"label": "TETRA", "project_key": "tetra-reveloc"},
+    "iamps": {
+        "label": "IAMPS",
+        "application": "IAMPS",
+        "project_key": "iamps-08",
+        "scope": "The IAMPS application and the infrastructure, services and controls that operate it.",
+    },
+    "utcdtc": {
+        "label": "UTC DTC",
+        "application": "UTC DTC",
+        "project_key": "utcdtc",
+        "scope": "The UTC DTC application and the KVM-based system in which it operates.",
+    },
+    "tetra": {
+        "label": "TETRA",
+        "application": "Reveloc TETRA",
+        "project_key": "tetra-reveloc",
+        "scope": "The Reveloc TETRA application and the hosts, dependencies and controls that provide its service.",
+    },
 }
 ANSWERED = "LIKELY_ANSWERED"
 TEXT_EXTENSIONS = {
@@ -45,6 +63,47 @@ FAMILY_RULES = (
     ("Policy", ("policy", "gpo", "gpresult")),
     ("Storage", ("disk", "volume", "storage", "share")),
 )
+
+AREA_LABELS = {
+    "application_architecture": "Application architecture",
+    "application_overview": "Application overview",
+    "application_and_services": "Application and services",
+    "architecture_and_dependencies": "Architecture and dependencies",
+    "asset_inventory": "Assets and hosting",
+    "availability_and_resilience": "Availability and resilience",
+    "backup_and_recovery": "Backup and recovery",
+    "business_and_operational_use": "Business and operational use",
+    "business_continuity": "Continuity and resilience",
+    "discovery_required": "Discovery required",
+    "dns": "DNS",
+    "gap_lookup": "Evidence candidates to review",
+    "identity_and_access": "Identity and access",
+    "identity_authentication": "Identity and authentication",
+    "infrastructure_and_hosting": "Infrastructure and hosting",
+    "integrations_and_dependencies": "Integrations and dependencies",
+    "logging_and_monitoring": "Logging and monitoring",
+    "monitoring_and_logging": "Monitoring and logging",
+    "network_and_connectivity": "Network and connectivity",
+    "operations_and_support": "Operations and support",
+    "patching_and_vulnerability": "Patching and vulnerability",
+    "pki_certificates": "PKI and certificates",
+    "security_posture": "Security posture",
+    "security_controls": "Security controls",
+    "storage_and_data_transfer": "Storage and data transfer",
+    "time_synchronisation": "Time synchronisation",
+}
+
+AREA_PRIORITY = (
+    "application_overview", "business_and_operational_use", "application_architecture",
+    "infrastructure_and_hosting", "application_and_services", "integrations_and_dependencies",
+    "network_and_connectivity", "identity_and_access", "identity_authentication",
+    "pki_certificates", "availability_and_resilience", "storage_and_data_transfer",
+    "monitoring_and_logging", "logging_and_monitoring", "backup_and_recovery",
+    "security_posture", "security_controls", "operations_and_support",
+    "time_synchronisation", "dns", "discovery_required", "gap_lookup",
+)
+
+STATUS_ORDER = ("VERIFIED", "INFERRED", "UNCONFIRMED", "CONFLICTING", "NOT_FOUND")
 
 
 class SearchRequest(BaseModel):
@@ -168,6 +227,20 @@ def overlay_review(row: dict[str, Any], reviews: dict[str, dict[str, Any]]) -> d
     return row
 
 
+def matrix_rows(project: dict[str, str]) -> list[dict[str, Any]]:
+    matrix = work_dir(project) / "evidence-matrix.csv"
+    if not matrix.is_file():
+        return []
+    reviews = reviews_for(project)
+    with matrix.open(encoding="utf-8-sig", newline="") as handle:
+        return [overlay_review(dict(row), reviews) for row in csv.DictReader(handle)]
+
+
+def area_label(value: str) -> str:
+    key = value.strip().lower()
+    return AREA_LABELS.get(key, key.replace("_", " ").strip().title() or "Unclassified")
+
+
 def scope_clause(all_captures: bool, include_archive: bool, alias: str = "f") -> tuple[str, list[Any]]:
     clauses: list[str] = []
     if not include_archive:
@@ -195,13 +268,7 @@ def source_roots(project: dict[str, str]) -> list[Path]:
 
 
 def resolve_indexed_path(project: dict[str, str], rel_path: str) -> Path:
-    """Resolve an indexed path, including indexes copied between CSA workspaces.
-
-    IAMPS 08 deliberately reuses the IAMPS 06 discovery index. Its stored paths
-    are relative to the IAMPS 06 project root, while the active registry project
-    is IAMPS 08. Rebase at the configured source folder name before declaring the
-    source missing; never search outside the registered evidence roots.
-    """
+    """Resolve an indexed path, including indexes copied between CSA workspaces."""
     relative = Path(rel_path)
     direct = (Path(project["project_root"]) / relative).resolve()
     roots = source_roots(project)
@@ -214,9 +281,6 @@ def resolve_indexed_path(project: dict[str, str], rel_path: str) -> Path:
     for candidate in candidates:
         if candidate.is_file() and any(candidate == root or root in candidate.parents for root in roots):
             return candidate
-    # Source folders sometimes get renamed after an index build (TETRA's
-    # `RevLoc` became `revloc-tetra`). A capture folder plus file name remains
-    # stable and is specific enough to recover the source without guessing.
     capture = next((part for part in parts
                     if re.search(r"_discovery_[A-Za-z0-9-]+_\d{8}T\d{6}Z$", part, re.I)), None)
     recovered: list[Path] = []
@@ -353,6 +417,18 @@ def get_systems() -> dict[str, Any]:
                          "available": cfg["project_key"] in registered} for key, cfg in SYSTEMS.items()]}
 
 
+@app.get("/api/systems/{system_key}/commands")
+def command_catalogue(system_key: str) -> dict[str, Any]:
+    project = system_project(system_key)
+    return {"system": system_key, "project_key": project["key"], "operations": commands.catalogue()}
+
+
+@app.post("/api/systems/{system_key}/commands/{operation_key}")
+def run_command(system_key: str, operation_key: str, request: CommandRequest) -> dict[str, Any]:
+    project = system_project(system_key)
+    return commands.execute(agents_dir(), project, operation_key, request).model_dump()
+
+
 @app.get("/api/systems/{system_key}/summary")
 def get_summary(system_key: str) -> dict[str, Any]:
     project = system_project(system_key)
@@ -379,6 +455,110 @@ def get_summary(system_key: str) -> dict[str, Any]:
             "captures": captures[0] or 0, "current_captures": captures[1] or 0,
             "files_by_status": statuses, "evidence_rows": evidence_count, "families": families,
             "coverage": [{"host": host, "families": dict(values)} for host, values in sorted(coverage.items())]}
+
+
+@app.get("/api/systems/{system_key}/portrait")
+def application_portrait(system_key: str) -> dict[str, Any]:
+    """Translate indexed material into the questions an assessor must resolve."""
+    project = system_project(system_key)
+    config = SYSTEMS[system_key]
+    rows = matrix_rows(project)
+    con = open_index(project)
+    scope, params = scope_clause(False, False)
+    files = con.execute(
+        "SELECT f.status,f.reason,f.host,f.rel_path FROM files f WHERE " + scope, params
+    ).fetchall()
+    con.close()
+
+    status_counts = Counter((row.get("status") or "UNCONFIRMED").upper() for row in rows)
+    review_counts = Counter((row.get("review_state") or "pending").lower() for row in rows)
+    areas: list[dict[str, Any]] = []
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        grouped[row.get("csa_area", "")].append(row)
+
+    for key, area_rows in grouped.items():
+        counts = Counter((row.get("status") or "UNCONFIRMED").upper() for row in area_rows)
+        open_rows = [row for row in area_rows if (row.get("status") or "").upper() != "VERIFIED"]
+        verified = [row for row in area_rows if (row.get("status") or "").upper() == "VERIFIED"]
+        if counts["CONFLICTING"]:
+            state = "conflict"
+        elif counts["NOT_FOUND"] or counts["UNCONFIRMED"]:
+            state = "gaps"
+        elif counts["INFERRED"]:
+            state = "inference"
+        elif verified:
+            state = "supported"
+        else:
+            state = "empty"
+        areas.append({
+            "key": key or "unclassified",
+            "label": area_label(key),
+            "state": state,
+            "total": len(area_rows),
+            "counts": {status: counts.get(status, 0) for status in STATUS_ORDER},
+            "pending_review": sum(1 for row in area_rows if (row.get("review_state") or "pending").lower() == "pending"),
+            "claims": [{field: row.get(field, "") for field in
+                        ("evidence_id", "claim", "status", "confidence", "source_title", "page_or_location")}
+                       for row in verified[:4]],
+            "decisions": [{field: row.get(field, "") for field in
+                           ("evidence_id", "question", "claim", "status", "confidence", "gap_or_action")}
+                          for row in open_rows[:8]],
+        })
+    priority = {key: index for index, key in enumerate(AREA_PRIORITY)}
+    areas.sort(key=lambda area: (priority.get(area["key"], len(priority)), area["label"]))
+
+    host_families: dict[str, Counter[str]] = defaultdict(Counter)
+    source_status = Counter()
+    skipped_reasons = Counter()
+    for row in files:
+        source_status[row["status"]] += 1
+        if row["status"] == "skipped":
+            skipped_reasons[row["reason"] or "No reason recorded"] += 1
+        if row["host"] and row["status"] == "indexed":
+            host_families[row["host"]][family(row["rel_path"])] += 1
+    observed_hosts = [{
+        "host": host,
+        "families": dict(counts),
+        "files": sum(counts.values()),
+        "breadth": len(counts),
+    } for host, counts in sorted(host_families.items())]
+
+    attention = [row for row in rows if (row.get("status") or "").upper() in
+                 {"CONFLICTING", "NOT_FOUND", "UNCONFIRMED", "INFERRED"}]
+    attention.sort(key=lambda row: (
+        {"CONFLICTING": 0, "NOT_FOUND": 1, "UNCONFIRMED": 2, "INFERRED": 3}.get(
+            (row.get("status") or "").upper(), 4),
+        row.get("evidence_id", ""),
+    ))
+    return {
+        "application": {
+            "name": config["application"],
+            "system": config["label"],
+            "project_key": project["key"],
+            "scope": config["scope"],
+        },
+        "assessment": {
+            "total": len(rows),
+            "status_counts": {status: status_counts.get(status, 0) for status in STATUS_ORDER},
+            "review_counts": dict(review_counts),
+            "supported_areas": sum(1 for area in areas if area["state"] == "supported"),
+            "areas_with_attention": sum(1 for area in areas if area["state"] in {"conflict", "gaps", "inference"}),
+        },
+        "areas": areas,
+        "attention": [{field: row.get(field, "") for field in
+                       ("evidence_id", "csa_area", "question", "claim", "status", "confidence",
+                        "gap_or_action", "source_title", "page_or_location")}
+                      for row in attention],
+        "observed_hosts": observed_hosts,
+        "source_health": {
+            "files": sum(source_status.values()),
+            "status_counts": dict(source_status),
+            "skipped_reasons": [{"reason": reason, "count": count}
+                                for reason, count in skipped_reasons.most_common(8)],
+        },
+        "disclaimer": "This portrait summarises recorded evidence. Host coverage shows where data was captured; it does not by itself prove an application dependency.",
+    }
 
 
 @app.post("/api/systems/{system_key}/search")
@@ -503,10 +683,27 @@ def evidence_sources(system_key: str, evidence_id: str) -> dict[str, Any]:
                        target.get("source_title", ""), re.I)
     con = open_index(project)
     matches: list[dict[str, Any]] = []
+    current_scope, scope_params = scope_clause(False, False)
     for name in sorted(set(names)):
-        rows = con.execute("SELECT file_id,rel_path,host,status FROM files WHERE rel_path LIKE ?", (f"%/{name}",)).fetchall()
+        rows = con.execute("SELECT f.file_id,f.rel_path,f.host,f.status FROM files f "
+                           f"WHERE f.rel_path LIKE ? AND {current_scope}",
+                           [f"%/{name}", *scope_params]).fetchall()
         matches.extend(dict(row) for row in rows)
     con.close()
+    citation = " ".join((target.get("source_title", ""), target.get("source_version", "")))
+    capture_ids = set(re.findall(r"[A-Za-z0-9-]+_discovery_[A-Za-z0-9-]+_\d{8}T\d{6}Z", citation, re.I))
+    capture_ids.update(re.findall(r"[A-Za-z0-9-]+_\d{8}T\d{6}Z", citation, re.I))
+    if capture_ids:
+        scoped = [row for row in matches if any(capture.casefold() in row["rel_path"].casefold()
+                                                for capture in capture_ids)]
+        if scoped:
+            matches = scoped
+    else:
+        cited_hosts = {str(row.get("host", "")).casefold() for row in matches
+                       if row.get("host") and re.search(rf"\b{re.escape(str(row['host']))}\b", citation, re.I)}
+        if cited_hosts:
+            matches = [row for row in matches if str(row.get("host", "")).casefold() in cited_hosts]
+    matches = list({row["file_id"]: row for row in matches}.values())
     return {"evidence": target, "sources": matches,
             "state": "found" if len(matches) == 1 else "ambiguous" if matches else "unavailable"}
 
