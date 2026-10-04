@@ -19,7 +19,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import commands, documents, pipeline, proposals, sections, validation
+from . import apply_workflow, commands, documents, pipeline, proposals, sections, validation
 from .jobs import JobManager
 from .models import CommandRequest, JobCreateRequest
 
@@ -480,6 +480,22 @@ def save_section_proposal(system_key: str, section: str, payload: dict[str, Any]
 @app.post("/api/systems/{system_key}/sections/{section}/validate")
 def validate_section_proposal(system_key: str, section: str, payload: dict[str, Any]) -> dict[str, Any]:
     return validation.validate(agents_dir(), system_project(system_key), section, payload)
+
+
+@app.post("/api/systems/{system_key}/sections/{section}/apply-preflight")
+def apply_preflight(system_key: str, section: str, payload: dict[str, Any]) -> dict[str, Any]:
+    return apply_workflow.preflight(agents_dir(), system_project(system_key), section, payload)
+
+
+@app.post("/api/systems/{system_key}/sections/{section}/apply", status_code=202)
+def apply_section(system_key: str, section: str, payload: dict[str, Any]) -> dict[str, Any]:
+    return apply_workflow.submit(agents_dir(), job_manager, system_project(system_key), section, payload)
+
+
+@app.get("/api/systems/{system_key}/apply-jobs/{job_id}")
+def get_apply_job(system_key: str, job_id: str) -> dict[str, Any]:
+    job = job_manager.get(system_project(system_key), job_id).model_dump()
+    return {"job": job, "outcome": apply_workflow.outcome(job)}
 
 
 @app.get("/api/systems/{system_key}/document")

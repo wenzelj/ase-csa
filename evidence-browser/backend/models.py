@@ -31,10 +31,10 @@ class CommandDescriptor(BaseModel):
     description: str
     target: Literal["none", "optional", "required"]
     options: dict[str, Literal["boolean", "identifier"]]
-    mutating: Literal[False] = False
+    mutating: bool = False
     output: Literal["json_or_text"] = "json_or_text"
     timeout_seconds: int
-    lock: Literal["none"] = "none"
+    lock: Literal["none", "docx"] = "none"
 
 
 JobState = Literal["queued", "running", "succeeded", "failed", "cancelled", "interrupted"]

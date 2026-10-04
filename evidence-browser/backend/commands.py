@@ -32,11 +32,13 @@ class Operation:
     target_kind: Literal["section", "file", "heading"] | None = None
     options: dict[str, Literal["boolean", "identifier"]] = field(default_factory=dict)
     timeout: int = 45
+    mutating: bool = False
+    lock: Literal["none", "docx"] = "none"
 
     def descriptor(self) -> CommandDescriptor:
         return CommandDescriptor(
             key=self.key, title=self.title, description=self.description, target=self.target,
-            options=self.options, timeout_seconds=self.timeout,
+            options=self.options, timeout_seconds=self.timeout, mutating=self.mutating, lock=self.lock,
         )
 
 
@@ -58,6 +60,11 @@ OPERATIONS: dict[str, Operation] = {
     "check_section": Operation(
         "check_section", "Validate build section", "Run the existing build-section validator without placing it.",
         ("check-section",), "required", "file", {"no_lint": "boolean"}, timeout=120,
+    ),
+    "apply": Operation(
+        "apply", "Apply validated proposal", "Apply through the framework with tracked changes and backups.",
+        ("apply",), "required", "section", {"until_done": "boolean"}, timeout=900,
+        mutating=True, lock="docx",
     ),
 }
 

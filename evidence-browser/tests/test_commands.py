@@ -11,13 +11,15 @@ from backend import commands
 from backend.models import CommandRequest
 
 
-def test_catalogue_exposes_only_read_only_operations() -> None:
+def test_catalogue_exposes_read_only_operations_and_one_docx_locked_apply() -> None:
     rows = commands.catalogue()
     assert {row["key"] for row in rows} == {
         "status", "next", "report", "sections", "spec_status", "comments",
-        "check_change", "check_section",
+        "check_change", "check_section", "apply",
     }
-    assert all(row["mutating"] is False and row["lock"] == "none" for row in rows)
+    apply = next(row for row in rows if row["key"] == "apply")
+    assert apply["mutating"] is True and apply["lock"] == "docx"
+    assert all(row["mutating"] is False and row["lock"] == "none" for row in rows if row["key"] != "apply")
 
 
 def test_build_argv_uses_fixed_executable_and_typed_arguments(tmp_path: Path) -> None:
@@ -51,7 +53,7 @@ def test_unknown_operation_project_and_option_are_rejected_before_launch(tmp_pat
     with pytest.raises(HTTPException):
         commands.build_argv(tmp_path, "hidden-project", "status", CommandRequest())
     with pytest.raises(HTTPException):
-        commands.build_argv(tmp_path, "tetra-reveloc", "apply", CommandRequest(target="3"))
+        commands.build_argv(tmp_path, "tetra-reveloc", "destroy", CommandRequest(target="3"))
     with pytest.raises(HTTPException):
         commands.build_argv(tmp_path, "tetra-reveloc", "next", CommandRequest(options={"force": True}))
     assert launched is False
@@ -87,4 +89,3 @@ def test_execute_uses_shell_false_minimal_env_and_redacted_audit(tmp_path: Path,
     event = json.loads((work / "evidence-browser-audit.jsonl").read_text(encoding="utf-8"))
     assert event["operation"] == "status" and event["classification"] == "read_only"
     assert "stdout" not in event and "stderr" not in event and "target" not in event
-
