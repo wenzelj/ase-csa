@@ -55,7 +55,7 @@ def fingerprint(card_json: Path, matrix: Path, hosts_csv: Path | None = None) ->
     for q in card.get("questions") or []:
         qid = q["id"]
         listed = [{"id": r.get("id"), "status": r.get("status"), "claim": r.get("claim")}
-                  for r in (evidence.get(qid) or {}).get("rows", [])]
+                  for r in (evidence.get(qid) or {}).get("rows", []) if not r.get("established")]
         cited = sorted({r["id"] for r in listed if r["id"]})
         cited_all.update(cited)
         current = [rows.get(i) or {"evidence_id": i, "missing": True} for i in cited]

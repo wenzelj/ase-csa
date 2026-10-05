@@ -2323,6 +2323,7 @@ def _author_cards(p: dict, a) -> int:
         res2 = check()
     _fw_json("csa_docx.answer_cache", "write", sheet, "--card", card_json, "--matrix", matrix,
              *(["--hosts", hosts_csv] if hosts_csv.is_file() else []), "--json")
+    _fw_json("csa_docx.fact_store", "add", work, sheet, "--card", card_json)
     if getattr(a, "check_answers", False):
         # advisory: a second look at whether each block answers its question; never a gate
         chk = cards / f"{key}.check.md"

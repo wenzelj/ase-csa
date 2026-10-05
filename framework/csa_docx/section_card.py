@@ -279,10 +279,43 @@ def _current(node: dict) -> list[str]:
     return out
 
 
+_HOST = re.compile(r"\b(?=[A-Z0-9]*\d)[A-Z][A-Z0-9]{6,}\b")
+
+
+def _established(node: dict, qs: list[dict], pack: dict, workspace: Path | None) -> dict:
+    """{question id: facts already established by validated sheets of other sections}, at most 8 per question.
+    Their evidence rows join the question's pack (flagged `established`) so the answer may cite them."""
+    if not workspace:
+        return {}
+    from csa_docx import fact_store
+
+    work = Path(workspace) / "csa-work"
+    if not fact_store.store_path(work).is_file():
+        return {}
+    rows = {r["evidence_id"].upper(): r for r in _matrix_rows(workspace)}
+    out: dict[str, list[dict]] = {}
+    for q in qs:
+        if q["kind"] == "comment" or q["id"] not in pack:
+            continue
+        hosts = {h for r in pack[q["id"]]["rows"] for h in _HOST.findall(r.get("claim", ""))}
+        found = fact_store.lookup(work, _words(q["text"]) | _words(node["title"]), hosts, 8, exclude_section=node["key"])
+        if not found:
+            continue
+        out[q["id"]] = [{k: f[k] for k in ("fact", "evidence_ids", "section", "question", "basis")} for f in found]
+        have = {r["id"].upper() for r in pack[q["id"]]["rows"]}
+        for f in found:
+            for eid in f["evidence_ids"]:
+                if eid.upper() not in have and eid.upper() in rows:
+                    pack[q["id"]]["rows"].append({**_row(rows[eid.upper()]), "established": True})
+                    have.add(eid.upper())
+    return out
+
+
 def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool = True,
          extra_searches: dict | None = None, exclude: tuple[str, ...] = ()) -> dict:
     qs = questions(node, spec)
     pack = evidence_pack(node, qs, workspace, extra_searches, exclude) if evidence else {}
+    established = _established(node, qs, pack, workspace) if pack else {}
     extra = scope_extras(node)
     kinds = sorted({q["kind"] for q in qs if q["kind"] != "comment"})
     lines = [f"# Card: {node['title']} (key {node['key']}, section {node['number']})", "",
@@ -299,11 +332,20 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
     cur = _current(node)
     if cur:
         lines += ["", "## Current text in the document", ""] + [f"- {c}" for c in cur]
+    if established:
+        lines += ["", "## Facts already established", "",
+                  "Reuse a fact if it answers the question; still cite its evidence IDs.", ""]
+        for qid, facts in established.items():
+            lines.append(f"### {qid}")
+            for f in facts:
+                lines.append(f"- {f['fact']} (section {f['section']}; {', '.join(f['evidence_ids'])})")
     if pack:
         lines += ["", "## Evidence pack", ""]
         for qid, p in pack.items():
             lines.append(f"### {qid}")
             for r in p["rows"]:
+                if r.get("established"):
+                    continue                    # listed under Facts already established
                 note = f" [{r['note']}]" if r["note"] else ""
                 lines.append(f"- {r['id']} {r['status']}: {r['claim']}{note}")
             for c in p["candidates"]:
@@ -319,7 +361,7 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
             lines += ["", f"## Example answer ({k})", "", ex]
     text = "\n".join(lines) + "\n"
     return {"status": "OK", "key": node["key"], "number": node["number"], "title": node["title"], "text": text,
-            "questions": qs, "evidence": pack, "tokens": len(text) // 4,
+            "questions": qs, "evidence": pack, "established": established, "tokens": len(text) // 4,
             "ratings": spec.get("ratings") or doc_spec.DEFAULT_RATINGS, "kinds": kinds}
 
 
