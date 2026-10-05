@@ -2104,6 +2104,24 @@ def _record_author_run(p: dict, args: list[str], **data) -> None:
         pass
 
 
+def _fleet_session_stats(p: dict, t: dict) -> None:
+    """Read the finished task's log: commands, KB read and tokens go to the fleet summary (t['stats']) and,
+    for author / answer / writer tasks, to the section's timing.json as <stage>_read_kb, _commands, _tokens."""
+    try:
+        sys.path.insert(0, str(FRAMEWORK))
+        from csa_docx.session_stats import stats, timing_fields
+        stage = {"author": "author", "answer": "answer", "write": "write"}.get(t["verb"], t["verb"])
+        st = stats(t["log"])
+        t["stats"] = {**timing_fields(stage, st), "top_files": st["top_files"][:5]}
+        if t["verb"] in ("author", "answer", "write") and t["args"]:
+            _record_author_run(p, t["args"], **timing_fields(stage, st))
+    except (OSError, ValueError, ImportError):
+        pass
+    finally:
+        if str(FRAMEWORK) in sys.path:
+            sys.path.remove(str(FRAMEWORK))
+
+
 def _record_author_counts(p: dict, args: list[str]) -> None:
     sec, label = split_section(task_values(agent("author"), args).get("SECTION", ""))
     if not sec or not str(sec).isdigit():
@@ -2879,6 +2897,7 @@ def cmd_fleet(a):
         fh.write(f"\n# finished: {datetime.now():%Y-%m-%d %H:%M:%S}  exit {rc}{('  ' + note) if note else ''}\n")
         fh.close()
         t.update(rc=rc, end=datetime.now(), status="done" if rc == 0 and not note else "failed", note=note or t["note"])
+        _fleet_session_stats(p, t)
         colour = C["g"] if t["status"] == "done" else C["r"]
         say(f"{colour}{t['status']:<5}{C['0']} #{t['n']} {t['text']}  [{slot}] {_dur((t['end'] - t['start']).total_seconds())}"
             + (f" exit {rc}" if rc else "") + (f" - {note}" if note else ""))
