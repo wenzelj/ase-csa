@@ -157,6 +157,10 @@ class AuthorOutcomeSummary(BaseModel):
     non_success_reasons: list[str] = Field(default_factory=list)
     actual_route: Literal["cards", "legacy"] = "cards"
     writer_policy: Literal["auto", "force", "skip"] = "auto"
+    cache_status: Literal["NONE", "REUSE", "PARTIAL", "STALE"] = "NONE"
+    question_decisions: list[dict[str, Any]] = Field(default_factory=list)
+    established_facts: list[dict[str, Any]] = Field(default_factory=list)
+    freshness: dict[str, Any] = Field(default_factory=dict)
 
 
 class CleanupGate(BaseModel):

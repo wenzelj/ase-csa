@@ -5,6 +5,7 @@ import csv
 import hashlib
 import json
 import re
+import sys
 from pathlib import Path
 from typing import Any, Callable
 
@@ -25,6 +26,8 @@ ARTIFACT_NAMES = {
     "search_notes": "Evidence search notes",
     "author_report": "Author report",
     "timing": "Run timing",
+    "cache_manifest": "Answer cache manifest",
+    "fact_store": "Established facts snapshot",
 }
 
 
@@ -113,6 +116,8 @@ def _artifact_paths(project: dict[str, str], stable_key: str) -> dict[str, Path]
         "answer_check": cards / f"{stable_key}.check.md", "answer_errors": cards / f"{stable_key}.errors.md",
         "search_notes": author / "search-notes.md", "author_report": author / "author-report.md",
         "timing": author / "timing.json",
+        "cache_manifest": cards / f"{stable_key}.manifest.json",
+        "fact_store": work / "facts" / "facts.jsonl",
     }
 
 
@@ -171,6 +176,78 @@ def _cards(path: Path) -> list[dict[str, str]]:
             for row in questions if isinstance(row, dict)]
 
 
+def _framework_import(agents_dir: Path, name: str) -> Any | None:
+    framework = str((agents_dir / "framework").resolve())
+    added = framework not in sys.path
+    try:
+        if added:
+            sys.path.insert(0, framework)
+        return __import__(f"csa_docx.{name}", fromlist=[name])
+    except (ImportError, OSError):
+        return None
+    finally:
+        if added and framework in sys.path:
+            sys.path.remove(framework)
+
+
+def _matrix_by_id(project: dict[str, str]) -> dict[str, dict[str, str]]:
+    path = Path(project["work_dir"]) / "evidence-matrix.csv"
+    if not path.is_file():
+        return {}
+    try:
+        with path.open(encoding="utf-8-sig", newline="") as handle:
+            return {str(row.get("evidence_id") or "").upper(): dict(row) for row in csv.DictReader(handle)}
+    except (OSError, csv.Error):
+        return {}
+
+
+def _author_state(agents_dir: Path, project: dict[str, str], stable_key: str) -> dict[str, Any]:
+    paths = _artifact_paths(project, stable_key)
+    card_path, sheet = paths["card_json"], paths["answer_sheet"]
+    matrix = Path(project["work_dir"]) / "evidence-matrix.csv"
+    hosts = Path(project["work_dir"]) / "hosts" / "hosts.csv"
+    cards = _cards(card_path)
+    cache = {"status": "NONE", "changed": [], "reason": "No validated answer cache is available."}
+    fingerprint: dict[str, Any] = {}
+    module = _framework_import(agents_dir, "answer_cache")
+    if module is not None and card_path.is_file() and matrix.is_file():
+        try:
+            fingerprint = module.fingerprint(card_path, matrix, hosts if hosts.is_file() else None)
+            cache = {**cache, **module.compare(sheet, fingerprint)}
+        except (OSError, ValueError, KeyError, TypeError):
+            cache = {"status": "STALE", "changed": [], "reason": "The answer cache manifest could not be validated."}
+    changed = set(cache.get("changed") or [])
+    decisions = [{"question_id": row["id"], "question": row["question"],
+                  "decision": "regenerate" if row["id"] in changed or cache["status"] in {"NONE", "STALE"} else "reuse",
+                  "reason": cache.get("reason") or ("Inputs changed." if row["id"] in changed else "Inputs are unchanged.")}
+                 for row in cards]
+    established: list[dict[str, Any]] = []
+    rows = _matrix_by_id(project)
+    if card_path.is_file():
+        try:
+            raw = json.loads(card_path.read_text(encoding="utf-8"))
+            for qid, facts in (raw.get("established") or {}).items():
+                for fact in facts:
+                    ids = [str(value).upper() for value in fact.get("evidence_ids") or []]
+                    live = all(value in rows for value in ids)
+                    sources = [{"evidence_id": value, "status": rows.get(value, {}).get("status", "UNAVAILABLE"),
+                                "source_title": rows.get(value, {}).get("source_title", ""),
+                                "page_or_location": rows.get(value, {}).get("page_or_location", "")}
+                               for value in ids]
+                    established.append({"fact": str(fact.get("fact") or ""), "origin_section": str(fact.get("section") or ""),
+                                        "question_id": str(fact.get("question") or qid), "basis": str(fact.get("basis") or ""),
+                                        "evidence_ids": ids, "sources": sources,
+                                        "validation_state": "valid" if live else "invalidated",
+                                        "reuse_status": "reused" if live else "unavailable"})
+        except (OSError, ValueError, TypeError):
+            pass
+    fp_hash = hashlib.sha256(json.dumps(fingerprint, sort_keys=True).encode()).hexdigest() if fingerprint else ""
+    return {"cache_status": cache["status"], "cache_reason": cache.get("reason", ""),
+            "question_decisions": decisions, "established_facts": established,
+            "freshness": {"status": "current" if cache["status"] == "REUSE" else "attention",
+                          "fingerprint": fp_hash, "reason": cache.get("reason", "")}}
+
+
 def _fingerprint(project_key: str, section: str, document_hash: str,
                  evidence: list[dict[str, str]]) -> str:
     value = {"project": project_key, "section": section, "document": document_hash,
@@ -202,6 +279,7 @@ def setup(agents_dir: Path, project: dict[str, str], section: str, *,
         _matching_row(builds, number) or _matching_row(builds, stable_key) or _matching_row(builds, section)
     proposal_path = _safe_selected_file(project, selected)
     artifacts = _artifact_rows(project, stable_key)
+    author_state = _author_state(agents_dir, project, stable_key)
     evidence = _evidence(project, number, stable_key)
     document_hash = _document_hash(project)
     prior = []
@@ -228,11 +306,12 @@ def setup(agents_dir: Path, project: dict[str, str], section: str, *,
         "selected_cards": _cards(_artifact_paths(project, stable_key)["card_json"]),
         "author_brief": next(row for row in artifacts if row["key"] == "brief"),
         "answer_sheet": next(row for row in artifacts if row["key"] == "answer_sheet"),
-        "evidence": evidence, "artifacts": artifacts, "stages": stages,
+        "evidence": evidence, "artifacts": artifacts, "stages": stages, **author_state,
         "existing_proposal": {"exists": proposal_path is not None, "file": proposal_path.name if proposal_path else None,
                               "hash": _sha256(proposal_path), "validation": stages[-1]["state"]},
         "prior_runs": len(prior),
-        "input_hash": _fingerprint(project["key"], section, document_hash, evidence),
+        "input_hash": hashlib.sha256((_fingerprint(project["key"], section, document_hash, evidence) +
+                                       author_state["freshness"]["fingerprint"]).encode()).hexdigest(),
     }
 
 
@@ -345,6 +424,10 @@ def outcome(job: dict[str, Any], current: dict[str, Any], context: dict[str, Any
         non_success_reasons=reasons,
         actual_route=str(context.get("actual_route") or "cards"),
         writer_policy=str(context.get("writer_policy") or "auto"),
+        cache_status=current.get("cache_status", "NONE"),
+        question_decisions=current.get("question_decisions", []),
+        established_facts=current.get("established_facts", []),
+        freshness=current.get("freshness", {}),
     ).model_dump()
 
 

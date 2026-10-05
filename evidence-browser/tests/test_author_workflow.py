@@ -80,6 +80,30 @@ def test_setup_exposes_brief_cards_evidence_proposal_and_hashes(tmp_path: Path, 
     assert result["evidence"][0]["evidence_id"] == "E-101"
     assert result["existing_proposal"]["file"] == change.name
     assert result["input_hash"] and all("/" not in str(row.get("file", "")) for row in result["artifacts"])
+    assert result["cache_status"] == "NONE"
+    assert result["question_decisions"][0]["decision"] == "regenerate"
+    assert {row["key"] for row in result["artifacts"]} >= {"cache_manifest", "fact_store"}
+
+
+def test_setup_uses_framework_cache_and_exposes_established_fact_provenance(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    p = project(tmp_path)
+    change = Path(p["project_root"]) / "proposal.md"; change.write_text("draft", encoding="utf-8")
+    cards = Path(p["work_dir"]) / "cards"; cards.mkdir()
+    card = {"questions": [{"id": "B1", "text": "Which paths?"}], "evidence": {"B1": {"rows": []}},
+            "established": {"B1": [{"fact": "Traffic uses two paths.", "evidence_ids": ["E-101"],
+                                        "section": "network-foundation", "question": "B1", "basis": "observed"}]}}
+    (cards / "network-segmentation.json").write_text(json.dumps(card), encoding="utf-8")
+    sheet = cards / "network-segmentation.answer.md"; sheet.write_text("## B1\n", encoding="utf-8")
+    matrix = Path(p["work_dir"]) / "evidence-matrix.csv"
+    matrix.write_text("evidence_id,status,review_state,section,question,claim,source_title,page_or_location\nE-101,VERIFIED,approved,3.1,Q,Two paths,Capture,line 4\n", encoding="utf-8")
+    module = author_workflow._framework_import(Path(__file__).resolve().parents[2], "answer_cache")
+    module.write_manifest(sheet, module.fingerprint(cards / "network-segmentation.json", matrix))
+    monkeypatch.setattr(author_workflow, "_document_hash", lambda _project: "doc-hash")
+    result = author_workflow.setup(Path(__file__).resolve().parents[2], p, "3.6", runner=runner(change))
+    assert result["cache_status"] == "REUSE" and result["freshness"]["status"] == "current"
+    assert result["question_decisions"][0]["decision"] == "reuse"
+    assert result["established_facts"][0]["origin_section"] == "network-foundation"
+    assert result["established_facts"][0]["sources"][0]["source_title"] == "Capture"
 
 
 def test_submit_uses_boolean_flags_and_records_bound_context(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

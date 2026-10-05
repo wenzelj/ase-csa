@@ -53,6 +53,8 @@ export type AuthorEvidence = {
   evidence_id: string; status: string; review_state: string; question: string; claim: string;
   source_title: string; page_or_location: string;
 };
+export type AuthorQuestionDecision = { question_id: string; question: string; decision: "reuse" | "regenerate"; reason: string };
+export type EstablishedFact = { fact: string; origin_section: string; question_id: string; basis: string; evidence_ids: string[]; sources: { evidence_id: string; status: string; source_title: string; page_or_location: string }[]; validation_state: "valid" | "invalidated"; reuse_status: "reused" | "unavailable" };
 export type AuthorSetup = {
   project_key: string; section: string; visible_number: string; stable_key: string;
   lane: string; document_hash: string; input_hash: string; no_apply: true; cards_available: boolean;
@@ -64,6 +66,9 @@ export type AuthorSetup = {
   artifacts: AuthorArtifact[]; stages: { key: string; label: string; state: string }[];
   existing_proposal: { exists: boolean; file?: string | null; hash?: string | null; validation: string };
   prior_runs: number;
+  cache_status: "NONE" | "REUSE" | "PARTIAL" | "STALE"; cache_reason: string;
+  question_decisions: AuthorQuestionDecision[]; established_facts: EstablishedFact[];
+  freshness: { status: string; fingerprint: string; reason: string };
 };
 export type AuthorOutcome = {
   state: string; section: string; lane: string; current: boolean; input_hash: string; document_hash: string;
@@ -72,6 +77,8 @@ export type AuthorOutcome = {
   routed_to_editor: boolean; routed_to_validation: boolean;
   warnings: string[]; non_success_reasons: string[];
   actual_route: "cards" | "legacy"; writer_policy: WriterPolicy;
+  cache_status: AuthorSetup["cache_status"]; question_decisions: AuthorQuestionDecision[];
+  established_facts: EstablishedFact[]; freshness: AuthorSetup["freshness"];
 };
 export type WriterPolicy = "auto" | "force" | "skip";
 export type AuthorOptions = { legacy: boolean; fresh: boolean; check_answers: boolean; writer_policy: WriterPolicy };
