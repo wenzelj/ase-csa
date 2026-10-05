@@ -48,4 +48,15 @@ const switched = renderToStaticMarkup(<AssessmentShell snapshot={snapshot("TETRA
 assert(switched.includes("TETRA service"), "new project content must render");
 assert(!switched.includes("Patch lifecycle"), "prior project sections must not leak into a switched project");
 
+const documentControl = { ...base, visible_number: "1", stable_key: "DOCUMENT_CONTROL", heading: "Document Control", lane: "build" as const };
+const documentControlInspection = {
+  identity: { requested: "DOCUMENT_CONTROL", visible_number: "1", stable_key: "DOCUMENT_CONTROL", stable_id: "@H1", heading: "Document Control", kind: "container" },
+  current: { status: { state: "n/a" }, parts: [] }, requirements: [], comments: [], guidance: [], removed: [], removed_sections: [], revisions: [], evidence: [], questions: [],
+  open_questions: [{ id: null, question: "Which reviewed evidence supports this section?", answered: false }],
+  work: { lane: "unknown", change_file: null, section_file: null, proposal: null, author_report: {} }, validation: { state: "unknown", findings: [] },
+};
+const documentControlHtml = renderToStaticMarkup(<AssessmentShell snapshot={snapshot("TETRA", [documentControl])} selected={documentControl} inspection={documentControlInspection as any} select={() => {}} readDocument={() => {}} />);
+assert(documentControlHtml.includes("Document structure"), "container headings need a safe read-only workspace");
+assert(!documentControlHtml.includes("AI Author"), "container headings without a work record must not start authoring controls");
+
 console.log("assessment component fixtures passed");
