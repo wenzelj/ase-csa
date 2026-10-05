@@ -40,11 +40,14 @@ task_cli:
 # `csa fleet`: run independent tasks side by side. One worker per slot; each task starts a
 # fresh headless CLI in a free slot and the process exits when the task is done. For codex,
 # each slot name is a Codex profile ({profile}); {last} is the file that gets the final message.
+# Each agent task opens its own Terminal window (csa-window); --no-window or CSA_NO_WINDOW=1 runs it in place.
 # DOCX steps never overlap (see `locks:` in registry.yaml). Override: --slots, --cli, CSA_FLEET_SLOTS.
 fleet_cli: codex
-fleet_slots: local-qwen, evo-x3-qwen
+fleet_slots: evo-x3-qwen
 # Slots that run a small local model. csa fleet warns before giving them a frontier-tier task (registry.yaml tier:).
-local_slots: local-qwen, evo-x3-qwen
+local_slots: evo-x3-qwen
+# Slots csa fleet refuses (local-qwen is always refused: it does not deliver).
+disabled_slots: local-qwen
 codex_fleet: codex exec --profile {profile} --skip-git-repo-check --output-last-message {last} {prompt}
 claude_fleet: claude -p {prompt}
 hermes_fleet: hermes chat -q {prompt}

@@ -2876,6 +2876,10 @@ def _fleet_follow_up(t: dict, n: int, p: dict | None = None) -> dict | None:
     return None
 
 
+def _has_terminal() -> bool:
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
 def _fleet_argv(p: dict, t: dict, slot: str, cli: str) -> list[str]:
     if t.get("cards"):
         extra = [flag for flag, key in (("--no-apply", "no_apply"), ("--no-writer", "no_writer"), ("--writer", "force_writer"))
@@ -2892,7 +2896,12 @@ def _fleet_argv(p: dict, t: dict, slot: str, cli: str) -> list[str]:
     if not tmpl:
         die(f"no '{cli}_fleet' or '{cli}_headless' command in .agents/cli.yaml")
     subs = {"{prompt}": t["prompt"], "{profile}": slot, "{last}": str(t["last"])}
-    return [subs.get(x, x) for x in shlex.split(tmpl)]
+    argv = [subs.get(x, x) for x in shlex.split(tmpl)]
+    if os.environ.get("CSA_NO_WINDOW") or "csa-window" in argv[0] or not _has_terminal():
+        return argv                                 # no window without a terminal (scripts, tests, other agents)
+    # one Terminal window per task; the output is also appended to the task's log (CSA_FLEET_LOG)
+    return [str(AGENTS_DIR / "bin" / "csa-window"), "/bin/zsh", "-c",
+            'set -o pipefail; "$@" 2>&1 | tee -a "$CSA_FLEET_LOG"; exit ${pipestatus[1]}', "csa-task", *argv]
 
 
 def cmd_fleet(a):
@@ -2905,6 +2914,12 @@ def cmd_fleet(a):
     slots = [s.strip() for s in (a.slots or os.environ.get("CSA_FLEET_SLOTS") or cfg.get("fleet_slots", "")).split(",") if s.strip()]
     if not slots:
         die("no fleet slots. Set 'fleet_slots:' in .agents/cli.yaml or pass --slots a,b")
+    off = {x.strip() for x in cfg.get("disabled_slots", "").split(",") if x.strip()} | {"local-qwen"}
+    if off & set(slots):
+        die(f"slot(s) {', '.join(sorted(off & set(slots)))} are disabled (they do not deliver; see disabled_slots in "
+            f".agents/cli.yaml). Use another slot, e.g. --slots evo-x3-qwen. Nothing was started.")
+    if getattr(a, "no_window", False):
+        os.environ["CSA_NO_WINDOW"] = "1"
     if len(set(slots)) != len(slots):
         die(f"duplicate slot names: {', '.join(slots)}")
     tasks = _fleet_tasks(p, a)
@@ -2976,11 +2991,11 @@ def cmd_fleet(a):
             return
         argv = _fleet_argv(p, t, slot, cli)
         shown = shlex.join(["<prompt>" if x == t["prompt"] else x for x in argv])
-        fh = open(t["log"], "w", encoding="utf-8")
+        fh = open(t["log"], "a", encoding="utf-8")
         fh.write(f"# csa fleet task {t['n']}: {t['text']}\n# slot: {slot}\n# started: {datetime.now():%Y-%m-%d %H:%M:%S}\n"
                  f"# command: {shown}\n\n")
         fh.flush()
-        env = dict(os.environ, CSA_PROJECT=p["key"], CSA_FLEET_SLOT=slot, NO_COLOR="1")
+        env = dict(os.environ, CSA_PROJECT=p["key"], CSA_FLEET_SLOT=slot, NO_COLOR="1", CSA_FLEET_LOG=str(t["log"]))
         proc = subprocess.Popen(argv, cwd=str(ROOT), stdin=subprocess.DEVNULL, stdout=fh, stderr=subprocess.STDOUT, env=env)
         t.update(status="running", slot=slot, start=datetime.now())
         running[slot] = (t, proc, fh)
@@ -3947,6 +3962,7 @@ def main(argv=None) -> int:
     s.add_argument("--log-dir", help="where logs go (default .agents/.state/fleet/<time>)")
     s.add_argument("--dry-run", action="store_true", help="show tasks and locks, start nothing")
     s.add_argument("--print", action="store_true", help="also print every prompt, start nothing")
+    s.add_argument("--no-window", action="store_true", help="run each task in place instead of in its own Terminal window")
     s = sp("convert", cmd_convert, help="move an old-format CSA into the template, one subsection at a time")
     s.add_argument("target", nargs="?", help="subsection to convert, e.g. 3.4, 5.3, 7 (Glossary), 8, 5.1")
     s.add_argument("--prepare", action="store_true", help="extract and map the legacy document")
