@@ -859,6 +859,21 @@ def section_arg(p: dict, target: str) -> str:
     return res["number"]
 
 
+def _autofix_change(p: dict, cf: Path, section: str | None = None, label: str | None = None) -> None:
+    """Fix the mechanical check-change errors (Markdown or IDs in Text, duplicate edit IDs, a missing `currently:`
+    quote) before a check, and say what was fixed. Never on an approved or partly applied file: its hashes stand."""
+    try:
+        if section:
+            st = section_state(p, section, label)
+            if st["approved"] or st["completed"]:
+                return
+        res = _fw_json("csa_docx.autofix_change", cf, "--workspace", local_path(p["project_root"]), "--write", "--json")
+    except OSError:
+        return
+    for f in res.get("fixes", []):
+        print(f"{C['d']}autofix {f['code']} {f.get('edit_id') or ''}: {f['message']}{C['0']}")
+
+
 def run_check_change(p: dict, cf: Path, a, strict: bool = False, section: str | None = None, label: str | None = None) -> int:
     argv = [framework_python(), "-m", "csa_docx.check_change", str(cf), "--workspace", str(local_path(p["project_root"]))]
     if strict:
@@ -966,6 +981,8 @@ def cmd_check_change(a):
     st = section_state(p, a.section, getattr(a, "file", None))
     if not st["change_file"]:
         die(f"section {label_display(a.section, getattr(a, 'file', None))} has no change file.")
+    if not getattr(a, "no_autofix", False) and not getattr(a, "json", False):
+        _autofix_change(p, Path(st["change_file"]), a.section, getattr(a, "file", None))
     rc = run_check_change(p, Path(st["change_file"]), a, section=a.section, label=getattr(a, "file", None))
     metric(p, "check_change", a.section, exit=rc)
     return rc
@@ -1355,6 +1372,7 @@ def _after_agent(p: dict, verb: str, args: list[str], started: float, a) -> int:
         cf = Path(st["change_file"]) if st["change_file"] else None
         if not cf or not st["edits"] or cf.stat().st_mtime < started - 1:
             return 0
+        _autofix_change(p, cf, sec, label)
         author_report(p, cf, sec, label, summary_only=True)
         print(f"{C['b']}Applying {cf.name} now (tracked changes; you approve in Word).{C['0']}")
         ns = argparse.Namespace(project=a.project, section=sec, file=label, allow_unapproved=False, agent=False, set=None,
@@ -2085,6 +2103,7 @@ def _writer_pass(p: dict, args: list[str], started: float, a) -> int:
     cf = Path(st["change_file"]) if st["change_file"] else None
     if not cf or not st["edits"] or cf.stat().st_mtime < started - 1:
         return 0
+    _autofix_change(p, cf, sec, label)
     if not getattr(a, "writer", False) and not getattr(a, "print", False):
         needed, why = _writer_needed(p, cf, sec, label)
         if not needed:
@@ -2337,6 +2356,7 @@ def _author_cards(p: dict, a) -> int:
     if out.get("scaffold"):
         die("the document still lacks rows for the answer after scaffolding; nothing was applied")
     print(f"{C['b']}{cf.name}: {out['records']} record(s) {out['change_set']}, {out['open']} open question(s).{C['0']}")
+    _autofix_change(p, cf, sec, label)
     _record_author_run(p, [number], cards=True, sheet_status="OK", search_round=searched, fix_round=fixed, **timing)
     if getattr(a, "no_apply", False):
         return 0
@@ -3872,6 +3892,7 @@ def main(argv=None) -> int:
     s = sp("check-change", cmd_check_change, help="check a section's change file before approval")
     s.add_argument("section"); s.add_argument("--no-anchors", action="store_true"); s.add_argument("--file", help="a labelled change file for this section, e.g. story for ChangesCSA_<App>_Section<N>_story.md")
     s.add_argument("--no-lint", action="store_true"); s.add_argument("--json", action="store_true")
+    s.add_argument("--no-autofix", action="store_true", help="do not fix mechanical errors (Markdown or IDs in Text, duplicate edit IDs) first")
     s = sp("author-report", cmd_author_report, help="each brief question, what answers it and the sentence that says it (no model)")
     s.add_argument("section"); s.add_argument("--file", help="a labelled change file for this section")
     s = sp("check-section", cmd_check_section, help="check a build-lane section file before approval")
