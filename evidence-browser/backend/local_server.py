@@ -93,6 +93,12 @@ class Handler(BaseHTTPRequestHandler):
             match = re.fullmatch(r"/api/systems/([^/]+)/review-jobs/([^/]+)", path)
             if match:
                 return self.dispatch_result(api.get_review_job(match.group(1), match.group(2)))
+            match = re.fullmatch(r"/api/systems/([^/]+)/sections/([^/]+)", path)
+            if match:
+                return self.dispatch_result(api.get_section(match.group(1), match.group(2)))
+            match = re.fullmatch(r"/api/systems/([^/]+)/sections/([^/]+)/proposal", path)
+            if match:
+                return self.dispatch_result(api.get_section_proposal(match.group(1), match.group(2)))
             match = re.fullmatch(r"/api/systems/([^/]+)/sections/([^/]+)/author-setup", path)
             if match:
                 return self.dispatch_result(api.author_setup(match.group(1), match.group(2)))
@@ -114,6 +120,9 @@ class Handler(BaseHTTPRequestHandler):
             match = re.fullmatch(r"/api/systems/([^/]+)/cleanup/latest/([^/]+)", path)
             if match:
                 return self.dispatch_result(api.latest_cleanup(match.group(1), match.group(2)))
+            match = re.fullmatch(r"/api/systems/([^/]+)/apply-jobs/([^/]+)", path)
+            if match:
+                return self.dispatch_result(api.get_apply_job(match.group(1), match.group(2)))
             match = re.fullmatch(r"/api/systems/([^/]+)/build/setup", path)
             if match:
                 return self.dispatch_result(api.build_setup(match.group(1)))
@@ -167,6 +176,8 @@ class Handler(BaseHTTPRequestHandler):
             if match:
                 return self.dispatch_result(api.tables(match.group(1), scalar(query, "table"), scalar(query, "host"),
                                                        scalar(query, "where"), int(scalar(query, "limit", "100"))))
+            if path.startswith("/api/"):
+                return self.send_json({"detail": "Route not found"}, 404)
             return self.static(path)
         except Exception as error:
             self.fail(error)
@@ -206,6 +217,15 @@ class Handler(BaseHTTPRequestHandler):
             match = re.fullmatch(r"/api/systems/([^/]+)/sections/([^/]+)/review", parsed.path)
             if match:
                 return self.dispatch_result(api.submit_review(match.group(1), match.group(2), payload))
+            match = re.fullmatch(r"/api/systems/([^/]+)/sections/([^/]+)/validate", path)
+            if match:
+                return self.dispatch_result(api.validate_section_proposal(match.group(1), match.group(2), payload))
+            match = re.fullmatch(r"/api/systems/([^/]+)/sections/([^/]+)/apply-preflight", path)
+            if match:
+                return self.dispatch_result(api.apply_preflight(match.group(1), match.group(2), payload))
+            match = re.fullmatch(r"/api/systems/([^/]+)/sections/([^/]+)/apply", path)
+            if match:
+                return self.dispatch_result(api.apply_section(match.group(1), match.group(2), payload))
             match = re.fullmatch(r"/api/systems/([^/]+)/sections/([^/]+)/author", path)
             if match:
                 return self.dispatch_result(api.submit_author(match.group(1), match.group(2), payload))
@@ -224,6 +244,18 @@ class Handler(BaseHTTPRequestHandler):
             match = re.fullmatch(r"/api/systems/([^/]+)/audit/gaps", path)
             if match:
                 return self.dispatch_result(api.record_audit_gap(match.group(1), payload))
+            self.send_json({"detail": "Route not found"}, 404)
+        except Exception as error:
+            self.fail(error)
+
+    def do_PUT(self) -> None:
+        path = unquote(urlparse(self.path).path)
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            payload = json.loads(self.rfile.read(length) or b"{}")
+            match = re.fullmatch(r"/api/systems/([^/]+)/sections/([^/]+)/proposal", path)
+            if match:
+                return self.dispatch_result(api.save_section_proposal(match.group(1), match.group(2), payload))
             self.send_json({"detail": "Route not found"}, 404)
         except Exception as error:
             self.fail(error)
