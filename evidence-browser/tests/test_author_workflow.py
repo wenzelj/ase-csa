@@ -104,6 +104,8 @@ def test_setup_uses_framework_cache_and_exposes_established_fact_provenance(tmp_
     assert result["question_decisions"][0]["decision"] == "reuse"
     assert result["established_facts"][0]["origin_section"] == "network-foundation"
     assert result["established_facts"][0]["sources"][0]["source_title"] == "Capture"
+    assert [stage["key"] for stage in result["stages"]] == ["evidence", "facts", "card", "cache", "answers", "repairs", "validation", "writer", "proposal"]
+    assert all(stage["reason"] for stage in result["stages"])
 
 
 def test_submit_uses_boolean_flags_and_records_bound_context(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -148,7 +150,8 @@ def test_outcome_never_routes_stale_or_malformed_runs() -> None:
 def test_browser_panel_supports_cards_sources_editing_validation_and_non_success_states() -> None:
     panel = (Path(__file__).resolve().parents[1] / "frontend" / "src" / "components" / "AuthorPanel.tsx").read_text()
     backend = (Path(__file__).resolve().parents[1] / "backend" / "author_workflow.py").read_text()
-    for text in ("Use legacy author workflow", "Generate every answer again", "openEvidence", "Edit proposal", "Validate proposal",
+    for text in ("Use legacy author workflow", "Generate every answer again", "Answer reuse", "Facts already established",
+                 "What the run changed", "Model tokens", "openEvidence", "Edit proposal", "Validate proposal",
                  "Proposal only · no apply", "non_success_reasons"):
         assert text in panel
     assert "TIMEOUT" in backend and "MALFORMED_OUTPUT" in backend

@@ -312,14 +312,31 @@ def setup(agents_dir: Path, project: dict[str, str], section: str, *,
     if manager is not None:
         prior = [_job_dict(job) for job in manager.list(project)]
         prior = [job for job in prior if job.get("operation") == "author" and _job_target(job) == section]
+    active = [job for job in prior if str(job.get("state")) in {"queued", "running"}]
     exists = {row["key"]: row["exists"] for row in artifacts}
+    validation = str(selected.get("validation") or selected.get("review") or "pending")
+    validation_ready = validation.lower() in {"ok", "pass", "passed", "valid", "validated", "ready"}
+    cache_status = author_state["cache_status"]
+    writer_state = author_state["writer_decision"]["state"]
     stages = [
-        {"key": "evidence", "label": "Evidence collection", "state": "ready" if evidence else "attention"},
-        {"key": "card", "label": "Card preparation", "state": "ready" if exists["card"] else "pending"},
-        {"key": "answer", "label": "Answer generation", "state": "ready" if exists["answer_sheet"] else "pending"},
-        {"key": "writer", "label": "Writer output", "state": "ready" if proposal_path else "pending"},
-        {"key": "proposal", "label": "Proposal editor", "state": "ready" if proposal_path else "pending"},
-        {"key": "validation", "label": "Validation", "state": str(selected.get("validation") or selected.get("review") or "pending")},
+        {"key": "evidence", "label": "Evidence selected", "state": "ready" if evidence else "attention",
+         "reason": f"{len(evidence)} matrix claim(s) selected." if evidence else "No section evidence is selected."},
+        {"key": "facts", "label": "Established facts", "state": "reused" if author_state["established_facts"] else "ready",
+         "reason": f"{len(author_state['established_facts'])} validated fact(s) reused." if author_state["established_facts"] else "No prior facts are needed."},
+        {"key": "card", "label": "Question card", "state": "ready" if exists["card"] else "pending",
+         "reason": "The section questions are prepared." if exists["card"] else "The card will be prepared when authoring starts."},
+        {"key": "cache", "label": "Reuse decision", "state": "reused" if cache_status == "REUSE" else "attention" if cache_status in {"PARTIAL", "STALE"} else "pending",
+         "reason": author_state["cache_reason"] or cache_status},
+        {"key": "answers", "label": "Question answers", "state": "reused" if cache_status == "REUSE" else "changed" if exists["answer_sheet"] else "pending",
+         "reason": f"{sum(1 for row in author_state['question_decisions'] if row['decision'] == 'reuse')} reused; {sum(1 for row in author_state['question_decisions'] if row['decision'] == 'regenerate')} to regenerate."},
+        {"key": "repairs", "label": "Mechanical repairs", "state": "changed" if author_state["autofixes"] else "ready" if proposal_path else "pending",
+         "reason": f"{len(author_state['autofixes'])} mechanical repair(s) recorded." if author_state["autofixes"] else "No mechanical repairs recorded."},
+        {"key": "validation", "label": "Proposal validation", "state": "ready" if validation_ready else "attention" if proposal_path else "pending",
+         "reason": validation},
+        {"key": "writer", "label": "Writer decision", "state": "changed" if writer_state == "executed" else "ready" if writer_state == "skipped" else "pending",
+         "reason": author_state["writer_decision"]["reason"]},
+        {"key": "proposal", "label": "Review handoff", "state": "ready" if proposal_path and validation_ready else "attention" if proposal_path else "pending",
+         "reason": "The proposal is ready for review." if proposal_path and validation_ready else "Validation must pass before review."},
     ]
     return {
         "project_key": project["key"], "section": section, "visible_number": number,
@@ -329,12 +346,14 @@ def setup(agents_dir: Path, project: dict[str, str], section: str, *,
         "supported_modes": {"legacy": True, "fresh": True, "check_answers": True,
                             "writer_policies": ["auto", "force", "skip"]},
         "default_route": "cards", "no_apply": True, "cards_available": True,
+        "lock_state": {"locked": bool(active), "job_id": active[0].get("id") if active else None,
+                       "detail": "This section is currently being authored." if active else "This section is available."},
         "selected_cards": _cards(_artifact_paths(project, stable_key)["card_json"]),
         "author_brief": next(row for row in artifacts if row["key"] == "brief"),
         "answer_sheet": next(row for row in artifacts if row["key"] == "answer_sheet"),
         "evidence": evidence, "artifacts": artifacts, "stages": stages, **author_state,
         "existing_proposal": {"exists": proposal_path is not None, "file": proposal_path.name if proposal_path else None,
-                              "hash": _sha256(proposal_path), "validation": stages[-1]["state"]},
+                              "hash": _sha256(proposal_path), "validation": validation},
         "prior_runs": len(prior),
         "input_hash": hashlib.sha256((_fingerprint(project["key"], section, document_hash, evidence) +
                                        author_state["freshness"]["fingerprint"]).encode()).hexdigest(),

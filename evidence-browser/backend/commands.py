@@ -67,17 +67,17 @@ OPERATIONS: dict[str, Operation] = {
     "review": Operation(
         "review", "Review section", "Run the framework review agent: verify applied edits, comments and DOCX integrity.",
         ("review",), "required", "section",
-        {}, timeout=900, mutation_class="document_write", lock="docx",
+        {}, timeout=900, mutating=True, mutation_class="document_write", lock="docx",
     ),
     "apply": Operation(
         "apply", "Apply validated proposal", "Apply through the framework with tracked changes and backups.",
         ("apply",), "required", "section", {"until_done": "boolean"}, timeout=900,
-        mutation_class="document_write", lock="docx",
+        mutating=True, mutation_class="document_write", lock="docx",
     ),
     "cleanup": Operation(
         "cleanup", "Cleanup section", "Finalise a reviewed section: accept signed-off changes and remove framework scaffolding.",
         ("cleanup",), "required", "section",
-        {}, timeout=900, mutation_class="document_write", lock="docx",
+        {}, timeout=900, mutating=True, mutation_class="document_write", lock="docx",
     ),
     "author": Operation(
         "author", "Author proposal", "Draft an evidence-grounded proposal for one section (no-apply; routed to validation, never applied).",
@@ -92,7 +92,7 @@ OPERATIONS: dict[str, Operation] = {
     ),
     "build": Operation(
         "build", "Build assessment", "Generate the registered assessment document from validated section sources.",
-        ("build",), timeout=900, mutation_class="document_write", lock="docx",
+        ("build",), timeout=900, mutating=True, mutation_class="document_write", lock="docx",
     ),
     "audit": Operation(
         "audit", "Audit assessment", "Run the framework's read-only assessment audit and preserve its report artifacts.",

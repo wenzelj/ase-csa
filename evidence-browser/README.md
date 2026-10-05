@@ -22,6 +22,17 @@ csa -p tetra-reveloc browse
 
 The server accepts loopback connections only. Add `--no-open` for a server-only launch or `--port 9000` to select another local port.
 
+## Authoring decisions
+
+The Assessment workspace uses the framework's card-first author route by default and always submits proposals with
+`--no-apply`. The advanced controls can request a fresh answer, an advisory answer check, an explicit legacy run, or
+an automatic/forced/skipped writer pass. None of these controls applies changes to the working DOCX.
+
+The author ledger reads the framework answer-cache manifest, established-fact store, timing record and repair audit.
+It shows which questions are reused or regenerated, where reused facts originated, why the writer ran or was skipped,
+which working artifacts changed, and whether the result is current enough to enter proposal validation. Author runs
+are classified as workspace writes and locked per project section; DOCX operations retain their separate document lock.
+
 During frontend development, run the backend and Vite separately:
 
 ```sh

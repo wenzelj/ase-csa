@@ -64,7 +64,7 @@ export type AuthorSetup = {
   default_route: "cards";
   selected_cards: { id: string; question: string }[];
   author_brief: AuthorArtifact; answer_sheet: AuthorArtifact; evidence: AuthorEvidence[];
-  artifacts: AuthorArtifact[]; stages: { key: string; label: string; state: string }[];
+  artifacts: AuthorArtifact[]; stages: { key: string; label: string; state: string; reason: string }[];
   existing_proposal: { exists: boolean; file?: string | null; hash?: string | null; validation: string };
   prior_runs: number;
   cache_status: "NONE" | "REUSE" | "PARTIAL" | "STALE"; cache_reason: string;
@@ -73,6 +73,7 @@ export type AuthorSetup = {
   autofixes: { code: string; edit_id?: string | null; message: string }[];
   writer_decision: { state: string; reason: string }; run_metrics: Record<string, string | number | boolean>;
   rules_digest: { name: string; sha256: string; bytes: number };
+  lock_state: { locked: boolean; job_id?: string | null; detail: string };
 };
 export type AuthorOutcome = {
   state: string; section: string; lane: string; current: boolean; input_hash: string; document_hash: string;
