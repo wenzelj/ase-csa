@@ -1983,7 +1983,24 @@ def build_prompt(p: dict, r: dict, args: list[str], local: bool | None = None) -
                      f"@H{resolved['stable_path']}. Do not derive a stable ID from the visible number. "
                      f"Edit IDs stay S{sec}-E<n>.")
     lines.append("\n" + r.get("instruction", ""))
+    stage = {"answer": "answer", "author": "author"}.get(r.get("verb", ""))
+    if r.get("verb") == "write" and str(values.get("MODE", "")).lower() == "records":
+        stage = "writer"
+    if stage and not (r.get("verb") == "answer" and str(values.get("MODE", "answer")).lower() != "answer"):
+        lines.append("\n## Rules (digest)\n\n" + _fw_digest(stage).rstrip())
+        lines.append("\nDo not read the full skill or reference files unless a check names them.")
     return "\n".join(lines)
+
+
+def _fw_digest(stage: str) -> str:
+    sys.path.insert(0, str(FRAMEWORK))
+    try:
+        from csa_docx.rules_digest import digest
+        return digest(stage)
+    except (OSError, ValueError) as e:
+        die(f"rules digest for {stage}: {e}")
+    finally:
+        sys.path.remove(str(FRAMEWORK))
 
 
 def task_cli(verb: str) -> str | None:
