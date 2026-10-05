@@ -1,0 +1,22 @@
+/* Keep the section inspector inside the viewport while allowing the complete
+   authoring and evidence workspace to move as one readable document. */
+.section-inspector {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  grid-template-rows: auto auto auto auto;
+}
+
+.section-inspector .inspector-columns {
+  min-height: auto;
+}
+
+.section-inspector .inspector-columns > section {
+  overflow: visible;
+}
+
+@media (max-width: 900px) {
+  .section-inspector {
+    overflow-y: auto;
+  }
+}
