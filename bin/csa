@@ -2186,8 +2186,24 @@ def _author_cards(p: dict, a) -> int:
     build()
     if getattr(a, "print", False):
         return launch(p, agent("answer"), [number, f"CARD={card_md}", f"SHEET={sheet}"], a)
-    if answer([]) != 0:
-        return 2
+    hosts_csv = work / "hosts" / "hosts.csv"
+    cache = {"status": "NONE", "changed": []}
+    if not getattr(a, "fresh", False):
+        cache = _fw_json("csa_docx.answer_cache", "check", sheet, "--card", card_json, "--matrix", matrix,
+                         *(["--hosts", hosts_csv] if hosts_csv.is_file() else []), "--json")
+    if cache.get("status") == "REUSE":
+        print(f"{C['b']}Reusing {sheet} (inputs unchanged){C['0']}")
+        timing["reused"] = True
+    elif cache.get("status") == "PARTIAL":
+        ids = ",".join(cache["changed"])
+        print(f"{C['b']}Inputs changed for {ids}; the answer agent rewrites only those blocks.{C['0']}")
+        timing["reused"] = "partial"
+        if answer([f"ONLY={ids}", f"ANSWER={sheet.with_suffix('.prev.md')}"]) != 0:
+            return 2
+    else:
+        timing["reused"] = False
+        if answer([]) != 0:
+            return 2
     res2, searched, fixed = check(), False, False
     while res2.get("status") != "OK":
         if res2.get("status") == "NEEDS_SEARCH" and not searched:
@@ -2212,6 +2228,8 @@ def _author_cards(p: dict, a) -> int:
         if rc != 0:
             return 2
         res2 = check()
+    _fw_json("csa_docx.answer_cache", "write", sheet, "--card", card_json, "--matrix", matrix,
+             *(["--hosts", hosts_csv] if hosts_csv.is_file() else []), "--json")
     if getattr(a, "check_answers", False):
         # advisory: a second look at whether each block answers its question; never a gate
         chk = cards / f"{key}.check.md"
@@ -3837,6 +3855,8 @@ def main(argv=None) -> int:
                        help="author: skip the writer pass (the author's own Text is applied as drafted)")
         s.add_argument("--cards", action="store_true",
                        help="author: card -> answer agent -> check -> render -> writer -> apply (csa card, answer sheet)")
+        s.add_argument("--fresh", action="store_true",
+                       help="author --cards: ignore a saved answer sheet and always run the answer agent")
         s.add_argument("--check-answers", action="store_true",
                        help="author --cards: an advisory answer check after the sheet passes (shown in the author report)")
 
