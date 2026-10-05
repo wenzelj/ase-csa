@@ -15,11 +15,18 @@ def test_catalogue_exposes_read_only_operations_and_one_docx_locked_apply() -> N
     rows = commands.catalogue()
     assert {row["key"] for row in rows} == {
         "status", "next", "report", "sections", "spec_status", "comments",
-        "check_change", "check_section", "apply",
+        "check_change", "check_section", "apply", "review", "cleanup", "author",
+        "build_preview", "build", "audit",
     }
     apply = next(row for row in rows if row["key"] == "apply")
     assert apply["mutating"] is True and apply["lock"] == "docx"
-    assert all(row["mutating"] is False and row["lock"] == "none" for row in rows if row["key"] != "apply")
+    review = next(row for row in rows if row["key"] == "review")
+    assert review["mutating"] is True and review["lock"] == "docx"
+    cleanup = next(row for row in rows if row["key"] == "cleanup")
+    assert cleanup["mutating"] is True and cleanup["lock"] == "docx"
+    author = next(row for row in rows if row["key"] == "author")
+    assert author["mutating"] is False and author["lock"] == "none"
+    assert all(row["mutating"] is False and row["lock"] == "none" for row in rows if row["key"] not in ("apply", "review", "cleanup", "build"))
 
 
 def test_build_argv_uses_fixed_executable_and_typed_arguments(tmp_path: Path) -> None:

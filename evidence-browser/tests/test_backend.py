@@ -270,14 +270,14 @@ def test_word_review_returns_document_and_sections(tmp_path: Path, monkeypatch: 
         tmp_path / ".agents", workspace.system_project("iamps"),
         snapshot_runner=lambda _: "ok",
     )
-    assert review["gate"] in ("approval", "awaiting_first_decision", "word_locked")
+    assert review["gate"] == "awaiting_word_save"
     assert review["authoritative_path"]
     assert review["sha256"]
     assert review["size"] > 0
     assert review["generated_at"]
     for sec in review["sections"]:
         assert sec["number"]
-        assert sec["status"] in ("pending", "decided", "has_comments")
+        assert sec["status"] in ("pending", "has_comments")
         assert sec["comment_count"] >= 0
 
 
@@ -313,7 +313,29 @@ def test_word_review_pending_counts_when_no_changes(tmp_path: Path, monkeypatch:
     )
     assert review["section_count"] == 0
     assert review["pending_count"] == 0
-    assert review["gate"] == "awaiting_first_decision"
+    assert review["gate"] == "awaiting_word_save"
+
+
+def test_word_review_requires_hash_change_after_save_and_close(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    project, _ = make_workspace(tmp_path, monkeypatch)
+    version_dir = project / "versions" / "v1"
+    version_dir.joinpath("reviews").mkdir(parents=True)
+    version_dir.joinpath("reviews", "ChangesCSA_01.md").write_text("# Change\n", encoding="utf-8")
+    document = version_dir / "Assessment.docx"
+    _make_doc(document)
+    monkeypatch.setattr("backend.pipeline.snapshot", lambda *_args, **_kwargs: PipelineSnapshot(
+        project_key="iamps", project_label="IAMPS", spec_mode="spec", word_locked=False,
+        document=PipelineDocument(path=str(document)), sections=[], issues=[], etag='"x"'))
+    project_row = workspace.system_project("iamps")
+    first = word_review.build_review(tmp_path / ".agents", project_row)
+    assert first["review_enabled"] is False
+    import time
+    time.sleep(0.002)
+    with document.open("ab") as handle:
+        handle.write(b"saved")
+    refreshed = word_review.refresh_gate(tmp_path / ".agents", project_row)
+    assert refreshed["gate"] == "ready_for_review"
+    assert refreshed["review_enabled"] is True
 
 
 def test_word_review_blocked_when_no_document(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

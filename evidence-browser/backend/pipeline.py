@@ -230,6 +230,7 @@ def snapshot(agents_dir: Path, project: dict[str, str], *, runner: Runner | None
     return PipelineSnapshot(
         project_key=project["key"], project_label=project.get("label", project["key"]),
         spec_mode=project.get("spec_mode", "shadow"),
+        assessment_lane="build" if str(project.get("assessment_lane") or "revise").lower() == "build" else "revise",
         document=PipelineDocument(path=str(document_path) if document_path else None,
                                   name=document_path.name if document_path else None,
                                   size=stat.st_size if stat else None, modified_at=_mtime(document_path)),

@@ -95,6 +95,164 @@ class WordReview(BaseModel):
     generated_at: str
 
 
+class ReviewBreakingChange(BaseModel):
+    area: str = "none"
+    detail: str = ""
+
+
+class ReviewSectionBreakdown(BaseModel):
+    key: str = ""
+    heading: str = ""
+    verdict: str = "unknown"
+    findings: list[str] = Field(default_factory=list)
+    breaking: bool = False
+
+
+class ReviewFinding(BaseModel):
+    id: str = ""
+    area: str = "content"
+    severity: str = "info"
+    detail: str = ""
+
+
+class ReviewReport(BaseModel):
+    project_key: str
+    section: str
+    job_id: str
+    state: str
+    review_signoff: ReviewSectionBreakdown | None = None
+    breaking: ReviewBreakingChange = Field(default_factory=ReviewBreakingChange)
+    section_breakdown: list[ReviewSectionBreakdown] = Field(default_factory=list)
+    findings: list[ReviewFinding] = Field(default_factory=list)
+    report_path: str | None = None
+    generated_at: str
+
+
+class AuthorPreflight(BaseModel):
+    section: str
+    stable_key: str
+    lane: str = "revise"
+    cards: bool = False
+    no_apply: bool = True
+    document_hash: str
+    input_hash: str
+    existing_proposal: dict[str, Any] = Field(default_factory=dict)
+    prior_author_jobs: int = 0
+
+
+class AuthorOutcomeSummary(BaseModel):
+    state: str
+    section: str
+    lane: str = "revise"
+    current: bool = False
+    input_hash: str = ""
+    document_hash: str = ""
+    proposal: dict[str, Any] = Field(default_factory=dict)
+    artifacts: list[dict[str, Any]] = Field(default_factory=list)
+    stages: list[dict[str, Any]] = Field(default_factory=list)
+    evidence: list[dict[str, Any]] = Field(default_factory=list)
+    routed_to_editor: bool = False
+    routed_to_validation: bool = False
+    warnings: list[str] = Field(default_factory=list)
+    non_success_reasons: list[str] = Field(default_factory=list)
+
+
+class CleanupGate(BaseModel):
+    key: str
+    required: bool
+    satisfied: bool
+    detail: str = ""
+
+
+class CleanupPreflight(BaseModel):
+    system: str
+    project_key: str
+    section: str
+    document: str
+    document_hash: str
+    review_signoff: str = "unknown"
+    review_signoff_satisfied: bool = False
+    word_locked: bool = False
+    framework_locked: bool = False
+    unresolved_revisions: str = "unknown"
+    unresolved_revisions_satisfied: bool = False
+    gates: list[CleanupGate] = Field(default_factory=list)
+    backup_destination: str | None = None
+    confirmation_required: bool = True
+
+
+class CleanupOutcomeSummary(BaseModel):
+    state: str
+    result: str = "unknown"
+    backup: str | None = None
+    document_hash: str | None = None
+    revisions_before: int | None = None
+    revisions_after: int | None = None
+    accepted_revisions: int | None = None
+    removed_artifacts: list[str] = Field(default_factory=list)
+    retained_artifacts: list[str] = Field(default_factory=list)
+    section_state: str = "unknown"
+    validation: dict[str, Any] = {}
+    recovery_instructions: list[str] = Field(default_factory=list)
+    failure_reason: str | None = None
+    raw: dict[str, Any] = {}
+
+
+class BuildGate(BaseModel):
+    key: str
+    satisfied: bool
+    detail: str = ""
+
+
+class BuildSetup(BaseModel):
+    lane: Literal["build"] = "build"
+    project_key: str
+    template: str | None = None
+    template_version: str | None = None
+    output: str | None = None
+    document_properties: dict[str, Any] = Field(default_factory=dict)
+    sections: list[dict[str, Any]] = Field(default_factory=list)
+    gaps: list[dict[str, Any]] = Field(default_factory=list)
+    gates: list[BuildGate] = Field(default_factory=list)
+    ready_for_preview: bool = False
+    ready_for_build: bool = False
+
+
+class BuildOutcome(BaseModel):
+    state: str
+    preview: bool = False
+    document: str | None = None
+    document_hash: str | None = None
+    backup: str | None = None
+    section_map: list[dict[str, Any]] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    integrity: dict[str, Any] = Field(default_factory=dict)
+    raw: dict[str, Any] = Field(default_factory=dict)
+
+
+class AuditFinding(BaseModel):
+    id: str
+    section: str = ""
+    severity: str = "unknown"
+    requirement: str = ""
+    claim: str = ""
+    evidence_ids: list[str] = Field(default_factory=list)
+    location: str = ""
+    disposition: Literal["OPEN", "PARTIAL", "CONFLICT", "NOT_FOUND", "DISCOVERY_REQUIRED", "ANSWERED"] = "OPEN"
+    action: str = ""
+
+
+class AuditSnapshot(BaseModel):
+    state: str
+    audit_id: str | None = None
+    document: str | None = None
+    document_hash: str | None = None
+    generated_at: str | None = None
+    report: str | None = None
+    findings: list[AuditFinding] = Field(default_factory=list)
+    history: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class PipelineSection(BaseModel):
     visible_number: str
     stable_key: str
@@ -116,6 +274,7 @@ class PipelineSnapshot(BaseModel):
     project_key: str
     project_label: str
     spec_mode: str
+    assessment_lane: Literal["revise", "build"] = "revise"
     document: PipelineDocument
     word_locked: bool
     word_lock_file: str | None = None

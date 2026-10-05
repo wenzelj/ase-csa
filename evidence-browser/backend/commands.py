@@ -61,10 +61,37 @@ OPERATIONS: dict[str, Operation] = {
         "check_section", "Validate build section", "Run the existing build-section validator without placing it.",
         ("check-section",), "required", "file", {"no_lint": "boolean"}, timeout=120,
     ),
+    "review": Operation(
+        "review", "Review section", "Run the framework review agent: verify applied edits, comments and DOCX integrity.",
+        ("review",), "required", "section",
+        {}, timeout=900, mutating=True, lock="docx",
+    ),
     "apply": Operation(
         "apply", "Apply validated proposal", "Apply through the framework with tracked changes and backups.",
         ("apply",), "required", "section", {"until_done": "boolean"}, timeout=900,
         mutating=True, lock="docx",
+    ),
+    "cleanup": Operation(
+        "cleanup", "Cleanup section", "Finalise a reviewed section: accept signed-off changes and remove framework scaffolding.",
+        ("cleanup",), "required", "section",
+        {}, timeout=900, mutating=True, lock="docx",
+    ),
+    "author": Operation(
+        "author", "Author proposal", "Draft an evidence-grounded proposal for one section (no-apply; routed to validation, never applied).",
+        ("author",), "required", "section",
+        {"cards": "boolean", "no_apply": "boolean"}, timeout=1800, mutating=False, lock="none",
+    ),
+    "build_preview": Operation(
+        "build_preview", "Preview assessment build", "Generate a throwaway candidate from validated build-lane section sources.",
+        ("build", "--preview"), timeout=900,
+    ),
+    "build": Operation(
+        "build", "Build assessment", "Generate the registered assessment document from validated section sources.",
+        ("build",), timeout=900, mutating=True, lock="docx",
+    ),
+    "audit": Operation(
+        "audit", "Audit assessment", "Run the framework's read-only assessment audit and preserve its report artifacts.",
+        ("audit",), timeout=900,
     ),
 }
 
@@ -124,7 +151,8 @@ def build_argv(agents_dir: Path, project_key: str, operation_key: str, request: 
             if not isinstance(value, str):
                 raise HTTPException(422, f"Option {name} must be an identifier")
             argv += [flag, _validate_identifier(value, "section")]
-    argv.append("--json")
+    if operation.key not in {"author", "review", "cleanup", "build_preview", "build", "audit"}:
+        argv.append("--json")
     return operation, argv
 
 

@@ -8,7 +8,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 from fastapi import HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
 from backend import app as api
 
@@ -48,6 +48,13 @@ class Handler(BaseHTTPRequestHandler):
     def dispatch_result(self, result: object) -> None:
         if isinstance(result, FileResponse):
             self.send_file(Path(result.path), result.media_type)
+        elif isinstance(result, Response):
+            body = bytes(result.body)
+            self.send_response(result.status_code)
+            self.send_header("Content-Type", result.media_type or "application/octet-stream")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
         else:
             self.send_json(result)
 
@@ -80,6 +87,48 @@ class Handler(BaseHTTPRequestHandler):
             if match:
                 project = api.system_project(match.group(1))
                 return self.dispatch_result(api.word_review.build_review(api.agents_dir(), project))
+            match = re.fullmatch(r"/api/systems/([^/]+)/review/latest/([^/]+)", path)
+            if match:
+                return self.dispatch_result(api.latest_review(match.group(1), match.group(2)))
+            match = re.fullmatch(r"/api/systems/([^/]+)/review-jobs/([^/]+)", path)
+            if match:
+                return self.dispatch_result(api.get_review_job(match.group(1), match.group(2)))
+            match = re.fullmatch(r"/api/systems/([^/]+)/sections/([^/]+)/author-setup", path)
+            if match:
+                return self.dispatch_result(api.author_setup(match.group(1), match.group(2)))
+            match = re.fullmatch(r"/api/systems/([^/]+)/sections/([^/]+)/author-jobs/([^/]+)", path)
+            if match:
+                return self.dispatch_result(api.get_author_job(match.group(1), match.group(2), match.group(3)))
+            match = re.fullmatch(r"/api/systems/([^/]+)/sections/([^/]+)/author/latest", path)
+            if match:
+                return self.dispatch_result(api.latest_author(match.group(1), match.group(2)))
+            match = re.fullmatch(r"/api/systems/([^/]+)/sections/([^/]+)/author-artifacts/([^/]+)", path)
+            if match:
+                return self.dispatch_result(api.get_author_artifact(match.group(1), match.group(2), match.group(3)))
+            match = re.fullmatch(r"/api/systems/([^/]+)/sections/([^/]+)/cleanup-preflight", path)
+            if match:
+                return self.dispatch_result(api.cleanup_preflight(match.group(1), match.group(2)))
+            match = re.fullmatch(r"/api/systems/([^/]+)/cleanup-jobs/([^/]+)", path)
+            if match:
+                return self.dispatch_result(api.get_cleanup_job(match.group(1), match.group(2)))
+            match = re.fullmatch(r"/api/systems/([^/]+)/cleanup/latest/([^/]+)", path)
+            if match:
+                return self.dispatch_result(api.latest_cleanup(match.group(1), match.group(2)))
+            match = re.fullmatch(r"/api/systems/([^/]+)/build/setup", path)
+            if match:
+                return self.dispatch_result(api.build_setup(match.group(1)))
+            match = re.fullmatch(r"/api/systems/([^/]+)/build-jobs/([^/]+)", path)
+            if match:
+                return self.dispatch_result(api.get_build_job(match.group(1), match.group(2)))
+            match = re.fullmatch(r"/api/systems/([^/]+)/audit", path)
+            if match:
+                return self.dispatch_result(api.get_audit(match.group(1)))
+            match = re.fullmatch(r"/api/systems/([^/]+)/audit-jobs/([^/]+)", path)
+            if match:
+                return self.dispatch_result(api.get_audit_job(match.group(1), match.group(2)))
+            match = re.fullmatch(r"/api/systems/([^/]+)/word-review/integrity", path)
+            if match:
+                return self.dispatch_result(api.check_integrity(match.group(1), scalar(query, "expected_hash") or None))
             match = re.fullmatch(r"/api/systems/([^/]+)/document", path)
             if match:
                 return self.dispatch_result(api.get_document(match.group(1)))
@@ -124,6 +173,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
+        path = unquote(parsed.path)
         try:
             length = int(self.headers.get("Content-Length", "0"))
             payload = json.loads(self.rfile.read(length) or b"{}")
@@ -153,6 +203,27 @@ class Handler(BaseHTTPRequestHandler):
             match = re.fullmatch(r"/api/systems/([^/]+)/word-review/refresh", parsed.path)
             if match:
                 return self.dispatch_result(api.word_review.refresh_gate(api.agents_dir(), api.system_project(match.group(1))))
+            match = re.fullmatch(r"/api/systems/([^/]+)/sections/([^/]+)/review", parsed.path)
+            if match:
+                return self.dispatch_result(api.submit_review(match.group(1), match.group(2), payload))
+            match = re.fullmatch(r"/api/systems/([^/]+)/sections/([^/]+)/author", path)
+            if match:
+                return self.dispatch_result(api.submit_author(match.group(1), match.group(2), payload))
+            match = re.fullmatch(r"/api/systems/([^/]+)/sections/([^/]+)/cleanup", path)
+            if match:
+                return self.dispatch_result(api.submit_cleanup(match.group(1), match.group(2), payload))
+            match = re.fullmatch(r"/api/systems/([^/]+)/build/preview", path)
+            if match:
+                return self.dispatch_result(api.submit_build_preview(match.group(1)))
+            match = re.fullmatch(r"/api/systems/([^/]+)/build", path)
+            if match:
+                return self.dispatch_result(api.submit_build(match.group(1), payload))
+            match = re.fullmatch(r"/api/systems/([^/]+)/audit", path)
+            if match:
+                return self.dispatch_result(api.submit_audit(match.group(1)))
+            match = re.fullmatch(r"/api/systems/([^/]+)/audit/gaps", path)
+            if match:
+                return self.dispatch_result(api.record_audit_gap(match.group(1), payload))
             self.send_json({"detail": "Route not found"}, 404)
         except Exception as error:
             self.fail(error)

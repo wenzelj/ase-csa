@@ -19,7 +19,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import apply_workflow, commands, documents, pipeline, proposals, sections, validation, word_review
+from . import apply_workflow, audit_workflow, author_workflow, build_workflow, cleanup_workflow, commands, documents, pipeline, proposals, review_workflow, sections, validation, word_review
 from .jobs import JobManager
 from .models import CommandRequest, JobCreateRequest
 
@@ -336,8 +336,10 @@ def text_preview(path: Path, anchor: str | None) -> dict[str, Any]:
         first, last = max(1, start - 80), min(len(lines), (end or start) + 120)
     else:
         first, last = 1, min(len(lines), 2000)
+    is_markup = path.suffix.lower() in {".xml", ".html", ".htm", ".xhtml"}
     return {
-        "kind": "text", "name": path.name, "line_start": first,
+        "kind": "markup" if is_markup else "text", "format": path.suffix.lower().lstrip(".") if is_markup else None,
+        "name": path.name, "line_start": first,
         "lines": [{"number": i, "text": lines[i - 1]} for i in range(first, last + 1)],
         "highlight": [start, end] if start else None,
         "truncated": last < len(lines), "total_lines": len(lines),
@@ -524,6 +526,135 @@ def apply_section(system_key: str, section: str, payload: dict[str, Any]) -> dic
 def get_apply_job(system_key: str, job_id: str) -> dict[str, Any]:
     job = job_manager.get(system_project(system_key), job_id).model_dump()
     return {"job": job, "outcome": apply_workflow.outcome(job)}
+
+
+@app.post("/api/systems/{system_key}/sections/{section}/review", status_code=202)
+def submit_review(system_key: str, section: str, payload: dict[str, Any]) -> dict[str, Any]:
+    return review_workflow.submit(agents_dir(), job_manager, system_project(system_key), section, payload)
+
+
+@app.get("/api/systems/{system_key}/review-jobs/{job_id}")
+def get_review_job(system_key: str, job_id: str) -> dict[str, Any]:
+    job = job_manager.get(system_project(system_key), job_id).model_dump()
+    return {"job": job, "outcome": review_workflow.outcome(job)}
+
+
+@app.get("/api/systems/{system_key}/review/latest/{section}")
+def latest_review(system_key: str, section: str) -> dict[str, Any]:
+    project = system_project(system_key)
+    found = review_workflow.latest(agents_dir(), project, section)
+    if found is None:
+        raise HTTPException(404, "No completed review found for this section")
+    return found
+
+
+@app.get("/api/systems/{system_key}/sections/{section}/author-setup")
+def author_setup(system_key: str, section: str) -> dict[str, Any]:
+    project = system_project(system_key)
+    return author_workflow.setup(agents_dir(), project, section, manager=job_manager)
+
+
+@app.post("/api/systems/{system_key}/sections/{section}/author", status_code=202)
+def submit_author(system_key: str, section: str, payload: dict[str, Any]) -> dict[str, Any]:
+    unknown = set(payload) - {"cards"}
+    if unknown:
+        raise HTTPException(422, f"Unsupported author option(s): {', '.join(sorted(unknown))}")
+    cards = payload.get("cards", False)
+    if not isinstance(cards, bool):
+        raise HTTPException(422, "cards must be true or false")
+    return author_workflow.submit(agents_dir(), system_project(system_key), section,
+                                  cards=cards, manager=job_manager)
+
+
+@app.get("/api/systems/{system_key}/sections/{section}/author-jobs/{job_id}")
+def get_author_job(system_key: str, section: str, job_id: str) -> dict[str, Any]:
+    return author_workflow.get_job(agents_dir(), system_project(system_key), section, job_id,
+                                   manager=job_manager)
+
+
+@app.get("/api/systems/{system_key}/sections/{section}/author/latest")
+def latest_author(system_key: str, section: str) -> dict[str, Any]:
+    found = author_workflow.latest(agents_dir(), system_project(system_key), section, manager=job_manager)
+    if found is None:
+        raise HTTPException(404, "No author run found for this section")
+    return found
+
+
+@app.get("/api/systems/{system_key}/sections/{section}/author-artifacts/{artifact_key}")
+def get_author_artifact(system_key: str, section: str, artifact_key: str) -> Response:
+    content, media_type = author_workflow.artifact(system_project(system_key), section, artifact_key,
+                                                   agents_dir=agents_dir())
+    return Response(content=content, media_type=media_type,
+                    headers={"Content-Disposition": f'inline; filename="{artifact_key}.txt"'})
+
+
+@app.get("/api/systems/{system_key}/sections/{section}/cleanup-preflight")
+def cleanup_preflight(system_key: str, section: str) -> dict[str, Any]:
+    return cleanup_workflow.preflight(agents_dir(), system_project(system_key), section, {})
+
+
+@app.post("/api/systems/{system_key}/sections/{section}/cleanup", status_code=202)
+def submit_cleanup(system_key: str, section: str, payload: dict[str, Any]) -> dict[str, Any]:
+    return cleanup_workflow.submit(agents_dir(), job_manager, system_project(system_key), section, payload)
+
+
+@app.get("/api/systems/{system_key}/cleanup-jobs/{job_id}")
+def get_cleanup_job(system_key: str, job_id: str) -> dict[str, Any]:
+    job = job_manager.get(system_project(system_key), job_id).model_dump()
+    return {"job": job, "outcome": cleanup_workflow.outcome(job)}
+
+
+@app.get("/api/systems/{system_key}/cleanup/latest/{section}")
+def latest_cleanup(system_key: str, section: str) -> dict[str, Any]:
+    project = system_project(system_key)
+    found = cleanup_workflow.latest(agents_dir(), project, section)
+    if found is None:
+        raise HTTPException(404, "No completed cleanup found for this section")
+    return found
+
+
+@app.get("/api/systems/{system_key}/build/setup")
+def build_setup(system_key: str) -> dict[str, Any]:
+    return build_workflow.setup(agents_dir(), system_project(system_key))
+
+
+@app.post("/api/systems/{system_key}/build/preview", status_code=202)
+def submit_build_preview(system_key: str) -> dict[str, Any]:
+    return build_workflow.submit(agents_dir(), job_manager, system_project(system_key), preview=True, confirmed=True)
+
+
+@app.post("/api/systems/{system_key}/build", status_code=202)
+def submit_build(system_key: str, payload: dict[str, Any]) -> dict[str, Any]:
+    return build_workflow.submit(agents_dir(), job_manager, system_project(system_key), preview=False,
+                                 confirmed=payload.get("confirmed") is True)
+
+
+@app.get("/api/systems/{system_key}/build-jobs/{job_id}")
+def get_build_job(system_key: str, job_id: str) -> dict[str, Any]:
+    job = job_manager.get(system_project(system_key), job_id).model_dump()
+    return {"job": job, "outcome": build_workflow.outcome(job, preview=job.get("operation") == "build_preview")}
+
+
+@app.get("/api/systems/{system_key}/audit")
+def get_audit(system_key: str) -> dict[str, Any]:
+    return audit_workflow.snapshot(system_project(system_key))
+
+
+@app.post("/api/systems/{system_key}/audit", status_code=202)
+def submit_audit(system_key: str) -> dict[str, Any]:
+    return audit_workflow.submit(agents_dir(), job_manager, system_project(system_key))
+
+
+@app.get("/api/systems/{system_key}/audit-jobs/{job_id}")
+def get_audit_job(system_key: str, job_id: str) -> dict[str, Any]:
+    project = system_project(system_key)
+    job = job_manager.get(project, job_id).model_dump()
+    return {"job": job, "outcome": audit_workflow.outcome(job, project)}
+
+
+@app.post("/api/systems/{system_key}/audit/gaps")
+def record_audit_gap(system_key: str, payload: dict[str, Any]) -> dict[str, Any]:
+    return audit_workflow.record_gap(system_project(system_key), payload)
 
 
 @app.get("/api/systems/{system_key}/document")

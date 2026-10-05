@@ -10,10 +10,9 @@ import json
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any, Callable
 
-from . import documents as doc_module, pipeline
+from . import commands, documents as doc_module, pipeline
 from .models import WordReview, WordSectionReview
 
 
@@ -44,9 +43,44 @@ def _word_lock_info(path: Path) -> dict[str, Any] | None:
         return None
     stat = lock.stat()
     return {
-        "owner": lock.name[2:],  # strip ~$ prefix
+        "owner": "Microsoft Word",
+        "file": lock.name,
         "since": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
     }
+
+
+def _gate_path(project: dict[str, str]) -> Path:
+    return Path(project["work_dir"]).expanduser() / "word-approval-gate.json"
+
+
+def _latest_apply(project: dict[str, str]) -> dict[str, Any] | None:
+    root = Path(project["work_dir"]).expanduser() / "ui-jobs"
+    rows: list[dict[str, Any]] = []
+    if root.is_dir():
+        for metadata in root.glob("*/metadata.json"):
+            try:
+                row = json.loads(metadata.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if row.get("operation") == "apply" and row.get("project_key") == project["key"]:
+                rows.append(row)
+    return max(rows, key=lambda row: str(row.get("finished_at") or row.get("created_at") or ""), default=None)
+
+
+def _read_gate(project: dict[str, str]) -> dict[str, Any] | None:
+    try:
+        value = json.loads(_gate_path(project).read_text(encoding="utf-8"))
+        return value if isinstance(value, dict) else None
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _write_gate(project: dict[str, str], value: dict[str, Any]) -> None:
+    path = _gate_path(project)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
+    temporary.replace(path)
 
 
 def build_review(
@@ -91,41 +125,56 @@ def build_review(
     except (OSError, Exception):
         pass  # zero defaults already set
 
-    # Try to get per-section detail from the pipeline if a runner is available.
+    # Pipeline state is authoritative in production; a runner remains injectable for tests.
     sections: list[WordSectionReview] = []
-    if snapshot_runner is not None:
-        try:
-            snap = pipeline.snapshot(agents_dir, project, runner=snapshot_runner)
-            for sec in snap.sections:
-                has_change = bool(sec.change_file)
-                if has_change and (sec.applied_state == "complete" or sec.validation_result == "valid"):
-                    status = "decided"
-                elif sec.open_comments > 0:
-                    status = "has_comments"
-                else:
-                    status = "pending"
-                sections.append(WordSectionReview(
-                    number=sec.visible_number,
-                    heading=sec.heading,
-                    change_count=1 if has_change else 0,
-                    comment_count=sec.open_comments,
-                    status=status,
-                    last_activity=sec.last_activity,
-                ))
-        except Exception:
-            pass  # sections stay empty; gate still works from document-level data
+    try:
+        snap = pipeline.snapshot(agents_dir, project, runner=snapshot_runner)
+        for sec in snap.sections:
+            has_change = bool(sec.change_file or sec.section_file)
+            status = "has_comments" if sec.open_comments > 0 else "pending"
+            sections.append(WordSectionReview(
+                number=sec.visible_number,
+                heading=sec.heading,
+                change_count=1 if has_change else 0,
+                comment_count=sec.open_comments,
+                status=status,
+                last_activity=sec.last_activity,
+            ))
+    except Exception:
+        pass  # document-level gate remains available when pipeline inspection fails
 
     pending = sum(1 for s in sections if s.status == "pending")
-    gate = "approval"
+    digest = _sha256(path)
+    latest_apply = _latest_apply(project)
+    apply_job_id = str((latest_apply or {}).get("id") or "")
+    apply_output, _ = commands.parse_json_output(str((latest_apply or {}).get("stdout_tail") or ""))
+    apply_details = apply_output if isinstance(apply_output, dict) else {}
+    gate_record = _read_gate(project)
+    if gate_record is None or (apply_job_id and gate_record.get("apply_job_id") != apply_job_id):
+        gate_record = {
+            "project_key": project["key"], "apply_job_id": apply_job_id or None,
+            "document": str(path), "baseline_hash": digest,
+            "baseline_mtime_ns": stat.st_mtime_ns, "created_at": _now(),
+        }
+        _write_gate(project, gate_record)
+
+    gate = "awaiting_word_save"
+    reason = "Open the document, inspect every tracked change and comment, then save and close Word."
     if lock_info:
         gate = "word_locked"
-    elif not sections:
-        gate = "awaiting_first_decision"
+        reason = "The document is open in Word. Save and close it before refreshing this gate."
+    elif gate_record.get("document") != str(path):
+        gate = "blocked"
+        reason = "The authoritative document changed. Resolve document selection before review."
+    elif gate_record.get("baseline_hash") != digest and stat.st_mtime_ns > int(gate_record.get("baseline_mtime_ns") or 0):
+        gate = "ready_for_review"
+        reason = "Word is closed and the saved document differs from the post-apply baseline."
 
     return {
         "gate": gate,
         "authoritative_path": str(path),
-        "sha256": _sha256(path),
+        "document": path.name,
+        "sha256": digest,
         "size": stat.st_size,
         "modified_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
         "word_lock": lock_info,
@@ -136,6 +185,18 @@ def build_review(
         "sections": [s.model_dump() for s in sections],
         "generated_at": _now(),
         "open_handler": {"state": "available"},
+        "reason": reason,
+        "apply_job_id": apply_job_id or None,
+        "baseline_hash": gate_record.get("baseline_hash"),
+        "baseline_modified_at": datetime.fromtimestamp(
+            int(gate_record.get("baseline_mtime_ns") or stat.st_mtime_ns) / 1_000_000_000, timezone.utc
+        ).isoformat(),
+        "review_enabled": gate == "ready_for_review",
+        "backup_path": apply_details.get("backup"),
+        "applied_edit_ids": list(dict.fromkeys([
+            *[str(value) for value in (apply_details.get("applied") or [])],
+            *[str(value) for value in (apply_details.get("already_applied") or [])],
+        ])),
     }
 
 
@@ -172,10 +233,12 @@ def record_operator_note(
     digest = _sha256(path)
     audit_path = Path(project["work_dir"]).expanduser() / "operator-decisions.jsonl"
     audit_path.parent.mkdir(parents=True, exist_ok=True)
+    gate = _read_gate(project) or {}
     record = {
         "project": project["key"],
         "document": path.name,
         "sha256": digest,
+        "apply_job_id": gate.get("apply_job_id"),
         "note": note,
         "label": "operator_record",
         "recorded_at": _now(),
