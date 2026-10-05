@@ -32,9 +32,10 @@ class CommandDescriptor(BaseModel):
     target: Literal["none", "optional", "required"]
     options: dict[str, Literal["boolean", "identifier"]]
     mutating: bool = False
+    mutation_class: Literal["read_only", "workspace_write", "document_write"] = "read_only"
     output: Literal["json_or_text"] = "json_or_text"
     timeout_seconds: int
-    lock: Literal["none", "docx"] = "none"
+    lock: Literal["none", "section", "docx"] = "none"
 
 
 JobState = Literal["queued", "running", "succeeded", "failed", "cancelled", "interrupted"]
@@ -51,8 +52,9 @@ class JobRecord(BaseModel):
     project_key: str
     operation: str
     display_args: list[str]
-    classification: Literal["read_only", "mutating"]
+    classification: Literal["read_only", "workspace_write", "document_write"]
     lock: str
+    resource: str | None = None
     state: JobState
     created_at: str
     started_at: str | None = None
@@ -161,6 +163,11 @@ class AuthorOutcomeSummary(BaseModel):
     question_decisions: list[dict[str, Any]] = Field(default_factory=list)
     established_facts: list[dict[str, Any]] = Field(default_factory=list)
     freshness: dict[str, Any] = Field(default_factory=dict)
+    autofixes: list[dict[str, Any]] = Field(default_factory=list)
+    writer_decision: dict[str, Any] = Field(default_factory=dict)
+    run_metrics: dict[str, Any] = Field(default_factory=dict)
+    rules_digest: dict[str, Any] = Field(default_factory=dict)
+    artifact_changes: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class CleanupGate(BaseModel):

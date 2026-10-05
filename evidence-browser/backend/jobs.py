@@ -132,21 +132,30 @@ class JobManager:
     def submit(self, project: dict[str, str], operation_key: str, request: CommandRequest) -> JobRecord:
         self._load_project(project)
         operation, argv = commands.build_argv(self.agents_dir, project["key"], operation_key, request)
-        classification = "mutating" if getattr(operation, "mutating", False) else "read_only"
+        classification = str(getattr(operation, "mutation_class", "read_only"))
+        if classification == "read_only" and getattr(operation, "mutating", False):
+            classification = "document_write"
         lock_class = str(getattr(operation, "lock", "none"))
+        resource = f"section:{request.target}" if lock_class == "section" and request.target else (
+            "document" if lock_class == "docx" else None)
         job = JobRecord(
             id=str(uuid.uuid4()), project_key=project["key"], operation=operation.key,
-            display_args=argv[3:], classification=classification, lock=lock_class,
+            display_args=argv[3:], classification=classification, lock=lock_class, resource=resource,
             state="queued", created_at=_now(),
         )
         with self._condition:
+            if lock_class == "section" and resource and any(row.project_key == project["key"] and row.resource == resource and
+                                row.state in {"queued", "running"} for row in self._jobs.values()):
+                raise HTTPException(409, f"Another operation is already working on {resource.replace(':', ' ')}.")
             self._jobs[job.id] = job
         threading.Thread(target=self._run, args=(dict(project), job.id, operation, argv), daemon=True).start()
         return job.model_copy(deep=True)
 
     def _resource(self, job: JobRecord) -> tuple[str, str] | None:
-        if job.classification == "mutating":
-            return (job.project_key, "mutating")
+        if job.resource:
+            return (job.project_key, job.resource)
+        if job.classification == "document_write":
+            return (job.project_key, "document")
         return None
 
     def _run(self, project: dict[str, str], job_id: str, operation, argv: list[str]) -> None:

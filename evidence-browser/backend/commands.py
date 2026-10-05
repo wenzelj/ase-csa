@@ -32,13 +32,16 @@ class Operation:
     target_kind: Literal["section", "file", "heading"] | None = None
     options: dict[str, Literal["boolean", "identifier"]] = field(default_factory=dict)
     timeout: int = 45
-    mutating: bool = False
-    lock: Literal["none", "docx"] = "none"
+    mutating: bool = False  # compatibility alias; mutation_class is authoritative for new operations
+    mutation_class: Literal["read_only", "workspace_write", "document_write"] = "read_only"
+    lock: Literal["none", "section", "docx"] = "none"
 
     def descriptor(self) -> CommandDescriptor:
         return CommandDescriptor(
             key=self.key, title=self.title, description=self.description, target=self.target,
-            options=self.options, timeout_seconds=self.timeout, mutating=self.mutating, lock=self.lock,
+            options=self.options, timeout_seconds=self.timeout,
+            mutating=self.mutating or self.mutation_class != "read_only",
+            mutation_class=self.mutation_class, lock=self.lock,
         )
 
 
@@ -64,24 +67,24 @@ OPERATIONS: dict[str, Operation] = {
     "review": Operation(
         "review", "Review section", "Run the framework review agent: verify applied edits, comments and DOCX integrity.",
         ("review",), "required", "section",
-        {}, timeout=900, mutating=True, lock="docx",
+        {}, timeout=900, mutation_class="document_write", lock="docx",
     ),
     "apply": Operation(
         "apply", "Apply validated proposal", "Apply through the framework with tracked changes and backups.",
         ("apply",), "required", "section", {"until_done": "boolean"}, timeout=900,
-        mutating=True, lock="docx",
+        mutation_class="document_write", lock="docx",
     ),
     "cleanup": Operation(
         "cleanup", "Cleanup section", "Finalise a reviewed section: accept signed-off changes and remove framework scaffolding.",
         ("cleanup",), "required", "section",
-        {}, timeout=900, mutating=True, lock="docx",
+        {}, timeout=900, mutation_class="document_write", lock="docx",
     ),
     "author": Operation(
         "author", "Author proposal", "Draft an evidence-grounded proposal for one section (no-apply; routed to validation, never applied).",
         ("author",), "required", "section",
         {"cards": "boolean", "legacy": "boolean", "fresh": "boolean", "check_answers": "boolean",
          "writer": "boolean", "no_writer": "boolean", "no_apply": "boolean"},
-        timeout=1800, mutating=False, lock="none",
+        timeout=1800, mutation_class="workspace_write", lock="section",
     ),
     "build_preview": Operation(
         "build_preview", "Preview assessment build", "Generate a throwaway candidate from validated build-lane section sources.",
@@ -89,7 +92,7 @@ OPERATIONS: dict[str, Operation] = {
     ),
     "build": Operation(
         "build", "Build assessment", "Generate the registered assessment document from validated section sources.",
-        ("build",), timeout=900, mutating=True, lock="docx",
+        ("build",), timeout=900, mutation_class="document_write", lock="docx",
     ),
     "audit": Operation(
         "audit", "Audit assessment", "Run the framework's read-only assessment audit and preserve its report artifacts.",

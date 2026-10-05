@@ -870,8 +870,10 @@ def _autofix_change(p: dict, cf: Path, section: str | None = None, label: str | 
         res = _fw_json("csa_docx.autofix_change", cf, "--workspace", local_path(p["project_root"]), "--write", "--json")
     except OSError:
         return
-    for f in res.get("fixes", []):
-        print(f"{C['d']}autofix {f['code']} {f.get('edit_id') or ''}: {f['message']}{C['0']}")
+        for f in res.get("fixes", []):
+            print(f"{C['d']}autofix {f['code']} {f.get('edit_id') or ''}: {f['message']}{C['0']}")
+        if section and res.get("fixes"):
+            _record_author_run(p, [str(section) + (f":{label}" if label else "")], autofixes=res["fixes"])
 
 
 def run_check_change(p: dict, cf: Path, a, strict: bool = False, section: str | None = None, label: str | None = None) -> int:
@@ -2359,14 +2361,16 @@ def _author_cards(p: dict, a) -> int:
     print(f"{C['b']}{cf.name}: {out['records']} record(s) {out['change_set']}, {out['open']} open question(s).{C['0']}")
     _autofix_change(p, cf, sec, label)
     _record_author_run(p, [number], cards=True, sheet_status="OK", search_round=searched, fix_round=fixed, **timing)
-    if getattr(a, "no_apply", False):
-        return 0
-    if writer_pass_wanted([number], getattr(a, "no_writer", False)):
+    if getattr(a, "no_writer", False):
+        _record_author_run(p, [number], writer="skipped: requested by the user")
+    elif writer_pass_wanted([number], False):
         wstart = time.time()
         if _writer_pass(p, [number], started, a) != 0:
             print(f"{C['r']}The writer pass failed; the change file was not applied.{C['0']}", file=sys.stderr)
             return 2
         _record_author_run(p, [number], write_s=round(time.time() - wstart, 1))
+    if getattr(a, "no_apply", False):
+        return 0
     _record_author_counts(p, [number])
     return _after_agent(p, "author", [number], started, a)
 

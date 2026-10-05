@@ -25,9 +25,9 @@ def test_catalogue_exposes_read_only_operations_and_one_docx_locked_apply() -> N
     cleanup = next(row for row in rows if row["key"] == "cleanup")
     assert cleanup["mutating"] is True and cleanup["lock"] == "docx"
     author = next(row for row in rows if row["key"] == "author")
-    assert author["mutating"] is False and author["lock"] == "none"
+    assert author["mutating"] is True and author["mutation_class"] == "workspace_write" and author["lock"] == "section"
     assert {"legacy", "fresh", "check_answers", "writer", "no_writer"} <= set(author["options"])
-    assert all(row["mutating"] is False and row["lock"] == "none" for row in rows if row["key"] not in ("apply", "review", "cleanup", "build"))
+    assert all(row["mutating"] is False and row["lock"] == "none" for row in rows if row["key"] not in ("apply", "review", "cleanup", "build", "author"))
 
 
 def test_build_argv_uses_fixed_executable_and_typed_arguments(tmp_path: Path) -> None:

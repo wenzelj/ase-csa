@@ -65,6 +65,22 @@ def test_mutating_jobs_serialize_per_project(tmp_path: Path, monkeypatch: pytest
     manager.wait(item, first.id); manager.wait(item, second.id)
 
 
+def test_workspace_writes_reject_same_section_but_allow_another(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    item = commands.Operation("stub", "Stub", "Test operation", ("stub",), "required", "section",
+                              mutation_class="workspace_write", lock="section")
+    monkeypatch.setitem(commands.OPERATIONS, "stub", item)
+    monkeypatch.setattr(commands, "build_argv", lambda agents, key, op, req:
+                        (item, [sys.executable, "-c", "import time; time.sleep(.2)", req.target]))
+    project_row = project(tmp_path)
+    manager = JobManager(tmp_path / ".agents")
+    manager.submit(project_row, "stub", CommandRequest(target="3.6"))
+    with pytest.raises(HTTPException) as caught:
+        manager.submit(project_row, "stub", CommandRequest(target="3.6"))
+    assert caught.value.status_code == 409
+    other = manager.submit(project_row, "stub", CommandRequest(target="3.7"))
+    assert other.resource == "section:3.7"
+
+
 def test_restart_marks_abandoned_job_interrupted(tmp_path: Path) -> None:
     item = project(tmp_path)
     job_id = "67f8a560-4865-4eb8-8b69-97b5c66e4bcc"

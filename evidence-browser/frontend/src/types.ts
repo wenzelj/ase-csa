@@ -30,6 +30,7 @@ export type ReviewJob = {
   id: string; project_key: string; operation: string; state: string;
   created_at: string; started_at?: string; finished_at?: string;
   exit_code?: number; stdout_tail?: string; stderr_tail?: string; message?: string;
+  classification?: "read_only" | "workspace_write" | "document_write"; lock?: string; resource?: string | null;
 };
 
 export type ReviewOutcome = {
@@ -69,6 +70,9 @@ export type AuthorSetup = {
   cache_status: "NONE" | "REUSE" | "PARTIAL" | "STALE"; cache_reason: string;
   question_decisions: AuthorQuestionDecision[]; established_facts: EstablishedFact[];
   freshness: { status: string; fingerprint: string; reason: string };
+  autofixes: { code: string; edit_id?: string | null; message: string }[];
+  writer_decision: { state: string; reason: string }; run_metrics: Record<string, string | number | boolean>;
+  rules_digest: { name: string; sha256: string; bytes: number };
 };
 export type AuthorOutcome = {
   state: string; section: string; lane: string; current: boolean; input_hash: string; document_hash: string;
@@ -79,6 +83,9 @@ export type AuthorOutcome = {
   actual_route: "cards" | "legacy"; writer_policy: WriterPolicy;
   cache_status: AuthorSetup["cache_status"]; question_decisions: AuthorQuestionDecision[];
   established_facts: EstablishedFact[]; freshness: AuthorSetup["freshness"];
+  autofixes: AuthorSetup["autofixes"]; writer_decision: AuthorSetup["writer_decision"];
+  run_metrics: AuthorSetup["run_metrics"]; rules_digest: AuthorSetup["rules_digest"];
+  artifact_changes: { key: string; label: string; change: "created" | "modified" }[];
 };
 export type WriterPolicy = "auto" | "force" | "skip";
 export type AuthorOptions = { legacy: boolean; fresh: boolean; check_answers: boolean; writer_policy: WriterPolicy };

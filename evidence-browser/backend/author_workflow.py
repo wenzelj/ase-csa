@@ -242,8 +242,34 @@ def _author_state(agents_dir: Path, project: dict[str, str], stable_key: str) ->
         except (OSError, ValueError, TypeError):
             pass
     fp_hash = hashlib.sha256(json.dumps(fingerprint, sort_keys=True).encode()).hexdigest() if fingerprint else ""
+    timing: dict[str, Any] = {}
+    try:
+        timing = json.loads(paths["timing"].read_text(encoding="utf-8")) if paths["timing"].is_file() else {}
+    except (OSError, ValueError):
+        timing = {}
+    writer = str(timing.get("writer") or "not-run")
+    if writer.startswith("run"):
+        writer_decision = {"state": "executed", "reason": writer.partition(":")[2].strip() or "Validation requested the writer."}
+    elif writer.startswith("skipped"):
+        writer_decision = {"state": "skipped", "reason": writer.partition(":")[2].strip() or "The proposal passed the writer gate."}
+    else:
+        writer_decision = {"state": "pending", "reason": "No writer decision has been recorded."}
+    digest_path = agents_dir / "references" / "digests" / "author.md"
+    digest_hash = _sha256(digest_path)
+    rules_digest = {"name": "author", "sha256": digest_hash or "", "bytes": digest_path.stat().st_size if digest_hash else 0}
+    metric_keys = ("author_s", "answer_s", "write_s", "author_read_kb", "answer_read_kb", "write_read_kb",
+                   "author_commands", "answer_commands", "write_commands", "author_tokens", "answer_tokens", "write_tokens",
+                   "reused", "answered", "open", "unanswered")
+    metrics = {key: timing[key] for key in metric_keys if key in timing}
+    durations = [float(timing[key]) for key in ("author_s", "answer_s", "write_s") if isinstance(timing.get(key), (int, float))]
+    metrics["total_seconds"] = round(sum(durations), 1)
+    metrics["read_kb"] = round(sum(float(timing.get(key) or 0) for key in ("author_read_kb", "answer_read_kb", "write_read_kb")), 1)
+    metrics["commands"] = sum(int(timing.get(key) or 0) for key in ("author_commands", "answer_commands", "write_commands"))
+    metrics["tokens"] = sum(int(timing.get(key) or 0) for key in ("author_tokens", "answer_tokens", "write_tokens"))
     return {"cache_status": cache["status"], "cache_reason": cache.get("reason", ""),
             "question_decisions": decisions, "established_facts": established,
+            "autofixes": timing.get("autofixes") or [], "writer_decision": writer_decision,
+            "run_metrics": metrics, "rules_digest": rules_digest,
             "freshness": {"status": "current" if cache["status"] == "REUSE" else "attention",
                           "fingerprint": fp_hash, "reason": cache.get("reason", "")}}
 
@@ -404,6 +430,10 @@ def outcome(job: dict[str, Any], current: dict[str, Any], context: dict[str, Any
         context.get("section") == current["section"] and context.get("document_hash") == current["document_hash"] and \
         context.get("input_hash") == current["input_hash"]
     reasons = []
+    before = context.get("artifact_hashes_before") or {}
+    artifact_changes = [{"key": row["key"], "label": row["label"],
+                         "change": "created" if not before.get(row["key"]) and row.get("hash") else "modified"}
+                        for row in current["artifacts"] if row.get("hash") and before.get(row["key"]) != row.get("hash")]
     if not current_run:
         reasons.append("The saved run belongs to different or older section inputs and is not current.")
     if state == "MALFORMED_OUTPUT":
@@ -428,6 +458,9 @@ def outcome(job: dict[str, Any], current: dict[str, Any], context: dict[str, Any
         question_decisions=current.get("question_decisions", []),
         established_facts=current.get("established_facts", []),
         freshness=current.get("freshness", {}),
+        autofixes=current.get("autofixes", []), writer_decision=current.get("writer_decision", {}),
+        run_metrics=current.get("run_metrics", {}), rules_digest=current.get("rules_digest", {}),
+        artifact_changes=artifact_changes,
     ).model_dump()
 
 
