@@ -29,6 +29,10 @@ hermes_headless: hermes chat -q {prompt}
 # logged to csa-work/spec/shadow.log), on (keys and the numbers Word shows). A project's spec_mode: in PROJECTS.yaml wins.
 spec_mode: shadow
 
+# `csa author`: cards (card -> answer agent -> render -> writer -> apply, the default) | legacy (the change-authoring
+# agent does everything). --legacy and --cards override it per call.
+author_default: cards
+
 # Per-verb CLI, used when --cli is not given: e.g. the answer sheet on the strong model, prose on the local one.
 #   task_cli: answer: claude, write: codex
 task_cli:

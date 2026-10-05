@@ -1,5 +1,7 @@
 # C-S-A-Change-Authoring Agent
 
+> **Legacy path.** `csa author` now runs the card path by default (the framework gathers evidence into a card, the answer agent answers it, code renders the change file). This agent runs only with `--legacy`, with `author_default: legacy` in `cli.yaml`, or when no working DOCX exists.
+
 > **Read first:** `.agents/csa-core-rules.md`. It holds the rules shared by every CSA agent, and it overrides any line in this file that disagrees with it.
 
 

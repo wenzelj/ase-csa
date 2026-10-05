@@ -2110,6 +2110,8 @@ def _fleet_session_stats(p: dict, t: dict) -> None:
     try:
         sys.path.insert(0, str(FRAMEWORK))
         from csa_docx.session_stats import stats, timing_fields
+        if t.get("cards"):
+            return                  # the log is csa's own output; the stages inside are not Codex logs
         stage = {"author": "author", "answer": "answer", "write": "write"}.get(t["verb"], t["verb"])
         st = stats(t["log"])
         t["stats"] = {**timing_fields(stage, st), "top_files": st["top_files"][:5]}
@@ -2311,6 +2313,20 @@ def _author_cards(p: dict, a) -> int:
     return _after_agent(p, "author", [number], started, a)
 
 
+def author_path(p: dict, args: list[str], legacy: bool = False, cards: bool = False) -> str:
+    """Which way `csa author` runs: "cards" (card -> answer agent -> render) or "legacy" (the change-authoring
+    agent does everything). Cards is the default when a working DOCX exists and the target resolves.
+    `--legacy` or `author_default: legacy` in cli.yaml selects the old path; `--cards` is kept for old scripts."""
+    if legacy or (str(settings().get("author_default", "cards")).lower() == "legacy" and not cards):
+        return "legacy"
+    target = next((x for x in args if "=" not in x and not x.startswith("-")), None)
+    if not target or not working_docx(p):
+        return "legacy"
+    if resolve_target(p, target).get("status") != "OK":
+        return "legacy"
+    return "cards"
+
+
 SECTION_VERBS = ("author", "write", "review", "cleanup", "answer")
 
 
@@ -2318,7 +2334,7 @@ def cmd_agent(a):
     p = project(a.project); banner(p)
     if a.verb in SECTION_VERBS and a.args and "=" not in a.args[0] and not re.fullmatch(r"\d+(\.\d+)*", a.args[0]):
         a.args = [section_arg(p, a.args[0])] + a.args[1:]
-    if a.verb == "author" and getattr(a, "cards", False):
+    if a.verb == "author" and author_path(p, a.args, getattr(a, "legacy", False), getattr(a, "cards", False)) == "cards":
         return _author_cards(p, a)
     if a.verb == "cleanup" and not getattr(a, "print", False) and _cleanup_not_needed(p, a.args):
         return 0
@@ -2651,11 +2667,21 @@ def _fleet_tasks(p: dict, a) -> list[dict]:
             if not sec:
                 die(f"task {i} '{text}': apply needs the section first, e.g. \"apply 6 --limit 2\"")
             values, prompt = {"SECTION": sec}, None
+        elif verb == "author" and author_path(p, args, "--legacy" in args, "--cards" in args) == "cards":
+            # the card path runs as one framework command (card, answer agent, render, writer, apply)
+            values, prompt = task_values(r, [x for x in args if not x.startswith("-")]), None
+            args = [x for x in args if x not in ("--legacy", "--cards")]
         else:
+            args = [x for x in args if x != "--legacy"]
             values = task_values(r, args)
             fcli = settings().get("fleet_cli", "codex")
             prompt = build_prompt(p, r, args, local=local_launch(settings().get(f"{fcli}_fleet", "")))  # dies on a missing required input
-        tasks.append(_fleet_task(len(tasks) + 1, text, verb, args, task_locks(r, values), prompt))
+        locks = task_locks(r, values)
+        cards_task = verb == "author" and prompt is None
+        if cards_task:
+            locks |= {"docx"}
+        tasks.append(_fleet_task(len(tasks) + 1, text, verb, args, locks, prompt))
+        tasks[-1]["cards"] = cards_task
         tasks[-1]["no_apply"] = no_apply
         tasks[-1]["no_writer"] = no_writer
     return tasks
@@ -2758,6 +2784,8 @@ def _fleet_follow_up(t: dict, n: int, p: dict | None = None) -> dict | None:
     is applied, a writer's section file is placed. None when the task changes nothing in the document."""
     if t["verb"] in ("apply", "place"):
         return None
+    if t.get("cards"):
+        return None                 # the card path already ran the writer pass and apply
     values = task_values(agent(t["verb"]), t["args"])
     spec = values.get("SECTION", "")
     if not spec or t.get("no_apply"):
@@ -2788,6 +2816,11 @@ def _fleet_follow_up(t: dict, n: int, p: dict | None = None) -> dict | None:
 
 
 def _fleet_argv(p: dict, t: dict, slot: str, cli: str) -> list[str]:
+    if t.get("cards"):
+        extra = [flag for flag, key in (("--no-apply", "no_apply"), ("--no-writer", "no_writer"))
+                 if t.get(key)]
+        return [sys.executable, str(Path(__file__).resolve()), "--project", p["key"], "author", *t["args"], "--cards",
+                "--headless", *extra]
     if t["verb"] == "place":
         return [sys.executable, str(Path(__file__).resolve()), "--project", p["key"], "place", *t["args"]]
     if t["verb"] == "apply":
@@ -3890,7 +3923,9 @@ def main(argv=None) -> int:
         s.add_argument("--no-writer", action="store_true",
                        help="author: skip the writer pass (the author's own Text is applied as drafted)")
         s.add_argument("--cards", action="store_true",
-                       help="author: card -> answer agent -> check -> render -> writer -> apply (csa card, answer sheet)")
+                       help="author: the card path (the default when a working DOCX exists; kept for old scripts)")
+        s.add_argument("--legacy", action="store_true",
+                       help="author: the old change-authoring agent path instead of card -> answer agent -> render")
         s.add_argument("--fresh", action="store_true",
                        help="author --cards: ignore a saved answer sheet and always run the answer agent")
         s.add_argument("--check-answers", action="store_true",
