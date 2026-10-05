@@ -1,0 +1,207 @@
+/*
+ * ASE evidence palette
+ *
+ * Bright ASE green identifies navigation and action. Evidence prose uses the
+ * darker operational green so citations and verified states remain readable.
+ * Amber, red and violet retain distinct decision meanings.
+ */
+:root {
+  color-scheme: light;
+  --ase-signal: #1cbb6e;
+  --ase-operational: #087a46;
+  --ase-carbon: #101512;
+  --ase-black: #000000;
+  --ase-paper: #f7faf8;
+  --ase-field: #e7eeea;
+  --ase-panel: #eef4f0;
+  --ase-graphite: #56635d;
+  --ase-line: #bbc8c1;
+  --ase-signal-soft: #dff6ea;
+
+  --ink: var(--ase-carbon);
+  --slate: #2e3b35;
+  --paper: var(--ase-paper);
+  --field: var(--ase-field);
+  --teal: var(--ase-operational);
+  --amber: #b87219;
+  --red: #a33d39;
+  --line: var(--ase-line);
+  --muted: var(--ase-graphite);
+}
+
+body {
+  background: var(--ase-field);
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline-color: var(--ase-signal);
+}
+
+.masthead {
+  background: var(--ase-black);
+  border-bottom-color: var(--ase-signal);
+}
+
+.product-mark {
+  border-right-color: #39413d;
+}
+
+.mark-lines {
+  border-left-color: var(--ase-signal);
+}
+
+.mark-lines::after {
+  background: #75827b;
+  box-shadow: 0 7px #75827b;
+}
+
+.rail {
+  background: #dce5df;
+  border-color: #afbeb5;
+}
+
+.rail nav button:hover {
+  background: #d2ded7;
+}
+
+.rail nav button.active {
+  background: var(--ase-paper);
+  border-left-color: var(--ase-signal);
+}
+
+.global-search button,
+.application-core button,
+.claim-buttons button,
+.index-result button,
+.draft-panel footer button {
+  background: var(--ase-operational);
+}
+
+.global-search button:hover,
+.application-core button:hover,
+.claim-buttons button:hover,
+.index-result button:hover,
+.draft-panel footer button:hover {
+  background: #05653a;
+}
+
+.portrait-hero {
+  background: var(--ase-black);
+  border-bottom-color: var(--ase-signal);
+}
+
+.assessment-reading,
+.area-map,
+.area-detail,
+.estate-strip,
+.section-ledger {
+  background: var(--ase-paper);
+}
+
+.area-map > div > button:hover,
+.area-map > div > button.active,
+.claim-thread button:hover {
+  background: var(--ase-signal-soft);
+}
+
+.area-map > div > button.active,
+.section-line:hover,
+.section-line:focus-visible,
+.section-line.selected {
+  box-shadow: inset 5px 0 var(--ase-signal);
+}
+
+.segment-verified,
+.host-rack i.seen,
+.lamp.good,
+.section-complete .section-state i,
+.section-complete.workspace-state > i {
+  background: var(--ase-operational);
+}
+
+.evidence-id,
+.requirement b,
+.change-sheet legend,
+.evidence-picker span b,
+.change-preview article footer,
+.proposal-instrument > div strong {
+  color: var(--ase-operational);
+}
+
+.status-verified,
+.status-supported {
+  border-color: var(--ase-operational);
+  color: #075f38;
+}
+
+.section-inspector,
+.apply-confirm {
+  background: var(--ase-field);
+}
+
+.section-inspector > header {
+  background: var(--ase-black);
+  border-bottom-color: var(--ase-signal);
+}
+
+.inspector-columns > section {
+  background: var(--ase-paper);
+}
+
+.inspector-columns > section:last-child {
+  background: var(--ase-panel);
+}
+
+.inspector-columns > section > header {
+  border-bottom-color: var(--ase-operational);
+}
+
+.author-panel {
+  border-color: #94b8a3;
+  border-left-color: var(--ase-signal);
+  background: #edf8f2;
+}
+
+.author-panel > footer button:first-child,
+.author-stage-ready i,
+.author-stage-reused i {
+  background: var(--ase-operational);
+}
+
+.author-no-apply,
+.author-facts article > i {
+  border-color: var(--ase-operational);
+  color: #075f38;
+}
+
+.add-change {
+  border-color: var(--ase-operational);
+  background: var(--ase-signal-soft);
+  color: #075f38;
+}
+
+.document-desk > aside button.active {
+  background: var(--ase-signal-soft);
+  box-shadow: inset 4px 0 var(--ase-signal);
+}
+
+.revision-inserted {
+  background: #d7f2e3;
+  text-decoration-color: var(--ase-operational);
+}
+
+.reader > header,
+.page-controls,
+.section-ledger > header {
+  background: var(--ase-black);
+}
+
+@media (max-width: 760px) {
+  .rail nav button.active {
+    border-top-color: var(--ase-signal);
+  }
+}
