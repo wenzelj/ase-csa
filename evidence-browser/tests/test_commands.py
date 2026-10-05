@@ -26,6 +26,7 @@ def test_catalogue_exposes_read_only_operations_and_one_docx_locked_apply() -> N
     assert cleanup["mutating"] is True and cleanup["lock"] == "docx"
     author = next(row for row in rows if row["key"] == "author")
     assert author["mutating"] is False and author["lock"] == "none"
+    assert {"legacy", "fresh", "check_answers", "writer", "no_writer"} <= set(author["options"])
     assert all(row["mutating"] is False and row["lock"] == "none" for row in rows if row["key"] not in ("apply", "review", "cleanup", "build"))
 
 

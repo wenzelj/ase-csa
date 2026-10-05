@@ -556,14 +556,23 @@ def author_setup(system_key: str, section: str) -> dict[str, Any]:
 
 @app.post("/api/systems/{system_key}/sections/{section}/author", status_code=202)
 def submit_author(system_key: str, section: str, payload: dict[str, Any]) -> dict[str, Any]:
-    unknown = set(payload) - {"cards"}
+    unknown = set(payload) - {"cards", "legacy", "fresh", "check_answers", "writer_policy"}
     if unknown:
         raise HTTPException(422, f"Unsupported author option(s): {', '.join(sorted(unknown))}")
-    cards = payload.get("cards", False)
-    if not isinstance(cards, bool):
+    cards = payload.get("cards")
+    if cards is not None and not isinstance(cards, bool):
         raise HTTPException(422, "cards must be true or false")
+    for key in ("legacy", "fresh", "check_answers"):
+        if not isinstance(payload.get(key, False), bool):
+            raise HTTPException(422, f"{key} must be true or false")
+    writer_policy = payload.get("writer_policy", "auto")
+    if writer_policy not in {"auto", "force", "skip"}:
+        raise HTTPException(422, "writer_policy must be auto, force, or skip")
     return author_workflow.submit(agents_dir(), system_project(system_key), section,
-                                  cards=cards, manager=job_manager)
+                                  cards=cards, legacy=payload.get("legacy", False),
+                                  fresh=payload.get("fresh", False),
+                                  check_answers=payload.get("check_answers", False),
+                                  writer_policy=writer_policy, manager=job_manager)
 
 
 @app.get("/api/systems/{system_key}/sections/{section}/author-jobs/{job_id}")

@@ -220,8 +220,11 @@ def setup(agents_dir: Path, project: dict[str, str], section: str, *,
     return {
         "project_key": project["key"], "section": section, "visible_number": number,
         "stable_key": stable_key, "lane": lane, "document_hash": document_hash,
-        "model_route": {"author": "registered author agent", "answer": "registered answer agent"},
-        "no_apply": True, "cards_available": True,
+        "model_route": {"default": "cards", "cards": "card → answer → validated proposal",
+                        "legacy": "legacy author agent"},
+        "supported_modes": {"legacy": True, "fresh": True, "check_answers": True,
+                            "writer_policies": ["auto", "force", "skip"]},
+        "default_route": "cards", "no_apply": True, "cards_available": True,
         "selected_cards": _cards(_artifact_paths(project, stable_key)["card_json"]),
         "author_brief": next(row for row in artifacts if row["key"] == "brief"),
         "answer_sheet": next(row for row in artifacts if row["key"] == "answer_sheet"),
@@ -265,15 +268,31 @@ def _read_context(project: dict[str, str], job_id: str) -> dict[str, Any]:
         return {}
 
 
-def submit(agents_dir: Path, project: dict[str, str], section: str, *, cards: bool = False,
+def submit(agents_dir: Path, project: dict[str, str], section: str, *, cards: bool | None = None,
+           legacy: bool = False, fresh: bool = False, check_answers: bool = False,
+           writer_policy: str = "auto",
            manager: jobs.JobManager | None = None, runner: Runner | None = None) -> dict[str, Any]:
+    if writer_policy not in {"auto", "force", "skip"}:
+        raise HTTPException(422, "writer_policy must be auto, force, or skip")
     current = setup(agents_dir, project, section, runner=runner, manager=manager)
-    request = CommandRequest(target=section, options={"no_apply": True, "cards": cards})
+    options = {"no_apply": True}
+    options.update({key: value for key, value in {
+        "legacy": legacy, "fresh": fresh, "check_answers": check_answers,
+        "writer": writer_policy == "force", "no_writer": writer_policy == "skip",
+    }.items() if value})
+    request = CommandRequest(target=section, options=options)
     manager = manager or jobs.JobManager(agents_dir)
     job = manager.submit(project, "author", request)
     row = _job_dict(job)
-    _write_context(project, str(row["id"]), current, cards)
-    return {"job": row, "section": section, "cards": cards, "no_apply": True,
+    actual_route = "legacy" if legacy else "cards"
+    _write_context(project, str(row["id"]), current, actual_route == "cards")
+    context_path = _context_path(project, str(row["id"]))
+    context = json.loads(context_path.read_text(encoding="utf-8"))
+    context.update({"actual_route": actual_route, "writer_policy": writer_policy,
+                    "fresh": fresh, "check_answers": check_answers})
+    context_path.write_text(json.dumps(context, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return {"job": row, "section": section, "cards": True, "actual_route": actual_route,
+            "writer_policy": writer_policy, "no_apply": True,
             "input_hash": current["input_hash"]}
 
 
@@ -324,6 +343,8 @@ def outcome(job: dict[str, Any], current: dict[str, Any], context: dict[str, Any
         routed_to_validation=state == "DRAFTED" and current_run,
         warnings=[value for value in [str(job.get("stderr_tail") or "").strip()] if value],
         non_success_reasons=reasons,
+        actual_route=str(context.get("actual_route") or "cards"),
+        writer_policy=str(context.get("writer_policy") or "auto"),
     ).model_dump()
 
 

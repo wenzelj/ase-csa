@@ -79,7 +79,9 @@ OPERATIONS: dict[str, Operation] = {
     "author": Operation(
         "author", "Author proposal", "Draft an evidence-grounded proposal for one section (no-apply; routed to validation, never applied).",
         ("author",), "required", "section",
-        {"cards": "boolean", "no_apply": "boolean"}, timeout=1800, mutating=False, lock="none",
+        {"cards": "boolean", "legacy": "boolean", "fresh": "boolean", "check_answers": "boolean",
+         "writer": "boolean", "no_writer": "boolean", "no_apply": "boolean"},
+        timeout=1800, mutating=False, lock="none",
     ),
     "build_preview": Operation(
         "build_preview", "Preview assessment build", "Generate a throwaway candidate from validated build-lane section sources.",

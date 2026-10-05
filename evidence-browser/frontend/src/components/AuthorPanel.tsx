@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { authorArtifactUrl, cancelJob, fetchAuthorJob, fetchAuthorSetup, fetchLatestAuthor, submitAuthor } from "../api";
-import type { AuthorEvidence, AuthorOutcome, AuthorSetup, ReviewJob } from "../types";
+import type { AuthorEvidence, AuthorOutcome, AuthorSetup, ReviewJob, WriterPolicy } from "../types";
 
 const TERMINAL = new Set(["succeeded", "failed", "cancelled", "interrupted"]);
 function evidenceLabel(status: string): string {
@@ -21,7 +21,10 @@ export function AuthorPanel({ system, section, openEvidence, onProposalReady }: 
   const [setup, setSetup] = useState<AuthorSetup | null>(null);
   const [job, setJob] = useState<ReviewJob | null>(null);
   const [outcome, setOutcome] = useState<AuthorOutcome | null>(null);
-  const [cards, setCards] = useState(true);
+  const [legacy, setLegacy] = useState(false);
+  const [fresh, setFresh] = useState(false);
+  const [checkAnswers, setCheckAnswers] = useState(false);
+  const [writerPolicy, setWriterPolicy] = useState<WriterPolicy>("auto");
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
@@ -54,7 +57,7 @@ export function AuthorPanel({ system, section, openEvidence, onProposalReady }: 
 
   const start = async () => {
     setError(""); setOutcome(null);
-    try { const result = await submitAuthor(system, section, cards); setJob(result.job); }
+    try { const result = await submitAuthor(system, section, { legacy, fresh, check_answers: checkAnswers, writer_policy: writerPolicy }); setJob(result.job); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "Author run could not start"); }
   };
   const stop = async () => {
@@ -70,11 +73,16 @@ export function AuthorPanel({ system, section, openEvidence, onProposalReady }: 
       <div className="author-context">
         <div><small>System</small><strong>{setup.project_key}</strong></div>
         <div><small>Section</small><strong>{setup.visible_number} · {setup.stable_key}</strong></div>
-        <div><small>Registered route</small><strong>{cards ? setup.model_route.answer : setup.model_route.author}</strong></div>
+        <div><small>Authoring route</small><strong>{outcome?.actual_route === "legacy" || legacy ? setup.model_route.legacy : setup.model_route.cards}</strong></div>
         <div><small>Existing proposal</small><strong>{setup.existing_proposal.exists ? `${setup.existing_proposal.file} · ${setup.existing_proposal.validation}` : "None"}</strong></div>
       </div>
-      <label className="author-card-toggle"><input type="checkbox" checked={cards} onChange={event => setCards(event.target.checked)} />Build a section card and answer sheet first</label>
-      {cards && <div className="author-cards"><strong>Selected card questions</strong>{setup.selected_cards.length ? <ul>{setup.selected_cards.map(card => <li key={card.id}><b>{card.id}</b>{card.question}</li>)}</ul> : <p>The framework will generate the section card when the run starts.</p>}</div>}
+      <details className="author-options"><summary>Authoring controls</summary><div>
+        <label><input type="checkbox" checked={legacy} onChange={event => setLegacy(event.target.checked)} />Use legacy author workflow</label>
+        <label><input type="checkbox" checked={fresh} disabled={legacy} onChange={event => setFresh(event.target.checked)} />Generate every answer again</label>
+        <label><input type="checkbox" checked={checkAnswers} disabled={legacy} onChange={event => setCheckAnswers(event.target.checked)} />Run an advisory answer check</label>
+        <label>Writer decision<select value={writerPolicy} onChange={event => setWriterPolicy(event.target.value as WriterPolicy)}><option value="auto">Let validation decide</option><option value="force">Always run writer</option><option value="skip">Skip writer</option></select></label>
+      </div></details>
+      {!legacy && <div className="author-cards"><strong>Questions this section must answer</strong>{setup.selected_cards.length ? <ul>{setup.selected_cards.map(card => <li key={card.id}><b>{card.id}</b>{card.question}</li>)}</ul> : <p>The framework will prepare the questions when the run starts.</p>}</div>}
       <ol className="author-stages">{(outcome?.stages || setup.stages).map(stage => <li key={stage.key} className={`author-stage-${stage.state.toLowerCase().replaceAll("_", "-")}`}><i /><span><strong>{stage.label}</strong><small>{stage.state}</small></span></li>)}</ol>
       <div className="author-artifacts"><strong>Run artifacts</strong><div>{setup.artifacts.map(item => item.exists ? <a key={item.key} href={authorArtifactUrl(system, section, item.key)} target="_blank" rel="noreferrer">{item.label}</a> : <span key={item.key}>{item.label} · pending</span>)}</div></div>
       <div className="author-evidence"><header><strong>Evidence set</strong><span>{setup.evidence.length} claim{setup.evidence.length === 1 ? "" : "s"}</span></header>{setup.evidence.length ? setup.evidence.map(row => { const label = evidenceLabel(row.status); return <button key={row.evidence_id} type="button" onClick={() => openEvidence(row)}><b>{row.evidence_id}</b><span>{row.claim || row.question}</span><em className={`author-evidence-${label.toLowerCase()}`}>{label}</em></button>; }) : <p>No section evidence is currently selected. The run may return an incomplete-evidence state.</p>}</div>

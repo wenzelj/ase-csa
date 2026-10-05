@@ -56,7 +56,9 @@ export type AuthorEvidence = {
 export type AuthorSetup = {
   project_key: string; section: string; visible_number: string; stable_key: string;
   lane: string; document_hash: string; input_hash: string; no_apply: true; cards_available: boolean;
-  model_route: { author: string; answer: string };
+  model_route: { default: string; cards: string; legacy: string };
+  supported_modes: { legacy: boolean; fresh: boolean; check_answers: boolean; writer_policies: WriterPolicy[] };
+  default_route: "cards";
   selected_cards: { id: string; question: string }[];
   author_brief: AuthorArtifact; answer_sheet: AuthorArtifact; evidence: AuthorEvidence[];
   artifacts: AuthorArtifact[]; stages: { key: string; label: string; state: string }[];
@@ -69,8 +71,11 @@ export type AuthorOutcome = {
   stages: AuthorSetup["stages"]; evidence: AuthorEvidence[];
   routed_to_editor: boolean; routed_to_validation: boolean;
   warnings: string[]; non_success_reasons: string[];
+  actual_route: "cards" | "legacy"; writer_policy: WriterPolicy;
 };
-export type AuthorSubmit = { job: ReviewJob; section: string; cards: boolean; no_apply: true; input_hash: string };
+export type WriterPolicy = "auto" | "force" | "skip";
+export type AuthorOptions = { legacy: boolean; fresh: boolean; check_answers: boolean; writer_policy: WriterPolicy };
+export type AuthorSubmit = { job: ReviewJob; section: string; cards: true; actual_route: "cards" | "legacy"; writer_policy: WriterPolicy; no_apply: true; input_hash: string };
 export type AuthorJobResponse = { job: ReviewJob; outcome: AuthorOutcome };
 
 export type CleanupGate = { key: string; required: boolean; satisfied: boolean; detail: string };

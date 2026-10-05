@@ -155,6 +155,8 @@ class AuthorOutcomeSummary(BaseModel):
     routed_to_validation: bool = False
     warnings: list[str] = Field(default_factory=list)
     non_success_reasons: list[str] = Field(default_factory=list)
+    actual_route: Literal["cards", "legacy"] = "cards"
+    writer_policy: Literal["auto", "force", "skip"] = "auto"
 
 
 class CleanupGate(BaseModel):

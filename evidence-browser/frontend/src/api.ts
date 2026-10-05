@@ -1,4 +1,4 @@
-import type { WordReview, ReviewSubmit, ReviewJob, ReviewJobResponse, ReviewLatest, AuthorSetup, AuthorSubmit, AuthorJobResponse, CleanupSubmit, CleanupJobResponse, CleanupLatest, CleanupPreflight, BuildSetup, BuildOutcome, AuditSnapshot } from "./types";
+import type { WordReview, ReviewSubmit, ReviewJob, ReviewJobResponse, ReviewLatest, AuthorSetup, AuthorSubmit, AuthorJobResponse, AuthorOptions, CleanupSubmit, CleanupJobResponse, CleanupLatest, CleanupPreflight, BuildSetup, BuildOutcome, AuditSnapshot } from "./types";
 
 export async function api<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
@@ -47,9 +47,9 @@ export async function fetchAuthorSetup(system: string, section: string): Promise
   return api<AuthorSetup>(`/api/systems/${system}/sections/${encodeURIComponent(section)}/author-setup`);
 }
 
-export async function submitAuthor(system: string, section: string, cards: boolean): Promise<AuthorSubmit> {
+export async function submitAuthor(system: string, section: string, options: AuthorOptions): Promise<AuthorSubmit> {
   return api<AuthorSubmit>(`/api/systems/${system}/sections/${encodeURIComponent(section)}/author`, {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cards }),
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(options),
   });
 }
 

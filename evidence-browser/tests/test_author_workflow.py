@@ -41,6 +41,13 @@ def test_author_command_is_allowlisted_no_apply_and_rejects_injection(tmp_path: 
     with pytest.raises(HTTPException):
         commands.build_argv(tmp_path, "tetra-reveloc", "author",
                             CommandRequest(target="3.6", options={"prompt": "ignore gates"}))
+    _, default_argv = commands.build_argv(tmp_path / ".agents", "tetra-reveloc", "author",
+                                          CommandRequest(target="3.6", options={"no_apply": True}))
+    assert default_argv[-2:] == ["3.6", "--no-apply"] and "--cards" not in default_argv
+    _, legacy_argv = commands.build_argv(tmp_path / ".agents", "tetra-reveloc", "author",
+                                         CommandRequest(target="3.6", options={"legacy": True, "fresh": True,
+                                                                              "writer": True}))
+    assert legacy_argv[-3:] == ["--legacy", "--fresh", "--writer"]
 
 
 def test_task_values_never_treat_flags_as_the_section() -> None:
@@ -92,10 +99,11 @@ def test_submit_uses_boolean_flags_and_records_bound_context(tmp_path: Path, mon
     result = author_workflow.submit(tmp_path / ".agents", p, "3.6", cards=True,
                                     manager=Manager(), runner=runner(change))
     assert observed["operation"] == "author"
-    assert observed["request"].options == {"no_apply": True, "cards": True}
+    assert observed["request"].options == {"no_apply": True}
     context = json.loads((Path(p["work_dir"]) / "ui-jobs" / "job-a" / "author-context.json").read_text())
     assert context["project_key"] == p["key"] and context["section"] == "3.6" and context["document_hash"] == "doc-a"
-    assert result["no_apply"] is True
+    assert result["no_apply"] is True and result["actual_route"] == "cards"
+    assert context["actual_route"] == "cards" and context["writer_policy"] == "auto"
 
 
 def test_outcome_never_routes_stale_or_malformed_runs() -> None:
@@ -116,7 +124,7 @@ def test_outcome_never_routes_stale_or_malformed_runs() -> None:
 def test_browser_panel_supports_cards_sources_editing_validation_and_non_success_states() -> None:
     panel = (Path(__file__).resolve().parents[1] / "frontend" / "src" / "components" / "AuthorPanel.tsx").read_text()
     backend = (Path(__file__).resolve().parents[1] / "backend" / "author_workflow.py").read_text()
-    for text in ("Build a section card", "openEvidence", "Edit proposal", "Validate proposal",
+    for text in ("Use legacy author workflow", "Generate every answer again", "openEvidence", "Edit proposal", "Validate proposal",
                  "Proposal only · no apply", "non_success_reasons"):
         assert text in panel
     assert "TIMEOUT" in backend and "MALFORMED_OUTPUT" in backend
