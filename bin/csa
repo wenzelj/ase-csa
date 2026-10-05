@@ -2085,8 +2085,45 @@ def _writer_pass(p: dict, args: list[str], started: float, a) -> int:
     cf = Path(st["change_file"]) if st["change_file"] else None
     if not cf or not st["edits"] or cf.stat().st_mtime < started - 1:
         return 0
+    if not getattr(a, "writer", False) and not getattr(a, "print", False):
+        needed, why = _writer_needed(p, cf, sec, label)
+        if not needed:
+            print(f"{C['b']}Writer pass skipped: check-change is clean.{C['0']}")
+            _record_author_run(p, args, write_s=0, writer="skipped")
+            return 0
+        _record_author_run(p, args, writer=f"run: {why}")
     print(f"{C['b']}Writer pass: rewriting the prose in {cf.name} from its Facts.{C['0']}")
     return launch(p, agent("write"), [values["SECTION"], "MODE=records"], a)
+
+
+# lint lines that name a structural prose problem (prose_lint warnings); "(advisory)" lines never count
+_STRUCTURAL = re.compile(r"fragment|lead-in|nested bullet|connector|stock phrase|repeated|stated in >|evidence ID|"
+                         r"evidence file|evidence-as-subject|inference|bullets \(limit|hedges", re.I)
+
+
+def writer_needed_from(findings: list[dict]) -> tuple[bool, str]:
+    """Does the change file need the writer pass? Yes on any ERROR, or a PROSE_LINT / TERM_LINT line that names a
+    structural problem. Advisory lines (length, sentence size, identifiers) never trigger it."""
+    for f in findings:
+        if f.get("level") == "ERROR":
+            return True, f"{f.get('code')} {str(f.get('message', ''))[:80]}"
+        if f.get("code") in ("PROSE_LINT", "TERM_LINT") and f.get("level") in ("WARN", "ERROR"):
+            for line in str(f.get("message", "")).splitlines():
+                if "(advisory)" not in line and _STRUCTURAL.search(line):
+                    return True, f"{f['code']} {line.strip()[:80]}"
+    return False, ""
+
+
+def _writer_needed(p: dict, cf: Path, sec: str, label: str | None) -> tuple[bool, str]:
+    argv = [framework_python(), "-m", "csa_docx.check_change", str(cf), "--workspace", str(local_path(p["project_root"])), "--json"]
+    if p.get("work_dir"):
+        argv += ["--notes", str(author_dir(p, sec, label) / "search-notes.md"),
+                 "--evidence", str(local_path(p["work_dir"]) / "evidence-matrix.csv")]
+    r = subprocess.run(argv, cwd=str(FRAMEWORK), capture_output=True, text=True, env=_fw_env())
+    try:
+        return writer_needed_from(json.loads(r.stdout).get("findings", []))
+    except ValueError:
+        return True, "check-change gave no result"
 
 
 def _record_author_run(p: dict, args: list[str], **data) -> None:
@@ -2650,6 +2687,8 @@ def _fleet_tasks(p: dict, a) -> list[dict]:
         args = [x for x in args if x != "--no-apply"] if no_apply else args
         no_writer = "--no-writer" in args
         args = [x for x in args if x != "--no-writer"]
+        force_writer = "--writer" in args
+        args = [x for x in args if x != "--writer"]
         if verb == "place":
             if not args:
                 die(f"task {i} '{text}': place needs a section file or number, e.g. \"place 3.4\"")
@@ -2684,6 +2723,7 @@ def _fleet_tasks(p: dict, a) -> list[dict]:
         tasks[-1]["cards"] = cards_task
         tasks[-1]["no_apply"] = no_apply
         tasks[-1]["no_writer"] = no_writer
+        tasks[-1]["force_writer"] = force_writer
     return tasks
 
 
@@ -2817,7 +2857,7 @@ def _fleet_follow_up(t: dict, n: int, p: dict | None = None) -> dict | None:
 
 def _fleet_argv(p: dict, t: dict, slot: str, cli: str) -> list[str]:
     if t.get("cards"):
-        extra = [flag for flag, key in (("--no-apply", "no_apply"), ("--no-writer", "no_writer"))
+        extra = [flag for flag, key in (("--no-apply", "no_apply"), ("--no-writer", "no_writer"), ("--writer", "force_writer"))
                  if t.get(key)]
         return [sys.executable, str(Path(__file__).resolve()), "--project", p["key"], "author", *t["args"], "--cards",
                 "--headless", *extra]
@@ -3922,6 +3962,9 @@ def main(argv=None) -> int:
                        help="author/write/summary: stop after the agent instead of changing the document")
         s.add_argument("--no-writer", action="store_true",
                        help="author: skip the writer pass (the author's own Text is applied as drafted)")
+        s.add_argument("--writer", action="store_true",
+                       help="author: always run the writer pass (by default it runs only when check-change reports an "
+                            "error or a structural prose problem)")
         s.add_argument("--cards", action="store_true",
                        help="author: the card path (the default when a working DOCX exists; kept for old scripts)")
         s.add_argument("--legacy", action="store_true",
