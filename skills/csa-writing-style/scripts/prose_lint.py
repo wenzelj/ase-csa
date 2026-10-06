@@ -319,6 +319,14 @@ def analyse(sec: Section, max_words: int) -> dict:
     ev_subject = [m.group(0) for p in prose for m in EVIDENCE_SUBJECT_RE.finditer(p.text)]
     if ev_files:
         warns.append(f"{len(ev_files)} evidence file names in body prose")
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "framework"))
+        from csa_docx.answer_sheet import count_mismatch
+        bad_counts = [m for para in prose for m in [count_mismatch(para.text)] if m]
+    except Exception:
+        bad_counts = []
+    if bad_counts:
+        warns.append(f"{len(bad_counts)} counts whose parts do not add up ({bad_counts[0]}); check the total against the host groups")
     if ev_subject:
         warns.append(f"{len(ev_subject)} evidence-as-subject passages (the sentence is about the data, not the system; rewrite around the application/component it tells us about)")
     if noisy_headings:

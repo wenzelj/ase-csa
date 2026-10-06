@@ -31,11 +31,22 @@ A reader should be able to read a paragraph aloud to a colleague and have it mak
 
 The reader asked a question of a system: where does its time come from, which resolvers does it use, what fails when they go. Answer it in terms of the systems and applications (the Reveloc application servers, the SQL clusters, the TETRA log server, the jump hosts), not host counts or capture coverage, and name the server or address the answer points to, so the reader knows what to look at. The limits below are guides that `prose_lint.py` reports as warnings. Never leave the question half answered, or drop a fact that answers it, to meet a limit; a longer sentence or one more host name is the smaller fault.
 
+### Requirement rows: judge the practice, not the assessment's own list
+
+A requirement asks whether the organisation does something (keeps an inventory, documents dependencies, monitors logs). The Current State cell answers that, in this order and usually in one to three sentences:
+
+1. **The practice or tool, present or absent.** Name it if found ("Assets are tracked in <tool>"); if not, say so plainly ("No dedicated OT asset inventory or CMDB tool was identified").
+2. **What exists instead, if anything.** A partial or informal substitute, in a few words ("A point-in-time list was compiled prior to discovery").
+3. **Scope exclusions that touch the requirement** ("KVM is excluded from this CSA and will be assessed separately").
+
+The assessment's own discovery output (the hosts the captures found, their roles and counts) is not the organisation's inventory or dependency map, and never counts as the practice being in place. Host lists, counts and roles go in the Discovery Information and Hosts tables, not the Current State cell. Rate against the practice: no maintained tool or process is Not Met, a maintained but incomplete one is Partially Met.
+
 ### Identifier budget
 
 - **Name first, address when there is no name.** Refer to a host by its name or role. When the evidence gives only an IP address (no host name in the discovery data, DNS records or host register), use the address in prose: describing the system matters more than hiding the address. Do not give both name and address in prose, and put long lists of addresses in a table.
 - **Ports where they matter.** Give a port where it explains how components connect; put full port lists in a table.
 - **Name hosts by role**, and give a host name only where the reader needs it to act or to find the host in a table. When a sentence would list many hosts, group them by role and put the list in a table.
+- **Group hosts by role.** Hosts with the same role share one table row ("ROTPRDCLU101-104, MOTPRDCLU101, MOTPRDCLU103 | OT | SQL Server cluster node"), and prose names the role group, not each host. A host table covers every captured host in the card's Host register, one row per role group. Any count must add up: a total and its breakdown name the same hosts.
 - **Readable sentences.** Aim for an average around 25 words and split sentences over about 45 words where that reads better. Never drop a fact to shorten a sentence.
 - **One hedge per point.** Put the unknown once, at the end ("Whether the second site is used only on failover is still to be confirmed with the operations team."), not in every sentence.
 

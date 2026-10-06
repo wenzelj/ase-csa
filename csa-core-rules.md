@@ -30,7 +30,7 @@ Every agent and skill in `.agents/` follows these rules. Where a line in an agen
 
 ## Document text
 
-- **The subject is the system, its applications and its hosts.** A source's own keys (a workbook row, a collection or group ID, a sheet or line number, an evidence ID) are citations, never the subject of a sentence, a fact or a table row. Tables are keyed by host(s), role or application; hosts that share the same configuration share a row.
+- **The subject is the system, its applications and its hosts.** A source's own keys (a workbook row, a collection or group ID, a sheet or line number, an evidence ID) are citations, never the subject of a sentence, a fact or a table row. Tables are keyed by host(s), role or application; hosts that share the same configuration share a row. **Group hosts by what they are.** Hosts with the same role share one table row ("ROTPRDCLU101-104, MOTPRDCLU101, MOTPRDCLU103 | OT | SQL Server cluster node"), and prose names the role group, not each host. A host table covers every captured host in the card's Host register, one row per role group. Any count must add up: a total and its breakdown name the same hosts.
 
 - Stable IDs (`@H...`), evidence file names and status tags never appear in document text either (see Evidence IDs never in document text).
 - Prose follows `csa-writing-style`; terms and spelling follow `australian-it-ot-terminology`.

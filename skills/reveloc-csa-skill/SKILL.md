@@ -12,6 +12,10 @@ description: >
 
 # Reveloc / RevelocPlus — CSA Application Knowledge Skill
 
+## Naming in the document
+
+The sources (captures, system matrix, host map) call the jump-host role "RevViewer". In every fact, table row and sentence written for the document, call it **Reviewer** ("Reviewer jump hosts"). Never write "RevViewer" in document text; quoting a source file name or log line in an evidence row is the only exception.
+
 ## Purpose
 
 Use this skill only to add **Reveloc-specific system knowledge** to the existing Current

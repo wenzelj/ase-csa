@@ -66,6 +66,10 @@ python3 "$S" append --agent <your-agent-name> --context "<...>" --row-json '{...
 python3 "$S" append ... --dry-run          # validate and preview IDs without writing
 ```
 
+### Graph and host index stay in step automatically
+
+Every successful `append` runs `scripts/graph_sync.py` for the project (set `CSA_NO_GRAPH_SYNC=1` to skip). It records any host capture newer than the last sync with `host_profile.py`, adds an edge for every link row in the host-profile grammar that has none, drops graph references to evidence that is no longer in the matrix (removing edges and nodes left with no evidence), and rebuilds `hosts/evidence_hosts.csv`. Free-text rows that merely name two hosts are not turned into edges. After removing or editing matrix rows by any other means, run `python3 scripts/graph_sync.py --workspace <project_root>` (add `--dry-run` to preview). Each run is logged in `csa-work/graph-audit.jsonl`.
+
 ### How to query
 
 Use a short phrase of the topic plus the names that matter (hosts, ports, services, file names), for example `NTP source time.windows.com` or `CSFalconService ROKPRDAMP101`, never a whole sentence from the document. `--host` restricts to one host and `--area` to one CSA area. Run two or three differently-worded queries before concluding the matrix has no answer. Agents use --brief (and get --brief) by default; drop it only to read a full excerpt.

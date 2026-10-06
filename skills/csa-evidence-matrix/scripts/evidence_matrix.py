@@ -709,6 +709,20 @@ def cmd_append(args):
                   "skipped_duplicates": skipped, "same_claim_elsewhere": also})
         finally:
             fcntl.flock(lock, fcntl.LOCK_UN)
+    graph_sync(workspace, written)
+
+
+def graph_sync(workspace, written):
+    """Keep the graph and host index in step after every write (graph_sync.py). Never fails the append."""
+    if not written or os.environ.get("CSA_NO_GRAPH_SYNC"):
+        return
+    import subprocess
+    try:
+        subprocess.run([sys.executable, str(Path(__file__).with_name("graph_sync.py")), "--workspace", str(workspace)],
+                       env=dict(os.environ, CSA_NO_GRAPH_SYNC="1"), stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL, timeout=600)
+    except Exception:
+        pass
 
 
 # --------------------------------------------------------------------------- main

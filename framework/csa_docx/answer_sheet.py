@@ -113,12 +113,54 @@ def _f(level: str, code: str, qid: str | None, message: str) -> dict:
     return {"level": level, "code": code, "question": qid, "message": message}
 
 
+
+# A fact whose subject is the source (matrix, capture, host map, previous assessment) instead of the system.
+_SOURCE_SUBJECT = re.compile(
+    r"^\s*(?:the|these|this|a|an)?\s*(?:capture'?s?|captures|system matrix|evidence matrix|matrix|host map|target host map|"
+    r"previous assessment|prior assessment|discovery (?:data|table|set|package|output)|spreadsheet|workbook|"
+    r"current evidence|evidence|supplied data|document|register|index)\b[^.]{0,80}?\b"
+    r"(?:records?|lists?|shows?|places?|contains?|notes?|states?|indicates?|identifies?|gives?|confirms?|describes?|has|holds?)\b",
+    re.IGNORECASE)
+
+_NUMWORDS = {w: i for i, w in enumerate("zero one two three four five six seven eight nine ten eleven twelve thirteen "
+             "fourteen fifteen sixteen seventeen eighteen nineteen twenty".split())}
+_NUM = re.compile(r"\b(\d{1,3}|" + "|".join(_NUMWORDS) + r")\b(?!\.\d)", re.IGNORECASE)
+_HOSTNAME = re.compile(r"\b[A-Z]{3}PRD[A-Z]{3}\d{3}\b")
+
+
+def _n(tok: str) -> int:
+    return int(tok) if tok.isdigit() else _NUMWORDS[tok.lower()]
+
+
+def count_mismatch(text: str) -> str | None:
+    """'twelve hosts ...: two jump hosts, one server, six nodes' -> message when the parts do not add up.
+
+    Only checked where a total is followed by a colon (or 'made up of' / 'comprising') and at least two counts."""
+    m = re.search(r":|\bmade up of\b|\bcomprising\b|\bconsisting of\b", text)
+    if not m:
+        return None
+    head = [x for x in _NUM.finditer(text[:m.start()])
+            if not re.match(r"[\d.]", text[x.end():x.end() + 1] or " ")
+            and not re.search(r"\b(?:port|ports|version|line|instance|vlan|site|row)\s*$", text[:x.start()], re.IGNORECASE)
+            and _n(x.group(1)) <= 500]
+    tail = [_n(x.group(1)) for x in _NUM.finditer(text[m.end():].split(".")[0])]
+    if not head or len(tail) < 2:
+        return None
+    total = _n(head[-1].group(1))
+    if sum(tail) != total:
+        return f"the parts add up to {sum(tail)}, not {total}"
+    return None
+
+
 def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None = None,
              ratings: list[str] | None = None, new_ids: set[str] | None = None) -> dict:
     """Findings for a parsed sheet against its card. ERROR blocks rendering; WARN is reported."""
     findings: list[dict] = []
     matrix = matrix or {}
     allowed = {r["id"].upper() for p in card.get("evidence", {}).values() for r in p.get("rows", [])}
+    # rows the card lists as "more rows not shown" are this section's evidence too: the card cut them
+    # for length, not relevance, so citing one is allowed (UNKNOWN_EVIDENCE still checks the matrix)
+    allowed |= {i.upper() for p in card.get("evidence", {}).values() for i in p.get("cut", [])}
     allowed |= {i.upper() for i in (new_ids or set())}
     ratings = ratings or card.get("ratings") or ["Met", "Partially Met", "Not Met", "Not Applicable"]
     qs = {q["id"]: q for q in card["questions"]}
@@ -136,6 +178,11 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
                 findings.append(_f("ERROR", "FACT_NO_EVIDENCE", qid, f"a fact cites no evidence ID: {fact['text'][:80]}"))
             if fact["basis"] not in BASES:
                 findings.append(_f("ERROR", "BAD_BASIS", qid, f"basis must be one of {', '.join(BASES)}: {fact['line'][:90]}"))
+            cm = count_mismatch(fact["text"])
+            if cm:
+                findings.append(_f("ERROR", "COUNT_MISMATCH", qid, f"{cm}: {fact['text'][:90]}"))
+            if q["kind"] in ("requirement", "narrative", "findings") and _SOURCE_SUBJECT.search(fact["text"]):
+                findings.append(_f("ERROR", "SOURCE_AS_SUBJECT", qid, f"the fact is about the source, not the system: make the application, host or practice the subject and keep the source in the basis braces: {fact['text'][:80]}"))
             if q["kind"] in ("requirement", "narrative", "findings") and _IP.search(fact["text"]):
                 findings.append(_f("WARN", "IP_IN_PROSE", qid, f"address in a prose fact: use the host name if one is known (fine where none was found): {fact['text'][:80]}"))
         cited = {i.upper() for fact in b["facts"] for i in fact["ids"]}
@@ -179,6 +226,22 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
                     findings.append(_f("ERROR", "ROW_WIDTH", qid, f"row has {len(r)} cells, the table has {len(want)}: {' | '.join(r)[:80]}"))
             if not data:
                 findings.append(_f("ERROR", "NO_ROWS", qid, "Rows: has a header but no rows"))
+            reg = card.get("host_register")
+            if reg and want and want[0].startswith("host") and data:
+                role_of = {h: g["role"] for g in reg["groups"] for h in g["hosts"]}
+                listed: dict[str, list[int]] = {}
+                for n, r in enumerate(data):
+                    for h in _HOSTNAME.findall(r[0]):
+                        listed.setdefault(role_of.get(h, h), []).append(n)
+                split = sorted(role for role, ns in listed.items() if len(set(ns)) > 1 and role in {g["role"] for g in reg["groups"]})
+                if split:
+                    findings.append(_f("ERROR", "HOSTS_NOT_GROUPED", qid,
+                                       f"one row per role group: these roles are spread over several rows: {', '.join(split)}"))
+                seen = {h for r in data for h in _HOSTNAME.findall(r[0])}
+                missing = sorted(set(role_of) - seen)
+                if missing:
+                    findings.append(_f("ERROR", "HOSTS_MISSING", qid,
+                                       f"captured hosts not in the table (see the card's host register): {', '.join(missing)}"))
     for qid in sheet:
         if qid not in qs:
             findings.append(_f("WARN", "EXTRA_BLOCK", qid, "this question is not on the card"))

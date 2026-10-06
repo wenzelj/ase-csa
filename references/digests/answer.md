@@ -6,9 +6,12 @@ The card (`CARD=`) is your whole input. Write the answer sheet (`SHEET=`) and st
 
 - One block per question, in order: `## B1 <short label>`. Fields: `Facts:`, `Rating:` with `Rating reason:` (requirement questions only), `Rows:` (table questions), `Bullets:` (findings), `Unknown:`, `Keep:`, `Search:`. Reviewer comments (`C1` ...) get `Answer:` (which B block answers them) or their own facts.
 - A fact is one sentence about the system, ends with its evidence IDs in brackets and its basis and scope in braces: `- The log server synchronises from the Rockhampton time server. (E-003) {observed; ROTPRDLOG102}`.
+- Write every fact about the application, host or practice, never about the source: "MOTPRDREV101 hosts the Reveloc application, TGOIP and SMTP", not "The capture's host map lists MOTPRDREV101 as ...". The source (matrix, capture, host map, previous assessment) shows only in the basis braces. A requirement fact that only restates which hosts the evidence names does not answer the requirement; say whether the practice exists, or write `Unknown:`.
 - Basis is `observed` (a capture shows it), `documented` (a document says it) or `stated` (a person said it). There is no `inferred`.
 - Scope names the hosts or sites the cited rows cover. Never widen it beyond them.
+- **Group hosts by what they are.** Hosts with the same role share one table row ("ROTPRDCLU101-104, MOTPRDCLU101, MOTPRDCLU103 | OT | SQL Server cluster node"), and prose names the role group, not each host. A host table covers every captured host in the card's Host register, one row per role group. Any count must add up: a total and its breakdown name the same hosts.
 - `Rows:` starts with the table's header row exactly as the card gives the columns, then one row per aspect, host or item. Evidence IDs go in brackets in the last cell.
+- Requirement questions judge the organisation's practice, not the assessment's own data: first whether the tool or process exists (name it, or say none was identified), then any informal substitute, then any scope exclusion on the card that touches the requirement. The hosts the captures found are never the organisation's inventory or dependency map; host lists, counts and roles belong in the table blocks. Rate on the practice (none maintained = Not Met). Keep it to one to three facts. See "Requirement rows" in `csa-writing-style`.
 - Rating is one of the ratings on the card, judged against the requirement text, with a one-sentence reason. Not Applicable needs a reason that says why the requirement does not apply.
 
 ## Never infer
@@ -25,7 +28,7 @@ The card (`CARD=`) is your whole input. Write the answer sheet (`SHEET=`) and st
 
 ## Errors the framework reports (fix every one)
 
-QUESTION_MISSING, EXTRA_BLOCK, EMPTY_ANSWER, REQUIREMENT_NO_FACTS, FACT_NO_EVIDENCE, UNKNOWN_EVIDENCE, EVIDENCE_NOT_ON_CARD, BAD_BASIS, SCOPE_OUTSIDE_EVIDENCE (a host in the fact's scope is not in the cited evidence), RATING_INVALID, RATING_NO_REASON, COLUMNS and ROW_WIDTH (table shape), NO_ROWS, IP_IN_PROSE. NEEDS_SEARCH means a `Search:` line was written: the framework adds results once.
+QUESTION_MISSING, EXTRA_BLOCK, EMPTY_ANSWER, REQUIREMENT_NO_FACTS, FACT_NO_EVIDENCE, UNKNOWN_EVIDENCE, EVIDENCE_NOT_ON_CARD, BAD_BASIS, SCOPE_OUTSIDE_EVIDENCE (a host in the fact's scope is not in the cited evidence), RATING_INVALID, RATING_NO_REASON, COLUMNS and ROW_WIDTH (table shape), NO_ROWS, IP_IN_PROSE, COUNT_MISMATCH (a total whose parts do not add up), HOSTS_NOT_GROUPED (one role spread over several rows), HOSTS_MISSING (a captured host left out of a host table), SOURCE_AS_SUBJECT (the sentence is about the matrix, capture or host map; rewrite it about the system). NEEDS_SEARCH means a `Search:` line was written: the framework adds results once.
 
 ## Searching and the matrix
 

@@ -311,6 +311,69 @@ def _established(node: dict, qs: list[dict], pack: dict, workspace: Path | None)
     return out
 
 
+_HOSTNAME = re.compile(r"\b[A-Z]{3}PRD[A-Z]{3}\d{3}\b")
+
+
+def host_register(workspace: Path | None) -> dict | None:
+    """Captured in-scope hosts grouped by role, plus named-but-not-captured hosts of the system.
+
+    Read from csa-work/hosts/hosts.csv; a missing role is filled from roles.csv (process/service matches).
+    Returns {"groups": [{"role", "hosts", "sites"}], "total", "uncaptured": [{"host", "role", "site"}]}."""
+    if not workspace:
+        return None
+    import csv
+    d = Path(workspace) / "csa-work" / "hosts"
+    hf = d / "hosts.csv"
+    if not hf.is_file():
+        return None
+    rows = list(csv.DictReader(hf.open(encoding="utf-8")))
+    fill: dict[str, str] = {}
+    rf = d / "roles.csv"
+    if rf.is_file():
+        for r in csv.DictReader(rf.open(encoding="utf-8")):
+            if r.get("kind") in ("process", "service") and r.get("role"):
+                for h in _HOSTNAME.findall(r.get("basis") or ""):
+                    fill.setdefault(h, r["role"])
+    groups: dict[str, dict] = {}
+    uncaptured = []
+    for r in rows:
+        host = r["host"].strip()
+        role = (r.get("role") or "").strip() or fill.get(host, "")
+        if not role:
+            m = re.search(r"Role '([^']+)'", " ".join(v or "" for v in r.values()))
+            role = m.group(1) if m else ""
+        site = (r.get("site") or "").strip()
+        if (r.get("in_scope") or "").strip() == "peer":
+            if role or (r.get("system") or "").strip():
+                uncaptured.append({"host": host, "role": (role or "role not recorded").replace("RevViewer", "Reviewer"), "site": site})
+            continue
+        if not (r.get("capture") or "").strip():
+            continue
+        key = (role or "role not recorded").replace("RevViewer", "Reviewer")
+        g = groups.setdefault(key.lower(), {"role": key, "hosts": [], "sites": []})
+        g["hosts"].append(host)
+        if site and site not in g["sites"]:
+            g["sites"].append(site)
+    gl = sorted(groups.values(), key=lambda g: (-len(g["hosts"]), g["role"]))
+    for g in gl:
+        g["hosts"].sort()
+    return {"groups": gl, "total": sum(len(g["hosts"]) for g in gl), "uncaptured": uncaptured}
+
+
+def _register_lines(reg: dict) -> list[str]:
+    counts = " + ".join(f"{len(g['hosts'])} {g['role']}" for g in reg["groups"])
+    out = ["", "## Host register (captured hosts, grouped by role)", "",
+           f"{reg['total']} captured hosts = {counts}.",
+           "Any host table uses one row per role group below, never one row per host. Any count you write must add up to these groups.", ""]
+    for g in reg["groups"]:
+        out.append(f"- {g['role']} ({len(g['hosts'])}): {', '.join(g['hosts'])}" + (f"; site: {', '.join(g['sites'])}" if g["sites"] else ""))
+    if reg["uncaptured"]:
+        out += ["", "Named in the sources for this system but not captured (scope to be confirmed):"]
+        for u in reg["uncaptured"]:
+            out.append(f"- {u['host']}: {u['role']}" + (f"; site: {u['site']}" if u["site"] else ""))
+    return out
+
+
 def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool = True,
          extra_searches: dict | None = None, exclude: tuple[str, ...] = ()) -> dict:
     qs = questions(node, spec)
@@ -318,6 +381,7 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
     established = _established(node, qs, pack, workspace) if pack else {}
     extra = scope_extras(node)
     kinds = sorted({q["kind"] for q in qs if q["kind"] != "comment"})
+    reg = host_register(workspace) if evidence else None
     lines = [f"# Card: {node['title']} (key {node['key']}, section {node['number']})", "",
              f"Kind: {node['kind']}", "", "## Questions", ""]
     for q in qs:
@@ -339,8 +403,14 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
             lines.append(f"### {qid}")
             for f in facts:
                 lines.append(f"- {f['fact']} (section {f['section']}; {', '.join(f['evidence_ids'])})")
+    if reg and reg["groups"]:
+        lines += _register_lines(reg)
     if pack:
-        lines += ["", "## Evidence pack", ""]
+        lines += ["", "## Evidence pack", "",
+                  "These rows are worded the way the source records them (\"The system matrix records X as ...\"). "
+                  "Never copy that wording: restate each as a fact about the host or application "
+                  "(\"X is a Reviewer jump host ...\") and put the source in the basis braces. "
+                  "A fact whose subject is the matrix, capture, host map or previous assessment is rejected (SOURCE_AS_SUBJECT).", ""]
         for qid, p in pack.items():
             lines.append(f"### {qid}")
             for r in p["rows"]:
@@ -362,7 +432,7 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
     text = "\n".join(lines) + "\n"
     return {"status": "OK", "key": node["key"], "number": node["number"], "title": node["title"], "text": text,
             "questions": qs, "evidence": pack, "established": established, "tokens": len(text) // 4,
-            "ratings": spec.get("ratings") or doc_spec.DEFAULT_RATINGS, "kinds": kinds}
+            "ratings": spec.get("ratings") or doc_spec.DEFAULT_RATINGS, "kinds": kinds, "host_register": reg}
 
 
 def main(argv: list[str] | None = None) -> int:

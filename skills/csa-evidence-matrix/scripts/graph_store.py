@@ -118,6 +118,12 @@ def _resolve_registered_project(workspace):
             root_path = Path(root).expanduser().resolve()
         except OSError:
             continue
+        # the registry holds the author's absolute paths; when the repository is mounted
+        # elsewhere (a VM or another machine) rebase the root onto this checkout
+        repo = Path(__file__).resolve().parents[4]
+        if not root_path.exists() and repo.name in root_path.parts:
+            i = root_path.parts.index(repo.name)
+            root_path = repo.joinpath(*root_path.parts[i + 1:])
         if workspace == root_path or root_path in workspace.parents:
             return project
     return None
