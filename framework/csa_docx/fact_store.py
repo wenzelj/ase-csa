@@ -86,6 +86,12 @@ def add_from_sheet(work_dir: Path, sheet: Path, card_json: Path) -> int:
     return len(new)
 
 
+_GENERIC = {"host", "hosts", "server", "servers", "captured", "capture", "system", "systems", "environment", "used",
+            "only", "each", "every", "twelve", "with", "from", "into", "that", "this", "which", "their", "there",
+            "application", "applications", "role", "roles", "site", "sites", "current", "state", "vital", "shall"}
+_HOSTLIKE = re.compile(r"^[a-z]{3}prd[a-z]{3}\d{3}$")
+
+
 def lookup(work_dir: Path, words: set[str], hosts: set[str], limit: int = 8, exclude_section: str | None = None) -> list[dict]:
     """Facts that share a host or at least three topic words with the question, newest first. A fact whose evidence
     IDs are no longer all in the matrix is dropped; the same fact text is offered once."""
@@ -94,17 +100,22 @@ def lookup(work_dir: Path, words: set[str], hosts: set[str], limit: int = 8, exc
     words = {w.lower() for w in words}
     out: list[dict] = []
     seen: set[str] = set()
+    # topic, not hosts: nearly every section names the same hosts, so a shared host alone is not relevance.
+    # Host names and generic words are not topic words; a fact needs two topic words with the question.
+    topic = {w for w in words if w not in _GENERIC and not _HOSTLIKE.match(w)}
+    seen_ev: set[tuple] = set()
     for rec in sorted(_read(work_dir), key=lambda r: r.get("added", ""), reverse=True):
         if exclude_section and rec.get("section") == exclude_section:
             continue
         if not rec.get("evidence_ids") or any(i.upper() not in live for i in rec["evidence_ids"]):
             continue
-        if rec["fact"] in seen:
+        ev = tuple(sorted(i.upper() for i in rec["evidence_ids"]))
+        if rec["fact"] in seen or ev in seen_ev:           # same text, or a rewording of the same evidence
             continue
-        shares_host = bool(hosts & {h.upper() for h in rec.get("hosts", [])})
-        if not shares_host and len(words & set(_WORD.findall(rec["fact"].lower()))) < 3:
+        fwords = {w for w in _WORD.findall(rec["fact"].lower()) if w not in _GENERIC and not _HOSTLIKE.match(w)}
+        if len(topic & fwords) < 2:
             continue
-        seen.add(rec["fact"])
+        seen.add(rec["fact"]); seen_ev.add(ev)
         out.append(rec)
         if len(out) >= limit:
             break

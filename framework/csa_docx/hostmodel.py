@@ -669,8 +669,9 @@ def build(work_dir: Path) -> dict:
                      "dst listens on port (seen from the server's capture)" if (s, d_, p) in served else
                      "dst not captured; port not verified")
             w.writerow([s, d_, p, n, basis, lsrc[(s, d_, p)]])
-    ev = link_evidence(work_dir, set(reg))
-    return {"status": "OK", "hosts": len(reg), "with_capture": sum(1 for e in reg.values() if e["capture"]),
+    addrs = build_addresses(work_dir, reg)
+    ev = link_evidence(work_dir, set(reg), set(addrs))
+    return {"status": "OK", "hosts": len(reg), "unnamed_addresses": len(addrs), "with_capture": sum(1 for e in reg.values() if e["capture"]),
             "facts": len(seen), "links": len(links), "unclassified": sum(1 for e in reg.values() if not e["system"]),
             "role_from_evidence": sum(1 for e in reg.values() if e["role_source"].startswith("evidence")),
             "role_from_name_only": sum(1 for e in reg.values() if e["role"] and not e["role_source"].startswith("evidence")),
@@ -681,7 +682,70 @@ def build(work_dir: Path) -> dict:
             "out": str(out)}
 
 
-def link_evidence(work_dir: Path, known: set[str]) -> dict:
+def build_addresses(work_dir: Path, reg: dict) -> dict:
+    """Peers seen only by address: hosts/addresses.csv, one row per address no register host owns.
+
+    Built from the matrix's connection rows (inbound and outbound, every captured host) and, for
+    sessions not yet in the matrix, the indexed established-connection captures. Nothing is guessed:
+    no role or site; `kind` says only whether the address is private or public. When a later build
+    names the address (a register host lists it), it drops out of this file and its evidence moves to
+    the host."""
+    import ipaddress
+    owned = {ip for e in reg.values() for ip in e["ips"]}
+    names = set(reg)
+    rows: dict[str, dict] = {}
+
+    def add(addr, host, direction, port, proc, eid=None):
+        addr = addr.strip()
+        if not addr or addr in owned or addr.upper() in names or ":" in addr or addr.startswith(("127.", "0.", "169.254.")):
+            return
+        try:
+            ip = ipaddress.ip_address(addr)
+        except ValueError:
+            return
+        r = rows.setdefault(addr, {"address": addr, "kind": "private" if ip.is_private else "public",
+                                   "hosts": set(), "directions": set(), "ports": set(), "processes": set(),
+                                   "evidence_ids": set(), "sessions": 0})
+        r["hosts"].add(host.upper()); r["directions"].add(direction); r["sessions"] += 1
+        if port:
+            r["ports"].add(str(port))
+        if proc:
+            r["processes"].add(proc)
+        if eid:
+            r["evidence_ids"].add(eid)
+
+    m = work_dir / "evidence-matrix.csv"
+    if m.is_file():
+        try:
+            from csa_docx import evidence_digest
+            with m.open(encoding="utf-8-sig", newline="") as fh:
+                for l in evidence_digest.links(list(csv.DictReader(fh))):
+                    add(l["peer"], l["host"], l["dir"], l["port"], l["proc"], l["id"])
+        except ImportError:
+            pass
+    try:
+        con = _db(work_dir)
+        for rel, host, t, line, d in _rows(con, "r.table_name = 'established_connections_raw' and f.host is not null"):
+            a = str(d.get("RemoteAddress") or "")
+            if a not in rows:          # matrix rows already cover the address; the index adds the rest
+                add(a, host, "outbound", d.get("RemotePort"), "")
+    except Exception:
+        pass
+    out = sorted(rows.values(), key=lambda r: (-len(r["hosts"]), -r["sessions"], r["address"]))
+    (work_dir / "hosts").mkdir(exist_ok=True)
+    with (work_dir / "hosts" / "addresses.csv").open("w", encoding="utf-8", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(["address", "name", "kind", "seen_from", "host_count", "directions", "ports", "processes",
+                    "sessions", "evidence_ids"])
+        for r in out:
+            w.writerow([r["address"], "name not captured", r["kind"], ";".join(sorted(r["hosts"])), len(r["hosts"]),
+                        ";".join(sorted(r["directions"])),
+                        ";".join(sorted(r["ports"], key=lambda x: int(x) if x.isdigit() else 0)[:10]),
+                        ";".join(sorted(r["processes"])), r["sessions"], ";".join(sorted(r["evidence_ids"]))])
+    return {r["address"]: r for r in out}
+
+
+def link_evidence(work_dir: Path, known: set[str], addresses: set[str] | None = None) -> dict:
     """Derived link table evidence_id -> hosts, read from each matrix row's text (shorthand
     expanded). The matrix itself is append-only and is not changed. A row naming no register
     host is subject_type 'system' (system-wide or not yet host-attributed)."""
@@ -695,13 +759,16 @@ def link_evidence(work_dir: Path, known: set[str]) -> dict:
                 for w in re.findall(r"[A-Za-z][A-Za-z0-9-]{2,30}(?:\s*/\s*\d+)*(?:\s*-\s*\d+)?", text):
                     toks.update(t.upper() for t in expand_hosts(w))
                 hosts = sorted(toks & known)
-                none += not hosts
-                out.append({"evidence_id": r["evidence_id"], "subject_type": "host" if hosts else "system",
+                addrs = sorted(set(re.findall(r"\b\d{1,3}(?:\.\d{1,3}){3}\b", r.get("claim") or "")) & (addresses or set()))
+                none += not hosts and not addrs
+                out.append({"evidence_id": r["evidence_id"], "subject_type": "host" if hosts else "address" if addrs else "system",
                             "hosts": ";".join(hosts), "status": r.get("status", ""),
-                            "review_state": r.get("review_state", ""), "question": (r.get("question") or "")[:160]})
+                            "review_state": r.get("review_state", ""), "question": (r.get("question") or "")[:160],
+                            "addresses": ";".join(addrs)})
     (work_dir / "hosts").mkdir(exist_ok=True)
     with (work_dir / "hosts" / "evidence_hosts.csv").open("w", encoding="utf-8", newline="") as fh:
-        w = csv.DictWriter(fh, fieldnames=["evidence_id", "subject_type", "hosts", "status", "review_state", "question"])
+        w = csv.DictWriter(fh, fieldnames=["evidence_id", "subject_type", "hosts", "status", "review_state", "question",
+                                           "addresses"])
         w.writeheader()
         w.writerows(out)
     return {"rows": len(out), "without_host": none}
@@ -719,6 +786,11 @@ def show(work_dir: Path, host: str) -> dict:
     h = host.strip().upper()
     reg = [r for r in _read(work_dir, "hosts.csv") if r["host"] == h]
     if not reg:
+        p = work_dir / "hosts" / "addresses.csv"
+        a = [r for r in _read(work_dir, "addresses.csv") if r["address"] == h] if p.is_file() else []
+        if a:
+            ev = [e for e in _read(work_dir, "evidence_hosts.csv") if h in (e.get("addresses") or "").split(";")]
+            return {"status": "OK", "address": a[0], "evidence": ev}
         return {"status": "NOT_FOUND", "host": h}
     facts = [f for f in _read(work_dir, "host_facts.csv") if f["host"] == h]
     links = [l for l in _read(work_dir, "host_links.csv") if h in (l["src_host"], l["dst_host"])]
@@ -1026,8 +1098,11 @@ def to_graph(work_dir: Path, workspace: Path, domain: str = "3.6 Network / Segme
 
 
 def unresolved(work_dir: Path, top: int = 40) -> list[dict]:
-    """Remote endpoints in the captures' sessions whose address is not any register host's:
-    the peers still to be named from evidence (e.g. a matrix row 'NAME (address)')."""
+    """The addresses still to be named: hosts/addresses.csv (built by `csa hosts build`), ranked by how many
+    captured hosts talk to each. Falls back to the indexed outbound sessions when the file is missing."""
+    p = work_dir / "hosts" / "addresses.csv"
+    if p.is_file():
+        return _read(work_dir, "addresses.csv")[:top]
     con = _db(work_dir)
     known = {ip for r in _read(work_dir, "hosts.csv") for ip in r["ips"].split(";") if ip}
     seen = defaultdict(lambda: {"ports": set(), "from": set(), "sessions": 0})

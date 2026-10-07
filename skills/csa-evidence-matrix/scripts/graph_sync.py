@@ -132,6 +132,22 @@ def main():
         if n_changed or len(N2) != len(N):
             write_csv(gdir / "nodes.csv", nf, N2, stamp)
 
+    # 3b. relabel address nodes the host register has since named
+    hp = wd / "hosts" / "hosts.csv"
+    if hp.is_file():
+        _, H = read_csv(hp)
+        owner = {ip: h["host"] for h in H for ip in (h.get("ips") or "").split(";") if ip}
+        nf, N = read_csv(gdir / "nodes.csv")
+        renamed = []
+        for n in N:
+            first = n["label"].split(" ")[0]
+            if first in owner and "name not captured" in n["label"]:
+                renamed.append((n["node_id"], first, owner[first]))
+                n["label"] = f"{owner[first]} ({first})"
+        report["relabelled"] = [f"{a}: {b} -> {c}" for a, b, c in renamed]
+        if renamed and not a.dry_run:
+            write_csv(gdir / "nodes.csv", nf, N, stamp)
+
     # 4. host index
     if not a.dry_run:
         try:

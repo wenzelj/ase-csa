@@ -357,7 +357,11 @@ def host_register(workspace: Path | None) -> dict | None:
     gl = sorted(groups.values(), key=lambda g: (-len(g["hosts"]), g["role"]))
     for g in gl:
         g["hosts"].sort()
-    return {"groups": gl, "total": sum(len(g["hosts"]) for g in gl), "uncaptured": uncaptured}
+    unnamed = []
+    af = d / "addresses.csv"
+    if af.is_file():
+        unnamed = list(csv.DictReader(af.open(encoding="utf-8")))
+    return {"groups": gl, "total": sum(len(g["hosts"]) for g in gl), "uncaptured": uncaptured, "unnamed": unnamed}
 
 
 def _register_lines(reg: dict) -> list[str]:
@@ -371,6 +375,21 @@ def _register_lines(reg: dict) -> list[str]:
         out += ["", "Named in the sources for this system but not captured (scope to be confirmed):"]
         for u in reg["uncaptured"]:
             out.append(f"- {u['host']}: {u['role']}" + (f"; site: {u['site']}" if u["site"] else ""))
+    un = reg.get("unnamed") or []
+    if un:
+        # every address several hosts use, then every private address that connects in (a client of the system)
+        many = [u for u in un if int(u.get("host_count") or 0) >= 2 and u.get("kind") == "private"]
+        inbound = [u for u in un if u not in many and u.get("kind") == "private" and "inbound" in (u.get("directions") or "")]
+        shown = (many + inbound)[:30]
+        out += ["", f"Peers seen only by address (name not captured; {len(un)} in total, not counted in the hosts above). "
+                    "Refer to one by its address and say its name was not captured:"]
+        for u in shown:
+            ev = (u.get("evidence_ids") or "").split(";")
+            out.append(f"- {u['address']} ({u['kind']}): from {u['host_count']} host(s) {u['seen_from'].replace(';', ', ')}; "
+                       f"{u['directions']}; ports {u['ports'].replace(';', ', ')}"
+                       + (f" ({', '.join(e for e in ev if e)})" if any(ev) else ""))
+        if len(un) > len(shown):
+            out.append(f"- {len(un) - len(shown)} more (public addresses, or private ones seen outbound from one host): csa hosts unresolved")
     return out
 
 
@@ -379,6 +398,16 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
     qs = questions(node, spec)
     pack = evidence_pack(node, qs, workspace, extra_searches, exclude) if evidence else {}
     established = _established(node, qs, pack, workspace) if pack else {}
+    if pack:
+        from csa_docx import evidence_digest
+        all_rows = _matrix_rows(workspace)
+        for q in qs:
+            if q["id"] not in pack:
+                continue
+            part = node["parts"][q["part"]] if q.get("part") is not None else {}
+            need = evidence_digest.need_for(q, node, (part or {}).get("evidence_need"))
+            d = evidence_digest.digest(q, need, node, all_rows, workspace)
+            pack[q["id"]].update({"need": need, "digest": d["blocks"], "digest_ids": d["ids"]})
     extra = scope_extras(node)
     kinds = sorted({q["kind"] for q in qs if q["kind"] != "comment"})
     reg = host_register(workspace) if evidence else None
@@ -398,11 +427,13 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
         lines += ["", "## Current text in the document", ""] + [f"- {c}" for c in cur]
     if established:
         lines += ["", "## Facts already established", "",
-                  "Reuse a fact if it answers the question; still cite its evidence IDs.", ""]
+                  "Facts other sections have already validated. Reuse one where it answers a question; still cite its evidence IDs.", ""]
+        by_fact: dict[tuple, list[str]] = {}
         for qid, facts in established.items():
-            lines.append(f"### {qid}")
             for f in facts:
-                lines.append(f"- {f['fact']} (section {f['section']}; {', '.join(f['evidence_ids'])})")
+                by_fact.setdefault((f["fact"], f["section"], ", ".join(f["evidence_ids"])), []).append(qid)
+        for (fact, sec, ev), qids in by_fact.items():
+            lines.append(f"- {fact} (section {sec}; {ev}; for {', '.join(qids)})")
     if reg and reg["groups"]:
         lines += _register_lines(reg)
     if pack:
@@ -411,8 +442,23 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
                   "Never copy that wording: restate each as a fact about the host or application "
                   "(\"X is a Reviewer jump host ...\") and put the source in the basis braces. "
                   "A fact whose subject is the matrix, capture, host map or previous assessment is rejected (SOURCE_AS_SUBJECT).", ""]
+        shown: dict[str, str] = {}
         for qid, p in pack.items():
             lines.append(f"### {qid}")
+            need = p.get("need")
+            if need:
+                lines.append(f"Evidence need: {need}" + (" (not recognised from the question: rows only; set evidence_need "
+                                                          "for this question in the scope map if they do not answer it)"
+                                                          if need == "default" else ""))
+            if p.get("digest"):
+                for block in p["digest"]:
+                    key = "\n".join(block)
+                    if key in shown:
+                        lines.append(f"- {block[0].rstrip(':')}: shown under {shown[key]} above; its evidence IDs may be cited here.")
+                    else:
+                        shown[key] = qid
+                        lines += [""] + block
+                lines += ["", "Rows:"]
             for r in p["rows"]:
                 if r.get("established"):
                     continue                    # listed under Facts already established

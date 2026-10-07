@@ -48,6 +48,8 @@ python3 "$H" --workspace <project_root> record --all --agent csa-evidence-invest
 
 `record` appends one VERIFIED matrix row per role fact and per peer link, each quoting the exact capture line (source-checked), then adds the host and peer nodes and one graph edge per link (`data-flow`, or `remote-access` for RDP/WinRM/SSH) carrying that row's E-id. Re-running skips duplicates, and the graph sync runs afterwards (pruning removed evidence, rebuilding the host index); new captures are picked up automatically on the next matrix append. Read the host card before writing about a host; it also lists the capture files that are missing and the addresses still to resolve.
 
+Peers seen only by address are kept in `csa-work/hosts/addresses.csv` (built with the host register; the graph sync rebuilds it): address, private or public, which captured hosts talk to it, direction, ports, processes and E-ids. `csa hosts show <address>` lists its evidence and `csa hosts unresolved` is the name-lookup request list, ranked by how many hosts use each address. When a later capture or lookup names an address, it moves to the host register and the graph node is relabelled on the next sync.
+
 Limits to state, never paper over: connection samples cover a short window, so periodic or batch peers may be absent; a missing capture file means "not captured", not "not present"; an inbound connection proves the peer used the service at capture time, not why.
 
 ## Search stopping rule

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from .soffice import find_soffice
 import hashlib
 import re
 import shutil
@@ -220,7 +221,7 @@ def render_pdf(project: dict[str, str], *, converter: Callable[[Path, Path], Non
         if converter is not None:
             converter(document, output)
         else:
-            soffice = shutil.which("soffice") or shutil.which("libreoffice")
+            soffice = find_soffice()
             if not soffice:
                 raise HTTPException(503, "LibreOffice preview runtime is unavailable")
             result = subprocess.run([soffice, "--headless", "--convert-to", "pdf", "--outdir", str(folder), str(document)],

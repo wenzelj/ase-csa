@@ -161,6 +161,7 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
     # rows the card lists as "more rows not shown" are this section's evidence too: the card cut them
     # for length, not relevance, so citing one is allowed (UNKNOWN_EVIDENCE still checks the matrix)
     allowed |= {i.upper() for p in card.get("evidence", {}).values() for i in p.get("cut", [])}
+    allowed |= {i.upper() for p in card.get("evidence", {}).values() for i in p.get("digest_ids", [])}
     allowed |= {i.upper() for i in (new_ids or set())}
     ratings = ratings or card.get("ratings") or ["Met", "Partially Met", "Not Met", "Not Applicable"]
     qs = {q["id"]: q for q in card["questions"]}
@@ -194,6 +195,11 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
             elif allowed and i not in allowed:
                 findings.append(_f("ERROR", "EVIDENCE_NOT_ON_CARD", qid,
                                    f"{i} was not on the card; ask for it with 'Search:' or append it to the matrix first"))
+        p = card.get("evidence", {}).get(qid, {})
+        if p.get("digest_ids") and p.get("need") in ("inventory", "dependencies", "isolation") \
+                and not (cited & {i.upper() for i in p["digest_ids"]}):
+            findings.append(_f("WARN", "DIGEST_UNUSED", qid, f"the card gave a {p['need']} digest for this question "
+                               "but the answer cites none of it; use it or say why it does not answer the question"))
         for fact in b["facts"]:
             hosts = set(_HOST.findall(fact["scope"])) | set(_HOST.findall(fact["text"]))
             if not hosts or not matrix:
@@ -411,6 +417,7 @@ def merge(existing: str, r: dict, brief: str, change_set: str) -> str:
         at = first.end() if first else len(text)
         text = text[:at] + "\n\n" + brief.strip() + "\n\n---\n" + text[at:]
     if r["records"]:
+        text = supersede(text, r["records"])
         span = _section_span(text, "Proposed changes")
         block = "\n" + "\n".join(r["records"])
         if span:
@@ -432,6 +439,36 @@ def merge(existing: str, r: dict, brief: str, change_set: str) -> str:
     text = re.sub(r"^\*\*Suggested change set:\*\*.*$", f"**Suggested change set:** {change_set} (earlier records in this file are kept)",
                   text, count=1, flags=re.M)
     text = re.sub(r"^\*\*Status:\*\*.*$", "**Status:** Proposed changes.", text, count=1, flags=re.M)
+    return text
+
+
+_TARGET = re.compile(r"\*\*Where:\*\*\s*`(@H[\w.\-]+)")
+_RECORD = re.compile(r"(?ms)^### (S\d+-E\d+)\b.*?(?=^### |^## |\Z)")
+
+
+def supersede(text: str, new_records: list[str]) -> str:
+    """Remove earlier records that are still pending (not on an Applied: line) and target the same anchor as a
+    new record, so one cell or paragraph never carries two pending replacements (apply would stack them).
+    Applied records stay as history. The removed IDs are noted under Proposed changes."""
+    targets = {m.group(1) for rec in new_records for m in [_TARGET.search(rec)] if m}
+    if not targets:
+        return text
+    applied = set()
+    for line in re.findall(r"(?m)^Applied:\s*(.+)$", text):
+        applied |= {x.strip(" .") for x in line.split(",")}
+    gone = []
+    def drop(m: re.Match) -> str:
+        t = _TARGET.search(m.group(0))
+        if t and t.group(1) in targets and m.group(1) not in applied:
+            gone.append(m.group(1))
+            return ""
+        return m.group(0)
+    text = _RECORD.sub(drop, text)
+    if gone:
+        span = _section_span(text, "Proposed changes")
+        note = f"\n_Superseded by the newer answer and removed before apply: {', '.join(gone)}._\n"
+        if span:
+            text = text[:span[1]].rstrip() + "\n" + note + text[span[1]:]
     return text
 
 

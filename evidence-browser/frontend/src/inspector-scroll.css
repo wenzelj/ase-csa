@@ -1,10 +1,33 @@
 /* Keep the section inspector inside the viewport while allowing the complete
    authoring and evidence workspace to move as one readable document. */
 .section-inspector {
+  inset: 0;
+  width: auto;
+  max-width: none;
+  height: 100dvh;
+  border: 0;
+  box-shadow: none;
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
   grid-template-rows: auto auto auto auto;
+}
+
+.section-inspector > header {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+}
+
+.section-inspector > footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 6;
+  box-shadow: 0 -10px 28px rgb(16 21 18 / 10%);
+}
+
+.section-inspector .author-panel {
+  margin: 20px clamp(20px, 3vw, 44px) 24px;
 }
 
 .section-inspector .inspector-columns {
@@ -15,8 +38,109 @@
   overflow: visible;
 }
 
+.section-inspector-loading {
+  inset: 0;
+  width: auto;
+  height: 100dvh;
+}
+
 @media (max-width: 900px) {
   .section-inspector {
     overflow-y: auto;
   }
+
+  .section-inspector .author-panel {
+    margin: 16px;
+  }
+
+  .section-inspector > footer.proposal-instrument {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    padding: 10px 12px 12px;
+  }
+
+  .proposal-instrument > div,
+  .proposal-instrument > span {
+    grid-column: 1 / -1;
+    min-width: 0;
+  }
+
+  .proposal-instrument > div small {
+    overflow-wrap: anywhere;
+  }
+
+  .proposal-instrument > button {
+    min-width: 0;
+    width: 100%;
+    padding-inline: 8px;
+  }
+}
+
+/* Collapsible workspace areas: keep long sections out of the way so the
+   assessor can reach each area without scrolling past everything else. */
+.inspector-area-nav {
+  position: sticky;
+  top: var(--inspector-header-height, 64px);
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  padding: 8px clamp(20px, 3vw, 44px);
+  background: #fff;
+  border-bottom: 1px solid #9dabad;
+}
+.inspector-area-nav > span { flex: 1; }
+.inspector-area-nav > button {
+  border: 1px solid #9dabad;
+  background: #f5f7f8;
+  padding: 4px 10px;
+  font-size: 13px;
+}
+.inspector-area-nav > button.is-collapsed { background: #fff; color: #5b6b70; font-weight: 400; }
+
+.area-toggle {
+  border: 0;
+  background: transparent;
+  padding: 0 8px 0 0;
+  font-size: 14px;
+  line-height: 1;
+  color: inherit;
+}
+.inspector-columns > section > header { justify-content: flex-start; gap: 4px; }
+.inspector-columns > section > header > span:first-of-type { margin-right: auto; }
+.section-inspector [id^="inspector-area-"] { scroll-margin-top: 120px; }
+
+.inspector-author-area > header {
+  display: flex;
+  align-items: center;
+  margin: 16px clamp(20px, 3vw, 44px) 0;
+  padding-bottom: 6px;
+  border-bottom: 2px solid #29444d;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  font-size: 12px;
+  font-weight: 700;
+}
+.inspector-author-area.collapsed > :not(header) { display: none; }
+.inspector-author-area.collapsed > header { margin-bottom: 12px; }
+.section-inspector .inspector-author-area .author-panel { margin-top: 12px; }
+
+.inspector-columns > section.collapsed > :not(header) { display: none; }
+.inspector-columns > section.collapsed { padding: 14px 6px; overflow: hidden; }
+.inspector-columns > section.collapsed > header {
+  writing-mode: vertical-rl;
+  border-bottom: 0;
+  margin: 0;
+  padding: 0;
+  gap: 10px;
+  white-space: nowrap;
+}
+.inspector-columns > section.collapsed > header > :not(.area-toggle):not(span:first-of-type) { display: none; }
+.inspector-columns > section.collapsed .area-toggle { padding: 0 0 6px; }
+
+@media (max-width: 900px) {
+  .inspector-columns > section.collapsed { padding: 12px 16px; }
+  .inspector-columns > section.collapsed > header { writing-mode: horizontal-tb; }
 }

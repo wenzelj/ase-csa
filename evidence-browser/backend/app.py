@@ -10,6 +10,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+from .soffice import find_soffice
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Literal
@@ -19,7 +20,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import apply_workflow, audit_workflow, author_workflow, build_workflow, cleanup_workflow, commands, documents, pipeline, proposals, review_workflow, sections, validation, word_review
+from . import apply_workflow, audit_workflow, author_workflow, build_workflow, cleanup_workflow, commands, documents, network, pipeline, proposals, review_workflow, sections, validation, word_review
 from .jobs import JobManager
 from .models import CommandRequest, JobCreateRequest
 
@@ -394,7 +395,7 @@ def extracted_document_preview(project: dict[str, str], file_id: int, path: Path
 
 
 def render_office(path: Path) -> Path:
-    soffice = shutil.which("soffice") or shutil.which("libreoffice")
+    soffice = find_soffice()
     if not soffice:
         raise HTTPException(503, "LibreOffice preview runtime is unavailable")
     fingerprint = hashlib.sha256(f"{path}:{path.stat().st_mtime_ns}:{path.stat().st_size}".encode()).hexdigest()[:20]
@@ -716,6 +717,13 @@ def get_summary(system_key: str) -> dict[str, Any]:
             "captures": captures[0] or 0, "current_captures": captures[1] or 0,
             "files_by_status": statuses, "evidence_rows": evidence_count, "families": families,
             "coverage": [{"host": host, "families": dict(values)} for host, values in sorted(coverage.items())]}
+
+
+@app.get("/api/systems/{system_key}/network")
+def host_network(system_key: str) -> dict[str, Any]:
+    """Every connection the captures recorded, as nodes and edges, from the matrix and host register."""
+    project = system_project(system_key)
+    return network.build(work_dir(project), agents_dir())
 
 
 @app.get("/api/systems/{system_key}/portrait")

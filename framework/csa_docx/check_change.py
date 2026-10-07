@@ -50,6 +50,21 @@ def structure_findings(path: Path, text: str, records) -> list[dict]:
         if eid in seen:
             out.append(finding("ERROR", "DUPLICATE_ID", f"{eid} is used more than once", eid))
         seen.add(eid)
+    # two pending edits on the same target stack: apply would insert each one as its own tracked change in the
+    # same cell or paragraph. Only the newest may stay; older ones already applied (Applied: line) are history.
+    applied = set()
+    for line in re.findall(r"(?m)^Applied:\s*(.+)$", text):
+        applied |= {x.strip(" .") for x in line.split(",")}
+    by_target: dict[str, list[str]] = {}
+    for r in records:
+        tgt = re.search(r"@H[\w.\-]+", r.where or "")
+        if tgt and r.edit_id not in applied:
+            by_target.setdefault(tgt.group(0), []).append(r.edit_id)
+    for tgt, ids in by_target.items():
+        if len(ids) > 1:
+            out.append(finding("ERROR", "TARGET_EDITED_TWICE",
+                               f"{tgt} has {len(ids)} pending edits ({', '.join(ids)}); applying all of them stacks the "
+                               f"text. Keep only the newest ({ids[-1]}) and remove the others", ids[0]))
     for r in records:
         if "@H" not in (r.where or ""):
             out.append(finding("ERROR", "WHERE_NOT_STABLE_ID", "Where: must be a stable ID (@H...) from lookupStableId", r.edit_id))
