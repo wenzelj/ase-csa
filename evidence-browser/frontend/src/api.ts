@@ -1,4 +1,4 @@
-import type { WordReview, ReviewSubmit, ReviewJob, ReviewJobResponse, ReviewLatest, AuthorSetup, AuthorSubmit, AuthorJobResponse, AuthorOptions, CleanupSubmit, CleanupJobResponse, CleanupLatest, CleanupPreflight, BuildSetup, BuildOutcome, AuditSnapshot } from "./types";
+import type { DraftSnapshot, WordReview, ReviewSubmit, ReviewJob, ReviewJobResponse, ReviewLatest, AuthorSetup, AuthorSubmit, AuthorJobResponse, AuthorOptions, CleanupSubmit, CleanupJobResponse, CleanupLatest, CleanupPreflight, BuildSetup, BuildOutcome, AuditSnapshot } from "./types";
 
 export async function api<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
@@ -96,3 +96,7 @@ export async function fetchAudit(system: string): Promise<AuditSnapshot> { retur
 export async function submitAudit(system: string): Promise<{ job: ReviewJob }> { return api(`/api/systems/${system}/audit`, { method: "POST" }); }
 export async function fetchAuditJob(system: string, id: string): Promise<{ job: ReviewJob; outcome: { state: string; snapshot?: AuditSnapshot; failure_reason?: string } }> { return api(`/api/systems/${system}/audit-jobs/${id}`); }
 export async function recordAuditGap(system: string, payload: Record<string, string>): Promise<{ state: string; path: string }> { return api(`/api/systems/${system}/audit/gaps`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }); }
+
+export async function fetchDraft(system: string): Promise<DraftSnapshot> { return api(`/api/systems/${system}/draft`); }
+export async function submitJob(system: string, operation: string, target?: string, options: Record<string, string | boolean> = {}): Promise<ReviewJob> { return api(`/api/systems/${system}/jobs`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ operation, target: target || null, options }) }); }
+export async function fetchJob(system: string, id: string): Promise<ReviewJob> { return api(`/api/systems/${system}/jobs/${id}`); }

@@ -29,7 +29,7 @@ A reader should be able to read a paragraph aloud to a colleague and have it mak
 
 ### Answer the question first
 
-The reader asked a question of a system: where does its time come from, which resolvers does it use, what fails when they go. Answer it in terms of the systems and applications (the Reveloc application servers, the SQL clusters, the TETRA log server, the jump hosts), not host counts or capture coverage, and name the server or address the answer points to, so the reader knows what to look at. The limits below are guides that `prose_lint.py` reports as warnings. Never leave the question half answered, or drop a fact that answers it, to meet a limit; a longer sentence or one more host name is the smaller fault.
+The reader asked a question of a system: where does its time come from, which resolvers does it use, what fails when they go. Answer it in terms of the systems and applications (the Reveloc application servers, the SQL clusters, the TETRA log server, the jump hosts), not host counts or capture coverage, and name the role the answer points to (the host name too only where the reader must act on one host; see "Host references"), so the reader knows what to look at. The limits below are guides that `prose_lint.py` reports as warnings. Never leave the question half answered, or drop a fact that answers it, to meet a limit; a longer sentence or one more host name is the smaller fault.
 
 ### Requirement rows: judge the practice, not the assessment's own list
 
@@ -41,11 +41,25 @@ A requirement asks whether the organisation does something (keeps an inventory, 
 
 The assessment's own discovery output (the hosts the captures found, their roles and counts) is not the organisation's inventory or dependency map, and never counts as the practice being in place. Host lists, counts and roles go in the Discovery Information and Hosts tables, not the Current State cell. Rate against the practice: no maintained tool or process is Not Met, a maintained but incomplete one is Partially Met.
 
+### Host references: function in prose, name and address in tables
+
+Prose that explains how the system works names a machine by what it does. A host name or IP address only identifies the machine, so it belongs in the table the reader looks it up in, unless the question asks for it.
+
+- **The question decides.** When a requirement or card question asks for hosts or addresses ("which hosts", "what addresses"), give exactly what it asks for: host names, IP addresses, ports. Role-first is the default for explaining how the system works; it never replaces a requested identifier. A "which hosts" answer lists them by name with the role group beside them, and a "which address" answer gives the address next to the role.
+- **Default: the function.** Use the machine's role from the Host register (`role` column), written the same way every time: "the RevViewer Jump Host", "the Radio Management host", "the enterprise domain controllers", "the TETRA log server". The role is the subject of the sentence, and the initiator of a connection is the subject: "The RevViewer Jump Host starts RDP (mstsc) sessions into the Radio Management host." not "ROKPRDOPS110 initiates RDP sessions into ROKPRDOPS112 and 10.40.228.132."
+- **Same role, several hosts: the group.** "The two RevViewer Jump Hosts", "the six SQL Server cluster nodes". Add the site only when the sites differ ("the Mackay RevViewer Jump Host"). The member names go in the table row for that role group.
+- **Add the host name in prose only when** (a) the finding is about one specific host and the reader must act on it or find it (an exception, a gap, a host that differs from its peers), or (b) the role and site still leave two hosts indistinguishable. Give it once, on first mention in that paragraph, as "role (NAME)": "the Mackay RevViewer Jump Host (MKYPRDOPS110)", then the role alone afterwards. Never repeat a host name sentence after sentence.
+- **No role in the evidence: use the name.** Never invent or infer a function. If the register has no role for a host, use its name exactly as the sources write it and let the unknown be stated once.
+- **IP address in prose only for a machine with no name and no known role**, written as "an unnamed internal peer (10.40.228.132)". Never give a name and an address together in prose, and never an address for a host that has a name. Leave subnets and address ranges to the tables.
+- **Tables give both**, one row per role group: `MOTPRDREV101 (10.20.1.5)`. Write names exactly as the sources do, never renamed (RevViewer stays RevViewer).
+- **Ports where they matter.** Give a port or protocol where it explains how components connect ("RDP (mstsc)", "tcp/9997"); put full port lists in a table.
+
+Before: "ROKPRDOPS110 initiates RDP (mstsc) sessions into ROKPRDOPS112 and into unnamed internal peers at 10.40.228.132 and 10.40.228.211. MKYPRDOPS110 and ROKPRDOPS110 each establish sessions to MOTPRDSRV122 and ROTPRDSRV122."
+
+After: "The RevViewer Jump Hosts are the administrative entry point. The Rockhampton jump host starts RDP (mstsc) sessions into the Radio Management host and two unnamed internal peers (10.40.228.132, 10.40.228.211), and both jump hosts authenticate against the enterprise domain controllers."
+
 ### Identifier budget
 
-- **Name first, address when there is no name.** Refer to a host by its name or role. When the evidence gives only an IP address (no host name in the discovery data, DNS records or host register), use the address in prose: describing the system matters more than hiding the address. Do not give both name and address in prose. Tables that capture the system (host, register and connection tables) give both, e.g. `MOTPRDREV101 (10.20.1.5)`. Write host names exactly as the sources do, never renamed (RevViewer stays RevViewer).
-- **Ports where they matter.** Give a port where it explains how components connect; put full port lists in a table.
-- **Name hosts by role**, and give a host name only where the reader needs it to act or to find the host in a table. When a sentence would list many hosts, group them by role and put the list in a table.
 - **Group hosts by role.** Hosts with the same role share one table row ("ROTPRDCLU101-104, MOTPRDCLU101, MOTPRDCLU103 | OT | SQL Server cluster node"), and prose names the role group, not each host. A host table covers every captured host in the card's Host register, one row per role group. Any count must add up: a total and its breakdown name the same hosts.
 - **Readable sentences.** Aim for an average around 25 words and split sentences over about 45 words where that reads better. Never drop a fact to shorten a sentence.
 - **One hedge per point.** Put the unknown once, at the end ("Whether the second site is used only on failover is still to be confirmed with the operations team."), not in every sentence.

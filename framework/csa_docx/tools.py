@@ -19,6 +19,8 @@ for the design this module implements.
 
 from __future__ import annotations
 
+import sys
+
 import hashlib
 import json
 import os
@@ -195,6 +197,12 @@ def _check_document_ready(docx: Path) -> _Readiness:
         )
 
     locks = _word_lock_files(docx)
+    if locks:
+        from .word_close import ensure_closed
+        closed = ensure_closed(docx)
+        if closed["status"] != "LOCKED":
+            print(f"csa: {closed['message']}; carrying on", file=sys.stderr)
+            locks = _word_lock_files(docx)
     if locks:
         return _Readiness(
             False,

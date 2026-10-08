@@ -132,6 +132,9 @@ class Handler(BaseHTTPRequestHandler):
             match = re.fullmatch(r"/api/systems/([^/]+)/build-jobs/([^/]+)", path)
             if match:
                 return self.dispatch_result(api.get_build_job(match.group(1), match.group(2)))
+            match = re.fullmatch(r"/api/systems/([^/]+)/draft", path)
+            if match:
+                return self.dispatch_result(api.get_draft(match.group(1)))
             match = re.fullmatch(r"/api/systems/([^/]+)/audit", path)
             if match:
                 return self.dispatch_result(api.get_audit(match.group(1)))

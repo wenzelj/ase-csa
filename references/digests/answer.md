@@ -23,7 +23,7 @@ The card (`CARD=`) is your whole input. Write the answer sheet (`SHEET=`) and st
 
 ## Naming
 
-- Name hosts by host name in full. An IP address is used in a fact only where it describes the system and no host name is known. Tables that capture the system (host, register, connection tables) give both the host name and the IP address, e.g. `MOTPRDREV101 (10.20.1.5)`. Host names are written exactly as the sources write them, never renamed (RevViewer stays RevViewer).
+- In facts, name a host by its role from the Host register and keep the host name in the fact for the table; the Writer chooses the prose form. Use an IP address only where no host name is known. Prose names a machine by its role from the Host register (the RevViewer Jump Host, the Radio Management host), not by host name or IP address; names and addresses go in tables, unless the question asks for hosts or addresses, in which case give them. Rules and exceptions: "Host references" in `csa-writing-style`. Tables that capture the system give both, e.g. `MOTPRDREV101 (10.20.1.5)`; names are written exactly as the sources write them (RevViewer stays RevViewer).
 - Evidence IDs never appear in document text; the framework strips them from rows.
 
 ## Errors the framework reports (fix every one)

@@ -35,6 +35,7 @@ class Operation:
     mutating: bool = False  # compatibility alias; mutation_class is authoritative for new operations
     mutation_class: Literal["read_only", "workspace_write", "document_write"] = "read_only"
     lock: Literal["none", "section", "docx"] = "none"
+    closes_word: bool = False  # the csa command saves and closes the working DOCX in Word itself
 
     def descriptor(self) -> CommandDescriptor:
         return CommandDescriptor(
@@ -98,7 +99,32 @@ OPERATIONS: dict[str, Operation] = {
         "audit", "Audit assessment", "Run the framework's read-only assessment audit and preserve its report artifacts.",
         ("audit",), timeout=900,
     ),
+    # Draft lane (before V1): index, answer, refresh, freeze.
+    "ingest": Operation(
+        "ingest", "Ingest new data", "Index new or changed files, sync the evidence matrix, host register and graph, then list stale subsections.",
+        ("ingest",), options={"rebuild": "boolean"}, timeout=3600, mutation_class="workspace_write",
+    ),
+    "stale": Operation(
+        "stale", "Check for stale answers", "Rebuild each answered card (no model) and compare it with the saved answer.",
+        ("stale",), timeout=1800, mutation_class="workspace_write",
+    ),
+    "answer": Operation(
+        "answer", "Answer subsection", "Draft lane: card, one agent call, written into the working DOCX as plain text.",
+        ("answer", "--headless"), "required", "section", {"cli": "identifier", "fresh": "boolean"},
+        timeout=3600, mutating=True, mutation_class="document_write", lock="docx", closes_word=True,
+    ),
+    "refresh_draft": Operation(
+        "refresh_draft", "Refresh stale answers", "Draft lane: answer again every subsection whose evidence changed.",
+        ("refresh-draft", "--headless"), options={"cli": "identifier"},
+        timeout=7200, mutating=True, mutation_class="document_write", lock="docx", closes_word=True,
+    ),
+    "freeze": Operation(
+        "freeze", "Freeze at V1", "Copy the working DOCX to a V1 baseline and switch the project to the V1 change lane.",
+        ("freeze",), "required", "section", timeout=120, mutating=True, mutation_class="document_write", lock="docx",
+    ),
 }
+
+DRAFT_CLIS = frozenset({"claude", "codex", "evo"})
 
 
 def catalogue() -> list[dict[str, Any]]:
@@ -156,7 +182,13 @@ def build_argv(agents_dir: Path, project_key: str, operation_key: str, request: 
             if not isinstance(value, str):
                 raise HTTPException(422, f"Option {name} must be an identifier")
             argv += [flag, _validate_identifier(value, "section")]
-    if operation.key not in {"author", "review", "cleanup", "build_preview", "build", "audit"}:
+    if operation.key == "answer" or operation.key == "refresh_draft":
+        if request.options.get("cli") not in (None, *DRAFT_CLIS):
+            raise HTTPException(422, "cli must be claude, codex or evo")
+    if operation.key == "freeze" and request.target != "v1":
+        raise HTTPException(422, "freeze takes the target v1")
+    if operation.key not in {"author", "review", "cleanup", "build_preview", "build", "audit",
+                             "ingest", "stale", "answer", "refresh_draft", "freeze"}:
         argv.append("--json")
     return operation, argv
 

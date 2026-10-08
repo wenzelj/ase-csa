@@ -146,3 +146,10 @@ export type ApplyPlan = { system: string; section: { visible_number: string; hea
 export type ApplyJob = { id: string; state: string; stdout_tail?: string; stderr_tail?: string; message?: string };
 export type ApplyOutcome = { state: string; applied: string[]; already_applied: string[]; skipped: string[]; blocked: string[]; backup?: string; warnings: string[]; next_edit_id?: string };
 export type ValidationFinding = { severity: string; code: string; edit_id?: string; record_id?: string; field?: string; stable_anchor?: string; evidence_ids: string[]; message: string };
+
+export type DraftSection = { number: string; key: string; title: string; kind: string; level: number; document_state: string; state: "current" | "stale" | "answered" | "not-answered"; answered_at?: string | null; open: number };
+export type DraftSnapshot = {
+  project_key: string; stage: string; stale_checked_at?: string | null; counts: Record<string, number>; sections: DraftSection[];
+  changes: { rows: { day: string; time: string; subsection: string; change: string; open: string }[]; file?: string | null };
+  open_questions: { groups: { title: string; items: string[] }[]; total: number; file?: string | null }; spec_error?: string | null;
+};

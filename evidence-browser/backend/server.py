@@ -12,6 +12,7 @@ def main() -> None:
     parser.add_argument("--project", default="iamps")
     parser.add_argument("--no-open", action="store_true")
     parser.add_argument("--agents-dir")
+    parser.add_argument("--reload", action="store_true", help="restart the backend when its Python code changes (development)")
     args = parser.parse_args()
     if args.host not in ("127.0.0.1", "localhost"):
         parser.error("the evidence workspace may only bind to loopback")
@@ -26,7 +27,8 @@ def main() -> None:
         from backend.local_server import serve
         serve("127.0.0.1", args.port)
     else:
-        uvicorn.run("backend.app:app", host="127.0.0.1", port=args.port, reload=False)
+        uvicorn.run("backend.app:app", host="127.0.0.1", port=args.port, reload=args.reload,
+                    reload_dirs=[os.path.dirname(os.path.abspath(__file__))] if args.reload else None)
 
 
 if __name__ == "__main__":

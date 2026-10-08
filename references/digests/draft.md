@@ -27,7 +27,7 @@ The card (`CARD=`) is your whole input. Write the answer sheet (`SHEET=`) once a
 ## Names and addresses
 
 - When a host has a name, use the name exactly as the sources write it. Never rename or "correct" a host name (for example, RevViewer stays RevViewer).
-- Use an IP address in prose only when it describes the system and no host name is known for it.
+- Prose names a machine by its role from the Host register (the RevViewer Jump Host, the Radio Management host), not by host name or IP address; names and addresses go in tables, unless the question asks for hosts or addresses, in which case give them. Rules and exceptions: "Host references" in `csa-writing-style`. Use an IP address in prose only for a machine with no name and no known role.
 - Tables that capture the system (host, register and connection tables) give both the name and the address, e.g. `MOTPRDREV101 (10.20.1.5)`. Leave the address out when none is known.
 
 ## Hard errors (the only ones that stop the write)

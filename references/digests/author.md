@@ -24,7 +24,7 @@ Draft `reviews/ChangesCSA_<App>_Section<N>.md` for one section from Discovery Da
 - Each edit has a `**Facts:**` list, each line starting with the brief item it answers: `- [B3] IAMPS opens the connection from the IT side (E-003) {basis: observed; scope: HOST01, HOST02}`. `Table detail:` and `Unknown:` lines are exempt; at most one `Unknown:` line.
 - Basis is `observed`, `documented` or `stated`. There is no `inferred`: a conclusion you would have to reason your way to is an `Unknown:` and an open question.
 - Scope names the hosts or sites the matrix row covers; never wider.
-- Text is a draft for the Writer: no evidence ID, IP address or subnet in prose. Hosts by name; an IP address only where it describes the system and no host name is known. Tables that capture the system (host, register, connection tables) give both the host name and the IP address, e.g. `MOTPRDREV101 (10.20.1.5)`. Host names are written exactly as the sources write them, never renamed (RevViewer stays RevViewer).
+- Text is a draft for the Writer: no evidence ID, IP address or subnet in prose. Host references follow `csa-writing-style` "Host references": role from the Host register in prose, no IP address for a named host. Tables that capture the system give both, e.g. `MOTPRDREV101 (10.20.1.5)`; names are written exactly as the sources write them (RevViewer stays RevViewer).
 - Write `## Fact audit` (`| Record | Sentence | Evidence quote | Basis | Scope |`), one row per Text sentence. A sentence with no quote is deleted or becomes the unknown.
 
 ## Errors to fix

@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import apply_workflow, audit_workflow, author_workflow, build_workflow, cleanup_workflow, commands, documents, network, pipeline, proposals, review_workflow, sections, validation, word_review
+from . import apply_workflow, audit_workflow, author_workflow, build_workflow, cleanup_workflow, commands, documents, draft_workflow, network, pipeline, proposals, review_workflow, sections, validation, word_review
 from .jobs import JobManager
 from .models import CommandRequest, JobCreateRequest
 
@@ -419,7 +419,14 @@ job_manager = JobManager(agents_dir())
 def get_systems() -> dict[str, Any]:
     registered = projects()
     return {"systems": [{"key": key, "label": cfg["label"], "project_key": cfg["project_key"],
-                         "available": cfg["project_key"] in registered} for key, cfg in SYSTEMS.items()]}
+                         "available": cfg["project_key"] in registered,
+                         "stage": str(registered.get(cfg["project_key"], {}).get("stage") or "draft").strip().lower()}
+                        for key, cfg in SYSTEMS.items()]}
+
+
+@app.get("/api/systems/{system_key}/draft")
+def get_draft(system_key: str) -> dict[str, Any]:
+    return draft_workflow.snapshot(agents_dir(), system_project(system_key))
 
 
 @app.get("/api/systems/{system_key}/commands")

@@ -98,6 +98,9 @@ def stamp(docx: Path, spec: dict, template_spec_: dict | None, work_dir: Path | 
         pl["status"] = "DRY_RUN" if dry_run else "NOTHING_TO_STAMP"
         return pl
     if word_has_open(docx):
+        from .word_close import ensure_closed
+        ensure_closed(Path(docx))
+    if word_has_open(docx):
         pl["status"] = "LOCKED"
         pl["message"] = f"{Path(docx).name} is open in Word; close it and run again"
         return pl

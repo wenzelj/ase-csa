@@ -1132,26 +1132,30 @@ def cmd_approve(a):
            approved=[] if a.revoke else section_state(p, a.section)["edits"], rejected=rejected)
 
 
-def close_in_word(docx: Path, wait: float = 20.0) -> bool:
-    """Save and close ``docx`` in Microsoft Word (macOS only), then wait for Word's lock file to go.
-    Returns True when the document is no longer open. Other open documents are left alone."""
-    lock = docx.parent / ("~$" + docx.name[2:])
-    if not lock.exists():
-        return True
-    if sys.platform != "darwin" or not shutil.which("osascript"):
-        return False
-    script = ('tell application "Microsoft Word"\n'
-              '  repeat with d in (documents)\n'
-              f'    if (full name of d) is "{docx}" or (name of d) is "{docx.name}" then close d saving yes\n'
-              '  end repeat\n'
-              'end tell')
-    subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=60)
-    end = time.time() + wait
-    while time.time() < end:
-        if not lock.exists():
-            return True
-        time.sleep(0.5)
-    return not lock.exists()
+_WORD_CLOSE_MSG = ""
+
+
+def close_in_word(docx: Path, wait: float = 30.0) -> bool:
+    """Make sure ``docx`` is not open in Word, then carry on (csa_docx.word_close): a stale owner file is removed,
+    an open document is saved and closed in Word (others stay open). False only when Word keeps it open."""
+    global _WORD_CLOSE_MSG
+    res = _fw_json("csa_docx.word_close", docx, "--json")
+    _WORD_CLOSE_MSG = res.get("message", "")
+    if res.get("status") in ("CLOSED", "STALE_REMOVED"):
+        print(f"{C['d']}{res['message']}; carrying on{C['0']}")
+    return res.get("status") != "LOCKED"
+
+
+def cmd_close_word(a):
+    """Save and close the working DOCX in Word if it is open (a leftover owner file is removed)."""
+    p = project(a.project)
+    d = working_docx(p)
+    if not d:
+        print("no working DOCX")
+        return 0
+    ok = close_in_word(d)
+    print(_WORD_CLOSE_MSG or f"{d.name} is not open in Word")
+    return 0 if ok else 1
 
 
 def _apply_once(p, a, limit):
@@ -1196,7 +1200,7 @@ def cmd_apply(a):
                 res = _apply_once(p, a, limit)
                 status = res.get("status")
             else:
-                print("could not close it automatically (only possible on the Mac, with Word's permission)")
+                print(f"could not close it automatically: {_WORD_CLOSE_MSG}")
         applied = (res.get("applied") or []) + (res.get("already_applied") or [])
         print(f"batch {rounds}: {status}  applied={applied}  next={res.get('next_edit_id')}")
         metric(p, "apply", a.section, batch=rounds, status=status, applied=applied, blocked=res.get("blocked") or [])
@@ -1322,7 +1326,7 @@ def cmd_place(a):
             if docx and (docx.parent / ("~$" + docx.name[2:])).exists() and not a.keep_open:
                 print(f"{docx.name} is open in Word; saving and closing it ...")
                 if not close_in_word(docx):
-                    die(f"{docx.name} is open in Word; close it and run `csa place {f.name}` again.")
+                    die(f"{docx.name} is open in Word and could not be closed: {_WORD_CLOSE_MSG}")
             before = {x.name for x in fv.glob("*.docx")} | {x.name for x in fv.glob("reviews/*")} | {x.name for x in fv.glob("run-state/*")}
             if plain:
                 blocked = _fw_module_call("build", "plain_blocker", str(root), str(f), system_name=system_name)
@@ -2294,7 +2298,7 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
         if (Path(docx).parent / ("~$" + Path(docx).name[2:])).exists():
             print(f"{Path(docx).name} is open in Word; saving and closing it ...")
             if not close_in_word(Path(docx)):
-                die(f"{Path(docx).name} is open in Word; close it and run again.")
+                die(f"{Path(docx).name} is open in Word and could not be closed: {_WORD_CLOSE_MSG}")
         blk = _fw_json("csa_docx.draft_lane", "blocker", "--docx", docx, "--heading", title)
         if blk.get("status") != "OK":
             die(f"draft lane: {blk.get('message')}")
@@ -2454,6 +2458,9 @@ def cmd_stale(a):
     p = project(a.project); banner(p)
     rows = stale_sections(p)
     stale = [r for r in rows if r["status"] != "REUSE"]
+    out = local_path(p["work_dir"]) / "draft" / "stale.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps({"checked_at": time.strftime("%Y-%m-%dT%H:%M:%S"), "sections": rows}, indent=1), encoding="utf-8")
     for r in rows:
         mark = C["g"] + "current" + C["0"] if r["status"] == "REUSE" else C["y"] + r["status"].lower() + C["0"]
         extra = f" ({', '.join(r['changed'])})" if r["changed"] else ""
@@ -3152,7 +3159,7 @@ def cmd_fleet(a):
         return None
 
     def start(t: dict, slot: str):
-        if "docx" in t["locks"] and _docx_open_in_word(p):
+        if "docx" in t["locks"] and _docx_open_in_word(p) and not (working_docx(p) and close_in_word(working_docx(p))):
             t["status"], t["note"] = "skipped", "working DOCX is open in Word (close it and re-run)"
             say(f"{C['y']}skip{C['0']}  #{t['n']} {t['text']} - {t['note']}")
             skip_dependents(t)
@@ -4109,6 +4116,7 @@ def main(argv=None) -> int:
     s.add_argument("--set", nargs="*", help="KEY=VALUE overrides for --agent"); agent_opts(s)
     s = sp("pipeline", cmd_pipeline); s.add_argument("section"); s.add_argument("--limit", type=int)
     s.add_argument("--max-batches", type=int, default=50); agent_opts(s)
+    sp("close-word", cmd_close_word, help="save and close the working DOCX in Word if it is open, then go on")
     s = sp("ingest", cmd_ingest, help="new data in: discovery index, graph sync (matrix, hosts, links), then stale subsections")
     s.add_argument("--rebuild", action="store_true", help="rebuild the discovery index from scratch")
     s.add_argument("--no-stale", action="store_true", help="skip the stale check")

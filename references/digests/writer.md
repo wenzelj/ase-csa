@@ -21,7 +21,7 @@ The author has written the change file; you rewrite only the `**Text:**` of pros
 
 - Answer the requirement's question first, in terms of the systems it concerns, and name the server, resolver or host it points to.
 - Say each fact once, in full sentences (no bullet fragments, no lead-ins, no evidence as the subject), no general technology explanation. Host-level detail goes in tables.
-- Host name first in prose; an IP address only where it describes the system and no host name is known. No evidence ID in prose Text. Tables that capture the system (host, register, connection tables) give both the host name and the IP address, e.g. `MOTPRDREV101 (10.20.1.5)`. Host names are written exactly as the sources write them, never renamed (RevViewer stays RevViewer).
+- Host references: Prose names a machine by its role from the Host register (the RevViewer Jump Host, the Radio Management host), not by host name or IP address; names and addresses go in tables, unless the question asks for hosts or addresses: then give them. Rules and exceptions: "Host references" in `csa-writing-style`. No evidence ID in prose Text. Tables that capture the system give both, e.g. `MOTPRDREV101 (10.20.1.5)`; names are written exactly as the sources write them (RevViewer stays RevViewer).
 - Keep current state, interpretation, gap and risk observation distinct. No recommendation, no future-state design.
 - Australian English. Technical explanations only in a labelled `Technical explanation` note.
 

@@ -22,6 +22,14 @@ csa -p tetra-reveloc browse
 
 The server accepts loopback connections only. Add `--no-open` for a server-only launch or `--port 9000` to select another local port.
 
+## Draft answers (before V1)
+
+While a project is at `stage: draft` (PROJECTS.yaml, the default), the rail shows **Draft answers**: ingest new data,
+check for stale answers, refresh them, and answer any subsection with Claude, Codex or Evo. Each answer runs
+`csa answer N --headless` in its own Terminal window and is written into the working DOCX as plain text. The page also
+shows the recent draft changes and the open questions. The section map's author/review/cleanup workspace and the Word
+review panel are hidden until the project is frozen at V1 (`Freeze at V1…` on the same page, or `csa freeze v1`).
+
 ## Authoring decisions
 
 The Assessment workspace uses the framework's card-first author route by default and always submits proposals with

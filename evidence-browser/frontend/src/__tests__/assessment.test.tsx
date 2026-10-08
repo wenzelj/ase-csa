@@ -3,6 +3,9 @@ import { AssessmentShell, pipelineState } from "../App";
 import type { PipelineSection, PipelineSnapshot } from "../types";
 
 
+// App reads location.search at render time; the test runs in node, which has no location.
+globalThis.location ??= { search: "" } as Location;
+
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }

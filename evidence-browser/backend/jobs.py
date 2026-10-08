@@ -172,8 +172,16 @@ class JobManager:
         stdout = ""
         stderr = ""
         try:
-            if job.lock == "docx":
+            if job.lock == "docx" and not getattr(operation, "closes_word", False):
                 lock = self._word_lock_check(project)
+                if lock is not None:      # save and close it in Word (or clear a stale owner file), then check again
+                    try:
+                        subprocess.run([str(self.agents_dir / "bin" / "csa"), "--project", project["key"], "close-word"],
+                                       cwd=str(self.agents_dir.parent), env=commands._minimal_environment(self.agents_dir),
+                                       capture_output=True, text=True, timeout=90)
+                    except (OSError, subprocess.SubprocessError):
+                        pass
+                    lock = self._word_lock_check(project)
                 if lock is not None:
                     raise RuntimeError(
                         f"Working DOCX is open in Word ({lock.name}). Close it before running this operation."

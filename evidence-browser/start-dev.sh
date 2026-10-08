@@ -22,8 +22,8 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-echo "Starting backend on http://127.0.0.1:8765 ..."
-uv run python -m backend.server --no-open "$@" &
+echo "Starting backend on http://127.0.0.1:8765 (restarts itself when backend code changes) ..."
+uv run python -m backend.server --no-open --reload "$@" &
 pids+=($!)
 
 echo "Starting frontend (Vite)..."

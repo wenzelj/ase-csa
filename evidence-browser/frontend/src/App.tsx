@@ -4,6 +4,7 @@ import { api, fetchWordReview } from "./api";
 import { WordReviewPanel } from "./components/WordReviewPanel";
 import { BuildPanel } from "./components/BuildPanel";
 import { AuditPanel } from "./components/AuditPanel";
+import { DraftLane } from "./components/DraftLane";
 
 const MarkupViewer = lazy(() => import("./components/MarkupViewer").then(module => ({ default: module.MarkupViewer })));
 import type { AssessmentState, PipelineSection, PipelineSnapshot, SectionInspection, WordReview } from "./types";
@@ -13,7 +14,7 @@ import { Empty, Loading, Status, human } from "./components/ui";
 
 export { pipelineState };
 
-type System = { key: string; label: string; project_key: string; available: boolean };
+type System = { key: string; label: string; project_key: string; available: boolean; stage?: string };
 type Summary = { label: string; built_at_utc?: string; index_complete: boolean; current_captures: number; files_by_status: Record<string, number>; evidence_rows: number; families: string[]; coverage: { host: string; families: Record<string, number> }[] };
 type EvidenceRow = Record<string, string>;
 type FileRow = { file_id: number; rel_path: string; host?: string; ext: string; size: number; status: string; reason?: string; source_class: string; current: number };
@@ -36,7 +37,7 @@ type DocumentInfo = { state: string; reason?: string; candidates?: string[]; fil
 type DocumentPreview = { state: string; reason?: string; filename?: string; cache_key?: string; page_count?: number; pdf_url?: string; revision_url?: string; revisions_in_pdf?: boolean; comments_in_pdf?: boolean };
 type RevisionView = { filename: string; notice: string; sections: { index: number; title: string }[]; paragraphs: { index: number; style: string; tokens: { kind: string; text: string }[] }[] };
 type DocumentComment = { id: string; author: string; date?: string; text: string; anchored_text: string };
-type View = "portrait" | "assessment" | "evidence" | "network" | "sources" | "tables";
+type View = "portrait" | "draft" | "assessment" | "evidence" | "network" | "sources" | "tables";
 
 const STATUSES = ["VERIFIED", "INFERRED", "UNCONFIRMED", "CONFLICTING", "NOT_FOUND"];
 const EMPTY_DRAFT: Draft = { csa_area: "", question: "", claim: "", status: "VERIFIED", source_title: "", source_version: "", section: "", page_or_location: "", evidence_excerpt: "", inference_reason: "", confidence: "high", gap_or_action: "", review_state: "pending" };
@@ -48,6 +49,7 @@ const NAV: { id: View; title: string; note: string }[] = [
   { id: "sources", title: "Source coverage", note: "What was observed" },
   { id: "tables", title: "Explore records", note: "Compare across hosts" },
 ];
+const DRAFT_NAV: { id: View; title: string; note: string } = { id: "draft", title: "Draft answers", note: "Ingest, answer, refresh" };
 
 function bytes(value: number) { return value < 1000 ? `${value} B` : value < 1e6 ? `${(value / 1000).toFixed(1)} KB` : `${(value / 1e6).toFixed(1)} MB`; }
 
@@ -93,6 +95,9 @@ export default function App() {
   useEffect(() => { if (view === "assessment" && showDocument && !documentInfo) void loadAssessment(); }, [view, system, showDocument]);
   function switchSystem(next: string) { setSelectedSection(null); setPipeline(null); setShowDocument(false); setPreview(null); setDocumentInfo(null); setDocumentPreview(null); setRevisionView(null); setDocumentComments([]); setTableRows(null); setActiveTable(""); setDraft(null); setChoices(null); setSystem(next); }
   const matrix = search?.stages.find(x => x.kind === "matrix"); const index = search?.stages.find(x => x.kind === "index");
+  const draftStage = (systems.find(x => x.key === system)?.stage || "draft") === "draft";
+  const nav = draftStage ? [NAV[0], DRAFT_NAV, ...NAV.slice(1)] : NAV;
+  const [draftFocus, setDraftFocus] = useState("");
 
   return <div className="shell">
     <header className="masthead"><button className="product-mark" onClick={() => { setSearch(null); setView("portrait"); }}><span className="mark-lines" /><span><b>CSA evidence</b><small>Application assessment workspace</small></span></button>
@@ -100,8 +105,8 @@ export default function App() {
       <form className="global-search" onSubmit={submit}><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Ask about the application, host, service or control" aria-label="Trace evidence" /><button disabled={busy}>{busy ? "Tracing…" : "Trace evidence"}</button></form>
       <div className="ase-brand" aria-label="ASE"><img src="/ase-logo.png" alt="ASE" /></div>
     </header>
-    <aside className="rail"><div className="rail-app"><span>Assessing</span><strong>{portrait?.application.name || summary?.label || "Application"}</strong><small>within {portrait?.application.system || "the selected system"}</small></div><nav>{NAV.map(x => <button key={x.id} className={view === x.id && !search ? "active" : ""} onClick={() => { setView(x.id); setSearch(null); }}><span>{x.title}</span><small>{x.note}</small></button>)}</nav><div className="rail-note"><i className={summary?.index_complete ? "lamp good" : "lamp"} /><div>{summary?.index_complete ? "Sources ready" : "Index incomplete"}<small>{summary?.built_at_utc ? `Indexed ${summary.built_at_utc.slice(0, 10)}` : "Build date unavailable"}</small></div></div></aside>
-    <main className="workspace">{error && <div className="error" role="alert"><div><b>Action needed</b><span>{error}</span></div><button onClick={() => setError("")}>×</button></div>}{loading ? <Loading /> : search ? <SearchDesk data={search} matrix={matrix} index={index} openFile={openFile} openEvidence={openEvidence} prepare={prepare} close={() => setSearch(null)} /> : view === "portrait" ? <ApplicationPortrait portrait={portrait} summary={summary} openEvidence={id => openEvidence(byId(id))} investigate={runSearch} navigate={setView} /> : view === "assessment" ? showDocument ? <AssessmentReader info={documentInfo} preview={documentPreview} revisions={revisionView} comments={documentComments} reload={loadAssessment} back={() => setShowDocument(false)} /> : <><AssessmentShell snapshot={pipeline} selected={selectedSection} inspection={sectionInspection} select={selectAssessmentSection} openEvidence={openEvidence} investigate={runSearch} refresh={async () => { setPipeline(await api<PipelineSnapshot>(`/api/systems/${system}/pipeline`)); await loadAssessment(); }} readDocument={() => setShowDocument(true)} />{pipeline && pipeline.sections.some(s => pipelineState(s) === "awaiting-word-decision") && <WordReviewPanel system={system} />}</> : view === "evidence" ? <EvidenceLedger rows={evidence} areas={portrait?.areas || []} openEvidence={openEvidence} investigate={runSearch} /> : view === "network" ? <NetworkMap system={system} openEvidenceId={id => openEvidence(byId(id))} /> : view === "sources" ? <SourceCoverage summary={summary} portrait={portrait} files={files} total={fileTotal} facets={facets} controls={{ fileQuery, fileStatus, fileExt, fileClass, history, setFileQuery, setFileStatus, setFileExt, setFileClass, setHistory }} openFile={openFile} /> : <Tables tables={tables} rows={tableRows} active={activeTable} openTable={openTable} />}</main>
+    <aside className="rail"><div className="rail-app"><span>Assessing</span><strong>{portrait?.application.name || summary?.label || "Application"}</strong><small>within {portrait?.application.system || "the selected system"}</small></div><nav>{nav.map(x => <button key={x.id} className={view === x.id && !search ? "active" : ""} onClick={() => { setView(x.id); setSearch(null); }}><span>{x.title}</span><small>{x.note}</small></button>)}</nav><div className="rail-note"><i className={summary?.index_complete ? "lamp good" : "lamp"} /><div>{summary?.index_complete ? "Sources ready" : "Index incomplete"}<small>{summary?.built_at_utc ? `Indexed ${summary.built_at_utc.slice(0, 10)}` : "Build date unavailable"}</small></div></div></aside>
+    <main className="workspace">{error && <div className="error" role="alert"><div><b>Action needed</b><span>{error}</span></div><button onClick={() => setError("")}>×</button></div>}{loading ? <Loading /> : search ? <SearchDesk data={search} matrix={matrix} index={index} openFile={openFile} openEvidence={openEvidence} prepare={prepare} close={() => setSearch(null)} /> : view === "portrait" ? <ApplicationPortrait portrait={portrait} summary={summary} openEvidence={id => openEvidence(byId(id))} investigate={runSearch} navigate={setView} /> : view === "draft" ? <DraftLane system={system} focus={draftFocus} investigate={runSearch} /> : view === "assessment" ? showDocument ? <AssessmentReader info={documentInfo} preview={documentPreview} revisions={revisionView} comments={documentComments} reload={loadAssessment} back={() => setShowDocument(false)} /> : <>{draftStage && <div className="draft-banner" role="status"><strong>Draft lane (before V1)</strong><span>Sections are answered on the Draft answers page and written straight into the document. Authoring, review and cleanup start once the assessment is frozen at V1.</span><button onClick={() => setView("draft")}>Open Draft answers</button></div>}<AssessmentShell snapshot={pipeline} selected={draftStage ? null : selectedSection} inspection={sectionInspection} select={draftStage ? (section => { if (section) { setDraftFocus(section.stable_key || section.visible_number); setView("draft"); } }) : selectAssessmentSection} openEvidence={openEvidence} investigate={runSearch} refresh={async () => { setPipeline(await api<PipelineSnapshot>(`/api/systems/${system}/pipeline`)); await loadAssessment(); }} readDocument={() => setShowDocument(true)} />{!draftStage && pipeline && pipeline.sections.some(s => pipelineState(s) === "awaiting-word-decision") && <WordReviewPanel system={system} />}</> : view === "evidence" ? <EvidenceLedger rows={evidence} areas={portrait?.areas || []} openEvidence={openEvidence} investigate={runSearch} /> : view === "network" ? <NetworkMap system={system} openEvidenceId={id => openEvidence(byId(id))} /> : view === "sources" ? <SourceCoverage summary={summary} portrait={portrait} files={files} total={fileTotal} facets={facets} controls={{ fileQuery, fileStatus, fileExt, fileClass, history, setFileQuery, setFileStatus, setFileExt, setFileClass, setHistory }} openFile={openFile} /> : <Tables tables={tables} rows={tableRows} active={activeTable} openTable={openTable} />}</main>
     {preview && <SourceReader preview={preview} close={() => setPreview(null)} />}{draft && <DraftPanel draft={draft} setDraft={setDraft} result={draftResult} validate={validateDraft} commit={commitDraft} close={() => setDraft(null)} />}{choices && <SourceChooser row={choices.row} files={choices.files} close={() => setChoices(null)} choose={file => { const row = choices.row; setChoices(null); void openFile(file.file_id, row.page_or_location); }} />}
   </div>;
 }

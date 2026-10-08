@@ -210,3 +210,34 @@ Confirm the pre-apply backup's accepted view matches the working DOCX's accepted
 - **Risk observed:** The prior review (for the 7-edit batch) had already signed off `PASS WITH NOTES` for S3-E141..S3-E147. A re-review that only checks whether S3-E141..S3-E147 are still correct would miss the unrecorded S3-E148/S3-E149 changes and could re-sign-off while the source of truth is missing two edit records.
 - **Improved review approach:** Before signing off, cross-check the `## Changes Report` "Applied:" list and the approval JSON `hashes` keys against the actual `### S<n>-E<m>` records present in the change file. Any ID that appears in the report/JSON but has no approved record is a P1 `change-report inaccuracy` — the edit cannot be verified against approved text, and sign-off is withheld for that ID. This is distinct from a blocked/missing-apply situation (where no changes were made at all).
 - **Validation next time:** `grep -c "^### S3-E" change-file.md` should equal the count of IDs in the "Applied:" line of `## Changes Report`. If it does not, list the missing IDs and flag P1 before any sign-off.
+
+## 2026-10-08 - Cross-host absence claims require source-by-source checking
+
+Context:
+REVELOC TETRA subsection 3.8 review of a statement that three named groups were absent from several hosts' gpresult captures.
+
+Issue or risk observed:
+A VERIFIED matrix row and automated source-check approval can still overstate a cross-host absence when its cited excerpt proves presence on one host but does not prove the claim across every named host. One raw host capture contradicted the broad absence statement.
+
+Evidence used:
+The reviewed wording and E-152 said the named groups were absent from MOTPRDREV101, while that host's `60_gpresult_user.txt` lists OT_Digital_Radio_LAdmins. The correction was recorded as E-476.
+
+Improved review approach:
+For a claim that a value is absent across multiple named hosts, open every named source or run a scoped cross-host index query. Do not treat one source-checked positive excerpt as proof of all stated absences.
+
+Validation:
+List each named host and record presence or absence for each named value before accepting a grouped negative statement.
+
+---
+
+### Re-review after corrective tracked-apply + flatten
+
+Context: REVELOC TETRA §3.8, 2026-10-08. Prior FAIL had two P1s: (a) S3-E151 evidence contradiction (MOTPRDREV101 OT_Digital_Radio_LAdmins absence claim contradicted by raw gpresult), (b) tracked-change control failure (revisions accepted/removed without sign-off).
+
+What happened: A corrective change file (3-8c, S3-E183/S3-E184) was authored, applied, and flattened. The re-review pass then signed off only S3-E183/S3-E184 by their own edit IDs. The prior FAIL's two P1s were re-stated as RESOLVED in the new report rather than re-found as open issues.
+
+Learning:
+When a re-review follows a corrective tracked-apply and flatten cycle, sign off the corrective edits by their own IDs (not the superseded originals). In the Findings table, re-state prior P1s as RESOLVED with the corrective edit IDs that closed them, rather than re-listing them as open. This keeps the audit trail clean: the FAIL → correction → PASS chain is explicit and each P1 has a clear closure record.
+
+Validation:
+After writing the re-review report, confirm: (1) the sign-off line lists only the corrective edit IDs reviewed in this pass, (2) each prior P1 appears in Findings as RESOLVED with the corrective edit ID, (3) no prior P1 is re-listed as an open finding.
