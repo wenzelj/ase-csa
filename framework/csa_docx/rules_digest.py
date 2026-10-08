@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 LIMIT = 8192
-STAGES = ("answer", "writer", "author")
+STAGES = ("answer", "writer", "author", "draft")
 DIGESTS = Path(__file__).resolve().parents[2] / "references" / "digests"
 
 

@@ -3,6 +3,9 @@
 # WORK_DIR were not given explicitly. Add a new block here whenever a new CSA project is placed
 # under /Users/wenzel/Work/ASE/CurrentStateAssessments/ -- nothing else in the shared framework
 # needs to change.
+# Optional per-project key: stage: draft | v1 (default draft). Draft: `csa answer N` writes each subsection straight
+# into the document as plain text (one model call, no change file, no review). `csa freeze v1` switches to v1:
+# the full change lane (csa author -> tracked changes -> Word -> review -> cleanup).
 # Optional per-project key: legacy_docx: "<absolute path to an old-format CSA .docx>" -- the document
 # `csa convert` moves into the CSA template one subsection at a time (read-only; never edited).
 
@@ -45,7 +48,7 @@ projects:
     project_context: "/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-context/TETRA_REVELOC_PROJECT_CONTEXT.yaml"
     work_dir: "/Users/wenzel/Work/ASE/CurrentStateAssessments/TETRA/06 REVELOC TETRA/csa-work"
     default_source_set: "/Users/wenzel/Work/ASE/CurrentStateAssessments/TETRA/05 Revloc Tetra/01 Current State AS Built"
-    index_extra_sources: "/Users/wenzel/Work/ASE/CurrentStateAssessments/TETRA/05 Revloc Tetra/02 Current State Assessment"
+    index_extra_sources: "/Users/wenzel/Work/ASE/CurrentStateAssessments/TETRA/05 Revloc Tetra/02 Current State Assessment; /Users/wenzel/Work/ASE/CurrentStateAssessments/TETRA/06 REVELOC TETRA/01 Current State AS Built/revloc-tetra"
     legacy_docx: "/Users/wenzel/Work/ASE/CurrentStateAssessments/TETRA/05 Revloc Tetra/02 Current State Assessment/NetSeg_Current_State_Assessment_REVELOC_TETRA.docx"
 
     # sections by key and the numbers Word shows (csa spec shadow: no differences, 2 Oct 2026)

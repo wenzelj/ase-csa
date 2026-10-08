@@ -43,7 +43,7 @@ The assessment's own discovery output (the hosts the captures found, their roles
 
 ### Identifier budget
 
-- **Name first, address when there is no name.** Refer to a host by its name or role. When the evidence gives only an IP address (no host name in the discovery data, DNS records or host register), use the address in prose: describing the system matters more than hiding the address. Do not give both name and address in prose, and put long lists of addresses in a table.
+- **Name first, address when there is no name.** Refer to a host by its name or role. When the evidence gives only an IP address (no host name in the discovery data, DNS records or host register), use the address in prose: describing the system matters more than hiding the address. Do not give both name and address in prose. Tables that capture the system (host, register and connection tables) give both, e.g. `MOTPRDREV101 (10.20.1.5)`. Write host names exactly as the sources do, never renamed (RevViewer stays RevViewer).
 - **Ports where they matter.** Give a port where it explains how components connect; put full port lists in a table.
 - **Name hosts by role**, and give a host name only where the reader needs it to act or to find the host in a table. When a sentence would list many hosts, group them by role and put the list in a table.
 - **Group hosts by role.** Hosts with the same role share one table row ("ROTPRDCLU101-104, MOTPRDCLU101, MOTPRDCLU103 | OT | SQL Server cluster node"), and prose names the role group, not each host. A host table covers every captured host in the card's Host register, one row per role group. Any count must add up: a total and its breakdown name the same hosts.

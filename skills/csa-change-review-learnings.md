@@ -184,3 +184,29 @@ Confirm every review iteration writes durable evidence: reviewed DOCX path, curr
 - **Risk observed:** (1) Reporting the batch as FAIL/MISSING-as-defect when the pipeline simply has not reached the apply step for this change file; (2) mis-attributing the document's existing tracked changes to this batch; (3) trusting the stale implementation run-state, which said `SECTION_COMPLETE` for `S3-E8` (an earlier October 1 iteration of a different change set) and could read like proof this file was applied.
 - **Improved review approach:** Before a deep review, check the change file header for `Status:` and the presence of a `## Changes Report`; if it says "Proposed changes" with no report, verify implementation state with a triple check: (a) `lookupStableId` on every `Where:` anchor still returns old text; (b) grep `word/document.xml` for each approved text marker and the `CSA_S<n>_E<m>` bookmark names — all zero; (c) confirm any `w:ins`/`w:del`/bookmarks present belong to *other* edit IDs. Then record the review as `BLOCKED` (not FAIL), sign off `NO` / nothing to sign, state the missing step and the exact resume command (`csa apply <section>` then re-run review), and list all evidence rows as VERIFIED so the next run can go straight to content verification.
 - **Validation next time:** The re-run should find the anchors carrying the approved text, `CSA_S3_E141`..`CSA_S3_E147` bookmarks present, and a `## Changes Report` in the change file — if any of those are still absent, the apply step again did not run and the review stays BLOCKED.
+
+## 2026-10-07 — REVELOC TETRA Section 3.4 (Time Synchronisation) — stacked insertions read as duplication in accepted view
+
+Context:
+Reviewed S3-E141..S3-E147 for REVELOC TETRA subsection 3.4 (`@H3.4`) after `csa apply` reported `SECTION_COMPLETE`. Two cells (S3-E141 current-state cell, S3-E142 row 1 of the Discovery Information table) showed the approved text appearing twice in the accepted view.
+
+Issue or risk observed:
+A reviewer can mistake stacked tracked insertions (two separate `w:ins` blocks with identical text, one per apply generation) for a content defect or an incorrect edit, and either block the review or flag it as `INCORRECT`. In this case the duplication pre-dated the current apply run (present in the `before_section_3_20261007-142040.bak` backup) — the current apply replaced text over an already-duplicated cell rather than introducing the duplication.
+
+Evidence used:
+- Backup `before_section_3_20261007-142040.bak` pre-apply accepted view already showed the duplicated sentence in both cells.
+- Raw XML inspection of the working DOCX confirmed two separate `w:ins` blocks per cell (not one `w:ins` containing duplicated text).
+- All other rows (S3-E143..S3-E146) and the paragraph (S3-E147) showed a single `w:ins` per cell with no duplication.
+
+Improved review approach:
+When an accepted-view cell reads as duplicated, check the pre-apply backup's accepted view and the raw `w:ins` block count in the working DOCX before classifying the edit. If the duplication pre-exists the current apply run and the approved text is present and correct, record the edit as `CORRECT WITH NOTE` (not `INCORRECT`) and note that the dedup should happen in the post-accept cleanup pass. Do not block sign-off on a pre-existing stacked-insertion artefact.
+
+Validation:
+Confirm the pre-apply backup's accepted view matches the working DOCX's accepted view for the duplicated cell (i.e. the current apply did not introduce the duplication), and confirm the approved text from the change file is present and correct in the working DOCX.
+
+## 2026-10-07 — REVELOC TETRA Section 3.4 — Changes Report claims APPLIED for edit IDs with no approved records in the change file
+
+- **Context:** Subsection 3.4 (`@H3.4`), batch S3-E141..S3-E147 (7 approved records). A second `csa apply` run at 18:21 reported S3-E148 and S3-E149 as APPLIED (de-duplication fix), updated the `## Changes Report` and the approval JSON with hashes for both IDs, and added comments 81/82 to the DOCX.
+- **Risk observed:** The prior review (for the 7-edit batch) had already signed off `PASS WITH NOTES` for S3-E141..S3-E147. A re-review that only checks whether S3-E141..S3-E147 are still correct would miss the unrecorded S3-E148/S3-E149 changes and could re-sign-off while the source of truth is missing two edit records.
+- **Improved review approach:** Before signing off, cross-check the `## Changes Report` "Applied:" list and the approval JSON `hashes` keys against the actual `### S<n>-E<m>` records present in the change file. Any ID that appears in the report/JSON but has no approved record is a P1 `change-report inaccuracy` — the edit cannot be verified against approved text, and sign-off is withheld for that ID. This is distinct from a blocked/missing-apply situation (where no changes were made at all).
+- **Validation next time:** `grep -c "^### S3-E" change-file.md` should equal the count of IDs in the "Applied:" line of `## Changes Report`. If it does not, list the missing IDs and flag P1 before any sign-off.

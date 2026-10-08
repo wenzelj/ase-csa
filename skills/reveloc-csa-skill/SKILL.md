@@ -14,7 +14,7 @@ description: >
 
 ## Naming in the document
 
-The sources (captures, system matrix, host map) call the jump-host role "RevViewer". In every fact, table row and sentence written for the document, call it **Reviewer** ("Reviewer jump hosts"). Never write "RevViewer" in document text; quoting a source file name or log line in an evidence row is the only exception.
+RevViewer is a host name in the sources (captures, system matrix, host map). Write it exactly as "RevViewer" in every fact, table row and sentence; never rename it.
 
 ## Purpose
 

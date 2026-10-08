@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useState } from "react";
 import { authorArtifactUrl, cancelJob, fetchAuthorJob, fetchAuthorSetup, fetchLatestAuthor, submitAuthor } from "../api";
 import type { AuthorEvidence, AuthorOutcome, AuthorSetup, ReviewJob, WriterPolicy } from "../types";
 
@@ -15,9 +15,13 @@ type Props = {
   section: string;
   openEvidence: (row: AuthorEvidence) => void;
   onProposalReady: () => void;
+  onJobChange?: (job: ReviewJob | null) => void;
+  onLockChange?: (locked: boolean) => void;
 };
 
-export function AuthorPanel({ system, section, openEvidence, onProposalReady }: Props) {
+export type AuthorPanelHandle = { start: () => Promise<void>; stop: () => Promise<void> };
+
+export const AuthorPanel = forwardRef<AuthorPanelHandle, Props>(function AuthorPanel({ system, section, openEvidence, onProposalReady, onJobChange, onLockChange }, ref) {
   const [setup, setSetup] = useState<AuthorSetup | null>(null);
   const [job, setJob] = useState<ReviewJob | null>(null);
   const [outcome, setOutcome] = useState<AuthorOutcome | null>(null);
@@ -66,6 +70,9 @@ export function AuthorPanel({ system, section, openEvidence, onProposalReady }: 
     catch (reason) { setError(reason instanceof Error ? reason.message : "Author run could not be stopped"); }
   };
   const running = Boolean(job && !TERMINAL.has(job.state));
+  useImperativeHandle(ref, () => ({ start, stop }));
+  useEffect(() => { onJobChange?.(job); }, [job?.id, job?.state]);
+  useEffect(() => { onLockChange?.(Boolean(setup?.lock_state.locked)); }, [setup?.lock_state.locked]);
   const view = outcome || setup!;
   const metric = (key: string, suffix = "") => `${view?.run_metrics[key] ?? 0}${suffix}`;
 
@@ -97,4 +104,4 @@ export function AuthorPanel({ system, section, openEvidence, onProposalReady }: 
       <footer><button type="button" disabled={running || setup.lock_state.locked} onClick={start}>{setup.prior_runs ? "Retry authoring" : "Run authoring"}</button>{setup.lock_state.locked && <span role="status">{setup.lock_state.detail}</span>}{running && <button type="button" className="quiet" onClick={stop}>Stop</button>}{outcome?.routed_to_editor && outcome.current && <><button type="button" className="quiet" onClick={() => document.querySelector(".inspector-proposal")?.scrollIntoView({ behavior: "smooth" })}>Edit proposal</button><button type="button" className="quiet" onClick={() => document.querySelector(".proposal-actions")?.scrollIntoView({ behavior: "smooth" })}>Validate proposal</button></>}</footer>
     </>}
   </section>;
-}
+});

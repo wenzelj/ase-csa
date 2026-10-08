@@ -109,6 +109,9 @@ def _roles(work_dir: Path) -> list[dict]:
                same system: its hosts name this project's links (in_scope "system: <key>").
     inventory  match = index table name of the project's computer inventory (e.g.
                tcs_computers/tcs_computers); role = its host-name column (default ComputerName).
+               Optional columns name that table's other columns: fqdn_col (default FQDN), ip_col (default
+               "IP Addresses", then IPAddress), ou_col (default OUPath). scope = "listed": a host in the
+               inventory is never marked only a peer (for inventories with no In Scope column).
     listening  match = TCP port the captured host listens on (listening_ports): evidence-based,
                for module ports that identify a role.
     service    match = text in the name or display name of a Windows service running on the host
@@ -138,7 +141,7 @@ def _roles(work_dir: Path) -> list[dict]:
             kind, match = (r.get("kind") or "").strip().lower(), (r.get("match") or "").strip()
             if kind and match and not kind.startswith("#"):
                 out.append({"kind": kind, "match": match, **{k: (r.get(k) or "").strip()
-                            for k in ("system", "role", "site", "basis", "reviewed")}})
+                            for k in ("system", "role", "site", "basis", "reviewed", "fqdn_col", "ip_col", "ou_col", "scope")}})
     return out
 
 
@@ -340,16 +343,21 @@ def build(work_dir: Path) -> dict:
     # 1. register from the project's inventory tables (roles.csv kind=inventory:
     #    match = table name, role = name column; other columns FQDN / IP Addresses / OUPath / In Scope)
     rules = _roles(work_dir)
+    listed: set[str] = set()                 # hosts of inventories with scope = listed
     for inv in (r for r in rules if r["kind"] == "inventory"):
         col = inv["role"] or "ComputerName"
+        fq, ipc, ouc = inv["fqdn_col"] or "FQDN", inv["ip_col"], inv["ou_col"] or "OUPath"
         for rel, _h, _t, _l, d in _rows(con, "r.table_name = ?", (inv["match"],)):
             name = (d.get(col) or "").strip()
             if not NAME_OK.match(name):
                 continue
             e = entry(name)
-            e["fqdn"] = e["fqdn"] or (d.get("FQDN") or "")
-            e["ips"].update(x.strip().strip("{}") for x in re.split(r"[,;\s]+", str(d.get("IP Addresses") or d.get("IPAddress") or "")) if x.strip().strip("{}"))
-            e["ou"] = e["ou"] or (d.get("OUPath") or "")
+            if inv["scope"].lower() == "listed":
+                listed.add(e["host"])
+            e["fqdn"] = e["fqdn"] or (d.get(fq) or "")
+            ips = d.get(ipc) if ipc else (d.get("IP Addresses") or d.get("IPAddress"))
+            e["ips"].update(x.strip().strip("{}") for x in re.split(r"[,;\s]+", str(ips or "")) if x.strip().strip("{}"))
+            e["ou"] = e["ou"] or (d.get(ouc) or "")
             e["in_scope"] = e["in_scope"] or (d.get("In Scope") or "")
             e["sources"].add(Path(rel).name)
     # 2. captures
@@ -514,6 +522,9 @@ def build(work_dir: Path) -> dict:
         facts.append({**base, "attribute": "domain_controllers: AD site", "value": dc["site"]})
         if dc["pdc"]:
             facts.append({**base, "attribute": "domain_controllers: PDC emulator", "value": "yes"})
+    for h in listed:
+        if reg[h]["in_scope"] == "peer":
+            reg[h]["in_scope"] = ""
     listening = defaultdict(set)
     for rel, host, t, line, d in _rows(con, "r.table_name = 'listening_ports' and f.host is not null"):
         if d.get("LocalPort"):

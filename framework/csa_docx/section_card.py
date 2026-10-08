@@ -345,11 +345,11 @@ def host_register(workspace: Path | None) -> dict | None:
         site = (r.get("site") or "").strip()
         if (r.get("in_scope") or "").strip() == "peer":
             if role or (r.get("system") or "").strip():
-                uncaptured.append({"host": host, "role": (role or "role not recorded").replace("RevViewer", "Reviewer"), "site": site})
+                uncaptured.append({"host": host, "role": (role or "role not recorded"), "site": site})
             continue
         if not (r.get("capture") or "").strip():
             continue
-        key = (role or "role not recorded").replace("RevViewer", "Reviewer")
+        key = (role or "role not recorded")
         g = groups.setdefault(key.lower(), {"role": key, "hosts": [], "sites": []})
         g["hosts"].append(host)
         if site and site not in g["sites"]:
@@ -440,7 +440,7 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
         lines += ["", "## Evidence pack", "",
                   "These rows are worded the way the source records them (\"The system matrix records X as ...\"). "
                   "Never copy that wording: restate each as a fact about the host or application "
-                  "(\"X is a Reviewer jump host ...\") and put the source in the basis braces. "
+                  "(\"X is a RevViewer jump host ...\") and put the source in the basis braces. "
                   "A fact whose subject is the matrix, capture, host map or previous assessment is rejected (SOURCE_AS_SUBJECT).", ""]
         shown: dict[str, str] = {}
         for qid, p in pack.items():

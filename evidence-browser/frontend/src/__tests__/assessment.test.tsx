@@ -60,3 +60,7 @@ assert(documentControlHtml.includes("Document structure"), "container headings n
 assert(!documentControlHtml.includes("AI Author"), "container headings without a work record must not start authoring controls");
 
 console.log("assessment component fixtures passed");
+
+const railHtml = renderToStaticMarkup(<AssessmentShell snapshot={snapshot("TETRA", [{ ...base, change_file: "Changes.md" }])} selected={{ ...base, change_file: "Changes.md" }} inspection={{ ...(documentControlInspection as any), identity: { ...documentControlInspection.identity, stable_key: "ASSET", heading: "Asset inventory" } }} select={() => {}} readDocument={() => {}} />);
+assert(railHtml.includes("Section steps") && railHtml.includes("4. Review"), "section workspace shows the four-step rail");
+assert(railHtml.includes("Review &amp; cleanup"), "review and cleanup live inside the inspector");

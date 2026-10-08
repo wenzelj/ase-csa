@@ -49,6 +49,18 @@ agents:
     skill: csa-answer-agent
     summary: Answer one section card (csa card N) as an answer sheet; csa author N --cards runs it, checks the sheet and renders the change file.
 
+  - verb: draft
+    file: csa-draft-agent.md
+    title: CSA Draft Agent
+    group: pipeline
+    tier: frontier
+    arg: SECTION
+    inputs: SECTION, CARD*, SHEET*, ERRORS, ONLY, ANSWER
+    locks: docx, section
+    instruction: Answer the section card in CARD and write the answer sheet, with the finished prose in Text:, to SHEET.
+    skill: csa-draft-agent
+    summary: Draft lane (before V1) - csa answer N (or csa draft N) builds the card, this agent writes the answer with its prose, the framework writes it into the document as plain text. One model call.
+
   - verb: apply
     file: current-state-assessment-document.md
     title: Current-State-Assessment-Document Agent

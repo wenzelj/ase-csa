@@ -55,3 +55,9 @@
 .net-panel .ids button { font: inherit; font-family: ui-monospace, Menlo, monospace; font-size: .72rem; border: 1px solid var(--line); border-radius: 4px; background: var(--paper); padding: 0 4px; cursor: pointer; color: var(--ink); }
 .net-note { font-size: .78rem; color: var(--muted); max-width: 80ch; margin: 0; }
 @media (max-width: 760px) { .net { padding: 24px 16px 88px; } }
+.net .node.cap-hi rect { stroke-width: 3; filter: drop-shadow(0 0 4px var(--teal)); }
+.net .node.cap-hi .cap-dot { fill: var(--teal); }
+.net .node.cap-lo { opacity: .35; }
+.net .node.cap-lo.dim { opacity: .12; }
+.net .node.listed rect, .net .sw.k-listed { fill: #e6f1ef; background: #e6f1ef; stroke: var(--teal); border-color: var(--teal); stroke-dasharray: 5 3; }
+.net .sw.k-listed { border-style: dashed; }

@@ -23,7 +23,7 @@ The card (`CARD=`) is your whole input. Write the answer sheet (`SHEET=`) and st
 
 ## Naming
 
-- Name hosts by host name in full, never an IP address, unless no name was found. No IP address or subnet in a fact or row text beyond that.
+- Name hosts by host name in full. An IP address is used in a fact only where it describes the system and no host name is known. Tables that capture the system (host, register, connection tables) give both the host name and the IP address, e.g. `MOTPRDREV101 (10.20.1.5)`. Host names are written exactly as the sources write them, never renamed (RevViewer stays RevViewer).
 - Evidence IDs never appear in document text; the framework strips them from rows.
 
 ## Errors the framework reports (fix every one)

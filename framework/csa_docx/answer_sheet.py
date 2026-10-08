@@ -37,7 +37,7 @@ import sys
 from pathlib import Path
 
 _BLOCK = re.compile(r"^##\s+([BC]\d+)\b[^\n]*$", re.M)
-_FIELD = re.compile(r"^(Facts|Unknown|Rating reason|Rating|Rows|Bullets|Search|Keep|Answer):\s*(.*)$", re.I)
+_FIELD = re.compile(r"^(Facts|Text|Unknown|Rating reason|Rating|Rows|Bullets|Search|Keep|Answer):\s*(.*)$", re.I)
 _FACT = re.compile(r"^[-*]\s+(?P<text>.+?)\s*(?:\((?P<ids>E-\d+(?:\s*,\s*E-\d+)*)\))?\s*(?:\{(?P<meta>[^}]*)\})?\s*$")
 _EID = re.compile(r"\bE-\d+\b")
 _HOST = re.compile(r"\b(?=[A-Z0-9]*\d)[A-Z][A-Z0-9]{6,}\b")
@@ -54,7 +54,7 @@ def parse(text: str) -> dict[str, dict]:
     for i, m in enumerate(marks):
         body = text[m.end(): marks[i + 1].start() if i + 1 < len(marks) else len(text)]
         b = {"facts": [], "unknown": [], "rating": "", "rating_reason": "", "rows": [], "bullets": [],
-             "search": [], "keep": "", "answer": "", "raw": body.strip()}
+             "search": [], "keep": "", "answer": "", "text": "", "raw": body.strip()}
         field = None
         for line in body.splitlines():
             s = line.strip()
@@ -76,6 +76,11 @@ def parse(text: str) -> dict[str, dict]:
                     b["keep"] = val or "yes"
                 elif field == "answer":
                     b["answer"] = val
+                elif field == "text" and val:
+                    b["text"] = val
+                continue
+            if field == "text":            # draft lane: the finished prose for the block, any number of lines
+                b["text"] = b["text"] + ("\n\n" if b["text"] else "") + s     # one line = one paragraph
                 continue
             if field == "facts" and s.startswith(("-", "*")):
                 fm = _FACT.match(s)
@@ -152,9 +157,16 @@ def count_mismatch(text: str) -> str | None:
     return None
 
 
+#: Draft lane (pre-V1): only these stop a sheet from being written into the document; every other ERROR is
+#: reported as a WARN and left for the next pass or the V1 change lane.
+HARD_CODES = {"QUESTION_MISSING", "EMPTY_ANSWER", "FACT_NO_EVIDENCE", "UNKNOWN_EVIDENCE", "RATING_INVALID",
+              "COLUMNS", "ROW_WIDTH", "NO_ROWS", "REQUIREMENT_NO_FACTS"}
+
+
 def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None = None,
-             ratings: list[str] | None = None, new_ids: set[str] | None = None) -> dict:
-    """Findings for a parsed sheet against its card. ERROR blocks rendering; WARN is reported."""
+             ratings: list[str] | None = None, new_ids: set[str] | None = None, draft: bool = False) -> dict:
+    """Findings for a parsed sheet against its card. ERROR blocks rendering; WARN is reported.
+    ``draft`` keeps only HARD_CODES as errors (the draft lane)."""
     findings: list[dict] = []
     matrix = matrix or {}
     allowed = {r["id"].upper() for p in card.get("evidence", {}).values() for r in p.get("rows", [])}
@@ -185,7 +197,7 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
             if q["kind"] in ("requirement", "narrative", "findings") and _SOURCE_SUBJECT.search(fact["text"]):
                 findings.append(_f("ERROR", "SOURCE_AS_SUBJECT", qid, f"the fact is about the source, not the system: make the application, host or practice the subject and keep the source in the basis braces: {fact['text'][:80]}"))
             if q["kind"] in ("requirement", "narrative", "findings") and _IP.search(fact["text"]):
-                findings.append(_f("WARN", "IP_IN_PROSE", qid, f"address in a prose fact: use the host name if one is known (fine where none was found): {fact['text'][:80]}"))
+                findings.append(_f("WARN", "IP_IN_PROSE", qid, f"address in a prose fact: name the host if it has a name; an address alone is right only where no host name is known: {fact['text'][:80]}"))
         cited = {i.upper() for fact in b["facts"] for i in fact["ids"]}
         cited |= {i.upper() for row in b["rows"] for c in row for i in _EID.findall(c)}
         cited |= {i.upper() for x in b["bullets"] for i in _EID.findall(x)}
@@ -251,6 +263,10 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
     for qid in sheet:
         if qid not in qs:
             findings.append(_f("WARN", "EXTRA_BLOCK", qid, "this question is not on the card"))
+    if draft:
+        for x in findings:
+            if x["level"] == "ERROR" and x["code"] not in HARD_CODES:
+                x["level"] = "WARN"
     errors = [x for x in findings if x["level"] == "ERROR"]
     status = "NEEDS_SEARCH" if searches and not errors else "ERROR" if errors else "OK"
     return {"status": status, "errors": len(errors), "warnings": len(findings) - len(errors),
@@ -325,7 +341,9 @@ def render_records(sheet: dict[str, dict], card: dict, node: dict, section: str,
             if not req:
                 continue
             observed = " ".join(_sentence(f) for f in b["facts"]) or "Not Applicable to the system in scope."
-            if b["unknown"]:
+            if b.get("text"):
+                observed = no_ids(" ".join(b["text"].split()))
+            elif b["unknown"]:
                 observed += f" Not established: {b['unknown'][0].rstrip('.')}."
             eid = record(f"{q['req_id']} current state and rating", f"{p['table']}-R{req['row']}",
                          (p.get("row_texts") or [""] * req["row"])[req["row"] - 2] if len(p.get("row_texts", [])) >= req["row"] - 1 else q["req_id"],
@@ -349,7 +367,9 @@ def render_records(sheet: dict[str, dict], card: dict, node: dict, section: str,
                              f"Row {k - 1} of {p.get('label') or p.get('facet') or 'the table'} from the evidence.")
         elif q["kind"] == "narrative":
             text = " ".join(_sentence(f) for f in b["facts"])
-            if b["unknown"]:
+            if b.get("text"):
+                text = "\n".join(no_ids(" ".join(par.split())) for par in b["text"].split("\n\n") if par.strip())
+            elif b["unknown"]:
                 text += f" Not established: {b['unknown'][0].rstrip('.')}."
             if not text.strip():
                 continue
@@ -487,6 +507,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--card", type=Path, required=True)
     ap.add_argument("--matrix", type=Path)
     ap.add_argument("--new-ids", default="", help="validate: evidence IDs appended during this run")
+    ap.add_argument("--draft", action="store_true", help="validate: draft lane, only the hard checks are errors")
     ap.add_argument("--docx", type=Path, help="render: the working document")
     ap.add_argument("--section", help="render: framework section number (3)")
     ap.add_argument("--change-file", type=Path, help="render: the change file to write (merged when it exists)")
@@ -498,7 +519,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     card = json.loads(a.card.read_text(encoding="utf-8"))
     if a.action == "validate":
-        res = validate(sheet, card, load_matrix(a.matrix), new_ids={x.strip() for x in a.new_ids.split(",") if x.strip()})
+        res = validate(sheet, card, load_matrix(a.matrix), new_ids={x.strip() for x in a.new_ids.split(",") if x.strip()},
+                       draft=a.draft)
         print(json.dumps(res, indent=1))
         return 0 if res["status"] == "OK" else 1
     from csa_docx import doc_spec, section_card, spec_cli

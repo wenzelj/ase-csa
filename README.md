@@ -25,7 +25,23 @@ csa mcp                 # prints the csa-mcp config for Codex and the `claude mc
 csa sync --codex-prompts  # wrapper skills, /csa-* slash commands, AGENTS.md (re-run after editing registry.yaml)
 ```
 
-Daily use:
+Draft lane (before V1; a project's `stage:` in PROJECTS.yaml, default `draft`):
+
+```text
+csa ingest                 new data in: discovery index (new/changed files) -> graph sync (matrix rows, hosts, links) -> stale list
+csa answer 3.4             card -> one agent call (answer + prose) -> written into the DOCX as plain text -> logged
+csa stale                  answered subsections whose evidence changed (no model)
+csa refresh-draft          answer every stale subsection again
+csa answer 3.4 --cli claude|codex|evo    pick the model per run
+csa freeze v1              baseline copy of the DOCX, then the V1 change lane below takes over
+```
+
+No change file, writer pass, check-change, tracked changes, review or cleanup run in the draft lane. Each run is logged in
+`csa-work/draft/changes-<date>.md`; every `Unknown:` line is collected in `csa-work/draft/open-questions.md`. A subsection
+with unaccepted tracked changes is refused until they are accepted or rejected in Word. Plan: `docs/draft-lane-plan.md`
+(project doc `claude/csa-draft-lane-plan.md`).
+
+V1 change lane, daily use:
 
 ```text
 csa status [N] | csa next                    where each section is, and what to do next

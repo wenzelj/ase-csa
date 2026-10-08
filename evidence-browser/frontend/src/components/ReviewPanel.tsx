@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import type { ReviewJob, ReviewOutcome, ReviewSubmit, ReviewLatest } from "../types";
 import { submitReview, fetchReviewJob, fetchLatestReview, cancelJob } from "../api";
 
@@ -29,11 +29,17 @@ function formatDate(value?: string): string {
 type ReviewPanelProps = {
   system: string;
   section: string;
+  onJobChange?: (job: ReviewJob | null) => void;
+  /** Called when a review could not be started (for example the Word gate refused it). */
+  onStartError?: (message: string) => void;
+  onFinished?: (state: string) => void;
 };
+
+export type ReviewPanelHandle = { start: () => Promise<void>; cancel: () => Promise<void>; isActive: () => boolean };
 
 type Phase = "idle" | "submitting" | "polling" | "done" | "error";
 
-export function ReviewPanel({ system, section }: ReviewPanelProps) {
+export const ReviewPanel = forwardRef<ReviewPanelHandle, ReviewPanelProps>(function ReviewPanel({ system, section, onJobChange, onStartError, onFinished }, ref) {
   const [phase, setPhase] = useState<Phase>("idle");
   const [confirmation, setConfirmation] = useState(false);
   const [job, setJob] = useState<ReviewJob | null>(null);
@@ -44,8 +50,10 @@ export function ReviewPanel({ system, section }: ReviewPanelProps) {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const sectionRef = useRef(section);
   sectionRef.current = section;
+  const onFinishedRef = useRef(onFinished);
+  onFinishedRef.current = onFinished;
 
-  // Load latest completed review on mount / section change
+  // Load latest review on mount / section change; resume it if it is still running
   useEffect(() => {
     let alive = true;
     setPhase("idle");
@@ -55,7 +63,15 @@ export function ReviewPanel({ system, section }: ReviewPanelProps) {
     setSubmitResult(null);
     setConfirmation(false);
     fetchLatestReview(system, section)
-      .then((result) => { if (alive) { setLatest(result); setOutcome({ state: result.state, ...parseOutcome(result) }); } })
+      .then((result) => {
+        if (!alive) return;
+        setLatest(result);
+        if (result.state === "created" || result.state === "running") {
+          setJob({ id: result.job_id, state: result.state } as ReviewJob);
+          setPhase("polling");
+          startPolling(result.job_id);
+        } else setOutcome({ state: result.state, ...parseOutcome(result) });
+      })
       .catch(() => { if (alive) setLatest(null); });
     return () => { alive = false; };
   }, [system, section]);
@@ -75,6 +91,7 @@ export function ReviewPanel({ system, section }: ReviewPanelProps) {
           if (pollRef.current) clearInterval(pollRef.current);
           pollRef.current = null;
           setPhase("done");
+          onFinishedRef.current?.(result.job.state);
         }
       } catch (err) {
         if (pollRef.current) clearInterval(pollRef.current);
@@ -96,8 +113,10 @@ export function ReviewPanel({ system, section }: ReviewPanelProps) {
       setPhase("polling");
       startPolling(result.job.id);
     } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to start review";
       setPhase("error");
-      setError(err instanceof Error ? err.message : "Failed to start review");
+      setError(message);
+      onStartError?.(message);
     }
   }, [system, startPolling]);
 
@@ -118,6 +137,10 @@ export function ReviewPanel({ system, section }: ReviewPanelProps) {
   const stateLabel = STATE_LABELS[outcome?.state ?? job?.state ?? "created"] ?? "Unknown";
   const stateColor = STATE_COLORS[outcome?.state ?? job?.state ?? "created"] ?? "var(--muted-foreground, #9ca3af)";
   const isActive = phase === "submitting" || phase === "polling";
+  const activeRef = useRef(isActive);
+  activeRef.current = isActive;
+  useImperativeHandle(ref, () => ({ start: handleSubmit, cancel: handleCancel, isActive: () => activeRef.current }));
+  useEffect(() => { onJobChange?.(job); }, [job?.id, job?.state]);
 
   return (
     <section className="review-panel" role="region" aria-label="Review agent">
@@ -243,7 +266,7 @@ export function ReviewPanel({ system, section }: ReviewPanelProps) {
       )}
     </section>
   );
-}
+});
 
 function parseOutcome(latest: ReviewLatest): Partial<ReviewOutcome> {
   return {

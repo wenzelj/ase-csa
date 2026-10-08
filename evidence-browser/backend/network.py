@@ -19,6 +19,12 @@ def _framework(agents: Path) -> None:
         sys.path.insert(0, fw)
 
 
+def _listed(r: dict) -> bool:
+    """A captured host, or one the project's inventory lists (every other register entry is a peer or another application's)."""
+    scope = (r.get("in_scope") or "").strip().lower()
+    return scope not in ("peer", "no") and not scope.startswith("system:")
+
+
 def build(work_dir: Path, agents: Path) -> dict[str, Any]:
     _framework(agents)
     from csa_docx import evidence_digest, section_card
@@ -47,7 +53,8 @@ def build(work_dir: Path, agents: Path) -> dict[str, Any]:
             kind = "captured" if captured else ("dc" if "domain controller" in (r.get("sources") or "").lower() else "named")
             nodes[name] = {"id": name, "kind": kind,
                            "role": roles.get(name) or ("Domain controller" if kind == "dc" else ""),
-                           "site": r.get("site") or r.get("ad_site") or "", "ips": r.get("ips") or ""}
+                           "site": r.get("site") or r.get("ad_site") or "", "ips": r.get("ips") or "",
+                           "listed": _listed(r)}
             return
         try:
             public = not ipaddress.ip_address(name.split("%")[0]).is_private
@@ -64,8 +71,8 @@ def build(work_dir: Path, agents: Path) -> dict[str, Any]:
         e["procs"].add(l["proc"])
         e["ids"].append(l["id"])
         e["est"] = e["est"] or l["state"].startswith("established")
-    for h, r in reg.items():                       # captured hosts with no recorded link still appear
-        if (r.get("in_scope") or "") != "peer" and r.get("capture"):
+    for h, r in reg.items():                       # captured and inventory-listed hosts with no recorded link still appear
+        if _listed(r):
             node(h)
     out_edges = [{**e, "procs": sorted(e["procs"])} for e in edges.values()]
     return {"nodes": list(nodes.values()), "edges": out_edges,

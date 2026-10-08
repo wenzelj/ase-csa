@@ -419,7 +419,8 @@ def project(explicit: str | None = None, required: bool = True) -> dict | None:
 
 
 def banner(p: dict):
-    print(f"{C['c']}[{p.get('label', p['key'])}]{C['0']}", file=sys.stderr)
+    stage = str(p.get("stage") or "draft").strip().lower()
+    print(f"{C['c']}[{p.get('label', p['key'])}] {'draft lane (pre-V1)' if stage == 'draft' else 'V1 change lane'}{C['0']}", file=sys.stderr)
 
 
 # ---------------------------------------------------------------- framework bridge
@@ -703,7 +704,10 @@ def cmd_status(a):
         r = spec_call(p, "next")
         if r.returncode == 0 and r.stdout.strip():
             print(f"\n{C['b']}Still to answer, in document order (csa spec):{C['0']}")
-            print(r.stdout.rstrip())
+            out = r.stdout.rstrip()
+            if project_stage(p) == "draft":
+                out = re.sub(r"csa author (\S+) --cards", r"csa answer \1", out)
+            print(out)
 
 
 def cmd_report(a):
@@ -2003,7 +2007,7 @@ def build_prompt(p: dict, r: dict, args: list[str], local: bool | None = None) -
                      f"@H{resolved['stable_path']}. Do not derive a stable ID from the visible number. "
                      f"Edit IDs stay S{sec}-E<n>.")
     lines.append("\n" + r.get("instruction", ""))
-    stage = {"answer": "answer", "author": "author"}.get(r.get("verb", ""))
+    stage = {"answer": "answer", "author": "author", "draft": "draft"}.get(r.get("verb", ""))
     if r.get("verb") == "write" and str(values.get("MODE", "")).lower() == "records":
         stage = "writer"
     if stage and not (r.get("verb") == "answer" and str(values.get("MODE", "answer")).lower() != "answer"):
@@ -2226,7 +2230,12 @@ def _matrix_ids(work: Path) -> set[str]:
         return {r["evidence_id"] for r in csv.DictReader(fh)}
 
 
-def _author_cards(p: dict, a) -> int:
+def project_stage(p: dict) -> str:
+    """`stage:` in PROJECTS.yaml: draft (before V1, the default) or v1 (the full change lane)."""
+    return str(p.get("stage") or "draft").strip().lower()
+
+
+def _author_cards(p: dict, a, draft: bool = False) -> int:
     """csa author N --cards: the framework builds the section card (questions from the document, evidence
     gathered per question), the answer agent writes the answer sheet, the framework checks it (one search round
     and one fix round at most), renders the change file with anchors from the document spec, then the writer pass,
@@ -2266,7 +2275,7 @@ def _author_cards(p: dict, a) -> int:
         if sheet.exists():
             sheet.replace(sheet.with_suffix(".prev.md"))
         t0 = time.time()
-        rc = launch(p, agent("answer"), [number, f"CARD={card_md}", f"SHEET={sheet}", *extra], a)
+        rc = launch(p, agent(verb), [number, f"CARD={card_md}", f"SHEET={sheet}", *extra], a)
         timing["answer_s"] = round(timing.get("answer_s", 0) + time.time() - t0, 1)
         return rc
 
@@ -2275,12 +2284,22 @@ def _author_cards(p: dict, a) -> int:
             return {"status": "ERROR", "findings": [{"level": "ERROR", "code": "NO_SHEET", "question": None,
                                                      "message": f"the answer agent wrote no {sheet.name}"}], "searches": {}}
         return _fw_json("csa_docx.answer_sheet", "validate", sheet, "--card", card_json, "--matrix", matrix,
-                        "--new-ids", ",".join(sorted(_matrix_ids(work) - before)))
+                        "--new-ids", ",".join(sorted(_matrix_ids(work) - before)), *(["--draft"] if draft else []))
 
     timing: dict = {}
+    verb = "draft" if draft else "answer"
     build()
+    if draft and not getattr(a, "print", False):
+        title = json.loads(card_json.read_text(encoding="utf-8")).get("title", "")
+        if (Path(docx).parent / ("~$" + Path(docx).name[2:])).exists():
+            print(f"{Path(docx).name} is open in Word; saving and closing it ...")
+            if not close_in_word(Path(docx)):
+                die(f"{Path(docx).name} is open in Word; close it and run again.")
+        blk = _fw_json("csa_docx.draft_lane", "blocker", "--docx", docx, "--heading", title)
+        if blk.get("status") != "OK":
+            die(f"draft lane: {blk.get('message')}")
     if getattr(a, "print", False):
-        return launch(p, agent("answer"), [number, f"CARD={card_md}", f"SHEET={sheet}"], a)
+        return launch(p, agent(verb), [number, f"CARD={card_md}", f"SHEET={sheet}"], a)
     hosts_csv = work / "hosts" / "hosts.csv"
     cache = {"status": "NONE", "changed": []}
     if not getattr(a, "fresh", False):
@@ -2323,10 +2342,15 @@ def _author_cards(p: dict, a) -> int:
         if rc != 0:
             return 2
         res2 = check()
+    warns = [f for f in res2.get("findings", []) if f.get("level") == "WARN"]
+    if draft and warns:
+        print(f"{C['y']}{len(warns)} warning(s) (not blocking in the draft lane):{C['0']}")
+        for f in warns[:8]:
+            print(f"  {f['code']} {f.get('question') or ''}: {f['message'][:110]}")
     _fw_json("csa_docx.answer_cache", "write", sheet, "--card", card_json, "--matrix", matrix,
              *(["--hosts", hosts_csv] if hosts_csv.is_file() else []), "--json")
     _fw_json("csa_docx.fact_store", "add", work, sheet, "--card", card_json)
-    if getattr(a, "check_answers", False):
+    if getattr(a, "check_answers", False) and not draft:
         # advisory: a second look at whether each block answers its question; never a gate
         chk = cards / f"{key}.check.md"
         launch(p, agent("answer"), [number, f"CARD={card_md}", f"SHEET={chk}", "MODE=check", f"ANSWER={sheet}"], a)
@@ -2339,6 +2363,7 @@ def _author_cards(p: dict, a) -> int:
     reviews = Path(docx).parent / "reviews"
     st = section_state(p, sec, label)
     cf = Path(st["change_file"]) if st["change_file"] else reviews / f"ChangesCSA_{_app_name(p, reviews)}_Section{sec}{'_' + label if label else ''}.md"
+    cf_new = not cf.is_file()
     for attempt in (1, 2):
         out = _fw_json("csa_docx.answer_sheet", "render", sheet, "--card", card_json, "--docx", docx, "--section", sec,
                        "--change-file", cf, "--app", _app_name(p, reviews))
@@ -2359,6 +2384,8 @@ def _author_cards(p: dict, a) -> int:
     if out.get("scaffold"):
         die("the document still lacks rows for the answer after scaffolding; nothing was applied")
     print(f"{C['b']}{cf.name}: {out['records']} record(s) {out['change_set']}, {out['open']} open question(s).{C['0']}")
+    if draft:
+        return _draft_write(p, a, card_json, docx, cf, cf_new, out, timing, started)
     _autofix_change(p, cf, sec, label)
     _record_author_run(p, [number], cards=True, sheet_status="OK", search_round=searched, fix_round=fixed, **timing)
     if getattr(a, "no_writer", False):
@@ -2375,6 +2402,138 @@ def _author_cards(p: dict, a) -> int:
     return _after_agent(p, "author", [number], started, a)
 
 
+def _draft_write(p: dict, a, card_json: Path, docx, cf: Path, cf_new: bool, out: dict, timing: dict, started: float) -> int:
+    """Draft lane: write this run's records into the document as plain text, log it, refresh the open questions."""
+    c = json.loads(card_json.read_text(encoding="utf-8"))
+    work = local_path(p["work_dir"])
+    res = _fw_json("csa_docx.draft_lane", "apply", "--workspace", local_path(p["project_root"]), "--docx", docx,
+                   "--change-file", cf, "--change-set", out.get("change_set", ""), *(["--new-file"] if cf_new else []))
+    if res.get("status") != "OK":
+        die(f"draft lane: the document was not changed past {res.get('applied') or 'the first edit'}: {res.get('message')}")
+    n = len(res.get("applied") or [])
+    _fw_json("csa_docx.draft_lane", "log", "--work-dir", work, "--key", c.get("key", ""), "--number", c.get("number", ""),
+             "--title", c.get("title", ""), "--records", n, "--open", out.get("open", 0))
+    oq = _fw_json("csa_docx.draft_lane", "open-questions", "--work-dir", work)
+    _record_author_run(p, [c.get("number", "")], draft=True, applied=n, total_s=round(time.time() - started, 1), **timing)
+    metric(p, "draft", c.get("number"), key=c.get("key"), applied=n, open=out.get("open", 0))
+    print(f"{C['g']}DRAFT{C['0']} {c.get('number')} {c.get('title')}: {n} part(s) written as plain text, "
+          f"{out.get('open', 0)} open question(s); {oq.get('open', '?')} open in total ({work / 'draft'}).")
+    return 0
+
+
+def _answered_keys(p: dict) -> list[str]:
+    cards = local_path(p["work_dir"]) / "cards"
+    return sorted(m.name[: -len(".manifest.json")] for m in cards.glob("*.manifest.json")) if cards.is_dir() else []
+
+
+def stale_sections(p: dict) -> list[dict]:
+    """Rebuild the card of every answered subsection (no model) and compare it with the saved answer's inputs."""
+    work = local_path(p["work_dir"])
+    cards, docx = work / "cards", working_docx(p)
+    if not docx:
+        return []
+    out = []
+    for key in _answered_keys(p):
+        card_md = cards / f"{key}.md"
+        argv = [key, "--docx", docx, "--workspace", local_path(p["project_root"]), "--work-dir", work, "--out", card_md, "--json"]
+        if legacy_docx(p):
+            argv += ["--exclude", legacy_docx(p).name]
+        built = _fw_json("csa_docx.section_card", *argv)
+        if built.get("status") != "OK":
+            out.append({"key": key, "number": "?", "title": "", "status": "GONE", "changed": []})
+            continue
+        hosts_csv = work / "hosts" / "hosts.csv"
+        chk = _fw_json("csa_docx.answer_cache", "check", cards / f"{key}.answer.md", "--card", card_md.with_suffix(".json"),
+                       "--matrix", work / "evidence-matrix.csv", *(["--hosts", hosts_csv] if hosts_csv.is_file() else []), "--json")
+        out.append({"key": key, "number": built.get("number", ""), "title": built.get("title", ""),
+                    "status": chk.get("status", "?"), "changed": chk.get("changed", [])})
+    return out
+
+
+def cmd_stale(a):
+    p = project(a.project); banner(p)
+    rows = stale_sections(p)
+    stale = [r for r in rows if r["status"] != "REUSE"]
+    for r in rows:
+        mark = C["g"] + "current" + C["0"] if r["status"] == "REUSE" else C["y"] + r["status"].lower() + C["0"]
+        extra = f" ({', '.join(r['changed'])})" if r["changed"] else ""
+        print(f"  {r['number']:<8} {r['title'][:44]:<44} {mark}{extra}")
+    print(f"{len(stale)} of {len(rows)} answered subsection(s) need a new answer" + (": csa refresh-draft" if stale else "."))
+    if getattr(a, "json", False):
+        print(json.dumps(rows))
+    return 0
+
+
+def cmd_refresh_draft(a):
+    """Answer again every subsection whose evidence changed (draft lane)."""
+    p = project(a.project); banner(p)
+    if project_stage(p) != "draft":
+        die("csa refresh-draft is for the draft lane; this project is at V1 (use csa author N)")
+    todo = [r for r in stale_sections(p) if r["status"] in ("PARTIAL", "STALE", "NONE")]
+    if not todo:
+        print("Every answered subsection is current.")
+        return 0
+    failed = []
+    for r in todo:
+        print(f"{C['b']}== {r['number']} {r['title']} ({r['key']}){C['0']}")
+        ns = argparse.Namespace(**{**vars(a), "verb": "author", "args": [r["number"]]})
+        try:
+            if _author_cards(p, ns, draft=True) != 0:
+                failed.append(r["number"])
+        except SystemExit:
+            failed.append(r["number"])
+    print(f"Refreshed {len(todo) - len(failed)} of {len(todo)}" + (f"; failed: {', '.join(failed)}" if failed else "."))
+    return 1 if failed else 0
+
+
+def cmd_ingest(a):
+    """New data in: discovery index (only new or changed files), then graph sync (captures -> matrix rows, nodes,
+    edges, host register), then the list of answered subsections whose evidence changed."""
+    p = project(a.project); banner(p)
+    print(f"{C['b']}1/3 discovery index{C['0']}")
+    if run_script("index", ["--project", p["key"], "build", *(["--rebuild"] if a.rebuild else [])]) != 0:
+        die("the discovery index build failed")
+    print(f"{C['b']}2/3 graph sync (captures, links, hosts){C['0']}")
+    gs = SKILLS / "csa-evidence-matrix" / "scripts" / "graph_sync.py"
+    if subprocess.call([framework_python(), str(gs), "--workspace", _ws(p)]) != 0:
+        die("graph sync failed")
+    print(f"{C['b']}3/3 stale subsections{C['0']}")
+    if a.no_stale:
+        return 0
+    return cmd_stale(argparse.Namespace(project=a.project, json=False))
+
+
+def cmd_freeze(a):
+    """Move a project from the draft lane to the V1 change lane: baseline copy of the DOCX, then stage: v1."""
+    p = project(a.project); banner(p)
+    if a.stage != "v1":
+        die("usage: csa freeze v1")
+    if project_stage(p) == "v1":
+        print("Already at V1.")
+        return 0
+    docx = working_docx(p)
+    if not docx:
+        die("no working DOCX to freeze")
+    base = docx.parent / "baseline"
+    base.mkdir(exist_ok=True)
+    dest = base / f"{docx.stem} - V1 baseline {time.strftime('%Y-%m-%d')}.docx"
+    shutil.copy2(docx, dest)
+    reg = AGENTS_DIR / "csa-context" / "PROJECTS.yaml"
+    text = reg.read_text(encoding="utf-8")
+    m = re.search(rf"^  - key: {re.escape(p['key'])}\s*$", text, re.M)
+    if not m:
+        die(f"project {p['key']} not found in {reg}")
+    nxt = re.search(r"^  - key: ", text[m.end():], re.M)
+    end = m.end() + nxt.start() if nxt else len(text)
+    block = text[m.start():end]
+    block = (re.sub(r"^(    stage:).*$", r"\1 v1", block, flags=re.M) if re.search(r"^    stage:", block, re.M)
+             else block.rstrip("\n") + "\n    stage: v1\n" + ("\n" if nxt else ""))
+    shutil.copy2(reg, reg.with_name(f"PROJECTS.yaml.bak-{time.strftime('%Y%m%d%H%M%S')}"))
+    reg.write_text(text[:m.start()] + block + text[end:], encoding="utf-8")
+    print(f"{C['g']}{p['key']} is at V1.{C['0']} Baseline: {dest}. From now on: csa author N -> Word -> csa review N -> csa cleanup N.")
+    return 0
+
+
 def author_path(p: dict, args: list[str], legacy: bool = False, cards: bool = False) -> str:
     """Which way `csa author` runs: "cards" (card -> answer agent -> render) or "legacy" (the change-authoring
     agent does everything). Cards is the default when a working DOCX exists and the target resolves.
@@ -2389,13 +2548,18 @@ def author_path(p: dict, args: list[str], legacy: bool = False, cards: bool = Fa
     return "cards"
 
 
-SECTION_VERBS = ("author", "write", "review", "cleanup", "answer")
+SECTION_VERBS = ("author", "write", "review", "cleanup", "answer", "draft")
 
 
 def cmd_agent(a):
     p = project(a.project); banner(p)
     if a.verb in SECTION_VERBS and a.args and "=" not in a.args[0] and not re.fullmatch(r"\d+(\.\d+)*", a.args[0]):
         a.args = [section_arg(p, a.args[0])] + a.args[1:]
+    if (((a.verb in ("author", "answer") and project_stage(p) == "draft") or a.verb == "draft")
+            and not getattr(a, "legacy", False) and a.args and not any(x.upper().startswith(("CARD=", "SHEET=", "MODE=", "EDIT_MODE=")) for x in a.args)):
+        if not working_docx(p):
+            die("draft lane: no working DOCX yet (create version 0.1 first: csa place / csa move)")
+        return _author_cards(p, a, draft=True)
     if a.verb == "author" and author_path(p, a.args, getattr(a, "legacy", False), getattr(a, "cards", False)) == "cards":
         return _author_cards(p, a)
     if a.verb == "cleanup" and not getattr(a, "print", False) and _cleanup_not_needed(p, a.args):
@@ -3878,7 +4042,7 @@ def main(argv=None) -> int:
         return s
 
     def agent_opts(s):
-        s.add_argument("--cli", choices=["codex", "claude", "hermes"])
+        s.add_argument("--cli", choices=["codex", "claude", "hermes", "evo"])
         s.add_argument("--headless", action="store_true")
         s.add_argument("--print", action="store_true", help="print the prompt instead of launching")
 
@@ -3945,6 +4109,15 @@ def main(argv=None) -> int:
     s.add_argument("--set", nargs="*", help="KEY=VALUE overrides for --agent"); agent_opts(s)
     s = sp("pipeline", cmd_pipeline); s.add_argument("section"); s.add_argument("--limit", type=int)
     s.add_argument("--max-batches", type=int, default=50); agent_opts(s)
+    s = sp("ingest", cmd_ingest, help="new data in: discovery index, graph sync (matrix, hosts, links), then stale subsections")
+    s.add_argument("--rebuild", action="store_true", help="rebuild the discovery index from scratch")
+    s.add_argument("--no-stale", action="store_true", help="skip the stale check")
+    s = sp("stale", cmd_stale, help="answered subsections whose evidence changed since their answer (no model)")
+    s.add_argument("--json", action="store_true")
+    s = sp("refresh-draft", cmd_refresh_draft, help="draft lane: answer again every subsection whose evidence changed")
+    agent_opts(s); s.add_argument("--fresh", action="store_true")
+    s = sp("freeze", cmd_freeze, help="csa freeze v1: baseline copy of the DOCX and switch the project to the V1 change lane")
+    s.add_argument("stage")
     s = sp("hosts", cmd_hosts, help="host register, facts per host and host-to-host links (build | list | show HOST | links [HOST] | group --attr ... | roles [--fix])")
     s.add_argument("action", nargs="?", default="list", choices=["build", "list", "show", "links", "group", "graph", "unresolved", "system", "evidence", "roles"])
     s.add_argument("host", nargs="?"); s.add_argument("--attr", action="append"); s.add_argument("--system")
