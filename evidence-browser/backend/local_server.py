@@ -76,6 +76,9 @@ class Handler(BaseHTTPRequestHandler):
             match = re.fullmatch(r"/api/systems/([^/]+)/network", path)
             if match:
                 return self.dispatch_result(api.host_network(match.group(1)))
+            match = re.fullmatch(r"/api/systems/([^/]+)/explorer", path)
+            if match:
+                return self.dispatch_result(api.system_explorer(match.group(1)))
             match = re.fullmatch(r"/api/systems/([^/]+)/portrait", path)
             if match:
                 return self.dispatch_result(api.application_portrait(match.group(1)))

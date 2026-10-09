@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import apply_workflow, audit_workflow, author_workflow, build_workflow, cleanup_workflow, commands, documents, draft_workflow, network, pipeline, proposals, review_workflow, sections, validation, word_review
+from . import apply_workflow, audit_workflow, author_workflow, build_workflow, cleanup_workflow, commands, documents, draft_workflow, explorer, network, pipeline, proposals, review_workflow, sections, validation, word_review
 from .jobs import JobManager
 from .models import CommandRequest, JobCreateRequest
 
@@ -731,6 +731,14 @@ def host_network(system_key: str) -> dict[str, Any]:
     """Every connection the captures recorded, as nodes and edges, from the matrix and host register."""
     project = system_project(system_key)
     return network.build(work_dir(project), agents_dir())
+
+
+@app.get("/api/systems/{system_key}/explorer")
+def system_explorer(system_key: str) -> dict[str, Any]:
+    """Hosts, captured links, per-host facts, CSA mentions and evidence-backed journeys for the System explorer."""
+    project = system_project(system_key)
+    resolved = documents.resolve(project)
+    return explorer.build(project, agents_dir(), resolved.get("path"))
 
 
 @app.get("/api/systems/{system_key}/portrait")

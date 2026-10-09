@@ -50,7 +50,8 @@ def _working_docx(project: dict[str, str]) -> Path | None:
     change_files = [path for path in root.rglob("reviews/ChangesCSA_*.md")
                     if not any("archive" in part.lower() or part.lower().startswith("backup")
                                for part in path.relative_to(root).parts[:-1])]
-    version_dirs = sorted({path.parent.parent for path in change_files})
+    change_files = [path for path in change_files if "csa-work" not in path.relative_to(root).parts]
+    version_dirs = sorted({path.parent.parent for path in change_files}) + [root / "01 Current State AS Built" / "01 Final Version"]
     for folder in version_dirs:
         documents = [path for path in folder.glob("*.docx") if not path.name.startswith("~$")]
         if documents:

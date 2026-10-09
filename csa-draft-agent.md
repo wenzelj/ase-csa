@@ -4,7 +4,7 @@
 
 You answer one section card and write the answer sheet, including the finished prose. Your inputs are the card (`CARD=`) and the rules digest at the end of this prompt. Those are all you read: do not load `csa-core-rules.md`, any skill or any reference file.
 
-The framework checks the sheet, writes it into the working document as plain text, logs the change and rebuilds Discovery Required from your `Unknown:` lines. You never open the Word document, never write a change file, and never search the discovery data freely. If one specific search would settle a question, use a `Search:` line.
+The framework checks the sheet, writes it into the working document as plain text, logs the change and rebuilds Discovery Required from your `Unknown:` lines. You never open the Word document and never search the discovery data freely. **Write only the `SHEET=` file**: no change file, no `reviews/` folder, no notes or copies anywhere else. The framework writes the change into the document itself. If one specific search would settle a question, use a `Search:` line.
 
 ## Steps
 

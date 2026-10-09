@@ -465,7 +465,7 @@ def all_change_files(p: dict) -> dict[str, list[Path]]:
     found: dict[str, list[Path]] = {}
     for f in sorted(root.rglob("reviews/*.md")):
         m = CHANGE_FILE_RE.match(f.name)
-        if m and not _archived(f, root):
+        if m and not _archived(f, root) and "csa-work" not in f.relative_to(root).parts:   # never a real change file
             found.setdefault(str(int(m["section"])), []).append(f)
     for files in found.values():
         files.sort(key=lambda f: (CHANGE_FILE_RE.match(f.name)["label"] is not None, f.name))
@@ -481,7 +481,10 @@ def final_version_dirs(p: dict) -> list[Path]:
 
 
 def working_docx(p: dict) -> Path | None:
-    for d in final_version_dirs(p):
+    """The working DOCX: the newest .docx beside a reviews/ folder of change files, else the project's standard
+    "01 Current State AS Built/01 Final Version" folder (a folder with change files but no .docx is skipped)."""
+    standard = local_path(p["project_root"]) / "01 Current State AS Built" / "01 Final Version"
+    for d in [*final_version_dirs(p), standard]:
         docs = sorted(x for x in d.glob("*.docx") if not x.name.startswith("~$"))
         if docs:
             docs.sort(key=lambda x: (int(m[1]) if (m := re.search(r"v(\d+)", x.name, re.I)) else -1, x.name), reverse=True)
@@ -2037,6 +2040,23 @@ def task_cli(verb: str) -> str | None:
     return {k.strip(): v.strip() for k, v in pairs}.get(verb)
 
 
+LAST_MESSAGE: Path | None = None
+
+
+def sheet_from_last_message(sheet: Path) -> bool:
+    """The agent answered in its final reply instead of writing SHEET: keep that reply as the sheet (from '## B1' on)."""
+    if sheet.is_file() or not LAST_MESSAGE or not LAST_MESSAGE.is_file():
+        return False
+    text = LAST_MESSAGE.read_text(encoding="utf-8", errors="replace")
+    m = re.search(r"^##\s+B1\b", text, re.M)
+    if not m:
+        return False
+    body = re.sub(r"\n```\s*$", "", text[m.start():].rstrip()) + "\n"
+    sheet.write_text(body, encoding="utf-8")
+    print(f"{C['y']}The agent put its answer in its reply, not in {sheet.name}; the framework saved it there.{C['0']}")
+    return True
+
+
 def launch(p: dict, r: dict, args: list[str], a) -> int:
     cli = getattr(a, "cli", None) or os.environ.get("CSA_CLI") or task_cli(r.get("verb", "")) or settings().get("default_cli", "codex")
     mode = "headless" if getattr(a, "headless", False) else "interactive"
@@ -2052,7 +2072,12 @@ def launch(p: dict, r: dict, args: list[str], a) -> int:
         return 0
     if not tmpl:
         die(f"no '{cli}_{mode}' command in .agents/cli.yaml")
-    argv = [prompt if t == "{prompt}" else t for t in shlex.split(tmpl)]
+    global LAST_MESSAGE
+    LAST_MESSAGE = None
+    if "{last}" in tmpl:                 # codex exec --output-last-message: the agent's final reply, kept for a fallback
+        LAST_MESSAGE = STATE_DIR / "tmp" / f"last-{os.getpid()}-{int(time.time())}.md"
+        LAST_MESSAGE.parent.mkdir(parents=True, exist_ok=True)
+    argv = [prompt if t == "{prompt}" else str(LAST_MESSAGE) if t == "{last}" else t for t in shlex.split(tmpl)]
     if not shutil.which(argv[0]):
         print(prompt)
         die(f"'{argv[0]}' is not on PATH. Prompt printed above; paste it into your CLI.")
@@ -2280,13 +2305,15 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
             sheet.replace(sheet.with_suffix(".prev.md"))
         t0 = time.time()
         rc = launch(p, agent(verb), [number, f"CARD={card_md}", f"SHEET={sheet}", *extra], a)
+        sheet_from_last_message(sheet)
         timing["answer_s"] = round(timing.get("answer_s", 0) + time.time() - t0, 1)
         return rc
 
     def check() -> dict:
         if not sheet.is_file():
             return {"status": "ERROR", "findings": [{"level": "ERROR", "code": "NO_SHEET", "question": None,
-                                                     "message": f"the answer agent wrote no {sheet.name}"}], "searches": {}}
+                                                     "message": f"the answer agent wrote no {sheet.name}. Write the whole sheet "
+                                                     f"with your file tool to exactly this path: {sheet}"}], "searches": {}}
         return _fw_json("csa_docx.answer_sheet", "validate", sheet, "--card", card_json, "--matrix", matrix,
                         "--new-ids", ",".join(sorted(_matrix_ids(work) - before)), *(["--draft"] if draft else []))
 
@@ -2346,6 +2373,8 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
         if rc != 0:
             return 2
         res2 = check()
+    if errs.is_file():                  # the sheet passes now: an old errors file would only mislead
+        errs.unlink(missing_ok=True)
     warns = [f for f in res2.get("findings", []) if f.get("level") == "WARN"]
     if draft and warns:
         print(f"{C['y']}{len(warns)} warning(s) (not blocking in the draft lane):{C['0']}")
