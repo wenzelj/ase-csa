@@ -1,247 +1,223 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import "./explorer.css";
 
-/* System explorer: a clean picture of the assessed system. Sites across, roles down; the services the system
- * relies on underneath. Select a host to read everything about it in one panel. "Show how data flows" plays the
- * recorded journey on the same picture. Data comes from /api/systems/<key>/explorer (host register, captured
- * links, host cards, facts, the working CSA and csa-work/explorer/journeys.json); nothing here is invented. */
+/* System explorer: the technical diagram of the assessed system, the same drawing as the CSA figure
+ * (csa_docx.techdiagram via /api/systems/<key>/diagram). IT across the top, the data centres side by side
+ * with tier rows, shared services across the bottom; every line runs in its own track. One tab per
+ * documented data flow (numbered steps, no animation). Select a system for everything about it (host
+ * register, captured links, facts, what the CSA says, from /api/systems/<key>/explorer) or a line for its
+ * ports and evidence. Nothing here is invented. */
 
 type Fact = { attribute: string; value: string };
 type Mention = { section: string; kind: string; text: string };
 type Host = { id: string; kind: string; role: string; site: string; ips: string; listed?: boolean; system: string; in_scope: string;
   fqdn: string; capture: string; conflicts: string; facts: Fact[]; csa: Mention[]; card: string };
 type Edge = { s: string; t: string; port: string; procs: string[]; est: boolean };
-type Status = "verified" | "inferred" | "documented" | "unknown";
-type Component = { id: string; name: string; host: string | null; status: Status; role: string };
+type Component = { id: string; name: string; host: string | null; status: string; role: string };
 type Dependency = { id: string; from: string; to: string[]; label: string; note?: string };
-type Transition = { id: string; from: string; to: string; payload: string; protocol?: string; port?: string; status: Status; edge: unknown };
-type Step = { id: string; component?: string; transition?: string | string[]; action: string; status: Status; narrative: string;
-  inference?: string; gaps?: string[]; dependencies?: string[] };
-type Journey = { id: string; title: string; purpose: string; trigger: { text: string; status: Status }; steps: Step[]; transitions: Transition[] };
-type Data = { application: string; hosts: Host[]; edges: Edge[]; components: Component[]; dependencies: Dependency[]; journeys: Journey[]; document: { name: string } };
-type Rect = { x: number; y: number; w: number; h: number };
-type Model = { byId: Record<string, Host>; sys: Host[]; loose: Host[]; sites: string[]; tiers: typeof TIERS; cell: (s: string, t: string) => Host[]; services: Host[]; externals: Component[] };
+type Data = { application: string; hosts: Host[]; edges: Edge[]; components: Component[]; dependencies: Dependency[]; document: { name: string } };
 
-const TIERS: { key: string; label: string; test: (h: Host) => boolean }[] = [
-  { key: "access", label: "Access", test: h => /jump/i.test(h.role) },
-  { key: "app", label: "Application", test: h => /reveloc|tgoip/i.test(h.role) && !/sql/i.test(h.role) },
-  { key: "bcast", label: "Broadcast", test: h => /revbroadcast/i.test(h.role) },
-  { key: "radio", label: "Radio management", test: h => /radio|sepura/i.test(h.role) },
-  { key: "db", label: "Database", test: h => /sql|database/i.test(h.role) },
-  { key: "log", label: "Logging", test: h => /\blog\b/i.test(h.role) },
-  { key: "other", label: "Role not recorded", test: () => true },
-];
-const SITE_ORDER = ["Rockhampton", "Mackay", "IPT"];
-const SAYS: Record<Status, string> = { verified: "Confirmed", inferred: "Not confirmed (inferred)", documented: "Documented only, not seen", unknown: "Not known" };
-const STEP_MS = 4200;
+type DNode = { id: string; label: string; role: string; kind: string; zone: string; kind_basis: string; ips: string[]; host?: boolean };
+type DEdge = { id: string; s: string; t: string; dir: string; label: string; status: string; step?: number; evidence: string[];
+  detail: Record<string, unknown> };
+type DGroup = { id: string; label: string; members: string[] };
+type DZone = { id: string; label: string };
+type DModel = { id: string; title: string; zones: DZone[]; groups: DGroup[]; nodes: DNode[]; edges: DEdge[]; notes?: string[] };
+type Diagram = { id: string; title: string; svg: string; model: DModel };
+type Diagrams = { application: string; diagrams: Diagram[] };
+type Sel = { type: "node" | "edge" | "group"; id: string } | null;
+
+const SAYS: Record<string, string> = { observed: "Observed in connection captures", configured: "Configured setting (DNS, Kerberos, time)",
+  inferred: "Inferred — validate", documented: "Documented only, not observed", unknown: "Path not captured" };
+const KIND: Record<string, string> = { database: "Database server", app_server: "Application server", logging: "Log server", jump_host: "Jump host",
+  terminal: "Operator workstation", radio: "Radio management", directory: "Domain controller · DNS", internal: "Internal addresses",
+  internet: "Internet", backup: "Backup target", mail: "Mail", firewall: "Firewall", dns: "DNS server", time: "Time source",
+  switch: "Network switch", router: "Router", hypervisor: "Virtualisation host", storage: "Storage", plc: "PLC", rtu: "RTU", hmi: "HMI",
+  historian: "Historian", server: "Server", unknown: "Role not recorded" };
 const PORT_NAME: Record<string, string> = { "56420": "SQL", "56522": "SQL cluster", "1433": "SQL", "445": "file sharing", "135": "RPC", "3389": "Remote Desktop",
   "53": "DNS", "88": "Kerberos", "389": "LDAP", "443": "HTTPS", "8080": "HTTP proxy", "5723": "monitoring agent", "9997": "Splunk", "8089": "Splunk management", "7000": "backup agent", "25": "SMTP" };
 
-const tierOf = (h: Host) => TIERS.find(t => t.test(h))!.key;
-const inSystem = (h: Host) => h.kind === "captured" || !!h.system || (!!h.listed && h.kind !== "unnamed" && h.kind !== "public");
-const list = <T,>(v: T | T[] | undefined): T[] => v === undefined ? [] : Array.isArray(v) ? v : [v];
 const ipsOf = (h: Host) => (h.ips || "").split(/[;,]\s*/).map(x => x.trim()).filter(x => x && !/\.0$/.test(x) && !x.startsWith("169.254") && x !== h.id);
 const captureDate = (c: string) => { const m = c.match(/_(\d{4})(\d{2})(\d{2})T/); return m ? new Date(`${m[1]}-${m[2]}-${m[3]}T00:00:00`).toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" }) : ""; };
+const cssId = (s: string) => (window.CSS && CSS.escape ? CSS.escape(s) : s.replace(/"/g, '\\"'));
 
 function cardSection(card: string, title: string): string[] {
-  const m = card.split(/\n## /).find(s => s.toLowerCase().startsWith(title.toLowerCase()));
+  const m = (card || "").split(/\n## /).find(s => s.toLowerCase().startsWith(title.toLowerCase()));
   return m ? m.split("\n").slice(1).filter(l => l.startsWith("- ")).map(l => l.slice(2).trim()) : [];
 }
 
-export default function SystemExplorer({ system }: { system: string; openEvidenceId?: (id: string) => void }) {
+function download(name: string, blob: Blob) {
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+function savePng(d: Diagram) {
+  const m = d.svg.match(/viewBox="0 0 ([\d.]+) ([\d.]+)"/); const w = m ? +m[1] : 1600, h = m ? +m[2] : 1200;
+  const img = new Image(); const url = URL.createObjectURL(new Blob([d.svg], { type: "image/svg+xml" }));
+  img.onload = () => {
+    const c = document.createElement("canvas"); c.width = w * 2; c.height = h * 2;
+    const g = c.getContext("2d")!; g.scale(2, 2); g.drawImage(img, 0, 0, w, h); URL.revokeObjectURL(url);
+    c.toBlob(b => b && download(`${d.id}.png`, b), "image/png");
+  };
+  img.src = url;
+}
+
+export default function SystemExplorer({ system, openEvidenceId }: { system: string; openEvidenceId?: (id: string) => void }) {
   const [data, setData] = useState<Data | null>(null);
+  const [dg, setDg] = useState<Diagrams | null>(null);
   const [error, setError] = useState("");
-  const [selected, setSelected] = useState<string | null>(null);
-  const [flow, setFlow] = useState(false);
-  const [t, setT] = useState(0);
-  const [playing, setPlaying] = useState(false);
-  const stageRef = useRef<HTMLDivElement | null>(null);
-  const tiles = useRef<Record<string, HTMLElement | null>>({});
-  const [rects, setRects] = useState<Record<string, Rect>>({});
-  const pathRefs = useRef<Record<string, SVGPathElement | null>>({});
+  const [tab, setTab] = useState(0);
+  const [sel, setSel] = useState<Sel>(null);
+  const [fit, setFit] = useState(true);
+  const stage = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    setData(null); setError(""); setSelected(null); setFlow(false); setT(0); setPlaying(false);
-    api<Data>(`/api/systems/${system}/explorer`).then(setData).catch(e => setError(String(e.message || e)));
+    setData(null); setDg(null); setError(""); setSel(null); setTab(0);
+    Promise.all([api<Data>(`/api/systems/${system}/explorer`), api<Diagrams>(`/api/systems/${system}/diagram`)])
+      .then(([d, g]) => { setData(d); setDg(g); }).catch(e => setError(String(e.message || e)));
   }, [system]);
 
-  const model = useMemo<Model | null>(() => {
-    if (!data) return null;
-    const byId = Object.fromEntries(data.hosts.map(h => [h.id, h]));
-    const sys = data.hosts.filter(inSystem);
-    const placed = sys.filter(h => h.role || h.site);
-    const loose = sys.filter(h => !h.role && !h.site);
-    const sites = [...new Set(placed.map(h => h.site || "Site not recorded"))]
-      .sort((a, b) => (SITE_ORDER.indexOf(a) + 1 || 99) - (SITE_ORDER.indexOf(b) + 1 || 99) || a.localeCompare(b));
-    const tiers = TIERS.filter(tr => placed.some(h => tierOf(h) === tr.key));
-    const cell = (site: string, tier: string) => placed.filter(h => (h.site || "Site not recorded") === site && tierOf(h) === tier).sort((a, b) => a.id.localeCompare(b.id));
-    const depTargets = new Set(data.dependencies.flatMap(d => d.to));
-    const services = data.hosts.filter(h => !inSystem(h) && (h.kind === "dc" || depTargets.has(h.id)));
-    const externals = data.components.filter(c => !c.host);
-    return { byId, sys, loose, sites, tiers, cell, services, externals };
-  }, [data]);
+  const cur = dg?.diagrams[tab] || null;
+  const model = cur?.model || null;
+  const byId = useMemo(() => Object.fromEntries((data?.hosts || []).map(h => [h.id, h])), [data]);
 
-  const journey = data?.journeys[0] || null;
-  const comps = useMemo(() => Object.fromEntries((data?.components || []).map(c => [c.id, c])), [data]);
-  const deps = useMemo(() => Object.fromEntries((data?.dependencies || []).map(d => [d.id, d])), [data]);
-  const total = journey?.steps.length || 0;
-  const step = Math.max(0, Math.min(total - 1, Math.floor(t)));
-  const progress = Math.min(1, t - step);
-  const cur = flow ? journey?.steps[step] : undefined;
-  const curTrans = cur ? list(cur.transition).map(id => journey!.transitions.find(x => x.id === id)).filter(Boolean) as Transition[] : [];
-  const tileOf = (cid: string) => { const c = comps[cid]; return c ? (c.host || "x:" + c.id) : ""; };
+  const members = (end: string): string[] => {
+    if (!model) return [];
+    if (end.startsWith("Z:")) return model.nodes.filter(n => n.zone === end.slice(2)).map(n => n.id);
+    if (end.startsWith("SG:")) return model.groups.find(g => g.id === end)?.members || [];
+    return [end];
+  };
+  const endName = (end: string): string => {
+    if (!model) return end;
+    if (end.startsWith("Z:")) return model.zones.find(z => z.id === end.slice(2))?.label || end;
+    if (end.startsWith("SG:")) return model.groups.find(g => g.id === end)?.label || end;
+    return model.nodes.find(n => n.id === end)?.label || end;
+  };
 
-  /* measure tile positions for the connection overlay */
-  const measure = useCallback(() => {
-    const stage = stageRef.current; if (!stage) return;
-    const base = stage.getBoundingClientRect(); const next: Record<string, Rect> = {};
-    Object.entries(tiles.current).forEach(([id, el]) => { if (el && el.isConnected) { const r = el.getBoundingClientRect(); next[id] = { x: r.left - base.left, y: r.top - base.top, w: r.width, h: r.height }; } });
-    setRects(prev => JSON.stringify(prev) === JSON.stringify(next) ? prev : next);
-  }, []);
-  useLayoutEffect(() => { measure(); });
+  /* highlight the selection on the drawing */
   useEffect(() => {
-    const stage = stageRef.current; if (!stage) return;
-    const ro = new ResizeObserver(() => measure()); ro.observe(stage); return () => ro.disconnect();
-  }, [measure, data]);
+    const svg = stage.current?.querySelector("svg"); if (!svg || !model) return;
+    svg.querySelectorAll(".on,.sel").forEach(e => e.classList.remove("on", "sel"));
+    svg.classList.toggle("dim", !!sel);
+    if (!sel) return;
+    let nodes: string[] = [], edges: string[] = [];
+    if (sel.type === "edge") {
+      const e = model.edges.find(x => x.id === sel.id); if (!e) return;
+      nodes = [...members(e.s), ...members(e.t)]; edges = [e.id];
+    } else {
+      const ids = sel.type === "group" ? members(sel.id) : [sel.id];
+      const es = model.edges.filter(e => [...members(e.s), ...members(e.t), e.s, e.t].some(x => ids.includes(x) || x === sel.id));
+      nodes = [...new Set([...ids, ...es.flatMap(e => [...members(e.s), ...members(e.t)])])]; edges = es.map(e => e.id);
+    }
+    nodes.forEach(id => svg.querySelector(`.node[data-id="${cssId(id)}"]`)?.classList.add("on"));
+    edges.forEach(id => svg.querySelectorAll(`.edge[data-id="${cssId(id)}"]`).forEach(x => x.classList.add("on")));
+    svg.querySelectorAll(".group").forEach(g => { if (members((g as HTMLElement).dataset.id || "").some(x => nodes.includes(x))) g.classList.add("on"); });
+    if (sel.type !== "edge") {
+      const el = svg.querySelector(`.${sel.type}[data-id="${cssId(sel.id)}"]`);
+      el?.classList.add("sel", "on");
+      const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+      (el as Element | null)?.scrollIntoView?.({ block: "nearest", inline: "nearest", behavior: reduce ? "auto" : "smooth" });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sel, tab, model]);
 
-  /* playback */
   useEffect(() => {
-    if (!playing || !total) return;
-    let raf = 0, last = performance.now();
-    const tick = (now: number) => { const dt = Math.min(100, now - last); last = now; setT(v => Math.min(total, v + dt / STEP_MS)); raf = requestAnimationFrame(tick); };
-    raf = requestAnimationFrame(tick); return () => cancelAnimationFrame(raf);
-  }, [playing, total]);
-  useEffect(() => { if (playing && t >= total) setPlaying(false); }, [playing, t, total]);
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { setSelected(null); return; }
-      if (!flow) return;
-      const tag = (e.target as HTMLElement)?.tagName; if (tag === "INPUT" || tag === "SELECT") return;
-      if (e.key === " ") { e.preventDefault(); setPlaying(p => !p); }
-      if (e.key === "ArrowRight") { e.preventDefault(); setPlaying(false); setT(Math.min(total - 1, step + 1)); }
-      if (e.key === "ArrowLeft") { e.preventDefault(); setPlaying(false); setT(Math.max(0, step - 1)); }
-    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setSel(null); };
     window.addEventListener("keydown", onKey); return () => window.removeEventListener("keydown", onKey);
-  }, [flow, step, total]);
+  }, []);
+
+  const pick = (target: EventTarget | null) => {
+    const el = target as Element | null; if (!el || !el.closest) return;
+    const n = el.closest(".node") as HTMLElement | null; if (n?.dataset.id) { setSel({ type: "node", id: n.dataset.id }); return; }
+    const e = el.closest(".edge") as HTMLElement | null; if (e?.dataset.id) { setSel({ type: "edge", id: e.dataset.id }); return; }
+    const g = el.closest(".group") as HTMLElement | null; if (g?.dataset.id) { setSel({ type: "group", id: g.dataset.id }); return; }
+    setSel(null);
+  };
 
   if (error) return <section className="sx"><div className="sx-msg">The system explorer could not load: {error}</div></section>;
-  if (!data || !model) return <section className="sx"><div className="loading"><span /><strong>Drawing the system…</strong></div></section>;
+  if (!data || !dg || !cur || !model) return <section className="sx"><div className="loading"><span /><strong>Drawing the system…</strong></div></section>;
 
-  /* lines: the selected host's connections to other tiles, or the current flow stage */
-  const centre = (r: Rect) => ({ x: r.x + r.w / 2, y: r.y + r.h / 2 });
-  const edgePoint = (r: Rect, toward: { x: number; y: number }) => {
-    const c = centre(r), dx = toward.x - c.x, dy = toward.y - c.y;
-    const sx = dx ? (r.w / 2) / Math.abs(dx) : Infinity, sy = dy ? (r.h / 2) / Math.abs(dy) : Infinity, k = Math.min(sx, sy);
-    return { x: c.x + dx * k, y: c.y + dy * k };
-  };
-  const pathBetween = (a: string, b: string) => {
-    const ra = rects[a], rb = rects[b]; if (!ra || !rb) return "";
-    const p1 = edgePoint(ra, centre(rb)), p2 = edgePoint(rb, centre(ra));
-    const mx = (p1.x + p2.x) / 2, my = (p1.y + p2.y) / 2, bend = Math.min(40, Math.hypot(p2.x - p1.x, p2.y - p1.y) / 6);
-    const nx = -(p2.y - p1.y), ny = p2.x - p1.x, n = Math.hypot(nx, ny) || 1;
-    return `M${p1.x},${p1.y} Q${mx + (nx / n) * bend},${my + (ny / n) * bend} ${p2.x},${p2.y}`;
-  };
-  const selLinks = selected && !flow ? (() => {
-    const pairs = new Map<string, { a: string; b: string; out: boolean }>();
-    data.edges.forEach(e => {
-      if (e.s !== selected && e.t !== selected) return;
-      const other = e.s === selected ? e.t : e.s; if (!rects[other]) return;
-      if (!pairs.has(other)) pairs.set(other, { a: selected, b: other, out: e.s === selected });
-    });
-    return [...pairs.values()];
-  })() : [];
-  const selDeps = selected && !flow ? data.dependencies.filter(d => d.from === selected).flatMap(d => d.to.filter(x => rects[x]).map(x => ({ id: d.id + x, a: selected, b: x }))) : [];
-  const flowDeps = cur ? list(cur.dependencies).map(id => deps[id]).filter(Boolean).flatMap(d => d.to.filter(x => rects[x]).map(x => ({ id: d.id + x, a: d.from, b: x }))) : [];
-  const linked = new Set<string>([...selLinks.map(l => l.b), ...selDeps.map(d => d.b)]);
-  const active = new Set<string>();
-  if (cur) { if (cur.component) active.add(tileOf(cur.component)); curTrans.forEach(x => { active.add(tileOf(x.from)); active.add(tileOf(x.to)); }); flowDeps.forEach(d => active.add(d.b)); }
-  const stateOf = (id: string) => selected === id ? " sel" : (selected && !flow && !linked.has(id)) || (flow && active.size > 0 && !active.has(id)) ? " quiet" : active.has(id) ? " on" : "";
+  const hostCount = model.nodes.filter(n => n.host).length;
+  const dcs = model.zones.filter(z => (model as unknown as { layout?: { dcs?: string[] } }).layout?.dcs?.includes(z.id)).map(z => z.label);
+  const selNode = sel?.type === "node" ? model.nodes.find(n => n.id === sel.id) : undefined;
+  const selHost = selNode && byId[selNode.id];
+  const selEdge = sel?.type === "edge" ? model.edges.find(e => e.id === sel.id) : undefined;
+  const selGroup = sel?.type === "group" ? model.groups.find(g => g.id === sel.id) : undefined;
 
-  const tile = (h: Host) => {
-    const notCaptured = h.kind !== "captured";
-    return <button key={h.id} ref={el => { tiles.current[h.id] = el; }} className={`sx-tile${notCaptured ? " nc" : ""}${stateOf(h.id)}`}
-      onClick={() => setSelected(selected === h.id ? null : h.id)} aria-pressed={selected === h.id}>
-      <b>{h.id}</b><span>{h.role || "Role not recorded"}</span>{notCaptured && <i>not captured</i>}
-    </button>;
-  };
-
-  const token = (x: Transition) => {
-    const el = pathRefs.current[x.id]; if (!el || !(x.status === "verified" || x.status === "inferred") || !el.getAttribute("d")) return null;
-    const p = el.getPointAtLength(Math.min(1, progress * 1.2) * el.getTotalLength());
-    return <circle key={"k" + x.id} className={`sx-token ${x.status}`} cx={p.x} cy={p.y} r={7} />;
-  };
-
-  const sel = selected && !selected.startsWith("x:") ? (model.byId[selected] || null) : null;
-  const selExt = selected?.startsWith("x:") ? comps[selected.slice(2)] : null;
-
-  return <section className={`sx${flow ? " flowing" : ""}`}>
+  return <section className="sx">
     <header className="sx-head">
-      <div><h2>{data.application}</h2>
-        <p>{model.sys.length - model.loose.length} hosts across {model.sites.length} sites. Select a host to explore it.</p></div>
-      {journey && <button className={`sx-flowbtn${flow ? " on" : ""}`} onClick={() => { const next = !flow; setFlow(next); setT(0); setPlaying(next); setSelected(null); }}>
-        {flow ? "Close data flow" : "▶ Show how data flows"}</button>}
+      <div><h2>{dg.application}</h2>
+        <p>{tab === 0 ? `${hostCount} systems${dcs.length ? ` across ${dcs.join(" and ")}` : ""}. ` : ""}Select a system or a line to see its evidence. The same drawing is the CSA figure.</p></div>
+      <div className="sx-tools">
+        <button onClick={() => setFit(f => !f)}>{fit ? "Actual size" : "Fit to width"}</button>
+        <button onClick={() => download(`${cur.id}.svg`, new Blob([cur.svg], { type: "image/svg+xml" }))}>Download SVG</button>
+        <button onClick={() => savePng(cur)}>Download PNG</button>
+      </div>
     </header>
 
-    <div className={`sx-body${sel || selExt ? " has-panel" : ""}`}>
-      <div className="sx-stage" ref={stageRef}>
-        <div className="sx-grid" style={{ gridTemplateColumns: `130px repeat(${model.sites.length}, minmax(0, 1fr))` }}>
-          <div />{model.sites.map(s => <div key={s} className="sx-site">{s}</div>)}
-          {model.tiers.map(tr => [
-            <div key={tr.key + "-l"} className="sx-tier">{tr.label}</div>,
-            ...model.sites.map(s => <div key={tr.key + s} className="sx-cell">{model.cell(s, tr.key).map(tile)}</div>),
-          ])}
-        </div>
+    {dg.diagrams.length > 1 && <nav className="sx-tabs" role="tablist" aria-label="Diagrams">
+      {dg.diagrams.map((d, i) => <button key={d.id} role="tab" aria-selected={i === tab} className={i === tab ? "on" : ""}
+        onClick={() => { setTab(i); setSel(null); }}>{i === 0 ? "System" : d.title}</button>)}
+    </nav>}
 
-        <div className="sx-services">
-          <div className="sx-tier">Relies on</div>
-          <div className="sx-svc-row">
-            {model.services.map(h => <button key={h.id} ref={el => { tiles.current[h.id] = el; }} className={`sx-tile svc${stateOf(h.id)}`}
-              onClick={() => setSelected(selected === h.id ? null : h.id)}><b>{h.id}</b><span>Domain controller{h.site ? ` · ${h.site}` : ""}</span></button>)}
-            {model.externals.map(c => <button key={c.id} ref={el => { tiles.current["x:" + c.id] = el; }} className={`sx-tile svc ext${stateOf("x:" + c.id)}`}
-              onClick={() => setSelected(selected === "x:" + c.id ? null : "x:" + c.id)}><b>{c.name}</b><span>{SAYS[c.status]}</span></button>)}
-          </div>
-        </div>
+    <div className={`sx-body${sel ? " has-panel" : ""}`}>
+      <div className={`sx-stage sx-drawing${fit ? " fit" : ""}`} ref={stage}
+        onClick={e => pick(e.target)}
+        onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { const n = (e.target as Element).closest?.(".node"); if (n) { e.preventDefault(); pick(n); } } }}
+        dangerouslySetInnerHTML={{ __html: cur.svg }} />
 
-        {model.loose.length > 0 && <p className="sx-note">Also in the AD inventory, with no role or site recorded: {model.loose.map((h, i) =>
-          <span key={h.id}>{i ? ", " : ""}<button className="sx-link" onClick={() => setSelected(h.id)}>{h.id}</button></span>)}.</p>}
-
-        <svg className="sx-lines" aria-hidden="true">
-          <defs><marker id="sx-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" /></marker></defs>
-          {selLinks.map(l => <path key={l.b} className="sx-line" d={l.out ? pathBetween(l.a, l.b) : pathBetween(l.b, l.a)} markerEnd="url(#sx-arrow)" />)}
-          {curTrans.map(x => <path key={x.id} ref={el => { pathRefs.current[x.id] = el; }} className={`sx-line flow ${x.status}`} d={pathBetween(tileOf(x.from), tileOf(x.to))} markerEnd="url(#sx-arrow)" />)}
-          {curTrans.map(token)}
-        </svg>
-      </div>
-
-      {(sel || selExt) && <aside className="sx-panel" aria-live="polite">
-        <button className="sx-close" onClick={() => setSelected(null)} aria-label="Close">×</button>
-        {sel ? <HostDetail host={sel} data={data} model={model} go={setSelected} /> : selExt && <div className="sx-detail">
-          <h3>{selExt.name}</h3><p className="sx-sub">{SAYS[selExt.status]}</p><p>{selExt.role}</p></div>}
+      {sel && <aside className="sx-panel" aria-live="polite">
+        <button className="sx-close" onClick={() => setSel(null)} aria-label="Close">×</button>
+        {selHost ? <HostDetail host={selHost} data={data} byId={byId} go={id => setSel({ type: "node", id })} />
+          : selNode ? <OtherDetail node={selNode} />
+          : selGroup ? <div className="sx-detail"><p className="sx-kind">Group</p><h3 className="plain">{selGroup.label}</h3>
+              <section><h4>Members</h4><ul className="sx-plain">{selGroup.members.map(m => <li key={m}>
+                <button className="sx-link" onClick={() => setSel({ type: "node", id: m })}>{m}</button></li>)}</ul></section></div>
+          : selEdge ? <EdgeDetail edge={selEdge} endName={endName} go={id => setSel({ type: "node", id })} openEvidenceId={openEvidenceId} />
+          : null}
       </aside>}
     </div>
-
-    {flow && journey && cur && <div className="sx-flow" role="group" aria-label="Data flow">
-      <div className="sx-flow-text">
-        <span className="sx-flow-title">{journey.title}</span>
-        <h3>{step + 1}. {cur.action} <em className={cur.status}>{SAYS[cur.status]}</em></h3>
-        <p>{cur.narrative}</p>
-        {cur.inference && <p className="sx-flow-note">{cur.inference}</p>}
-        {!!cur.gaps?.length && <p className="sx-flow-note">Not yet known: {cur.gaps.join(" ")}</p>}
-        {step === 0 && <p className="sx-flow-note">What starts it: {journey.trigger.text}</p>}
-      </div>
-      <div className="sx-flow-ctl">
-        <button onClick={() => { setPlaying(false); setT(Math.max(0, step - 1)); }} disabled={step === 0} aria-label="Previous step">‹</button>
-        <button className="play" onClick={() => { if (t >= total) { setT(0); setPlaying(true); } else setPlaying(p => !p); }}>{playing ? "Pause" : t >= total ? "Replay" : "Play"}</button>
-        <button onClick={() => { setPlaying(false); setT(Math.min(total - 1, step + 1)); }} disabled={step >= total - 1} aria-label="Next step">›</button>
-        <div className="sx-dots">{journey.steps.map((s, i) => <button key={s.id} className={i === step ? "on" : ""} title={s.action} onClick={() => { setPlaying(false); setT(i); }} aria-label={`Step ${i + 1}: ${s.action}`} />)}</div>
-        <span className="sx-pace">Playback speed is for reading, not real timing.</span>
-      </div>
-    </div>}
   </section>;
 }
 
-function HostDetail({ host, data, model, go }: { host: Host; data: Data; model: Model; go: (id: string) => void }) {
+function OtherDetail({ node }: { node: DNode }) {
+  return <div className="sx-detail">
+    <p className="sx-kind">{KIND[node.kind] || node.kind}</p>
+    <h3 className="plain">{node.label}</h3>
+    <p className="sx-sub">{node.role}</p>
+    <p className="sx-meta">{node.kind_basis}</p>
+    {node.ips.length > 0 && <section><h4>Addresses ({node.ips.length})</h4>
+      <p className="sx-ips">{node.ips.join(", ")}</p></section>}
+  </div>;
+}
+
+function EdgeDetail({ edge, endName, go, openEvidenceId }: { edge: DEdge; endName: (s: string) => string; go: (id: string) => void;
+  openEvidenceId?: (id: string) => void }) {
+  const d = edge.detail || {};
+  const ports = d.ports as Record<string, number> | undefined;
+  const hosts = d.hosts as string[] | undefined;
+  const settings = d.settings as string[] | undefined;
+  const end = (x: string) => x.startsWith("Z:") || x.startsWith("SG:") || x.startsWith("G-") ? <b>{endName(x)}</b>
+    : <button className="sx-link" onClick={() => go(x)}>{endName(x)}</button>;
+  return <div className="sx-detail">
+    <p className="sx-kind">{edge.step ? `Step ${edge.step} · ` : ""}{SAYS[edge.status] || edge.status}</p>
+    <h3 className="plain edge-title">{end(edge.s)} <span>{edge.dir === "both" ? "↔" : "→"}</span> {end(edge.t)}</h3>
+    <p className="sx-sub">{edge.label.split("\n").join(" · ")}</p>
+    {typeof d.connections === "number" && <p className="sx-meta">{d.connections as number} captured connection{(d.connections as number) === 1 ? "" : "s"}</p>}
+    {ports && <section><h4>Ports</h4><ul className="sx-plain">{Object.entries(ports).map(([p, n]) =>
+      <li key={p}>{PORT_NAME[p] ? `${PORT_NAME[p]} (${p})` : /^\d+$/.test(p) ? `port ${p}` : p}{n > 1 ? ` × ${n}` : ""}</li>)}</ul></section>}
+    {hosts && hosts.length > 0 && <section><h4>Hosts on this line</h4><p className="sx-ips">{hosts.map((h, i) =>
+      <span key={h}>{i ? ", " : ""}<button className="sx-link" onClick={() => go(h)}>{h}</button></span>)}</p></section>}
+    {settings && settings.length > 0 && <section><h4>Settings</h4><ul className="sx-plain">{settings.map((s, i) => <li key={i}>{s}</li>)}</ul></section>}
+    {typeof d.inference === "string" && <section><h4>Why inferred</h4><p className="sx-quiet">{d.inference as string}</p></section>}
+    {typeof d.unknown === "string" && <section><h4>Not known</h4><p className="sx-quiet">{d.unknown as string}</p></section>}
+    <section><h4>Evidence ({edge.evidence.length})</h4>
+      {edge.evidence.length ? <div className="sx-ev">{edge.evidence.map(id => <button key={id} onClick={() => openEvidenceId?.(id)}>{id}</button>)}</div>
+        : <p className="sx-quiet">No evidence ID recorded.</p>}</section>
+  </div>;
+}
+
+function HostDetail({ host, data, byId, go }: { host: Host; data: Data; byId: Record<string, Host>; go: (id: string) => void }) {
   const doesLines = cardSection(host.card, "What it does");
   const apps = [...new Set(doesLines.filter(l => l.startsWith("Application:")).map(l => l.replace(/^Application:\s*/, "")))];
   const services = doesLines.filter(l => l.startsWith("Service:")).map(l => l.replace(/^Service:\s*/, "").split(" - ")[0].replace(/\s*\(`[^`]*`\)\s*$/, ""));
@@ -254,7 +230,7 @@ function HostDetail({ host, data, model, go }: { host: Host; data: Data; model: 
     p.ports.add(e.port); e.procs.forEach(x => x && p.procs.add(x)); peers.set(k, p);
   });
   const all = [...peers.values()];
-  const named = all.filter(p => { const h = model.byId[p.id]; return h && h.kind !== "unnamed" && h.kind !== "public"; }).sort((a, b) => a.id.localeCompare(b.id));
+  const named = all.filter(p => { const h = byId[p.id]; return h && h.kind !== "unnamed" && h.kind !== "public"; }).sort((a, b) => a.id.localeCompare(b.id));
   const unnamed = all.filter(p => !named.includes(p));
   const deps = data.dependencies.filter(d => d.from === host.id);
   const comps = data.components.filter(c => c.host === host.id);
@@ -282,7 +258,7 @@ function HostDetail({ host, data, model, go }: { host: Host; data: Data; model: 
       {named.length ? <ul className="sx-peers">{named.map(p => <li key={p.id + p.out}>
         <span className="dir" title={p.out ? "it connects to" : "connects to it"}>{p.out ? "→" : "←"}</span>
         <div><button className="sx-link" onClick={() => go(p.id)}>{p.id}</button>
-          <small>{model.byId[p.id]?.role ? `${model.byId[p.id].role} · ` : ""}{usage(p)}</small></div></li>)}</ul>
+          <small>{byId[p.id]?.role ? `${byId[p.id].role} · ` : ""}{usage(p)}</small></div></li>)}</ul>
         : <p className="sx-quiet">No connections to named hosts were captured.</p>}
       {unnamed.length > 0 && <details><summary>{unnamed.length} other address{unnamed.length > 1 ? "es" : ""} (names not captured)</summary>
         <ul className="sx-plain small">{unnamed.map(p => <li key={p.id + p.out}>{p.out ? "→" : "←"} {p.id} · {usage(p)}</li>)}</ul></details>}

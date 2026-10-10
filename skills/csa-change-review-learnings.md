@@ -241,3 +241,9 @@ When a re-review follows a corrective tracked-apply and flatten cycle, sign off 
 
 Validation:
 After writing the re-review report, confirm: (1) the sign-off line lists only the corrective edit IDs reviewed in this pass, (2) each prior P1 appears in Findings as RESOLVED with the corrective edit ID, (3) no prior P1 is re-listed as an open finding.
+## 2026-10-09 - Missing subsection change record after draft refresh
+
+- Context: a subsection review had historical author/apply run-state, but the approved Markdown change file and live edit comments were no longer present after a later draft refresh.
+- Risk: reconstructing approved `Where`, `Text`, `Why` or `Note` fields from run-state, comments or memory would silently create a new source of truth.
+- Review approach: mark the review `BLOCKED`, sign off no edit IDs, preserve the historical IDs only as an unverified inventory, and require restoration or controlled re-author/apply.
+- Validation: confirm live `csa status`, `csa prepare`, stable-ID lookup, current comments, live evidence IDs and a known pre-refresh backup before reporting the blocker.

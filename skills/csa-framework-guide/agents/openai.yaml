@@ -1,0 +1,4 @@
+interface:
+  display_name: "CSA Framework Guide"
+  short_description: "Operate the ASE CSA skills and document pipeline"
+  default_prompt: "Use $csa-framework-guide to inspect the live CSA project and take the next safe framework-supported action."

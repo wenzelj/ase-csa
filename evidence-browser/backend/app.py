@@ -741,6 +741,13 @@ def system_explorer(system_key: str) -> dict[str, Any]:
     return explorer.build(project, agents_dir(), resolved.get("path"))
 
 
+@app.get("/api/systems/{system_key}/diagram")
+def system_diagram(system_key: str) -> dict[str, Any]:
+    """Technical diagrams (SVG + model) for the System explorer; the same drawings as the CSA figures."""
+    project = system_project(system_key)
+    return explorer.diagrams(project, agents_dir())
+
+
 @app.get("/api/systems/{system_key}/portrait")
 def application_portrait(system_key: str) -> dict[str, Any]:
     """Translate indexed material into the questions an assessor must resolve."""

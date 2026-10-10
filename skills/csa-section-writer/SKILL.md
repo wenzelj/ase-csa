@@ -52,10 +52,13 @@ When a subsection would only restate another, reduce it to one sentence that poi
 - State `INFERRED`, `UNCONFIRMED`, `CONFLICTING`, and `NOT_FOUND` matters transparently -- as plain wording in the sentence itself (e.g. "has not been directly observed" rather than a bracketed tag), not as a citation-style marker.
 - Expand an abbreviation on first use, for example Operational Technology (OT).
 - Keep current state, interpretation, gap, risk observation, and recommendation distinct.
+- Before writing a requirement finding, complete the requirement-assessment object and decision sequence in `current-state-reasoning.md` section 8. Assess applicability and each mandatory obligation before selecting a rating. If the result is `unable_to_determine`, do not force it into the document's four-value rating schema; retain it as an open question for human review.
 - Do not copy stale facts from a prior assessment merely to complete a section.
 - Preserve named owners, reviewers, approvers, dates, and controlled-document fields unless instructed to change them.
 - Use tables for inventories and exact mappings; use prose for meaning and operational context.
 
 Before returning the draft, run `prose_lint.py` on it (see `csa-writing-style`, Check before returning) and fix its warnings. Then map every material factual sentence to its evidence ID(s) -- but keep that mapping in the change record, not the section text. If the source cannot support the wording, narrow it or label the uncertainty in the prose itself.
+
+For every requirement finding, also verify that the application function and supporting components remain the subject; observed behaviour, missing evidence and the compliance conclusion are separate; communication is not generalised into file transfer; every mandatory obligation has an assessment; and any recommendation is proportional to the established result.
 
 Return the revised section (clean prose, no evidence IDs in it) and a brief change record stating what changed, why, and which E-id(s) support each material change -- the change record is where citations belong. Do not silently broaden scope.

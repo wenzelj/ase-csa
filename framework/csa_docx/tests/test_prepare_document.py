@@ -47,10 +47,14 @@ def test_word_lock_file_is_detected_under_both_naming_conventions(tmp_path):
     assert tools._word_lock_files(docx) == [full]
 
 
-def test_prepare_document_reports_not_ready_when_the_docx_is_open_in_word(tmp_path):
+def test_prepare_document_reports_not_ready_when_the_docx_is_open_in_word(tmp_path, monkeypatch):
     workspace = _make_workspace(tmp_path)
     docx = _workspace_docx(workspace)
     docx.with_name(f"~${docx.name[2:]}").write_bytes(b"owner file")
+    monkeypatch.setattr(
+        "csa_docx.word_close.ensure_closed",
+        lambda _docx: {"status": "LOCKED", "message": "document is open in Word"},
+    )
 
     result = tools.prepareDocument("1", workspace=workspace)
 
@@ -452,11 +456,15 @@ def test_lookup_stable_id_surfaces_an_unresolvable_section_as_error(tmp_path):
     assert "section 9" in result["message"]
 
 
-def test_apply_next_batch_returns_not_ready_and_touches_nothing_when_locked(tmp_path):
+def test_apply_next_batch_returns_not_ready_and_touches_nothing_when_locked(tmp_path, monkeypatch):
     workspace = _make_workspace(tmp_path)
     docx = _workspace_docx(workspace)
     lock = docx.with_name(f"~${docx.name[2:]}")
     lock.write_bytes(b"owner file")
+    monkeypatch.setattr(
+        "csa_docx.word_close.ensure_closed",
+        lambda _docx: {"status": "LOCKED", "message": "document is open in Word"},
+    )
     before = docx.read_bytes()
 
     result = tools.apply_next_batch("1", limit=1, workspace=workspace)

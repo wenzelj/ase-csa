@@ -94,6 +94,23 @@ Because it is approved.
     assert "approved" in records[0].why
 
 
+def test_parse_assessment_basis_without_applying_it_as_text():
+    markdown = '''### S3-E1 - Requirement assessment
+**Where:** `@H3.1-T1-R2`
+**Do:** Replace
+**Facts:**
+- [B1] The application uses an API. (E-101) {basis: documented}
+**Assessment basis:**
+{"requirement_id":"CTRL-01","compliance_status":"unable_to_determine"}
+**Text:**
+> Observed: The application uses an API.\n> Assessment: Partially Met
+**Why:** E-101.
+'''
+    record = parse_change_records(markdown)[0]
+    assert '"requirement_id":"CTRL-01"' in record.assessment_basis
+    assert "Assessment basis" not in record.text
+
+
 def test_find_anchor_after_markdown_cleanup():
     where = """Section 4, immediately after the sentence beginning exactly:
 

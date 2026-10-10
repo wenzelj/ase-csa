@@ -1,0 +1,11 @@
+{
+  "_about": "Page layout for `csa system-diagram` and the Evidence Workspace System explorer. Per project: the data centres left to right (sites = the site values recorded against hosts that belong to it) and the band titles. IT goes across the top, shared services across the bottom. A project without an entry gets its two busiest sites as data centres.",
+  "tetra-reveloc": {
+    "data_centres": [
+      {"key": "rok", "label": "Rockhampton data centre", "sites": ["Rockhampton", "ROT"]},
+      {"key": "mky", "label": "Mackay data centre", "sites": ["Mackay", "MOT"]}
+    ],
+    "top_label": "IT, Internet and other networks",
+    "shared_label": "Shared services: directory, DNS and time"
+  }
+}

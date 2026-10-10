@@ -203,3 +203,18 @@ def build(project: dict[str, str], agents: Path, document: Path | None) -> dict[
             "journeys": spec.get("journeys", []), "issues": issues, "evidence": evidence, "document": doc_state,
             "sources": {"links": net["source"], "journeys": str(spec_path.name) if spec else "",
                         "facts": "hosts/host_facts.csv", "evidence": "evidence-matrix.csv, hosts/evidence_hosts.csv"}}
+
+
+def diagrams(project: dict[str, str], agents: Path) -> dict[str, Any]:
+    """The project's technical diagrams (system overview + one numbered data flow per journey) as SVG plus their
+    models, from csa_docx.techdiagram: the same drawings `csa system-diagram` writes for the CSA figures."""
+    work = Path(project["work_dir"]).expanduser()
+    net = network.build(work, agents)                     # also puts the framework on sys.path
+    from csa_docx.techdiagram import diagrams as build_diagrams
+    spec_path = work / "explorer" / "journeys.json"
+    try:
+        spec = json.loads(spec_path.read_text(encoding="utf-8")) if spec_path.is_file() else {}
+    except json.JSONDecodeError:
+        spec = {}
+    app = spec.get("application") or project.get("label", "")
+    return {"application": app, "diagrams": build_diagrams(net, spec, project.get("key", ""), app)}

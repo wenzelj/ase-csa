@@ -72,3 +72,40 @@ def test_build_reads_project_files(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     h1 = next(h for h in out["hosts"] if h["id"] == "H1")
     assert h1["facts"][0]["value"] == "Windows" and h1["evidence_ids"] == ["E-1"]
     assert out["evidence"]["E-1"]["claim"] == "H1 talks to H2"
+
+
+def test_diagrams_draw_every_host_and_journey(tmp_path: Path, monkeypatch) -> None:
+    """The System explorer's drawings come from csa_docx.techdiagram: one overview plus one flow per journey."""
+    net = {"nodes": [{"id": "H1", "kind": "captured", "role": "Reveloc application server", "site": "S1", "ips": "10.0.0.1"},
+                     {"id": "H2", "kind": "captured", "role": "SQL Server cluster node", "site": "S2", "ips": "10.0.0.2"},
+                     {"id": "8.8.8.8", "kind": "public", "role": "", "site": "", "ips": "8.8.8.8"}],
+           "edges": [{"s": "H1", "t": "H2", "port": "1433", "procs": ["app"], "ids": ["E-1"], "est": True},
+                     {"s": "H1", "t": "8.8.8.8", "port": "443", "procs": [], "ids": ["E-2"], "est": True}],
+           "source": "test"}
+    monkeypatch.setattr(explorer.network, "build", lambda work, agents: net)
+    work = tmp_path / "csa-work"; (work / "explorer").mkdir(parents=True)
+    (work / "explorer" / "journeys.json").write_text(json.dumps({**spec(), "application": "APP"}), encoding="utf-8")
+    import sys
+    fw = str(Path(__file__).resolve().parents[2] / "framework")
+    if fw not in sys.path:
+        sys.path.insert(0, fw)
+    out = explorer.diagrams({"key": "none", "work_dir": str(work), "label": "APP"}, tmp_path)
+    ids = [d["id"] for d in out["diagrams"]]
+    assert ids[0] == "system-overview" and ids[1] == "flow-j"
+    over = out["diagrams"][0]
+    assert {n["id"] for n in over["model"]["nodes"]} >= {"H1", "H2", "G-INTERNET"}
+    assert 'data-id="H1"' in over["svg"] and over["svg"].startswith("<svg")
+
+
+def test_system_types_come_from_the_recorded_role() -> None:
+    import sys
+    fw = str(Path(__file__).resolve().parents[2] / "framework")
+    if fw not in sys.path:
+        sys.path.insert(0, fw)
+    from csa_docx.techdiagram.model import classify
+    cases = {"SQL Server cluster node (instance S01)": "database", "RevViewer Jump Host": "jump_host", "Siemens S7 PLC": "plc",
+             "ABB RTU560": "rtu", "OSIsoft PI historian": "historian", "Wonderware HMI": "hmi", "Splunk SIEM": "logging",
+             "Core switch": "switch", "VMware ESXi host": "hypervisor", "TETRA base station controller": "server", "": "unknown"}
+    for role, kind in cases.items():
+        assert classify(role, "captured")[0] == kind, role
+    assert classify("", "dc")[0] == "directory"

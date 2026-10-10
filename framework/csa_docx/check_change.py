@@ -339,6 +339,8 @@ def check(path: Path, workspace: str | None = None, anchors: bool = True, lint: 
     findings += strict_brief(brief) if strict else brief
     findings += notes_findings(records, Path(notes) if notes else None)
     findings += node_findings(records, node)
+    from csa_docx.assessment_checks import assessment_findings
+    findings += assessment_findings(records, finding, require=strict, node=node)
     findings += section_fit_findings(text, records)
     findings += subject_findings(records)
     from csa_docx.fact_checks import fact_findings, load_matrix, parse_sites

@@ -358,6 +358,9 @@ def cmd_verify(args):
     _, matrix = resolve_paths(args)
     header, body, bom, nl, _ = load(matrix)
     issues = []
+    con = _index_for(matrix)
+    index_present = con is not None
+    unresolvable = []
     if header != COLUMNS:
         issues.append({"row": 0, "issue": "header differs from template", "found": header})
     seen, last = set(), 0
@@ -386,9 +389,29 @@ def cmd_verify(args):
                            "found": d["confidence"][:80]})
         if d["review_state"] not in REVIEW_STATES:
             issues.append({"row": i, "evidence_id": eid, "issue": f"invalid review_state {d['review_state']!r}"})
+    # Citation-resolution pass: every row's named capture files must exist in the
+    # discovery index, whatever their status. This catches a bad source citation on
+    # UNCONFIRMED / INFERRED / CONFLICTING / NOT_FOUND rows, which check-sources
+    # (VERIFIED-only) would otherwise let through.
+    if index_present:
+        for i, r in enumerate(body, start=2):
+            d = as_dict(header, r)
+            missing, checked = _cited_file_exists(con, d["source_title"])
+            if missing:
+                issue = {"row": i, "evidence_id": d["evidence_id"],
+                         "status": d["status"], "issue": "cited source file not in discovery index",
+                         "missing": missing}
+                issues.append(issue)
+                unresolvable.append({"evidence_id": d["evidence_id"], "missing": missing})
+    else:
+        # No index: we cannot prove citations exist; surface that as a note, not a failure.
+        cited = [as_dict(header, r)["evidence_id"] for r in body]
+        unresolvable = [{"note": "no discovery index next to the matrix; citations not resolved against disk (run `csa index build`)"}]
     emit({"status": "OK" if not issues else "ISSUES", "matrix": str(matrix),
           "rows": len(body), "bom": bom, "newline": "CRLF" if nl == "\r\n" else "LF",
-          "issue_count": len(issues), "issues": issues})
+          "index_present": index_present,
+          "issue_count": len(issues), "issues": issues,
+          "unresolvable_sources": unresolvable})
 
 
 # --------------------------------------------------------------------------- append
@@ -555,6 +578,36 @@ def source_check(row, con):
 def _index_for(matrix):
     p = matrix.parent / "discovery-index.sqlite"
     return sqlite3.connect(str(p)) if p.is_file() else None
+
+def _cited_file_exists(con, source_title):
+    """Does every real capture file named in source_title exist in the discovery index?
+    Tries the full cited path first (so multi-level citations like 'a/b/Reveloc flows.xlsx'
+    resolve), then falls back to the trailing file name. Returns
+    (missing, checked). Non-file tokens (matrix self-references, prose, placeholders) are
+    ignored, so meta rows like a NOT_FOUND search-scope don't count as bad citations."""
+    if con is None:
+        return [], []
+    src = (source_title or "").strip()
+    checked, missing = [], []
+    for name in sorted(set(_FILE_RE.findall(src))):
+        if con.execute("select count(*) from files where rel_path like ?", ("%" + src,)).fetchone()[0]:
+            checked.append(name)      # full cited path resolves verbatim
+            continue
+        like = "%/" + name
+        cap = None
+        for host, ts in _CAPTURE_RE.findall(src):
+            cap = f"%_{host}_{ts}%"
+        if cap:
+            n = con.execute("select count(*) from files where rel_path like ? and rel_path like ?",
+                            (cap, like)).fetchone()[0]
+        else:
+            n = con.execute("select count(*) from files where rel_path like ? and archived = 0", (like,)).fetchone()[0]
+            if not n:
+                n = con.execute("select count(*) from files where rel_path like ?", (like,)).fetchone()[0]
+        checked.append(name)
+        if not n:
+            missing.append(name)
+    return missing, checked
 
 
 def record_reviews(matrix, ids, note_by_id, state="reviewed", by=AUTO_REVIEWER):

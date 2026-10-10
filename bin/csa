@@ -59,6 +59,7 @@ SCRIPTS = {
     "scaffold": SKILLS / "csa-document-template/scripts/scaffold_csa.py",
     "check": SKILLS / "csa-document-template/scripts/check_csa.py",
     "diagram": SKILLS / "csa-diagram-generator/scripts/build_diagram_model.py",
+    "system-diagram": FRAMEWORK / "csa_docx/techdiagram/cli.py",
     "table": FRAMEWORK / "csa_docx/cli_create_table.py",
     "dry-run": FRAMEWORK / "csa_docx/tools/dry_run_all_sections.py",
 }
@@ -1443,6 +1444,12 @@ def cmd_browse(a):
         return subprocess.call(command, cwd=app_dir)
     except KeyboardInterrupt:
         return 130
+
+
+def cmd_system_diagram(a):
+    """Technical system diagrams (CSA figures + Evidence Workspace) from the project's live evidence."""
+    p = project(a.project); banner(p)
+    return run_script("system-diagram", ["--project", p["key"], *a.rest])
 
 
 def cmd_graph(a):
@@ -3569,7 +3576,7 @@ def cmd_build(a):
 # ---------------------------------------------------------------- main
 PASSTHROUGH = {
     "ev": cmd_ev, "appendix": cmd_appendix, "graph": cmd_graph, "index": cmd_index, "test": cmd_test,
-    "spec": cmd_spec, "card": cmd_card,
+    "spec": cmd_spec, "card": cmd_card, "system-diagram": cmd_system_diagram,
     **{n: cmd_passthrough(n) for n in ("new", "scaffold", "table", "diagram", "dry-run", "cross-check", "findings")},
 }
 
@@ -3592,6 +3599,7 @@ Framework   csa prepare | csa lookup "<text>" | csa validate N | csa refresh | c
 Integrate   csa sync [--codex-prompts]   (wrapper skills, /csa-* slash commands, AGENTS.md from registry.yaml)
 Scripts     csa ev lookup "<q>" | csa index rows|search|hosts|tables|build ... | csa graph ... | csa lint [N] | csa check [--final] | csa new ... | csa scaffold ...
             csa table ... | csa diagram ... | csa dry-run ... | csa appendix [--out f.md]
+            csa system-diagram [--no-png] [--out DIR]   (system + data-flow figures from live evidence, PNG/SVG/HTML)
             csa cross-check <docx|md> [--hosts-file f] | csa findings <docx|md>   (arguments pass straight through;
             put -p <key> before the command: csa -p utcdtc ev stats)
 Agent opts  KEY=VALUE overrides (EDIT_MODE=editorial, ITERATION_EDIT_LIMIT=4), --cli codex|claude|hermes,

@@ -100,8 +100,8 @@ def lookup(work_dir: Path, words: set[str], hosts: set[str], limit: int = 8, exc
     words = {w.lower() for w in words}
     out: list[dict] = []
     seen: set[str] = set()
-    # topic, not hosts: nearly every section names the same hosts, so a shared host alone is not relevance.
-    # Host names and generic words are not topic words; a fact needs two topic words with the question.
+    # Host names and generic words are not topic words. An explicitly requested host is relevant on its own;
+    # otherwise a fact needs at least three topic words in common with the question.
     topic = {w for w in words if w not in _GENERIC and not _HOSTLIKE.match(w)}
     seen_ev: set[tuple] = set()
     for rec in sorted(_read(work_dir), key=lambda r: r.get("added", ""), reverse=True):
@@ -113,7 +113,8 @@ def lookup(work_dir: Path, words: set[str], hosts: set[str], limit: int = 8, exc
         if rec["fact"] in seen or ev in seen_ev:           # same text, or a rewording of the same evidence
             continue
         fwords = {w for w in _WORD.findall(rec["fact"].lower()) if w not in _GENERIC and not _HOSTLIKE.match(w)}
-        if len(topic & fwords) < 2:
+        host_match = bool(hosts & {h.upper() for h in rec.get("hosts", [])})
+        if not host_match and len(topic & fwords) < 3:
             continue
         seen.add(rec["fact"]); seen_ev.add(ev)
         out.append(rec)

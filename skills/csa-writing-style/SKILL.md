@@ -35,11 +35,11 @@ The reader asked a question of a system: where does its time come from, which re
 
 A requirement asks whether the organisation does something (keeps an inventory, documents dependencies, monitors logs). The Current State cell answers that, in this order and usually in one to three sentences:
 
-1. **The practice or tool, present or absent.** Name it if found ("Assets are tracked in <tool>"); if not, say so plainly ("No dedicated OT asset inventory or CMDB tool was identified").
+1. **The applicable practice or control.** Name what the application does and the function involved. If implementation was not demonstrated, say that it was not identified in the defined evidence scope; do not state a bare absence.
 2. **What exists instead, if anything.** A partial or informal substitute, in a few words ("A point-in-time list was compiled prior to discovery").
 3. **Scope exclusions that touch the requirement** ("KVM is excluded from this CSA and will be assessed separately").
 
-The assessment's own discovery output (the hosts the captures found, their roles and counts) is not the organisation's inventory or dependency map, and never counts as the practice being in place. Host lists, counts and roles go in the Discovery Information and Hosts tables, not the Current State cell. Rate against the practice: no maintained tool or process is Not Met, a maintained but incomplete one is Partially Met.
+The assessment's own discovery output (the hosts the captures found, their roles and counts) is not the organisation's inventory or dependency map, and never counts as the practice being in place. Host lists, counts and roles go in the Discovery Information and Hosts tables, not the Current State cell. Rate only after applying the applicability and evidence decision rules in `csa-section-writer/references/current-state-reasoning.md`; failure to identify a maintained tool or process is not by itself proof of Not Met.
 
 ### Host references: function in prose, name and address in tables
 
