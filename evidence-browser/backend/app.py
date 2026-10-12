@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import apply_workflow, audit_workflow, author_workflow, build_workflow, cleanup_workflow, commands, documents, draft_workflow, explorer, network, pipeline, proposals, review_workflow, sections, validation, word_review
+from . import apply_workflow, audit_workflow, author_workflow, build_workflow, cleanup_workflow, commands, documents, draft_workflow, explorer, csa_figures, network, pipeline, proposals, review_workflow, sections, validation, word_review
 from .jobs import JobManager
 from .models import CommandRequest, JobCreateRequest
 
@@ -746,6 +746,71 @@ def system_diagram(system_key: str) -> dict[str, Any]:
     """Technical diagrams (SVG + model) for the System explorer; the same drawings as the CSA figures."""
     project = system_project(system_key)
     return explorer.diagrams(project, agents_dir())
+
+
+def _figure_doc(project: dict[str, str]) -> Path | None:
+    resolved = documents.resolve(project)
+    return Path(resolved["path"]) if resolved.get("path") else None
+
+
+@app.get("/api/systems/{system_key}/figures")
+def figure_list(system_key: str) -> dict[str, Any]:
+    """CSA figures page: every section of the working document, whether it needs a figure, and why."""
+    project = system_project(system_key)
+    return csa_figures.listing(project, agents_dir(), _figure_doc(project))
+
+
+@app.get("/api/systems/{system_key}/figures/{section_key}")
+def figure_detail(system_key: str, section_key: str) -> dict[str, Any]:
+    """One section's figure, drawn now from the current evidence, with the relationships it shows."""
+    project = system_project(system_key)
+    try:
+        return csa_figures.detail(project, agents_dir(), _figure_doc(project), section_key)
+    except KeyError:
+        raise HTTPException(404, f"No section '{section_key}' in the working document")
+
+
+FIGURE_FILES = {"figure.docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                "figure-print.svg": "image/svg+xml", "figure.png": "image/png"}
+
+
+@app.get("/api/systems/{system_key}/figures/{section_key}/file/{name}")
+def figure_file(system_key: str, section_key: str, name: str):
+    """A saved figure's file: the standalone Word document (editable drawing), the print SVG or the PNG."""
+    project = system_project(system_key)
+    if name not in FIGURE_FILES or not re.fullmatch(r"[A-Za-z0-9_.-]{1,80}", section_key):
+        raise HTTPException(404, "Unknown figure file")
+    path = work_dir(project) / "figures" / section_key / name
+    if not path.is_file():
+        raise HTTPException(404, "Save the figure first")
+    return FileResponse(path, media_type=FIGURE_FILES[name], filename=f"{section_key.lower()}-{name}")
+
+
+@app.post("/api/systems/{system_key}/figures/refresh")
+def figure_refresh(system_key: str) -> dict[str, Any]:
+    """Create and redraw every figure the document needs from the latest evidence. The document is not changed."""
+    project = system_project(system_key)
+    return csa_figures.refresh(project, agents_dir(), _figure_doc(project))
+
+
+@app.post("/api/systems/{system_key}/figures/{section_key}/brief")
+def figure_brief(system_key: str, section_key: str, edits: dict[str, Any]) -> dict[str, Any]:
+    """Your edits to a figure's brief (purpose, caption, source, items in or out), checked against the evidence."""
+    project = system_project(system_key)
+    try:
+        return csa_figures.edit_brief(project, agents_dir(), _figure_doc(project), section_key, edits)
+    except KeyError:
+        raise HTTPException(404, f"No section '{section_key}' in the working document")
+
+
+@app.post("/api/systems/{system_key}/figures/{section_key}/save")
+def figure_save(system_key: str, section_key: str) -> dict[str, Any]:
+    """Save the figure (model, SVG, PNG) under csa-work/figures. The document itself is not changed."""
+    project = system_project(system_key)
+    try:
+        return csa_figures.save(project, agents_dir(), _figure_doc(project), section_key)
+    except KeyError:
+        raise HTTPException(404, f"No section '{section_key}' in the working document")
 
 
 @app.get("/api/systems/{system_key}/portrait")

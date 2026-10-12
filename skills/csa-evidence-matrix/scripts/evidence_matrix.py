@@ -508,7 +508,7 @@ def next_id_number(body):
 
 # --------------------------------------------------------------------------- source check
 AUTO_REVIEWER = "csa source check (automated)"
-_FILE_RE = re.compile(r"[\w.\-]+\.(?:txt|csv|xlsx|docx|md|log|json|xml|ps1)\b", re.I)
+_FILE_RE = re.compile(r"[\w.\-]+\.(?:txt|csv|xlsx|docx|pdf|md|log|json|xml|ps1)\b", re.I)   # pdf: the index reads PDFs (pdftotext)
 _CAPTURE_RE = re.compile(r"([A-Za-z0-9]+)_(\d{8}T\d{6}Z)")
 
 
@@ -535,6 +535,9 @@ def _unit_text(con, unit):
         ids = con.execute("select coalesce(dup_of, file_id), rel_path from files where rel_path like ? and archived = 0", (like_name,)).fetchall()
         if not ids:
             ids = con.execute("select coalesce(dup_of, file_id), rel_path from files where rel_path like ?", (like_name,)).fetchall()
+        if not ids:   # a file name with spaces ("Reveloc flows.xlsx") is cut at the last space by _FILE_RE: match the tail
+            ids = con.execute("select coalesce(dup_of, file_id), rel_path from files where rel_path like ? and archived = 0",
+                              ("% " + name,)).fetchall()
     if not ids:
         return None
     parts = []
@@ -597,13 +600,16 @@ def _cited_file_exists(con, source_title):
         cap = None
         for host, ts in _CAPTURE_RE.findall(src):
             cap = f"%_{host}_{ts}%"
+        n = 0
         if cap:
             n = con.execute("select count(*) from files where rel_path like ? and rel_path like ?",
                             (cap, like)).fetchone()[0]
-        else:
+        if not n:     # no capture named, or a document cited next to a capture ("x.pdf; HOST_<ts>: 03_time.txt")
             n = con.execute("select count(*) from files where rel_path like ? and archived = 0", (like,)).fetchone()[0]
             if not n:
                 n = con.execute("select count(*) from files where rel_path like ?", (like,)).fetchone()[0]
+        if not n:     # a file name with spaces is cut at the last space by _FILE_RE: match the tail
+            n = con.execute("select count(*) from files where rel_path like ?", ("% " + name,)).fetchone()[0]
         checked.append(name)
         if not n:
             missing.append(name)

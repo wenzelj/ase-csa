@@ -40,6 +40,9 @@ _q = lambda tag: f"{{{W}}}{tag}"  # noqa: E731
 STAMP_PREFIX = "_csa_"
 GUIDANCE_AUTHORS = ("CSA Template", "CSA Guidance")
 SKIP_STYLES = {"Figure", "Caption", "FigureSource", "TOCHeading", "Title", "Subtitle"}
+# A figure slot is a Figure paragraph (image or placeholder) with its Caption and FigureSource paragraphs.
+# Slots are kept on node["figures"], not node["parts"], so nothing that answers parts has to know about them.
+FIGURE_STYLES = {"Figure": "slot", "Caption": "caption", "FigureSource": "source"}
 _HEADING = re.compile(r"^Heading\s?([1-9])$")
 _REQ_ID = re.compile(r"^SEP-([A-Z]+)-\d+$")
 _BRACKET = re.compile(r"^\[.*\]$", re.S)
@@ -293,7 +296,7 @@ def read(path: Path | str) -> dict:
                 node = {"title": text, "level": level, "number": visible, "path": hpath, "hid": f"@H{hpath}",
                         "stamp": stamps[0] if stamps else None, "stamps": stamps,
                         "parent": h1["path"] if (level == 2 and h1) else None,
-                        "parts": [], "guidance": [], "comments": [], "children": []}
+                        "parts": [], "guidance": [], "comments": [], "children": [], "figures": []}
                 nodes.append(node)
                 if level == 1:
                     h1 = node
@@ -311,6 +314,22 @@ def read(path: Path | str) -> dict:
         pid = f"@H{hpath}-P{p_ord}"
         if topic is not None:
             _attach(topic, notes, (text.rstrip(':').strip() if style == 'Label' else facet))
+        if topic is not None and style in FIGURE_STYLES:
+            flush_bullets()
+            image = sum(1 for _ in el.iter(_q("drawing"))) > sum(1 for d in el.iter(_q("del")) for _ in d.iter(_q("drawing")))
+            figs = topic["figures"]
+            if style == "Figure":
+                figs.append({"facet": facet, "pid": pid, "image": False, "placeholder": True,
+                             "caption": None, "source": None, "after_table": table_ord})
+            elif not figs or figs[-1].get(FIGURE_STYLES[style]) is not None or figs[-1]["after_table"] != table_ord:
+                continue                                   # a caption that belongs to no figure (e.g. a table caption)
+            f = figs[-1]
+            if style == "Figure":
+                f["image"] = f["image"] or image
+                f["placeholder"] = not f["image"] and (not text or is_placeholder(text))
+            else:
+                f[FIGURE_STYLES[style]] = text
+            continue
         if topic is None or style in SKIP_STYLES or not text:
             continue
         if style == "Label":

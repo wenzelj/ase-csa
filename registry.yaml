@@ -195,3 +195,27 @@ agents:
     instruction: Review the requested draft or section and give findings and a verdict.
     skill: csa-quality-reviewer-agent
     summary: Content review - traceability, consistency, section fit, readability, concision; READY / NOT READY verdict.
+
+  - verb: figure-brief
+    file: csa-figure-brief-agent.md
+    title: CSA Figure Brief Agent
+    group: analysis
+    tier: frontier
+    arg: SECTION
+    inputs: SECTION, PROMPT*, WORDING*
+    locks: section
+    instruction: Follow PROMPT and write only the JSON file at WORDING.
+    skill: csa-figure-brief-agent
+    summary: Figures - reword one figure's purpose and caption from its brief (csa figure KEY --agent); the framework checks the wording against the evidence before it is used.
+
+  - verb: figure-design
+    file: csa-figure-design-agent.md
+    title: CSA Figure Design Agent
+    group: analysis
+    tier: frontier
+    arg: KEY
+    inputs: KEY, MODE=design, QUESTION, OUTPUT
+    locks: section
+    instruction: Work in the requested MODE for KEY (design, build, review or explain) to the figure design guide, and finish with the final report.
+    skill: csa-figure-design-agent
+    summary: Figures - design a new figure kind for a section (MODE=design), build it after you approve (MODE=build), review a figure against the design rules (MODE=review), or explain how figures work (MODE=explain QUESTION="...").

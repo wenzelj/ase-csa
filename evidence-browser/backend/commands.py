@@ -118,6 +118,22 @@ OPERATIONS: dict[str, Operation] = {
         ("refresh-draft", "--headless"), options={"cli": "identifier"},
         timeout=7200, mutating=True, mutation_class="document_write", lock="docx", closes_word=True,
     ),
+    # CSA figures: the agent rewords one figure's purpose and caption; placing puts a saved figure in the document.
+    "figure_wording": Operation(
+        "figure_wording", "Reword figure caption", "The wording agent rewords one figure's purpose and caption; the framework checks it against the evidence.",
+        ("figure", "--agent"), "required", "section", {"cli": "identifier"}, timeout=900, mutation_class="workspace_write",
+    ),
+    "figure_design": Operation(
+        "figure_design", "Figure design agent", "The CSA Figure Design Agent designs a figure for the section (design.md), builds it after you approve the design, or reviews a figure (review.md). It runs in its own window.",
+        ("figure", "--design"), "required", "section", {"mode": "identifier", "cli": "identifier"}, timeout=3600,
+        mutation_class="workspace_write", lock="section",
+    ),
+    "figure_place": Operation(
+        "figure_place", "Put figure in document", "Insert the saved figure into the working DOCX as a tracked change (approve in Word).",
+        ("figure", "--place"), "required", "section", {"drawing": "identifier"}, timeout=300, mutating=True,
+        mutation_class="document_write",
+        lock="docx", closes_word=True,
+    ),
     "freeze": Operation(
         "freeze", "Freeze at V1", "Copy the working DOCX to a V1 baseline and switch the project to the V1 change lane.",
         ("freeze",), "required", "section", timeout=120, mutating=True, mutation_class="document_write", lock="docx",
@@ -182,7 +198,11 @@ def build_argv(agents_dir: Path, project_key: str, operation_key: str, request: 
             if not isinstance(value, str):
                 raise HTTPException(422, f"Option {name} must be an identifier")
             argv += [flag, _validate_identifier(value, "section")]
-    if operation.key == "answer" or operation.key == "refresh_draft":
+    if operation.key == "figure_place" and request.options.get("drawing") not in (None, "picture", "word"):
+        raise HTTPException(422, "drawing must be picture or word")
+    if operation.key == "figure_design" and request.options.get("mode") not in (None, "design", "build", "review"):
+        raise HTTPException(422, "mode must be design, build or review")
+    if operation.key in ("answer", "refresh_draft", "figure_wording", "figure_design"):
         if request.options.get("cli") not in (None, *DRAFT_CLIS):
             raise HTTPException(422, "cli must be claude, codex or evo")
     if operation.key == "freeze" and request.target != "v1":

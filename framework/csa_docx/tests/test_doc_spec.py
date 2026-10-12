@@ -192,3 +192,15 @@ Rows:
             "COLUMNS", "QUESTION_MISSING"} <= codes
     need = answer_sheet.validate(answer_sheet.parse("## B1\nSearch: w32tm fallback\n## B2\nUnknown: x\n## B3\nUnknown: y\n"), card)
     assert need["status"] == "NEEDS_SEARCH" and need["searches"] == {"B1": ["w32tm fallback"]}
+
+
+def test_a_figure_slot_is_found_with_its_caption_and_source():
+    """Figure / Caption / FigureSource paragraphs become one figure slot on their section, kept apart from parts."""
+    spec = doc_spec.read(_template())
+    slots = [(n["key"], f) for n in spec["nodes"] for f in n.get("figures", [])]
+    assert [k for k, _ in slots] == ["EXECUTIVE_SUMMARY"]
+    f = slots[0][1]
+    assert f["placeholder"] and not f["image"]
+    assert f["caption"].startswith("Figure") and f["source"].startswith("Source")
+    summary = next(n for n in spec["nodes"] if n["key"] == "EXECUTIVE_SUMMARY")
+    assert not any("Figure caption" in (p.get("text") or p.get("question") or "") for p in summary["parts"])

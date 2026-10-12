@@ -24,6 +24,7 @@ The author has written the change file; you rewrite only the `**Text:**` of pros
 - Host references: Prose names a machine by its role from the Host register (the RevViewer Jump Host, the Radio Management host), not by host name or IP address; names and addresses go in tables, unless the question asks for hosts or addresses: then give them. Rules and exceptions: "Host references" in `csa-writing-style`. No evidence ID in prose Text. Tables that capture the system give both, e.g. `MOTPRDREV101 (10.20.1.5)`; names are written exactly as the sources write them (RevViewer stays RevViewer).
 - Keep current state, interpretation, gap and risk observation distinct. No recommendation, no future-state design.
 - Australian English. Technical explanations only in a labelled `Technical explanation` note.
+- No semicolons (`;`) in Text, ever: write two sentences, or join the parts with a comma and "and" or "but". `check-change` reports SEMICOLON_IN_TEXT as an ERROR.
 
 ## Errors and warnings
 

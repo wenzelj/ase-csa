@@ -118,6 +118,11 @@ def open_questions(work: Path) -> dict:
         if items:
             lines += [f"## {title}", ""] + [f"- [{qid}] {u}" for qid, u in items] + [""]
             total += len(items)
+    from csa_docx.figures.work import load_gaps
+    for key, gaps in load_gaps(Path(work)).items():           # what the CSA figures need but the evidence lacks
+        if gaps:
+            lines += [f"## Figure for {gaps[0].get('section') or key}", ""] + [f"- [{g['dr_id']}] {g['text']}" for g in gaps] + [""]
+            total += len(gaps)
     out = Path(work) / "draft" / "open-questions.md"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text("\n".join(lines), encoding="utf-8")

@@ -284,6 +284,9 @@ def analyse(sec: Section, max_words: int) -> dict:
     share = (len(bullets) / len(prose)) if prose else 0.0
     warns = []
     notes = []  # advisory: shown in the report, never a failure
+    semis = [p.text for p in prose if ";" in p.text]
+    if semis:
+        warns.append(f"{len(semis)} prose paragraphs use a semicolon; write two sentences, or join the parts with a comma and 'and' or 'but'")
     if inferred:
         warns.append(f"inference wording ({', '.join(sorted(set(inferred)))}); state what the evidence shows, or move the conclusion to an open question")
     if ips:

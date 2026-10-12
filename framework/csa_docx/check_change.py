@@ -106,6 +106,24 @@ def _is_table_text(t: str) -> bool:
     return " | " in first or first.startswith(("Observed:", "Assessment:"))
 
 
+RATING_WORDS = {"met", "partially met", "not met", "not applicable"}
+
+
+def semicolon_text(t: str) -> str | None:
+    """The words around the first semicolon in prose Text, or in a requirement row's Current State; None if none.
+    Other table rows (Discovery Information cells, host lists) are data and may separate items with ';'."""
+    first = t.strip().splitlines()[0] if t.strip() else ""
+    if " | " in first:
+        cells = [c.strip() for c in first.split(" | ")]
+        if not (len(cells) == 2 and cells[1].lower() in RATING_WORDS):
+            return None
+        t = cells[0]
+    i = t.find(";")
+    if i < 0:
+        return None
+    return t[max(0, i - 30):i + 30].strip()
+
+
 BRIEF_RE = re.compile(r"^##\s+Section brief\s*$(.*?)(?=^#{2,}\s|^---\s*$|\Z)", re.M | re.S | re.I)
 BRIEF_ITEM_RE = re.compile(r"^\s*[-*]?\s*([BC]\d+)\b", re.M)
 FACT_TAG_RE = re.compile(r"^\s*[-*]\s*\[([BC]\d+(?:\s*,\s*[BC]\d+)*)\]")
@@ -259,6 +277,9 @@ def hygiene_findings(records) -> list[dict]:
             out.append(finding("ERROR", "MARKDOWN_IN_TEXT", "Markdown (**, backticks, >, #) in Text; it would land in the document", r.edit_id))
         if r.action.lower().startswith(("replace", "delete")) and not re.search(r"currently:\s*[\"\u201c]", r.where or "") and "-T" not in (r.where or ""):
             out.append(finding("WARN", "NO_CURRENTLY", "Where has no 'currently: \"...\"' quote; apply uses it to confirm the stable ID still points at the right paragraph", r.edit_id))
+        semi = semicolon_text(t)
+        if semi:
+            out.append(finding("ERROR", "SEMICOLON_IN_TEXT", f"semicolon in document text (\"{semi}\"): write two sentences, or join the parts with a comma and \"and\" or \"but\"", r.edit_id))
         if IP_RE.search(t) and not _is_table_text(t):
             out.append(finding("WARN", "IP_IN_TEXT", "IP address in prose Text: use the host name if the evidence gives one; an address is fine where no name was found", r.edit_id))
         if t.strip() and r.action.lower().startswith(("replace", "insert")) and not (r.facts or "").strip() and not _is_table_text(t):

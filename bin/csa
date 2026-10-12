@@ -60,6 +60,7 @@ SCRIPTS = {
     "check": SKILLS / "csa-document-template/scripts/check_csa.py",
     "diagram": SKILLS / "csa-diagram-generator/scripts/build_diagram_model.py",
     "system-diagram": FRAMEWORK / "csa_docx/techdiagram/cli.py",
+    "figures": FRAMEWORK / "csa_docx/figures/cli.py",
     "table": FRAMEWORK / "csa_docx/cli_create_table.py",
     "dry-run": FRAMEWORK / "csa_docx/tools/dry_run_all_sections.py",
 }
@@ -1450,6 +1451,92 @@ def cmd_system_diagram(a):
     """Technical system diagrams (CSA figures + Evidence Workspace) from the project's live evidence."""
     p = project(a.project); banner(p)
     return run_script("system-diagram", ["--project", p["key"], *a.rest])
+
+
+def _figure_base(p) -> list[str]:
+    d = working_docx(p)
+    if not d:
+        die("no working DOCX found for this project")
+    return ["--project", p["key"], "--docx", str(d)]
+
+
+def cmd_figures(a):
+    """csa figures [--refresh | --all --save] [--json]: where the CSA needs a figure, and why (from the document and the
+    evidence). --refresh: from the latest evidence, create the figures never saved and redraw the ones that changed."""
+    p = project(a.project); banner(p)
+    return run_script("figures", [*_figure_base(p), *(["--json"] if "--json" in a.rest else []), "list",
+                                  *[x for x in a.rest if x != "--json"]])
+
+
+FIGURE_DESIGN_OUT = {"design": "design.md", "review": "review.md", "build": "build-report.md"}
+
+
+def _figure_design(p: dict, rest: list[str], as_json: bool) -> int:
+    """csa figure KEY --design [--mode design|build|review] [--cli claude]: the CSA Figure Design Agent for one
+    section (headless, in its own window). design writes figures/<KEY>/design.md, review writes review.md, build
+    changes the framework from the design and writes build-report.md."""
+    mode, cli = "design", None
+    if "--mode" in rest:
+        i = rest.index("--mode"); mode = rest[i + 1] if i + 1 < len(rest) else ""; del rest[i:i + 2]
+    if "--cli" in rest:
+        i = rest.index("--cli"); cli = rest[i + 1] if i + 1 < len(rest) else None; del rest[i:i + 2]
+    if mode not in FIGURE_DESIGN_OUT:
+        die("csa figure KEY --design --mode: design, build or review")
+    keys = [x for x in rest if not x.startswith("-")]
+    if not keys:
+        die("csa figure KEY --design: name the section key, e.g. csa figure MON --design")
+    key = keys[0].upper()
+    folder = local_path(p["work_dir"]) / "figures" / key
+    folder.mkdir(parents=True, exist_ok=True)
+    out = folder / FIGURE_DESIGN_OUT[mode]
+    if mode == "build" and not (folder / "design.md").is_file():
+        die(f"csa figure {key} --design --mode build: write and read the design first (--mode design)")
+    before = out.stat().st_mtime if out.is_file() else None
+    run = argparse.Namespace(cli=cli, headless=True, print=False)
+    rc = launch(p, agent("figure-design"), [key, f"MODE={mode}", f"OUTPUT={out}"], run)
+    wrote = out.is_file() and out.stat().st_mtime != before
+    res = {"status": "OK" if rc == 0 and wrote else "ERROR", "key": key, "mode": mode, "output": str(out),
+           "message": f"wrote {out.name}" if wrote else f"the figure design agent wrote no new {out.name}"}
+    print(json.dumps(res) if as_json else res["message"])
+    return 0 if res["status"] == "OK" else 2
+
+
+def cmd_figure(a):
+    """csa figure KEY [--save | --place | --agent [--cli claude] | --design [--mode design|build|review]]: one
+    section's figure. --agent: the wording agent rewords the purpose and caption; the framework checks the wording
+    against the evidence before it is used. --design: the CSA Figure Design Agent designs, builds or reviews it."""
+    p = project(a.project); banner(p)
+    rest = list(a.rest)
+    base = _figure_base(p) + (["--json"] if "--json" in rest else [])
+    as_json = "--json" in rest
+    rest = [x for x in rest if x != "--json"]
+    if "--design" in rest:
+        rest.remove("--design")
+        return _figure_design(p, rest, as_json)
+    if "--agent" not in rest:
+        return run_script("figures", [*base, "figure", *rest])
+    rest.remove("--agent")
+    cli = None
+    if "--cli" in rest:
+        i = rest.index("--cli"); cli = rest[i + 1] if i + 1 < len(rest) else None; del rest[i:i + 2]
+    keys = [x for x in rest if not x.startswith("-")]
+    if not keys:
+        die("csa figure KEY --agent: name the section key, e.g. csa figure TIME --agent")
+    key = keys[0].upper()
+    folder = local_path(p["work_dir"]) / "figures" / key
+    folder.mkdir(parents=True, exist_ok=True)
+    prompt, wording = folder / "wording-prompt.md", folder / "wording.json"
+    wording.unlink(missing_ok=True)
+    proc = subprocess.run([framework_python(), str(SCRIPTS["figures"]), *_figure_base(p), "figure", key,
+                           "--brief-prompt", str(wording)], capture_output=True, text=True)
+    if proc.returncode != 0:
+        print(proc.stdout + proc.stderr, file=sys.stderr); return proc.returncode
+    prompt.write_text(proc.stdout, encoding="utf-8")
+    run = argparse.Namespace(cli=cli, headless=True, print=False)
+    rc = launch(p, agent("figure-brief"), [f"PROMPT={prompt}", f"WORDING={wording}"], run)
+    if rc != 0 or not wording.is_file():
+        die(f"the wording agent wrote no {wording.name}; the framework's wording stays")
+    return run_script("figures", [*base, "figure", key, "--wording", str(wording)])
 
 
 def cmd_graph(a):
@@ -3577,6 +3664,7 @@ def cmd_build(a):
 PASSTHROUGH = {
     "ev": cmd_ev, "appendix": cmd_appendix, "graph": cmd_graph, "index": cmd_index, "test": cmd_test,
     "spec": cmd_spec, "card": cmd_card, "system-diagram": cmd_system_diagram,
+    "figures": cmd_figures, "figure": cmd_figure,
     **{n: cmd_passthrough(n) for n in ("new", "scaffold", "table", "diagram", "dry-run", "cross-check", "findings")},
 }
 
@@ -3600,6 +3688,8 @@ Integrate   csa sync [--codex-prompts]   (wrapper skills, /csa-* slash commands,
 Scripts     csa ev lookup "<q>" | csa index rows|search|hosts|tables|build ... | csa graph ... | csa lint [N] | csa check [--final] | csa new ... | csa scaffold ...
             csa table ... | csa diagram ... | csa dry-run ... | csa appendix [--out f.md]
             csa system-diagram [--no-png] [--out DIR]   (system + data-flow figures from live evidence, PNG/SVG/HTML)
+Figures     csa figures [--all --save]   (where the CSA needs a figure, and why)
+            csa figure KEY [--save | --place | --agent [--cli claude]]   (brief, drawing, fit check; --place = tracked, approve in Word)
             csa cross-check <docx|md> [--hosts-file f] | csa findings <docx|md>   (arguments pass straight through;
             put -p <key> before the command: csa -p utcdtc ev stats)
 Agent opts  KEY=VALUE overrides (EDIT_MODE=editorial, ITERATION_EDIT_LIMIT=4), --cli codex|claude|hermes,

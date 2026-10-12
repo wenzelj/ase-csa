@@ -22,6 +22,7 @@ The card (`CARD=`) is your whole input. Write the answer sheet (`SHEET=`) once a
 
 - Write for this subsection's purpose only. Explain how the system works as far as this subsection needs it, and leave out what belongs elsewhere.
 - Write plain, story-like Australian English in full sentences. Make the application, host or practice the subject, never the capture or the matrix.
+- No semicolons (`;`) in Text, Facts or Bullets: write two sentences, or join the parts with a comma and "and" or "but". The framework refuses a sheet with one (SEMICOLON, a hard error).
 - Group hosts by role. One table row per role group, and prose names the role group. Every count must add up.
 
 ## Names and addresses
@@ -32,6 +33,6 @@ The card (`CARD=`) is your whole input. Write the answer sheet (`SHEET=`) once a
 
 ## Hard errors (the only ones that stop the write)
 
-QUESTION_MISSING, EMPTY_ANSWER, FACT_NO_EVIDENCE, UNKNOWN_EVIDENCE, RATING_INVALID, COLUMNS, ROW_WIDTH, NO_ROWS, REQUIREMENT_NO_FACTS. Everything else is reported as a warning. `csa check-change` does not run in the draft lane.
+QUESTION_MISSING, EMPTY_ANSWER, FACT_NO_EVIDENCE, UNKNOWN_EVIDENCE, RATING_INVALID, COLUMNS, ROW_WIDTH, NO_ROWS, REQUIREMENT_NO_FACTS, SEMICOLON. Everything else is reported as a warning. `csa check-change` does not run in the draft lane.
 
 Do not open other rule files. Report in two lines: questions answered, questions unknown.

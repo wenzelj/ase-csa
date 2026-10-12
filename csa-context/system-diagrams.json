@@ -1,11 +1,36 @@
 {
-  "_about": "Page layout for `csa system-diagram` and the Evidence Workspace System explorer. Per project: the data centres left to right (sites = the site values recorded against hosts that belong to it) and the band titles. IT goes across the top, shared services across the bottom. A project without an entry gets its two busiest sites as data centres.",
+  "_about": "Page layout for `csa system-diagram` and the Evidence Workspace System explorer. Per project: the data centres left to right (sites = the site values recorded against hosts that belong to it) and the band titles. IT goes across the top, shared services across the bottom. A project without an entry gets its two busiest sites as data centres. residency: which side of the IT/OT line a service provider sits, stated per project with the evidence for it (it_domains: domain controllers of these enterprise domains are IT-resident; ot_domains: members of these domains are OT-resident). A provider the rule does not cover is drawn as 'location not captured'.",
   "tetra-reveloc": {
     "data_centres": [
-      {"key": "rok", "label": "Rockhampton data centre", "sites": ["Rockhampton", "ROT"]},
-      {"key": "mky", "label": "Mackay data centre", "sites": ["Mackay", "MOT"]}
+      {
+        "key": "rok",
+        "label": "Rockhampton data centre",
+        "sites": [
+          "Rockhampton",
+          "ROT"
+        ]
+      },
+      {
+        "key": "mky",
+        "label": "Mackay data centre",
+        "sites": [
+          "Mackay",
+          "MOT"
+        ]
+      }
     ],
     "top_label": "IT, Internet and other networks",
-    "shared_label": "Shared services: directory, DNS and time"
+    "shared_label": "Shared services: directory, DNS and time",
+    "residency": {
+      "it_domains": [
+        "internal.qr.com.au"
+      ],
+      "ot_domains": [],
+      "evidence": [
+        "E-021",
+        "E-066"
+      ],
+      "basis": "E-021: DNS resolution depends on enterprise Active Directory-integrated DNS servers. E-066: the enterprise NTP sources are ROTPRDSRV122, MOTPRDSRV122 and IPTPRDSRV224. No OT domain exists yet (the OT domain is part of the migration)."
+    }
   }
 }

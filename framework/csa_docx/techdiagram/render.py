@@ -12,11 +12,15 @@ from .icons import ICONS, KINDS
 from .layout_tracks import NODE_H, NODE_W, layout
 
 STATUS = {  # line style per evidence status
-    "observed":   {"stroke": "#3d444d", "dash": "",        "w": 1.4, "label": "Observed in connection captures"},
-    "configured": {"stroke": "#9a6700", "dash": "",        "w": 1.4, "label": "Configured setting (DNS, Kerberos, time)"},
-    "inferred":   {"stroke": "#3d444d", "dash": "6 4",     "w": 1.4, "label": "Inferred — validate"},
-    "documented": {"stroke": "#3d444d", "dash": "1.5 3.5", "w": 1.6, "label": "Documented only, not observed"},
-    "unknown":    {"stroke": "#cf222e", "dash": "6 4",     "w": 1.4, "label": "Path not captured"},
+    "observed":   {"stroke": "#167d8d", "dash": "",        "w": 1.4, "label": "Observed in connection captures"},
+    "configured": {"stroke": "#167d8d", "dash": "7 4",        "w": 1.4, "label": "Configured setting (DNS, Kerberos, time)"},
+    "inferred":   {"stroke": "#203a55", "dash": "6 4",     "w": 1.4, "label": "Inferred — validate"},
+    "documented": {"stroke": "#203a55", "dash": "1.5 3.5", "w": 1.6, "label": "Documented only, not observed"},
+    "unknown":    {"stroke": "#c4432b", "dash": "6 4",     "w": 1.4, "label": "Path not captured"},
+    "inactive":   {"stroke": "#8c959f", "dash": "2 4",     "w": 1.4, "label": "Configured, not in use"},
+    "unenforced": {"stroke": "#c4432b", "dash": "",        "w": 2.0, "label": "Cross-zone · no control evidenced"},
+    "direct":     {"stroke": "#c4432b", "dash": "",        "w": 2.0, "label": "From outside OT · no jump host"},
+    "via-jump":   {"stroke": "#1a7f37", "dash": "",        "w": 1.6, "label": "Through a jump host"},
 }
 TOP, LEFT = 92, 170          # title strip; left margin holds the tier labels
 ROLE_CH = 34                 # role text that fits on a card at 12.5px
@@ -64,8 +68,7 @@ def render_svg(model: dict) -> str:
     pos = {k: (fx(x), fy(y)) for k, (x, y) in T["pos"].items()}
     paths = {k: [(fx(x), fy(y)) for x, y in v] for k, v in T["paths"].items()}
     W = T["W"] + LEFT + 24
-    note_lines = sum(len(_wrap(n, 60)) + 2 for n in model.get("notes", []))
-    legend_h = max(190, 50 + 18 * note_lines) + 28 * len(model.get("steps", []))
+    legend_h = 190 + 28 * len(model.get("steps", []))   # notes stay in the model and the page, not in the drawing
     H = T["H"] + TOP + legend_h
     o = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W:.0f} {H:.0f}" width="{W:.0f}" height="{H:.0f}" '
          f'font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, sans-serif" class="tdiag" data-diagram="{esc(stem)}">', "<defs>"]
@@ -73,16 +76,16 @@ def render_svg(model: dict) -> str:
         o.append(f'<marker id="ah-{stem}-{k}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" '
                  f'orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="{st["stroke"]}"/></marker>')
     o += ["</defs>", '<rect width="100%" height="100%" fill="#ffffff"/>',
-          f'<text x="24" y="38" font-size="26" font-weight="700" fill="#1f2328">{esc(model["title"])}</text>',
-          f'<text x="24" y="66" font-size="15" fill="#57606a">{esc(model.get("subtitle", ""))}</text>']
+          f'<text x="24" y="38" font-size="26" font-weight="700" fill="#203a55">{esc(model["title"])}</text>',
+          f'<text x="24" y="66" font-size="15" fill="#55677a">{esc(model.get("subtitle", ""))}</text>']
 
     # zones, then groups on top
     for zid, (x1, y1, x2, y2) in T["zones"].items():
         z = zones[zid]; dashed = zid == "outside"
         dash_attr = ' stroke-dasharray="6 4"' if dashed else ""
         o.append(f'<g class="zone" data-id="{esc(zid)}"><rect x="{fx(x1):.1f}" y="{fy(y1):.1f}" width="{x2 - x1:.1f}" height="{y2 - y1:.1f}" '
-                 f'rx="14" fill="{"#fbfbfc" if dashed else "#f5f7fa"}" stroke="#c9d1d9"{dash_attr}/>'
-                 f'<text x="{fx(x1) + 18:.1f}" y="{fy(y1) + 30:.1f}" font-size="18" font-weight="700" fill="#24292f" letter-spacing="0.2">'
+                 f'rx="14" fill="{ {"it": "#f2f7fc", "shared": "#fff8f0", "nosite": "#f5f7f9", "outside": "#f5f7f9"}.get(zid, "#f1f9f7") }" stroke="#b9c8d3"{dash_attr}/>'
+                 f'<text x="{fx(x1) + 18:.1f}" y="{fy(y1) + 30:.1f}" font-size="18" font-weight="700" fill="#203a55" letter-spacing="0.2">'
                  f'{esc(z["label"] if dashed else z["label"].upper())}</text></g>')
     for lab_, y1_, y2_ in T["tiers"]:
         Y1, Y2 = fy(y1_) - 4, fy(y2_) + 2
@@ -91,11 +94,11 @@ def render_svg(model: dict) -> str:
         tl = lab_.upper().split("\n")
         for j, t_ in enumerate(tl):
             o.append(f'<text x="{LEFT - 14}" y="{(Y1 + Y2) / 2 + 4 + (j - (len(tl) - 1) / 2) * 17:.1f}" font-size="14" font-weight="700" '
-                     f'fill="#57606a" text-anchor="end" letter-spacing="0.5">{esc(t_)}</text>')
+                     f'fill="#55677a" text-anchor="end" letter-spacing="0.5">{esc(t_)}</text>')
     for gid, (x1, y1, x2, y2) in T["groups"].items():
         o.append(f'<g class="group" data-id="{esc(gid)}"><rect x="{fx(x1):.1f}" y="{fy(y1):.1f}" width="{x2 - x1:.1f}" height="{y2 - y1:.1f}" rx="10" '
-                 f'fill="#eef4ff" stroke="#9cb9e8" stroke-dasharray="4 3"/><text x="{fx(x1) + 12:.1f}" y="{fy(y1) + 21:.1f}" font-size="14" '
-                 f'font-weight="600" fill="#1f4f99">{esc(groups[gid]["label"])}</text></g>')
+                 f'fill="#e4f2f1" stroke="#167d8d" stroke-dasharray="4 3"/><text x="{fx(x1) + 12:.1f}" y="{fy(y1) + 21:.1f}" font-size="14" '
+                 f'font-weight="600" fill="#203a55">{esc(groups[gid]["label"])}</text></g>')
 
     # lines
     o.append('<g class="edges">')
@@ -112,20 +115,18 @@ def render_svg(model: dict) -> str:
         cx, cy = pos[n["id"]]
         icon, kind_label, col = KINDS.get(n["kind"], KINDS["unknown"])
         x, y = cx - NODE_W / 2, cy - NODE_H / 2
-        unk = n["kind"] == "unknown"
+        unk = n["kind"] in ("unknown", "gap")
         role = n.get("role", "")
         unk_attr = ' stroke-dasharray="4 3"' if unk else ""
         name = n["label"] if len(n["label"]) <= NAME_CH else n["label"][:NAME_CH - 1] + "…"
         o.append(f'<g class="node" data-id="{esc(n["id"])}" tabindex="0" role="button" aria-label="{esc(n["label"])}"><title>{esc(n["label"])}{" — " + esc(role) if role else ""}</title>'
-                 f'<rect x="{x:.1f}" y="{y:.1f}" width="{NODE_W}" height="{NODE_H}" rx="8" fill="#ffffff" stroke="{"#8c959f" if unk else "#d0d7de"}"'
+                 f'<rect x="{x:.1f}" y="{y:.1f}" width="{NODE_W}" height="{NODE_H}" rx="8" fill="#ffffff" stroke="{"#8c959f" if unk else "#c9d6df"}"'
                  f'{unk_attr} stroke-width="1.1"/>'
-                 f'<rect x="{x:.1f}" y="{y:.1f}" width="5" height="{NODE_H}" rx="2" fill="{col}"/>'
-                 f'<rect x="{x + 14:.1f}" y="{y + 14:.1f}" width="46" height="46" rx="9" fill="{col}" fill-opacity="0.12"/>'
-                 f'<g transform="translate({x + 20:.1f},{y + 20:.1f}) scale(1.4)" fill="none" stroke="{col}" stroke-width="1.6" stroke-linecap="round" '
-                 f'stroke-linejoin="round">{ICONS[icon]}</g>'
-                 f'<text x="{x + 72:.1f}" y="{y + 23:.1f}" font-size="11" font-weight="700" fill="{col}" letter-spacing="0.6">{esc(kind_label.upper())}</text>'
-                 f'<text x="{x + 72:.1f}" y="{y + 43:.1f}" font-size="16" font-weight="700" fill="#1f2328">{esc(name)}</text>'
-                 f'<text x="{x + 72:.1f}" y="{y + 61:.1f}" font-size="12.5" fill="#57606a">{esc(role[:ROLE_CH] + ("…" if len(role) > ROLE_CH else ""))}</text></g>')
+                 f'<g transform="translate({x + 18:.1f},{y + 17:.1f}) scale(1.65)" fill="none" stroke="{col}" stroke-width="1.9" stroke-linecap="round" '
+                 f'stroke-linejoin="round" color="{col}">{ICONS[icon]}</g>'
+                 f'<text x="{x + 72:.1f}" y="{y + 23:.1f}" font-size="11" font-weight="700" fill="{"#167d8d" if not unk else col}" letter-spacing="0.6">{esc(kind_label.upper())}</text>'
+                 f'<text x="{x + 72:.1f}" y="{y + 43:.1f}" font-size="16" font-weight="700" fill="#203a55">{esc(name)}</text>'
+                 f'<text x="{x + 72:.1f}" y="{y + 61:.1f}" font-size="12.5" fill="#55677a">{esc(role[:ROLE_CH] + ("…" if len(role) > ROLE_CH else ""))}</text></g>')
 
     # labels last, along each line where they cover no box, zone title or other label
     cards = [(x - NODE_W / 2 - 4, y - NODE_H / 2 - 4, x + NODE_W / 2 + 4, y + NODE_H / 2 + 4) for x, y in pos.values()]
@@ -159,12 +160,12 @@ def render_svg(model: dict) -> str:
             o.append(f'<circle cx="{lx - wmax / 2 - 14:.1f}" cy="{ly:.1f}" r="12" fill="{st["stroke"]}"/>'
                      f'<text x="{lx - wmax / 2 - 14:.1f}" y="{ly + 5:.1f}" font-size="13" font-weight="700" text-anchor="middle" fill="#fff">{e["step"]}</text>')
         o.append(f'<rect x="{lx - wmax / 2:.1f}" y="{ly - hh / 2:.1f}" width="{wmax:.1f}" height="{hh:.1f}" rx="4" fill="#ffffff" '
-                 f'stroke="{st["stroke"] if e["status"] in ("configured", "unknown") else "#d0d7de"}" stroke-width="0.8"/>')
-        tc = "#9a6700" if e["status"] == "configured" else ("#cf222e" if e["status"] == "unknown" else "#24292f")
+                 f'stroke="{st["stroke"] if e["status"] in ("configured", "unknown", "unenforced", "direct", "via-jump") else "#d0d7de"}" stroke-width="0.8"/>')
+        tc = {"configured": "#167d8d", "unknown": "#c4432b", "unenforced": "#c4432b", "direct": "#c4432b", "via-jump": "#1a7f37"}.get(e["status"], "#203a55")
         for i, l in enumerate(lines):
             o.append(f'<text x="{lx:.1f}" y="{ly - hh / 2 + 3 + lh * (i + 1) - 3:.1f}" font-size="11.5" text-anchor="middle" fill="{tc}">{esc(l)}</text>')
         if e["status"] == "unknown":
-            o.append(f'<circle cx="{lx + wmax / 2 + 12:.1f}" cy="{ly:.1f}" r="10" fill="#cf222e"/><text x="{lx + wmax / 2 + 12:.1f}" '
+            o.append(f'<circle cx="{lx + wmax / 2 + 12:.1f}" cy="{ly:.1f}" r="10" fill="#c4432b"/><text x="{lx + wmax / 2 + 12:.1f}" '
                      f'y="{ly + 5:.1f}" font-size="13" font-weight="700" text-anchor="middle" fill="#fff">?</text>')
         o.append("</g>")
     o.append("</g>")
@@ -172,32 +173,25 @@ def render_svg(model: dict) -> str:
     # legend
     ly = T["H"] + TOP + 26
     o.append(f'<g class="legend"><line x1="24" y1="{ly - 8}" x2="{W - 24}" y2="{ly - 8}" stroke="#d0d7de"/>'
-             f'<text x="24" y="{ly + 12}" font-size="14" font-weight="700" fill="#24292f">LINES</text>')
+             f'<text x="24" y="{ly + 12}" font-size="14" font-weight="700" fill="#203a55">LINES</text>')
     used_st = [k for k in STATUS if any(e["status"] == k for e in model["edges"])]
     for i, k in enumerate(used_st):
         st = STATUS[k]; yy = ly + 34 + i * 22
         o.append(f'<line x1="24" y1="{yy}" x2="64" y2="{yy}" stroke="{st["stroke"]}" stroke-width="{st["w"] + 0.4}" stroke-dasharray="{st["dash"]}" '
-                 f'marker-end="url(#ah-{stem}-{k})"/><text x="76" y="{yy + 5}" font-size="13" fill="#24292f">{esc(st["label"])}</text>')
+                 f'marker-end="url(#ah-{stem}-{k})"/><text x="76" y="{yy + 5}" font-size="13" fill="#203a55">{esc(st["label"])}</text>')
     kx = 420
-    o.append(f'<text x="{kx}" y="{ly + 12}" font-size="14" font-weight="700" fill="#24292f">SYSTEM TYPES</text>')
+    o.append(f'<text x="{kx}" y="{ly + 12}" font-size="14" font-weight="700" fill="#203a55">SYSTEM TYPES</text>')
     used = [k for k in KINDS if any(n["kind"] == k for n in model["nodes"])]
     for i, k in enumerate(used):
         icon, lab, col = KINDS[k]; c, r = divmod(i, 5)
         xx, yy = kx + c * 250, ly + 26 + r * 24
         o.append(f'<g transform="translate({xx},{yy}) scale(0.75)" fill="none" stroke="{col}" stroke-width="2" stroke-linecap="round" '
-                 f'stroke-linejoin="round">{ICONS[icon]}</g><text x="{xx + 26}" y="{yy + 13}" font-size="13" fill="#24292f">{esc(lab)}</text>')
-    nx, yy = kx + 250 * ((len(used) + 4) // 5) + 20, ly + 12
-    for note in model.get("notes", []):
-        lines = _wrap(note, 60)
-        o.append(f'<text x="{nx}" y="{yy}" font-size="14" font-weight="700" fill="#24292f">NOTE</text>')
-        for j, l in enumerate(lines):
-            o.append(f'<text x="{nx}" y="{yy + 22 + j * 18}" font-size="13" fill="#57606a">{esc(l)}</text>')
-        yy += 32 + 18 * len(lines)
+                 f'stroke-linejoin="round">{ICONS[icon]}</g><text x="{xx + 26}" y="{yy + 13}" font-size="13" fill="#203a55">{esc(lab)}</text>')
     if model.get("steps"):
         sy = ly + 34 + 24 * max(5, len(used_st)) + 14
-        o.append(f'<text x="24" y="{sy}" font-size="14" font-weight="700" fill="#24292f">STEPS</text>')
+        o.append(f'<text x="24" y="{sy}" font-size="14" font-weight="700" fill="#203a55">STEPS</text>')
         for i, s in enumerate(model["steps"]):
-            o.append(f'<text x="24" y="{sy + 22 + i * 24}" font-size="13" fill="#24292f"><tspan font-weight="700">{s["n"]}.</tspan> '
-                     f'{esc(s["text"])} <tspan fill="#57606a">({esc(STATUS[s["status"]]["label"].lower())})</tspan></text>')
+            o.append(f'<text x="24" y="{sy + 22 + i * 24}" font-size="13" fill="#203a55"><tspan font-weight="700">{s["n"]}.</tspan> '
+                     f'{esc(s["text"])} <tspan fill="#55677a">({esc(STATUS[s["status"]]["label"].lower())})</tspan></text>')
     o.append("</g></svg>")
     return "\n".join(o)

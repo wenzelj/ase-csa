@@ -160,7 +160,7 @@ def count_mismatch(text: str) -> str | None:
 #: Draft lane (pre-V1): only these stop a sheet from being written into the document; every other ERROR is
 #: reported as a WARN and left for the next pass or the V1 change lane.
 HARD_CODES = {"QUESTION_MISSING", "EMPTY_ANSWER", "FACT_NO_EVIDENCE", "UNKNOWN_EVIDENCE", "RATING_INVALID",
-              "COLUMNS", "ROW_WIDTH", "NO_ROWS", "REQUIREMENT_NO_FACTS"}
+              "COLUMNS", "ROW_WIDTH", "NO_ROWS", "REQUIREMENT_NO_FACTS", "SEMICOLON"}
 
 
 def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None = None,
@@ -198,6 +198,15 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
                 findings.append(_f("ERROR", "SOURCE_AS_SUBJECT", qid, f"the fact is about the source, not the system: make the application, host or practice the subject and keep the source in the basis braces: {fact['text'][:80]}"))
             if q["kind"] in ("requirement", "narrative", "findings") and _IP.search(fact["text"]):
                 findings.append(_f("WARN", "IP_IN_PROSE", qid, f"address in a prose fact: name the host if it has a name; an address alone is right only where no host name is known: {fact['text'][:80]}"))
+        if q["kind"] in ("requirement", "narrative", "findings"):
+            # no semicolons in anything that becomes document prose: Text, the facts it is built from, bullets
+            for where, s in [("Text", b.get("text") or "")] + [("fact", f["text"]) for f in b["facts"]] + \
+                    [("bullet", x) for x in b["bullets"]]:
+                if ";" in s:
+                    i = s.find(";")
+                    findings.append(_f("ERROR", "SEMICOLON", qid, f"semicolon in a {where} (\"{s[max(0, i - 30):i + 30].strip()}\"): "
+                                       "write two sentences, or join the parts with a comma and 'and' or 'but'"))
+                    break
         cited = {i.upper() for fact in b["facts"] for i in fact["ids"]}
         cited |= {i.upper() for row in b["rows"] for c in row for i in _EID.findall(c)}
         cited |= {i.upper() for x in b["bullets"] for i in _EID.findall(x)}

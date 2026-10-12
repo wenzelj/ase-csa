@@ -27,6 +27,10 @@ Draft `reviews/ChangesCSA_<App>_Section<N>.md` for one section from Discovery Da
 - Text is a draft for the Writer: no evidence ID, IP address or subnet in prose. Host references follow `csa-writing-style` "Host references": role from the Host register in prose, no IP address for a named host. Tables that capture the system give both, e.g. `MOTPRDREV101 (10.20.1.5)`; names are written exactly as the sources write them (RevViewer stays RevViewer).
 - Write `## Fact audit` (`| Record | Sentence | Evidence quote | Basis | Scope |`), one row per Text sentence. A sentence with no quote is deleted or becomes the unknown.
 
+## Writing
+
+- No semicolons (`;`) in Text: write two sentences, or join the parts with a comma and "and" or "but". `check-change` reports SEMICOLON_IN_TEXT as an ERROR.
+
 ## Errors to fix
 
 `csa check-change` ERRORs, including FACT_*, SCOPE_*, UNSUPPORTED_QUALIFIER, UNTAGGED_FACT, BRIEF_ITEM_UNANSWERED, NO_BRIEF, BRIEF_NO_QUESTIONS, and TERM_LINT findings. NO_SEARCH_NOTES is a warning: write the note.

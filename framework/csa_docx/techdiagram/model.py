@@ -25,6 +25,8 @@ TIER = {"firewall": "net", "switch": "net", "router": "net",
         "jump_host": "access", "terminal": "access", "hmi": "access",
         "app_server": "app", "radio": "app", "logging": "app", "server": "app", "unknown": "app",
         "hypervisor": "app", "dns": "app", "time": "app", "backup": "app",
+        "workstation": "access", "scada": "app", "vm": "app", "dhcp": "app", "api": "app", "rack": "app",
+        "wireless": "net", "cloud": "app",
         "database": "db", "historian": "db", "storage": "db",
         "plc": "ot", "rtu": "ot"}
 TIERS = [["net", "Network"], ["access", "Access"], ["app", "Application\nand logging"], ["db", "Database\nand storage"],
@@ -43,6 +45,8 @@ RULES = [  # (pattern on the recorded role, kind) -- first match wins; order mat
     (r"sql server|database|\bdb\b|oracle|postgres|mysql", "database"),
     (r"jump host|jump server|bastion", "jump_host"),
     (r"\bhmi\b|scada client|operator station|human.machine", "hmi"),
+    (r"\bscada\b", "scada"),
+    (r"engineering (?:workstation|station)|\bews\b", "workstation"),
     (r"radio manager", "radio"),
     (r"workstation|operator|reviewer|revviewer|radio management|console", "terminal"),
     (r"log server|logging|syslog|\bsiem\b", "logging"),
@@ -53,6 +57,9 @@ RULES = [  # (pattern on the recorded role, kind) -- first match wins; order mat
     (r"\bsan\b|\bnas\b|storage", "storage"),
     (r"backup server|backup target|backup appliance", "backup"),
     (r"\bdns\b", "dns"),
+    (r"\bdhcp\b", "dhcp"),
+    (r"wireless|access point|\bwap\b|wi-?fi", "wireless"),
+    (r"virtual machine|\bvm\b", "vm"),
     (r"\bntp\b|time server|time source", "time"),
     (r"\bplc|programmable logic|modicon|controllogix|compactlogix|simatic|\bs7-?\d", "plc"),
     (r"\brtu|remote terminal unit", "rtu"),
@@ -252,7 +259,7 @@ def _rollup_groups(edges, groups):
     for (g, end, other, label, dr), es in bucket.items():
         if len(es) < 2: continue
         n = {"id": "G" + es[0]["id"], end: g, ("s" if end == "t" else "t"): other, "dir": dr,
-             "label": label, "status": "observed",
+             "label": label, "status": es[0]["status"], "short": es[0].get("short"),
              "evidence": sorted({i for e in es for i in e["evidence"]}),
              "detail": {"connections": sum(e["detail"].get("connections", 1) for e in es), "hosts": sorted({h for e in es for h in e["detail"].get("hosts", [])})}}
         drop.update(e["id"] for e in es); new.append(n)

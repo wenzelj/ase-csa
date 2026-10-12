@@ -79,6 +79,15 @@ class Handler(BaseHTTPRequestHandler):
             match = re.fullmatch(r"/api/systems/([^/]+)/explorer", path)
             if match:
                 return self.dispatch_result(api.system_explorer(match.group(1)))
+            match = re.fullmatch(r"/api/systems/([^/]+)/figures", path)
+            if match:
+                return self.dispatch_result(api.figure_list(match.group(1)))
+            match = re.fullmatch(r"/api/systems/([^/]+)/figures/([^/]+)/file/([^/]+)", path)
+            if match:
+                return self.dispatch_result(api.figure_file(match.group(1), match.group(2), match.group(3)))
+            match = re.fullmatch(r"/api/systems/([^/]+)/figures/([^/]+)", path)
+            if match:
+                return self.dispatch_result(api.figure_detail(match.group(1), match.group(2)))
             match = re.fullmatch(r"/api/systems/([^/]+)/diagram", path)
             if match:
                 return self.dispatch_result(api.system_diagram(match.group(1)))
@@ -200,6 +209,15 @@ class Handler(BaseHTTPRequestHandler):
         try:
             length = int(self.headers.get("Content-Length", "0"))
             payload = json.loads(self.rfile.read(length) or b"{}")
+            match = re.fullmatch(r"/api/systems/([^/]+)/figures/refresh", parsed.path)
+            if match:
+                return self.dispatch_result(api.figure_refresh(match.group(1)))
+            match = re.fullmatch(r"/api/systems/([^/]+)/figures/([^/]+)/brief", parsed.path)
+            if match:
+                return self.dispatch_result(api.figure_brief(match.group(1), match.group(2), payload))
+            match = re.fullmatch(r"/api/systems/([^/]+)/figures/([^/]+)/save", parsed.path)
+            if match:
+                return self.dispatch_result(api.figure_save(match.group(1), match.group(2)))
             match = re.fullmatch(r"/api/systems/([^/]+)/search", parsed.path)
             if match:
                 return self.dispatch_result(api.search(match.group(1), api.SearchRequest.model_validate(payload)))

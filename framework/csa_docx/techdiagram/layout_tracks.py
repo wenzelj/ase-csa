@@ -58,7 +58,10 @@ def layout(model):
             for x in (e["s"], e["t"]):
                 for m in (groups[x]["members"] if x in groups else [x]): cross[m] += 1
     rowcards = defaultdict(list)            # (zone,row) -> [ids] left to right
-    for n in sorted(model["nodes"], key=lambda n: n["label"]):
+    # inside a data centre cards are ordered by name (then by cross-site weight below); in the bands the
+    # model's own order is kept, so a figure can put each provider above the data centre it serves
+    order = {id(n): i for i, n in enumerate(model["nodes"])}
+    for n in sorted(model["nodes"], key=lambda n: (n["label"], 0) if n["zone"] in dcs else ("", order[id(n)])):
         rowcards[(n["zone"], obj[n["id"]]["r0"])].append(n["id"])
     for (z, r), ids in rowcards.items():
         if z in dcs:

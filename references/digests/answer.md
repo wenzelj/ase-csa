@@ -28,7 +28,7 @@ The card (`CARD=`) is your whole input. Write the answer sheet (`SHEET=`) and st
 
 ## Errors the framework reports (fix every one)
 
-QUESTION_MISSING, EXTRA_BLOCK, EMPTY_ANSWER, REQUIREMENT_NO_FACTS, FACT_NO_EVIDENCE, UNKNOWN_EVIDENCE, EVIDENCE_NOT_ON_CARD, BAD_BASIS, SCOPE_OUTSIDE_EVIDENCE (a host in the fact's scope is not in the cited evidence), RATING_INVALID, RATING_NO_REASON, COLUMNS and ROW_WIDTH (table shape), NO_ROWS, IP_IN_PROSE, COUNT_MISMATCH (a total whose parts do not add up), HOSTS_NOT_GROUPED (one role spread over several rows), HOSTS_MISSING (a captured host left out of a host table), SOURCE_AS_SUBJECT (the sentence is about the matrix, capture or host map; rewrite it about the system). NEEDS_SEARCH means a `Search:` line was written: the framework adds results once.
+QUESTION_MISSING, EXTRA_BLOCK, EMPTY_ANSWER, REQUIREMENT_NO_FACTS, FACT_NO_EVIDENCE, UNKNOWN_EVIDENCE, EVIDENCE_NOT_ON_CARD, BAD_BASIS, SCOPE_OUTSIDE_EVIDENCE (a host in the fact's scope is not in the cited evidence), RATING_INVALID, RATING_NO_REASON, COLUMNS and ROW_WIDTH (table shape), NO_ROWS, IP_IN_PROSE, COUNT_MISMATCH (a total whose parts do not add up), HOSTS_NOT_GROUPED (one role spread over several rows), HOSTS_MISSING (a captured host left out of a host table), SOURCE_AS_SUBJECT (the sentence is about the matrix, capture or host map: rewrite it about the system), SEMICOLON (a semicolon in a fact, Text or bullet: write two sentences, or join the parts with a comma and "and" or "but"). NEEDS_SEARCH means a `Search:` line was written: the framework adds results once.
 
 ## Searching and the matrix
 

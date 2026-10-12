@@ -89,3 +89,33 @@ def test_append_approves_a_row_the_source_proves_and_stats_counts_it(tmp_path):
     stats = subprocess.run([sys.executable, str(SCRIPT), "--workspace", str(tmp_path / "workspace"), "stats"],
                            capture_output=True, text=True)
     assert json.loads(stats.stdout)["by_review_state"] == {"reviewed": 1}
+
+
+def _doc_index(path: Path):
+    """A document source (a Confluence PDF export) with spaces in its file name."""
+    con = _index(path)
+    con.execute("insert into files values (4, '01 Current State AS Built/revloc-tetra/IS-Troubleshoot Tetra Radio Issues-111026-235730.pdf', null, 0)")
+    con.execute("insert into chunk_map values (4, 4, 1)")
+    con.execute("insert into chunks_content values (4, ?)", ("SIP_DAMM-01 is pointed to Primary Tetra server ( 10.124.32.81) and SIP_DAMM-02 is\npointed to Secondary Tetra server ( 10.124.32.209 ).",))
+    con.commit()
+    return con
+
+
+def test_source_check_reads_a_pdf_document_with_spaces_in_its_name(tmp_path):
+    con = _doc_index(tmp_path / "i.sqlite")
+    row = _row(source_title="revloc-tetra/IS-Troubleshoot Tetra Radio Issues-111026-235730.pdf",
+               evidence_excerpt="SIP_DAMM-02 is pointed to Secondary Tetra server ( 10.124.32.209 )")
+    assert em.source_check(row, con)["verdict"] == "SOURCE_OK"
+    assert em.source_check(dict(row, evidence_excerpt="pointed to Tertiary Tetra server"), con)["verdict"] == "SOURCE_MISMATCH"
+    assert em.source_check(dict(row, source_title="revloc-tetra/Missing Page-000000.pdf"), con)["verdict"] == "SOURCE_NOT_FOUND"
+
+
+def test_cited_file_check_finds_spaced_names_and_documents_cited_next_to_a_capture(tmp_path):
+    con = _doc_index(tmp_path / "i.sqlite")
+    missing, _ = em._cited_file_exists(con, "revloc-tetra/IS-Troubleshoot Tetra Radio Issues-111026-235730.pdf")
+    assert missing == []
+    missing, _ = em._cited_file_exists(con, "revloc-tetra/IS-Troubleshoot Tetra Radio Issues-111026-235730.pdf; "
+                                            "REVELOC_discovery_HOSTA01_20260605T010203Z: 03_time_status.txt")
+    assert missing == []
+    missing, _ = em._cited_file_exists(con, "revloc-tetra/Missing Page-000000.pdf")
+    assert missing == ["Page-000000.pdf"]

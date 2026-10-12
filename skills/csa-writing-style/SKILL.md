@@ -132,6 +132,7 @@ The rewrite keeps every fact, adds the consequence the original only implied, an
 - **Symmetric triplets.** "Reliable, scalable, and secure" or any three-adjective/three-clause list used as a rhetorical flourish rather than because there are exactly three distinct, evidenced things to say. State what's actually true; stop when you've said it.
 - **Uniform paragraph and sentence rhythm.** Real technical writing varies -- a short sentence next to a longer one, a paragraph that's two sentences next to one that's five. Prose where every sentence is roughly the same length and every paragraph follows the same setup-detail-consequence shape reads as generated. Vary it.
 - **Over-signposting.** Don't narrate the structure of what you're about to say ("There are three key points to consider," "Let's break this down," "In summary," when nothing was actually summarised). State the finding; let the heading and table do the structural work the document already provides.
+- **Semicolons.** Never put a semicolon in text that lands in the document: prose, a requirement's Current State, a Drawbridge Impact paragraph, a finding or a Discovery note. Write two sentences, or join the two parts with a comma and "and" or "but". A list after a colon is separated by commas. `prose_lint.py` warns on every one, and `csa check-change` and the draft lane refuse a Text that has one.
 - **Em dash overuse as a substitute for commas or full stops.** An occasional em dash is fine; a string of them in every paragraph is a tell. Prefer a comma, a full stop, or a colon where either reads more naturally.
 - **Manufactured enthusiasm or editorialising.** No exclamation points, no "excitingly," no implied opinion about whether a finding is good or bad beyond what the evidence and the document's risk/gap framing supports.
 - **Padding a sentence to sound authoritative.** "It is worth noting that the server was found to be running Windows Server 2019" is a sentence about nothing; "The server runs Windows Server 2019." says the same thing and reads like a person who trusts their own claim.
@@ -182,7 +183,7 @@ Run the prose lint on the draft (Markdown) or, for review, on the working DOCX s
 python3 .agents/skills/csa-writing-style/scripts/prose_lint.py <draft.md | working.docx> [--section N]
 ```
 
-It measures the rules above: bullet share, nested bullets, fragments and lead-ins, announcing connectors, identifiers repeated in prose, repeated sentences, evidence IDs or file names in prose, and heading label noise. New or rewritten text should produce no connector, nested-bullet, evidence-ID or heading-noise warnings, and no identifier stated in more than three prose paragraphs of one section. The lint is a guide, not a substitute for reading the paragraph back.
+It measures the rules above: bullet share, nested bullets, fragments and lead-ins, announcing connectors, identifiers repeated in prose, repeated sentences, evidence IDs or file names in prose, and heading label noise. New or rewritten text should produce no semicolon, connector, nested-bullet, evidence-ID or heading-noise warnings, and no identifier stated in more than three prose paragraphs of one section. The lint is a guide, not a substitute for reading the paragraph back.
 
 ## What this skill does not change
 

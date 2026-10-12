@@ -60,6 +60,11 @@ def _collect(work: Path) -> list[dict]:
                                                "fact": g["fact"], "scope": g["evidence_scope"]})
             if g["req_id"] and g["req_id"] not in it["reqs"]:
                 it["reqs"].append(g["req_id"])
+    # gaps the CSA figures need (csa-work/figures/gaps.json, written when a figure is saved)
+    from csa_docx.figures.work import all_gaps
+    for g in all_gaps(work):
+        items.setdefault(g["dr_id"], {"dr_id": g["dr_id"], "text": g["text"], "reqs": list(g.get("reqs") or []),
+                                      "fact": g.get("fact", ""), "scope": f"figure in {g.get('section', '')}".strip()})
     return list(items.values())
 
 
