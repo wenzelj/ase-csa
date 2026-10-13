@@ -1,4 +1,4 @@
-import type { DraftSnapshot, WordReview, ReviewSubmit, ReviewJob, ReviewJobResponse, ReviewLatest, AuthorSetup, AuthorSubmit, AuthorJobResponse, AuthorOptions, CleanupSubmit, CleanupJobResponse, CleanupLatest, CleanupPreflight, BuildSetup, BuildOutcome, AuditSnapshot } from "./types";
+import type { IntakeSnapshot, DraftSnapshot, WordReview, ReviewSubmit, ReviewJob, ReviewJobResponse, ReviewLatest, AuthorSetup, AuthorSubmit, AuthorJobResponse, AuthorOptions, CleanupSubmit, CleanupJobResponse, CleanupLatest, CleanupPreflight, BuildSetup, BuildOutcome, AuditSnapshot } from "./types";
 
 export async function api<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
@@ -100,3 +100,8 @@ export async function recordAuditGap(system: string, payload: Record<string, str
 export async function fetchDraft(system: string): Promise<DraftSnapshot> { return api(`/api/systems/${system}/draft`); }
 export async function submitJob(system: string, operation: string, target?: string, options: Record<string, string | boolean> = {}): Promise<ReviewJob> { return api(`/api/systems/${system}/jobs`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ operation, target: target || null, options }) }); }
 export async function fetchJob(system: string, id: string): Promise<ReviewJob> { return api(`/api/systems/${system}/jobs/${id}`); }
+
+export async function fetchIntake(system: string): Promise<IntakeSnapshot> { return api(`/api/systems/${system}/intake`); }
+export async function reviewEvidence(system: string, id: string, state: "rejected" | "reviewed", note: string): Promise<{ status: string; reviewed: string[]; state: string }> {
+  return api(`/api/systems/${system}/evidence/${encodeURIComponent(id)}/review`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ state, note }) });
+}

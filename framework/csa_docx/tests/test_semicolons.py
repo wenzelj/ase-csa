@@ -24,3 +24,15 @@ def test_draft_lane_refuses_a_semicolon_in_text():
                  "Text:\nThe log server takes time from an enterprise domain controller. No OT source was identified.\n"
                  "Rating: Not Met\nRating reason: No OT source was identified.\n")
     assert not any(f["code"] == "SEMICOLON" for f in A.validate(ok, card, draft=True)["findings"])
+
+
+def test_no_ids_strips_bracketed_evidence_ids_without_leaving_brackets():
+    # Evidence IDs are stripped; the brackets/parens that held them go with them,
+    # so no [] or [,,] artifacts reach the document.
+    assert A.no_ids("events [E-487]") == "events"
+    assert A.no_ids("[E-218, E-219, E-220, E-221]") == ""
+    assert A.no_ids("hosts [E-043, E-097] use AD") == "hosts use AD"
+    assert A.no_ids("all 12 captured hosts, indexed discovery searches [E-468]") == "all 12 captured hosts, indexed discovery searches"
+    assert A.no_ids("enterprise NTP (E-063, E-112)") == "enterprise NTP"
+    # Brackets that carry real content are left alone.
+    assert A.no_ids("keep [Optional note: x]") == "keep [Optional note: x]"

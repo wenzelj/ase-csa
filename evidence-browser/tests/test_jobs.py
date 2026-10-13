@@ -120,3 +120,16 @@ def test_word_lock_rejects_docx_job_before_launch(tmp_path: Path, monkeypatch: p
     result = manager.wait(item, created.id)
     assert result.state == "failed"
     assert "open in Word" in (result.message or "")
+
+
+def test_evidence_lock_refuses_a_second_evidence_job(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    operation(monkeypatch, "import time; time.sleep(.3)", lock="evidence")
+    item = project(tmp_path)
+    manager = JobManager(tmp_path / ".agents")
+    first = manager.submit(item, "stub", CommandRequest())
+    with pytest.raises(HTTPException) as refused:
+        manager.submit(item, "stub", CommandRequest())
+    assert refused.value.status_code == 409 and "evidence" in str(refused.value.detail)
+    manager.wait(item, first.id)
+    second = manager.submit(item, "stub", CommandRequest())
+    assert manager.wait(item, second.id).state == "succeeded"

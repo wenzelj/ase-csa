@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """CSA discovery index -- a rebuildable SQLite index of a project's Discovery Data.
 
-Stdlib only (Python 3.8+, SQLite with JSON1; FTS5 used when available).
+Python 3.8+ and SQLite with JSON1 (FTS5 used when available). PDF extraction
+prefers Poppler's ``pdftotext`` and falls back to the framework's vendored
+``pypdf`` package.
 
 The index is a *search aid*, not evidence. Every result carries a `cite` block
 (source_title / source_version / page_or_location / evidence_excerpt) that points
@@ -311,13 +313,29 @@ def docx_text(path):
 
 
 def pdf_text(path):
+    """Extract a PDF text layer without making Poppler a hard dependency.
+
+    Poppler remains first choice because ``-layout`` generally preserves tables
+    better.  The pure-Python fallback makes evidence ingestion work on a clean
+    framework installation where the ``pdftotext`` executable is unavailable.
+    """
     exe = shutil.which("pdftotext")
-    if not exe:
-        return None
+    if exe:
+        try:
+            r = subprocess.run([exe, "-layout", str(path), "-"], capture_output=True, timeout=120)
+            if r.returncode == 0:
+                return r.stdout.decode("utf-8", "replace")
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+
+    vendor = FRAMEWORK_DIR / "framework" / "vendor"
+    if str(vendor) not in sys.path:
+        sys.path.insert(0, str(vendor))
     try:
-        r = subprocess.run([exe, "-layout", str(path), "-"], capture_output=True, timeout=120)
-        return r.stdout.decode("utf-8", "replace") if r.returncode == 0 else None
-    except (OSError, subprocess.TimeoutExpired):
+        from pypdf import PdfReader
+        reader = PdfReader(str(path))
+        return "\f".join(page.extract_text() or "" for page in reader.pages)
+    except (ImportError, OSError, ValueError):
         return None
 
 
@@ -456,12 +474,17 @@ def index_file(con, file_id, path, ext, fname):
             add_text(con, file_id, text)
         return "indexed", f"xlsx rows={count}"
     if ext == ".docx":
-        add_text(con, file_id, docx_text(path))
+        t = docx_text(path)
+        if not (t or "").strip():
+            return "skipped", "docx has no text"
+        add_text(con, file_id, t)
         return "indexed", "docx text"
     if ext == ".pdf":
         t = pdf_text(path)
         if t is None:
-            return "skipped", "pdf (pdftotext not available)"
+            return "skipped", "pdf text extraction failed"
+        if not t.strip():
+            return "skipped", "pdf has no text layer (scanned)"
         add_text(con, file_id, t)
         return "indexed", "pdf text"
     raw = path.read_bytes()
@@ -494,6 +517,17 @@ def cmd_build(args, project, root):
             shutil.copyfile(final_db, db_path)
     else:
         db_path = final_db
+    # A rebuild starts from an empty index; remember what the old one held so the intake record reports only real changes.
+    previous = {}
+    if args.rebuild:
+        old = db_path if db_path.exists() else final_db
+        if old.exists():
+            try:
+                pc = sqlite3.connect(f"file:{old}?mode=ro", uri=True)
+                previous = {r: (sha, size) for r, sha, size in pc.execute("SELECT rel_path, sha1, size FROM files")}
+                pc.close()
+            except sqlite3.Error:
+                previous = {}
     if args.rebuild and db_path.exists():
         db_path.unlink()
     # Default: the project's discovery data (default_source_set) plus any extra evidence folders
@@ -509,6 +543,8 @@ def cmd_build(args, project, root):
     con.execute("PRAGMA synchronous=OFF")
     init_db(con)
     t0, done, stats, seen = time.time(), True, {}, set()
+    changes = {"added": [], "changed": [], "removed": []}
+    shas = {}
     capture_ids = {}
     for src in sources:
         for dirpath, dirnames, filenames in os.walk(src):
@@ -543,8 +579,10 @@ def cmd_build(args, project, root):
                         capture_ids[folder] = cap_id
                 host = cap[1] if cap else None
                 sclass = "capture" if cap else ("derived" if derived else "other")
-                prev = con.execute("SELECT file_id, size, mtime, status FROM files WHERE rel_path=?", (rel,)).fetchone()
-                if prev and prev[1] == st.st_size and abs((prev[2] or 0) - st.st_mtime) < 1:
+                prev = con.execute("SELECT file_id, size, mtime, status, reason FROM files WHERE rel_path=?", (rel,)).fetchone()
+                retry_pdf = (ext == ".pdf" and prev and prev[3] in ("skipped", "error") and
+                             prev[4] in ("pdf (pdftotext not available)", "pdf text extraction failed"))
+                if prev and prev[1] == st.st_size and abs((prev[2] or 0) - st.st_mtime) < 1 and not retry_pdf:
                     stats[prev[3]] = stats.get(prev[3], 0) + 1
                     continue
                 if prev:
@@ -583,6 +621,9 @@ def cmd_build(args, project, root):
                             status, reason = "error", f"{type(e).__name__}: {e}"[:300]
                 con.execute("UPDATE files SET sha1=?, status=?, reason=?, dup_of=? WHERE file_id=?", (sha, status, reason, dup, fid))
                 stats[status] = stats.get(status, 0) + 1
+                shas[rel] = (sha, st.st_size)
+                changes["changed" if prev else "added"].append(dict(
+                    rel_path=rel, ext=ext, status=status, reason=reason, source_class=sclass, host=host))
                 if sum(stats.values()) % 200 == 0:
                     con.commit()
     if done:
@@ -591,6 +632,17 @@ def cmd_build(args, project, root):
             drop_content(con, fid)
             con.execute("DELETE FROM files WHERE file_id=?", (fid,))
         stats["removed"] = len(stale)
+        changes["removed"] = sorted(r[1] for r in stale)
+        if previous:      # a rebuild: compare with the old index instead of reporting every file as new
+            added, changed = [], list(changes["changed"])
+            for f in changes["added"]:
+                old = previous.get(f["rel_path"])
+                if old is None:
+                    added.append(f)
+                elif old != shas.get(f["rel_path"]):
+                    changed.append(f)
+            changes["added"], changes["changed"] = added, changed
+            changes["removed"] = sorted(set(changes["removed"]) | (set(previous) - seen))
     # current vs superseded captures, per host (archived captures never current)
     con.execute("UPDATE captures SET superseded_by=NULL, file_count=(SELECT COUNT(*) FROM files f WHERE f.capture_id=captures.capture_id)")
     for (host,) in con.execute("SELECT DISTINCT host FROM captures").fetchall():
@@ -603,7 +655,8 @@ def cmd_build(args, project, root):
     con.execute("INSERT OR REPLACE INTO meta VALUES('project', ?)", (project["key"],))
     con.execute("INSERT OR REPLACE INTO meta VALUES('sources', ?)", (json.dumps([str(s) for s in sources]),))
     con.execute("INSERT OR REPLACE INTO meta VALUES('complete', ?)", ("1" if done else "0",))
-    con.execute("INSERT OR REPLACE INTO meta VALUES('built_at_utc', ?)", (time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),))
+    built_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    con.execute("INSERT OR REPLACE INTO meta VALUES('built_at_utc', ?)", (built_at,))
     con.commit()
     if done and has_fts5(con):
         con.execute("INSERT INTO chunks(chunks) VALUES('optimize')")
@@ -615,8 +668,61 @@ def cmd_build(args, project, root):
         shutil.copyfile(db_path, tmp)
         os.replace(tmp, final_db)
         copied = str(final_db)
+    intake = write_intake(work_dir, changes, built_at, matrix_last_id(work_dir)) if done else None
     emit(dict(status="OK" if done else "INCOMPLETE", message=None if done else "time budget reached - run build again to continue",
-              db=str(db_path), published_to=copied, seconds=round(time.time() - t0, 1), files=stats))
+              db=str(db_path), published_to=copied, seconds=round(time.time() - t0, 1), files=stats,
+              intake=str(intake) if intake else None))
+
+
+def matrix_last_id(work_dir):
+    """The highest evidence ID in the project's matrix ("" when there is none), so a reader of the intake
+    record can tell which rows were added after this build."""
+    path = Path(work_dir) / "evidence-matrix.csv"
+    if not path.is_file():
+        return ""
+    with open(path, encoding="utf-8-sig", newline="") as fh:
+        nums = [int(m.group(1)) for r in csv.DictReader(fh) for m in [re.fullmatch(r"E-(\d+)", r.get("evidence_id") or "")] if m]
+    return f"E-{max(nums):03d}" if nums else ""
+
+
+def unreadable(f):
+    """A document the index could not read and a person can supply in another format. Capture artefacts
+    (DLLs, renderings, extracted zips) and empty files are not documents to ask for."""
+    reason = f.get("reason") or ""
+    return (f.get("source_class") != "capture" and f.get("status") in ("skipped", "error") and reason != "empty"
+            and not reason.startswith(("zip (extracted", "rendering duplicated")))
+
+
+def write_intake(work_dir, changes, built_at, last_id):
+    """Record what this build brought in: <work_dir>/intake/<id>.json and a copy at intake/latest.json.
+    Nothing is written when nothing was added, changed or removed (latest.json keeps the last real intake)."""
+    if not any(changes.get(k) for k in ("added", "changed", "removed")):
+        return None
+    folder = Path(work_dir) / "intake"
+    folder.mkdir(parents=True, exist_ok=True)
+    added, changed, carried_from = list(changes["added"]), list(changes["changed"]), []
+    try:
+        prev = json.loads((folder / "latest.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        prev = None
+    if isinstance(prev, dict) and prev.get("id") and not (folder / f"{prev['id']}.evidence.md").exists():
+        # The evidence agent has not read the previous intake yet: carry its files forward so none is lost.
+        listed = {f["rel_path"] for f in added + changed} | set(changes["removed"])
+        added += [f for f in prev.get("added", []) if f["rel_path"] not in listed]
+        changed += [f for f in prev.get("changed", []) if f["rel_path"] not in listed]
+        carried_from = list(prev.get("carried_from", [])) + [prev["id"]]
+    rid = base = built_at.replace("-", "").replace(":", "")
+    n = 1
+    while (folder / f"{rid}.json").exists():
+        n += 1
+        rid = f"{base}-{n}"
+    record = dict(id=rid, built_at_utc=built_at, matrix_last_id=last_id, carried_from=carried_from, added=added,
+                  changed=changed, removed=changes["removed"], unreadable=[f for f in added + changed if unreadable(f)])
+    text = json.dumps(record, indent=1)
+    path = folder / f"{rid}.json"
+    path.write_text(text, encoding="utf-8")
+    (folder / "latest.json").write_text(text, encoding="utf-8")
+    return path
 
 
 # --------------------------------------------------------------------------- queries

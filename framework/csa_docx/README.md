@@ -82,9 +82,10 @@ Use DocxEngine for paragraph, list, range, subsection-body, subsection-delete, p
 Alongside `docxengine`, `framework/vendor/` also carries:
 
 - `mistune` (pure Python, MIT) - parses approved replacement Markdown tables for the whole-table-replace capability, instead of a hand-rolled pipe-table regex.
+- `pypdf` (pure Python, BSD-3-Clause) - extracts searchable text from PDF evidence when Poppler's `pdftotext` executable is unavailable.
 - `rapidfuzz` (MIT) - fuzzy row-label matching for the labelled table-row lookup. Vendored as a wheel built for the Mac's `/opt/homebrew/bin/python3.14` (macOS arm64, cp314); the adapter falls back to `difflib` if that wheel doesn't import on whatever interpreter actually runs it.
 
-Both were fetched by running `python3.14 -m pip download <package> --no-deps -d .` on the Mac (network access to PyPI is not available from every environment this framework may run in) and unpacked directly into `framework/vendor/` the same way the `docxengine` wheel is - no system-wide `pip install` required on any machine that runs this framework.
+The packaged libraries are unpacked directly into `framework/vendor/` so no system-wide `pip install` is required on a machine that runs the framework.
 
 ## Function Factory / MCP Server
 

@@ -136,6 +136,18 @@ agents:
     skill: csa-gap-analysis-agent
     summary: Investigator in GAP mode - gap register and targeted questions.
 
+  - verb: intake
+    file: csa-evidence-investigator-agent.md
+    title: CSA Evidence Investigator Agent
+    group: analysis
+    tier: local
+    arg: INTAKE
+    inputs: INTAKE=latest, MODE=INTAKE
+    locks: none
+    instruction: Intake mode - read the new and changed files in WORK_DIR/intake/latest.json (written by csa ingest) and record what they state as evidence matrix rows and graph items, following Intake mode (MODE=INTAKE) in the agent file.
+    skill: csa-evidence-investigator-agent
+    summary: Turn newly ingested documents into evidence rows and graph items (Evidence intake step 2).
+
   - verb: analyse
     file: csa-technical-analyst-agent.md
     title: CSA Technical Analyst Agent

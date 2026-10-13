@@ -23,6 +23,7 @@ The card (`CARD=`) is your whole input. Write the answer sheet (`SHEET=`) once a
 - Write for this subsection's purpose only. Explain how the system works as far as this subsection needs it, and leave out what belongs elsewhere.
 - Write plain, story-like Australian English in full sentences. Make the application, host or practice the subject, never the capture or the matrix.
 - No semicolons (`;`) in Text, Facts or Bullets: write two sentences, or join the parts with a comma and "and" or "but". The framework refuses a sheet with one (SEMICOLON, a hard error).
+- When the evidence shows something is absent, say so about the system and name the sources that were checked: "No isolation test record appears in the twelve discovery captures or the supplied documents." Never describe the framework's own search ("the matrix", "the index rows", "rows searched", "for this domain"). The reader has never seen them, and the framework refuses the sheet (PROCESS_AS_SUBJECT).
 - Group hosts by role. One table row per role group, and prose names the role group. Every count must add up.
 
 ## Names and addresses

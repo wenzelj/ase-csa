@@ -1,0 +1,124 @@
+import { useEffect, useRef, useState } from "react";
+import { api, cancelJob, fetchIntake, fetchJob, reviewEvidence, submitJob } from "../api";
+import type { IntakeCandidate, IntakeEvidenceRow, IntakeFile, IntakeSnapshot, ReviewJob } from "../types";
+import { deriveIntakeSteps, resumableJob, type StepKey } from "./intakeSteps";
+
+const TERMINAL = ["succeeded", "failed", "cancelled", "interrupted"];
+const CLIS = [{ id: "claude", label: "Claude" }, { id: "codex", label: "Codex" }, { id: "evo", label: "Evo (local)" }];
+const OP_LABEL: Record<string, string> = { ingest: "Ingest new data", intake: "Evidence agent", gap_check: "Check open questions" };
+const VERDICT: Record<string, string> = { ANSWERED: "Answered", CANDIDATES: "Possible answer found", NOT_FOUND: "Not found" };
+
+function remembered(): string { try { return localStorage.getItem("csa-draft-cli") || "claude"; } catch { return "claude"; } }
+function when(value?: string | null) { if (!value) return "—"; const d = new Date(value); return isNaN(d.getTime()) ? value : d.toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }); }
+function name(path: string) { return path.split("/").pop() || path; }
+
+type Props = {
+  system: string; draftStage: boolean; refreshKey: number;
+  openEvidence: (row: IntakeEvidenceRow) => void; writeFact: (candidate: IntakeCandidate) => void;
+  openSection: (key: string) => void;
+};
+
+export function EvidenceIntake({ system, draftStage, refreshKey, openEvidence, writeFact, openSection }: Props) {
+  const [snap, setSnap] = useState<IntakeSnapshot | null>(null); const [job, setJob] = useState<ReviewJob | null>(null);
+  const [error, setError] = useState(""); const [cli, setCli] = useState(remembered()); const [showLog, setShowLog] = useState(false);
+  const [onlyFound, setOnlyFound] = useState(true);
+  const poll = useRef<number | undefined>(undefined);
+
+  async function load() {
+    try { setSnap(await fetchIntake(system)); }
+    catch (e) {
+      const message = (e as Error).message;
+      setError(message === "Not Found" ? "The evidence workspace server is older than this page. Stop it (Ctrl+C in its Terminal) and run csa browse again." : message);
+    }
+  }
+  function watch(id: string) {
+    window.clearInterval(poll.current);
+    poll.current = window.setInterval(async () => {
+      try {
+        const current = await fetchJob(system, id); setJob(current);
+        if (TERMINAL.includes(current.state)) { window.clearInterval(poll.current); await load(); }
+      } catch (e) { window.clearInterval(poll.current); setError((e as Error).message); }
+    }, 2000);
+  }
+  async function resume() {
+    try { const live = resumableJob((await api<{ jobs: ReviewJob[] }>(`/api/systems/${system}/jobs`)).jobs); if (live) { setJob(live); watch(live.id); } }
+    catch { /* no job list: nothing to resume */ }
+  }
+  useEffect(() => { setSnap(null); setJob(null); void load(); void resume(); return () => window.clearInterval(poll.current); }, [system]);
+  useEffect(() => { if (refreshKey) void load(); }, [refreshKey]);
+  useEffect(() => { try { localStorage.setItem("csa-draft-cli", cli); } catch { /* per-viewer convenience only */ } }, [cli]);
+
+  async function run(operation: string, options: Record<string, string | boolean> = {}) {
+    setError(""); setShowLog(true);
+    try {
+      const started = await submitJob(system, operation, undefined, options); setJob(started); watch(started.id);
+    } catch (e) { setError((e as Error).message); }
+  }
+  async function notAnAnswer(c: IntakeCandidate) {
+    setError("");
+    try { await reviewEvidence(system, c.evidence_id, "rejected", `read for ${c.dr_id}: does not answer the question`); await load(); }
+    catch (e) { setError((e as Error).message); }
+  }
+
+  if (!snap) return <section className="page draft-page intake-page">{error ? <div className="desk-error" role="alert">{error}</div> : <div className="loading"><span /><strong>Reading what came in…</strong></div>}</section>;
+
+  const { steps, next, busy } = deriveIntakeSteps(snap, job);
+  const running = !!job && !TERMINAL.includes(job.state);
+  const rec = snap.intake;
+  const questions = (snap.gap_check?.questions || []).filter(q => !onlyFound || q.verdict !== "NOT_FOUND");
+  const files: IntakeFile[] = rec ? [...rec.added, ...rec.changed] : [];
+  const action = (key: StepKey) => ({
+    ingest: <button onClick={() => void run("ingest")} disabled={busy}>Ingest new data</button>,
+    documents: <span className="intake-action"><select value={cli} onChange={e => setCli(e.target.value)} disabled={busy} aria-label="Model for the evidence agent">{CLIS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}</select><button onClick={() => void run("intake", { cli })} disabled={busy || !rec}>Run the evidence agent</button></span>,
+    gaps: <button onClick={() => void run("gap_check")} disabled={busy}>Check open questions</button>,
+    settle: null, use: null,
+  })[key];
+
+  return <section className="page draft-page intake-page">
+    <header className="page-heading"><div><span>Evidence intake</span><h1>Bring new data in and use it</h1><p>New files go into the index first. The evidence agent then turns what new documents state into evidence, the open questions are checked against it, and you settle what was found. Nothing here changes the working document.</p></div></header>
+
+    <ol className="intake-steps">{steps.map((s, i) => <li key={s.key} className={`intake-step intake-${s.status}${s.key === next ? " intake-next" : ""}`}>
+      <span className="intake-num">{i + 1}</span><div><b>{s.title}</b><small>{s.detail || " "}</small></div>{action(s.key)}
+    </li>)}</ol>
+
+    <div className="draft-counts">
+      <div className="draft-count"><strong>{snap.matrix.rows}</strong><span>Evidence rows</span></div>
+      <div className="draft-count"><strong>{snap.matrix.by_status.VERIFIED || 0}</strong><span>Verified</span></div>
+      <div className="draft-count draft-stale"><strong>{snap.candidates.length}</strong><span>To settle</span></div>
+      <div className="draft-count"><strong>{snap.graph.nodes} / {snap.graph.edges}</strong><span>Graph nodes / links</span></div>
+      <div className="draft-count"><strong>{snap.stale}</strong><span>Stale answers</span></div>
+    </div>
+
+    {error && <p className="desk-error" role="alert">{error}</p>}
+    {job && <div className={`draft-job draft-job-${job.state}`} role="status"><div><b>{OP_LABEL[job.operation] || job.operation}</b><span>{running ? (job.operation === "intake" ? "Running — the agent works in its own Terminal window" : "Running…") : job.state === "succeeded" ? "Done" : `Stopped: ${job.state}`}</span></div><div className="draft-job-buttons"><button className="quiet" onClick={() => setShowLog(!showLog)}>{showLog ? "Hide output" : "Show output"}</button>{running && <button className="quiet" onClick={() => void cancelJob(system, job.id).then(() => fetchJob(system, job.id)).then(setJob)}>Stop</button>}</div>{showLog && <pre>{[job.stdout_tail, job.stderr_tail].filter(Boolean).join("\n") || "No output yet."}</pre>}</div>}
+
+    <section className="decision-desk"><header><div><h2>1 · What came in</h2><p>{rec ? `Last ingest that brought something in: ${when(rec.built_at_utc)}.` : "Run Ingest new data after adding files to the project's discovery folders."}{snap.nothing_new_since ? ` The index was refreshed since then with nothing new.` : ""}</p></div></header>
+      {rec && rec.unreadable.length > 0 && <div className="intake-warn" role="note"><b>Not readable: supply a text or PDF copy</b><ul>{rec.unreadable.map(f => <li key={f.rel_path}>{name(f.rel_path)} <small>{f.reason}</small></li>)}</ul></div>}
+      {files.length ? <table className="draft-table"><thead><tr><th>File</th><th>Change</th><th>Index</th></tr></thead><tbody>{files.map(f => <tr key={f.rel_path}><td>{name(f.rel_path)}<small>{f.rel_path}</small></td><td>{rec!.added.includes(f) ? "New" : "Changed"}</td><td>{f.status === "indexed" ? "Readable" : f.status}<small>{f.reason}</small></td></tr>)}</tbody></table> : <p className="draft-none">{rec ? "Only removals in the last intake." : "Nothing ingested yet."}</p>}
+      {rec && rec.removed.length > 0 && <p className="draft-none">Removed from the index: {rec.removed.map(name).join(", ")}</p>}
+    </section>
+
+    <section className="decision-desk"><header><div><h2>2 · New evidence</h2><p>Rows added to the evidence matrix since that ingest.</p></div></header>
+      {snap.matrix.added_since_intake.length ? <table className="draft-table"><thead><tr><th>ID</th><th>Status</th><th>Claim</th><th /></tr></thead><tbody>{snap.matrix.added_since_intake.map(r => <tr key={r.evidence_id}><td>{r.evidence_id}</td><td><span className="draft-pill">{r.status}</span></td><td>{r.claim}<small>{r.source_title}</small></td><td><button className="quiet" onClick={() => openEvidence(r)}>Open source</button></td></tr>)}</tbody></table> : <p className="draft-none">No new rows yet.</p>}
+      {snap.agent_summary && <details className="intake-summary"><summary>Evidence agent summary ({when(snap.agent_summary.modified_at)})</summary><pre>{snap.agent_summary.text}</pre></details>}
+    </section>
+
+    <section className="decision-desk"><header><div><h2>3 · Open questions</h2><p>{snap.gap_check ? `Checked ${when(snap.gap_check.checked_at)}.` : "Not checked yet."}</p></div><label className="draft-check"><input type="checkbox" checked={onlyFound} onChange={e => setOnlyFound(e.target.checked)} /> Only questions with something found</label></header>
+      {questions.length ? <table className="draft-table"><thead><tr><th>Section</th><th>Question</th><th>Result</th><th>Evidence</th></tr></thead><tbody>{questions.map(q => <tr key={q.dr_id}><td><b>{q.number}</b><small>{q.dr_id}</small></td><td>{q.text}</td><td><span className={`draft-pill intake-${q.verdict.toLowerCase()}`}>{VERDICT[q.verdict] || q.verdict}</span></td><td>{q.evidence_ids.join(", ") || "—"}</td></tr>)}</tbody></table> : <p className="draft-none">{snap.gap_check ? "Nothing found for the open questions." : "Run Check open questions."}</p>}
+    </section>
+
+    <section className="decision-desk"><header><div><h2>4 · Settle what was found</h2><p>Each candidate quotes a source that may answer an open question. Read it, then reject it or write the fact it supports.</p></div></header>
+      {snap.candidates.length ? <div className="intake-cards">{snap.candidates.map(c => <article key={c.evidence_id} className="intake-card">
+        <header><b>{c.dr_id}</b><span>{c.evidence_id}</span></header>
+        <p className="intake-question">{(c.question || "").replace(/^DR-[^:]+:\s*/, "")}</p>
+        <blockquote>{c.evidence_excerpt}</blockquote>
+        <small>{c.source_title}{c.page_or_location ? ` · ${c.page_or_location}` : ""}</small>
+        <footer><button className="quiet" onClick={() => openEvidence(c)}>Open source</button><button className="quiet" onClick={() => void notAnAnswer(c)} disabled={busy}>Not an answer</button><button onClick={() => writeFact(c)} disabled={busy}>Write the fact</button></footer>
+      </article>)}</div> : <p className="draft-none">Nothing to settle.</p>}
+    </section>
+
+    <section className="decision-desk"><header><div><h2>5 · Use it in the document</h2><p>{draftStage ? "These subsections have new evidence for an open question. Answer them again on Draft answers." : "These subsections have new evidence for an open question. Author them on the Assessment page."}</p></div></header>
+      {snap.gap_check?.affected.length ? <table className="draft-table"><thead><tr><th>Subsection</th><th>Answered</th><th>To settle</th><th /></tr></thead><tbody>{snap.gap_check.affected.map(a => <tr key={a.key}><td><b>{a.number}</b> {a.title}<small>{a.key}</small></td><td>{a.answered}</td><td>{a.candidates}</td><td><button onClick={() => openSection(a.key)}>{draftStage ? "Open in Draft answers" : "Open in Assessment"}</button></td></tr>)}</tbody></table> : <p className="draft-none">Nothing new to answer yet.</p>}
+    </section>
+  </section>;
+}

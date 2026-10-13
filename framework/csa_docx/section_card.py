@@ -393,6 +393,29 @@ def _register_lines(reg: dict) -> list[str]:
     return out
 
 
+def system_name(workspace: Path | None) -> str:
+    """The system's name as the working document writes it (its "System Name:" line), or "" when the
+    document has none. The framework holds no system name of its own: the document is the one place."""
+    if not workspace:
+        return ""
+    import zipfile
+    for root in (Path(workspace), Path(workspace).parent):
+        fv = root / "01 Current State AS Built" / "01 Final Version"
+        docs = sorted(d for d in fv.glob("*.docx") if not d.name.startswith("~$")) if fv.is_dir() else []
+        if len(docs) != 1:
+            continue
+        try:
+            xml = zipfile.ZipFile(docs[0]).read("word/document.xml").decode("utf8", "ignore")
+        except (OSError, KeyError, zipfile.BadZipFile):
+            return ""
+        for para in re.findall(r"<w:p[ >].*?</w:p>", xml, flags=re.S):
+            text = re.sub(r"<[^>]+>", "", re.sub(r"<w:del .*?</w:del>", "", para, flags=re.S)).strip()
+            m = re.match(r"System Name:\s*(.+)$", text)
+            if m:
+                return m.group(1).strip()
+    return ""
+
+
 def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool = True,
          extra_searches: dict | None = None, exclude: tuple[str, ...] = ()) -> dict:
     qs = questions(node, spec)
@@ -417,6 +440,12 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
         lines.append(f"- {q['id']} {q['text']}")
         if q.get("columns"):
             lines.append(f"  Columns: {' | '.join(q['columns'])}")
+    sysname = system_name(workspace)
+    if sysname:
+        lines += ["", "## System name", "",
+                  f"- The document names the system \"{sysname}\". Use exactly this name, spelled and cased this way, "
+                  "whenever you refer to the system as a whole. Evidence rows and quoted sources may spell it another way; "
+                  "do not copy that spelling into your text."]
     rl = rules(node, spec)
     if rl:
         lines += ["", "## Rules from the template", ""] + [f"- {r}" for r in rl]

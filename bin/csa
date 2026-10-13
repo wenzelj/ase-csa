@@ -2395,7 +2395,7 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
         print(f"{C['b']}Card {card_md.name}: {len(out['questions'])} question(s), about {out['tokens']} tokens.{C['0']}")
 
     def answer(extra: list[str]) -> int:
-        if sheet.exists():
+        if sheet.exists() and "answer_s" not in timing:        # .prev.md stays the answer this run replaces
             sheet.replace(sheet.with_suffix(".prev.md"))
         t0 = time.time()
         rc = launch(p, agent(verb), [number, f"CARD={card_md}", f"SHEET={sheet}", *extra], a)
@@ -2409,7 +2409,8 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
                                                      "message": f"the answer agent wrote no {sheet.name}. Write the whole sheet "
                                                      f"with your file tool to exactly this path: {sheet}"}], "searches": {}}
         return _fw_json("csa_docx.answer_sheet", "validate", sheet, "--card", card_json, "--matrix", matrix,
-                        "--new-ids", ",".join(sorted(_matrix_ids(work) - before)), *(["--draft"] if draft else []))
+                        "--new-ids", ",".join(sorted(_matrix_ids(work) - before)), *(["--draft"] if draft else []),
+                        *(["--previous", sheet.with_suffix(".prev.md")] if sheet.with_suffix(".prev.md").is_file() else []))
 
     timing: dict = {}
     verb = "draft" if draft else "answer"
@@ -2592,6 +2593,24 @@ def cmd_stale(a):
     if getattr(a, "json", False):
         print(json.dumps(rows))
     return 0
+
+
+def cmd_gap_check(a):
+    """Check every open question (draft/open-questions.md) against the evidence matrix and the discovery index.
+    What the index finds is added to the matrix as UNCONFIRMED candidate rows to settle (no model)."""
+    p = project(a.project); banner(p)
+    argv = [framework_python(), "-m", "csa_docx.gap_sweep", "--workspace", str(local_path(p["project_root"]))]
+    if a.section:
+        key = a.section if re.fullmatch(r"[A-Z][A-Z0-9_]*", a.section) else None
+        if not key:
+            res = resolve_target(p, a.section)
+            if res.get("status") != "OK":
+                die(res.get("message", f"cannot resolve '{a.section}'"))
+            key = res["key"]
+        argv += ["--section", key]
+    if a.json:
+        argv.append("--json")
+    return subprocess.call(argv, cwd=str(FRAMEWORK), env=_fw_env())
 
 
 def cmd_refresh_draft(a):
@@ -4248,6 +4267,10 @@ def main(argv=None) -> int:
     s.add_argument("--rebuild", action="store_true", help="rebuild the discovery index from scratch")
     s.add_argument("--no-stale", action="store_true", help="skip the stale check")
     s = sp("stale", cmd_stale, help="answered subsections whose evidence changed since their answer (no model)")
+    s.add_argument("--json", action="store_true")
+    s = sp("gap-check", cmd_gap_check, help="check every open question against the matrix and index (no model)",
+           description="Check every open question against the evidence matrix and the discovery index. What the index finds is added as UNCONFIRMED candidate rows to settle. No model.")
+    s.add_argument("section", nargs="?", default="", help="one section: number, heading or key (default: all)")
     s.add_argument("--json", action="store_true")
     s = sp("refresh-draft", cmd_refresh_draft, help="draft lane: answer again every subsection whose evidence changed")
     agent_opts(s); s.add_argument("--fresh", action="store_true")

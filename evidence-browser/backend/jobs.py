@@ -138,14 +138,14 @@ class JobManager:
             classification = "document_write"
         lock_class = str(getattr(operation, "lock", "none"))
         resource = f"section:{request.target}" if lock_class == "section" and request.target else (
-            "document" if lock_class == "docx" else None)
+            "document" if lock_class == "docx" else "evidence" if lock_class == "evidence" else None)
         job = JobRecord(
             id=str(uuid.uuid4()), project_key=project["key"], operation=operation.key,
             display_args=argv[3:], classification=classification, lock=lock_class, resource=resource,
             state="queued", created_at=_now(),
         )
         with self._condition:
-            if lock_class == "section" and resource and any(row.project_key == project["key"] and row.resource == resource and
+            if lock_class in ("section", "evidence") and resource and any(row.project_key == project["key"] and row.resource == resource and
                                 row.state in {"queued", "running"} for row in self._jobs.values()):
                 raise HTTPException(409, f"Another operation is already working on {resource.replace(':', ' ')}.")
             self._jobs[job.id] = job

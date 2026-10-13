@@ -43,3 +43,7 @@ QUESTION_MISSING, EXTRA_BLOCK, EMPTY_ANSWER, REQUIREMENT_NO_FACTS, FACT_NO_EVIDE
 - An application skill: the card names a product you do not recognise.
 
 `csa check-change` is not run at this stage; the framework validates the sheet.
+
+## Absence
+
+- When the evidence shows something is absent, say so about the system and name the sources that were checked: "No isolation test record appears in the twelve discovery captures or the supplied documents." Never describe the framework's own search ("the matrix", "the index rows", "rows searched", "for this domain"). The reader has never seen them, and the framework refuses the sheet (PROCESS_AS_SUBJECT).

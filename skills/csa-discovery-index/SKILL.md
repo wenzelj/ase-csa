@@ -85,3 +85,7 @@ parent of the project's `default_source_set` (`01 Current State AS Built`) unles
 new captures are added. If the build runs somewhere the work folder cannot host SQLite (e.g. a mounted share),
 add `--stage-dir <local folder>`: it builds there and copies the finished file into `work_dir`. Queries open
 the index read-only, so do not run a build while agents are querying.
+
+PDF files with a text layer are indexed automatically. The builder prefers Poppler's `pdftotext` when installed
+and otherwise uses the framework's vendored `pypdf` fallback; scanned image-only PDFs remain listed as unreadable
+until an OCR or text copy is supplied.

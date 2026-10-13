@@ -247,3 +247,26 @@ After writing the re-review report, confirm: (1) the sign-off line lists only th
 - Risk: reconstructing approved `Where`, `Text`, `Why` or `Note` fields from run-state, comments or memory would silently create a new source of truth.
 - Review approach: mark the review `BLOCKED`, sign off no edit IDs, preserve the historical IDs only as an unverified inventory, and require restoration or controlled re-author/apply.
 - Validation: confirm live `csa status`, `csa prepare`, stable-ID lookup, current comments, live evidence IDs and a known pre-refresh backup before reporting the blocker.
+
+## 2026-10-13 - Reconcile accumulated change-file identity before trusting an apply report
+
+- **Context:** A subsection change file retained older approved edit records while its header and fact-audit history referred to later edit-number series. The implementation report named the older records, but the live DOCX contained later condensed wording.
+- **Risk:** A reviewer can incorrectly pass semantically similar text by relying on the header, fact audit or implementation report instead of the actual approved edit records.
+- **Review approach:** Treat each explicit approved edit record as the source of truth, resolve its stable anchor, compare the live accepted text with the immediate pre-apply backup, and compare DOCX part hashes. When a report claims comments were added, verify that `word/comments.xml` changed or that comment IDs increased; an unchanged comments part disproves the claim.
+- **Validation next time:** Record the exact edit series selected for the bounded batch before DOCX inspection, then verify live text, revision/bookmark markers, comment-part delta and package-part delta independently of the changes report.
+
+## 2026-10-13 - Use the workspace DocxEngine render adapter when the packaged review renderer lacks its Python rasteriser
+
+- **Context:** A read-only CSA review needed a fresh full-document render, but the packaged `render_docx.py` stopped before conversion because its configured Python did not provide `pdf2image`.
+- **Issue or risk observed:** Repeatedly invoking the same renderer cannot produce new validation evidence, while falling back directly to an unmanaged desktop conversion path makes the render less reproducible.
+- **Evidence used:** The packaged renderer raised `ModuleNotFoundError: No module named 'pdf2image'`; the workspace-vendored DocxEngine converted the same DOCX through its LibreOffice adapter and reported a 35-page PDF, which PDFKit rasterised successfully for visual inspection.
+- **Improved review approach:** After one diagnosed packaged-renderer dependency failure, use the workspace-vendored DocxEngine `Document.convert("pdf")` path, then rasterise the required PDF pages with the platform PDF library. Record both the failed preferred path and the successful fallback in the review report.
+- **Validation next time:** Confirm the DocxEngine result names the renderer and output path, verify the PDF page count, and visually inspect the cover plus every page containing the reviewed subsection or edited tables.
+
+## 2026-10-13 - Reconcile group coverage against the complete expected host set
+
+- **Context:** A VERIFIED monitoring row cited ten positive host captures and stated that one other host did not list the service, while the subsection claimed coverage across twelve captured hosts. The omitted twelfth host's primary service inventory also contained the same positive service state.
+- **Issue or risk observed:** Automated source checking can prove every cited source excerpt while still missing an uncited host from the expected fleet, leaving a group count or absence statement materially wrong.
+- **Evidence used:** The host register expected twelve captured hosts; eleven primary service inventories contained the same stopped/manual Sense service entry, and only one captured inventory did not list it. Corrected rows E-690 and E-691 preserved the positive group and scoped absence separately.
+- **Improved review approach:** For any grouped count or full-capture coverage claim, enumerate the expected host set, compare it with every host named or cited by the evidence row, and open any omitted host capture before accepting the claim.
+- **Validation next time:** Record expected, positive, negative and unexamined host sets and confirm that their union equals the stated review scope before signing off the edit.

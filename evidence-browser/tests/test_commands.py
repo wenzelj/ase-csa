@@ -17,8 +17,11 @@ def test_catalogue_exposes_read_only_operations_and_one_docx_locked_apply() -> N
         "status", "next", "report", "sections", "spec_status", "comments",
         "check_change", "check_section", "apply", "review", "cleanup", "author",
         "build_preview", "build", "audit", "ingest", "stale", "answer", "refresh_draft", "freeze",
-        "figure_wording", "figure_place", "figure_design",
+        "figure_wording", "figure_place", "figure_design", "intake", "gap_check",
     }
+    for key in ("intake", "gap_check"):
+        op = next(row for row in rows if row["key"] == key)
+        assert op["mutation_class"] == "workspace_write" and op["lock"] == "evidence"
     design = next(row for row in rows if row["key"] == "figure_design")
     assert design["mutation_class"] == "workspace_write" and design["lock"] == "section" and set(design["options"]) == {"mode", "cli"}
     apply = next(row for row in rows if row["key"] == "apply")
@@ -32,7 +35,7 @@ def test_catalogue_exposes_read_only_operations_and_one_docx_locked_apply() -> N
     assert {"legacy", "fresh", "check_answers", "writer", "no_writer"} <= set(author["options"])
     assert all(row["mutating"] is False and row["lock"] == "none" for row in rows if row["key"] not in ("apply", "review", "cleanup", "build", "author",
                                                                                   "ingest", "stale", "answer", "refresh_draft", "freeze",
-                                                                                  "figure_wording", "figure_place", "figure_design"))
+                                                                                  "figure_wording", "figure_place", "figure_design", "intake", "gap_check"))
 
 
 def test_build_argv_uses_fixed_executable_and_typed_arguments(tmp_path: Path) -> None:

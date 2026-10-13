@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import apply_workflow, audit_workflow, author_workflow, build_workflow, cleanup_workflow, commands, documents, draft_workflow, explorer, csa_figures, network, pipeline, proposals, review_workflow, sections, validation, word_review
+from . import apply_workflow, audit_workflow, author_workflow, intake_workflow, build_workflow, cleanup_workflow, commands, documents, draft_workflow, explorer, csa_figures, network, pipeline, proposals, review_workflow, sections, validation, word_review
 from .jobs import JobManager
 from .models import CommandRequest, JobCreateRequest
 
@@ -129,6 +129,12 @@ class EvidenceDraft(BaseModel):
     confidence: Literal["", "high", "medium", "low"] = ""
     gap_or_action: str = ""
     review_state: str = "pending"
+
+
+class EvidenceReviewRequest(BaseModel):
+    """Settle one candidate row: rejected (not an answer) or reviewed (settled, e.g. superseded by a VERIFIED row)."""
+    state: Literal["rejected", "reviewed"]
+    note: str = Field(default="", max_length=400)
 
 
 class CommitRequest(BaseModel):
@@ -427,6 +433,20 @@ def get_systems() -> dict[str, Any]:
 @app.get("/api/systems/{system_key}/draft")
 def get_draft(system_key: str) -> dict[str, Any]:
     return draft_workflow.snapshot(agents_dir(), system_project(system_key))
+
+
+@app.get("/api/systems/{system_key}/intake")
+def get_intake(system_key: str) -> dict[str, Any]:
+    return intake_workflow.snapshot(system_project(system_key))
+
+
+@app.post("/api/systems/{system_key}/evidence/{evidence_id}/review")
+def review_evidence(system_key: str, evidence_id: str, request: EvidenceReviewRequest) -> dict[str, Any]:
+    project = system_project(system_key)
+    if not re.fullmatch(r"E-\d{3,}", evidence_id):
+        raise HTTPException(422, "Invalid evidence ID")
+    return run_json([sys.executable, str(matrix_script()), "--workspace", project["project_root"], "review", evidence_id,
+                     "--by", "evidence workspace", "--state", request.state, "--note", request.note or request.state])
 
 
 @app.get("/api/systems/{system_key}/commands")

@@ -60,7 +60,7 @@ export function DraftLane({ system, focus = "", investigate }: { system: string;
     </header>
 
     <div className="draft-actions">
-      <button onClick={() => void run("ingest")} disabled={running}><b>1 · Ingest new data</b><small>Index new files, update the evidence matrix, hosts and graph</small></button>
+      <button onClick={() => void run("ingest")} disabled={running}><b>1 · Ingest new data</b><small>Index new files, update hosts and graph from captures. Documents: use Evidence intake</small></button>
       <button onClick={() => void run("stale")} disabled={running}><b>2 · Check for stale answers</b><small>{snap.stale_checked_at ? `Last checked ${when(snap.stale_checked_at)}` : "Not checked yet"} · no model</small></button>
       <button onClick={() => void run("refresh_draft", undefined, { cli })} disabled={running || !stale}><b>3 · Refresh stale answers{stale ? ` (${stale})` : ""}</b><small>{stale ? `Answer again with ${CLIS.find(c => c.id === cli)?.label}` : "Nothing is stale"}</small></button>
     </div>

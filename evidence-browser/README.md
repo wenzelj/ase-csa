@@ -30,6 +30,30 @@ check for stale answers, refresh them, and answer any subsection with Claude, Co
 shows the recent draft changes and the open questions. The section map's author/review/cleanup workspace and the Word
 review panel are hidden until the project is frozen at V1 (`Freeze at V1…` on the same page, or `csa freeze v1`).
 
+## Evidence intake
+
+**Evidence intake** (second in the rail) brings new data in and puts it to use, in five steps. Nothing on this page
+changes the working DOCX.
+
+1. **Bring in new data** runs `csa ingest`. The index build records what came in (`csa-work/intake/latest.json`):
+   new, changed and removed files, plus the files the index cannot read (.doc, .pptx, images), listed with a request for
+   a text or PDF copy.
+2. **Turn new documents into evidence** runs `csa intake --headless` with Claude, Codex or Evo, in its own Terminal
+   window. The evidence agent (Intake mode in `csa-evidence-investigator-agent.md`) reads the new documents and appends
+   source-checked rows through `evidence_matrix.py append` and graph items through `graph_store.py`. Its summary is
+   `csa-work/intake/<id>.evidence.md`.
+3. **Check open questions** runs `csa gap-check` (no model): every question in `csa-work/draft/open-questions.md` is
+   looked up in the matrix and the index. What the index finds is added as UNCONFIRMED candidate rows.
+   Result: `csa-work/intake/gap-check-latest.json`.
+4. **Settle what was found**: each candidate shows its quote and source. *Not an answer* records it as rejected (it is
+   never offered again). *Write the fact* opens the evidence form filled from the candidate. When the new row is added,
+   the candidate is recorded as reviewed ("settled by E-...").
+5. **Use it in the document** lists the subsections with new evidence for an open question and opens them on Draft
+   answers (draft lane) or Assessment (V1).
+
+Routes: `GET /api/systems/{key}/intake` (snapshot) and `POST /api/systems/{key}/evidence/{id}/review`
+(`{"state": "rejected" | "reviewed", "note": "..."}`). Jobs: `ingest`, `intake`, `gap_check`.
+
 ## Authoring decisions
 
 The Assessment workspace uses the framework's card-first author route by default and always submits proposals with

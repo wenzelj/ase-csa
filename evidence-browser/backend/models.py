@@ -35,7 +35,7 @@ class CommandDescriptor(BaseModel):
     mutation_class: Literal["read_only", "workspace_write", "document_write"] = "read_only"
     output: Literal["json_or_text"] = "json_or_text"
     timeout_seconds: int
-    lock: Literal["none", "section", "docx"] = "none"
+    lock: Literal["none", "section", "docx", "evidence"] = "none"
 
 
 JobState = Literal["queued", "running", "succeeded", "failed", "cancelled", "interrupted"]

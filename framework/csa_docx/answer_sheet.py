@@ -127,6 +127,15 @@ _SOURCE_SUBJECT = re.compile(
     r"(?:records?|lists?|shows?|places?|contains?|notes?|states?|indicates?|identifies?|gives?|confirms?|describes?|has|holds?)\b",
     re.IGNORECASE)
 
+# Wording about how the framework looked (the evidence matrix, the discovery index, the rows it searched) instead
+# of about the system. The reader of the assessment never sees those; say what the system lacks, and where the
+# sources were looked at (the captures and the supplied documents).
+_PROCESS_WORDING = re.compile(
+    r"\b(?:evidence matrix|discovery index|gap lookup|index rows?|matrix rows?|matrix (?:and|or) (?:the )?index|"
+    r"(?:the )?(?:matrix|index) (?:search|lookup)|(?:search|lookup)(?:es)? of the (?:evidence )?(?:matrix|index)|"
+    r"rows? (?:searched|reviewed|examined)|(?:searched|searching) the (?:evidence )?(?:matrix|index)|"
+    r"(?:matrix|index) (?:rows? )?(?:searched|reviewed|examined)|for this domain)\b", re.IGNORECASE)
+
 _NUMWORDS = {w: i for i, w in enumerate("zero one two three four five six seven eight nine ten eleven twelve thirteen "
              "fourteen fifteen sixteen seventeen eighteen nineteen twenty".split())}
 _NUM = re.compile(r"\b(\d{1,3}|" + "|".join(_NUMWORDS) + r")\b(?!\.\d)", re.IGNORECASE)
@@ -160,11 +169,67 @@ def count_mismatch(text: str) -> str | None:
 #: Draft lane (pre-V1): only these stop a sheet from being written into the document; every other ERROR is
 #: reported as a WARN and left for the next pass or the V1 change lane.
 HARD_CODES = {"QUESTION_MISSING", "EMPTY_ANSWER", "FACT_NO_EVIDENCE", "UNKNOWN_EVIDENCE", "RATING_INVALID",
-              "COLUMNS", "ROW_WIDTH", "NO_ROWS", "REQUIREMENT_NO_FACTS", "SEMICOLON"}
+              "COLUMNS", "ROW_WIDTH", "NO_ROWS", "REQUIREMENT_NO_FACTS", "SEMICOLON", "PROCESS_AS_SUBJECT",
+              "CITATION_OFF_TOPIC"}
+
+
+_CAPTURE_SRC = re.compile(r"_discovery_[^:\s]+_\d{8}T\d{6}Z")
+_PREVIOUS_SRC = re.compile(r"current[ _]state[ _]assessment", re.IGNORECASE)
+_REQ_KEY = re.compile(r"\b[A-Z]{2,5}-([A-Z][A-Z_]*)-[A-Z]?\d+\b")
+_HOSTTOKEN = re.compile(r"\b[A-Z][A-Z0-9]{5,}\d{2,3}\b")
+
+
+def source_class(row: dict | None) -> str:
+    """Where a matrix row comes from: capture (a discovery capture file), previous (the previous assessment),
+    user (a confirmation), or document (any other supplied document)."""
+    if not row:
+        return ""
+    src = row.get("source_title") or ""
+    if _CAPTURE_SRC.search(src):
+        return "capture"
+    if (row.get("gap_or_action") or "").startswith("legacy L-") or _PREVIOUS_SRC.search(src):
+        return "previous"
+    if src.lower().startswith("user confirmation"):
+        return "user"
+    return "document"
+
+
+def block_ids(b: dict) -> set[str]:
+    """Every evidence ID a block cites, in facts, table rows and bullets."""
+    ids = {i.upper() for f in b["facts"] for i in f["ids"]}
+    ids |= {i.upper() for r in b["rows"] for c in r for i in _EID.findall(c)}
+    ids |= {i.upper() for x in b["bullets"] for i in _EID.findall(x)}
+    return ids
+
+
+def regression(old: dict[str, dict], new: dict[str, dict], matrix: dict[str, dict] | None = None) -> list[dict]:
+    """What a re-answer lost against the sheet it replaces. Advisory (WARN): evidence no longer cited, fewer
+    table rows, fewer capture-sourced citations. A re-answer should add or correct, not quietly thin out."""
+    matrix = matrix or {}
+    out: list[dict] = []
+    for qid, nb in new.items():
+        ob = old.get(qid)
+        if not ob:
+            continue
+        o_ids, n_ids = block_ids(ob), block_ids(nb)
+        dropped = sorted(o_ids - n_ids)
+        if dropped:
+            out.append(_f("WARN", "EVIDENCE_DROPPED", qid,
+                          f"{len(dropped)} evidence ID(s) cited before are no longer cited: {', '.join(dropped[:8])}"))
+        if len(nb["rows"]) < len(ob["rows"]):
+            out.append(_f("WARN", "ROWS_DROPPED", qid,
+                          f"the table has {len(nb['rows']) - 1} row(s), the answer it replaces had {len(ob['rows']) - 1}"))
+        cap = lambda ids: sum(1 for i in ids if source_class(matrix.get(i)) == "capture")
+        if matrix and cap(n_ids) < cap(o_ids):
+            out.append(_f("WARN", "SOURCE_DOWNGRADE", qid,
+                          f"capture-sourced citations fell from {cap(o_ids)} to {cap(n_ids)}: facts that were observed in the "
+                          "captures are now supported by documents or the previous assessment"))
+    return out
 
 
 def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None = None,
-             ratings: list[str] | None = None, new_ids: set[str] | None = None, draft: bool = False) -> dict:
+             ratings: list[str] | None = None, new_ids: set[str] | None = None, draft: bool = False,
+             previous: dict[str, dict] | None = None) -> dict:
     """Findings for a parsed sheet against its card. ERROR blocks rendering; WARN is reported.
     ``draft`` keeps only HARD_CODES as errors (the draft lane)."""
     findings: list[dict] = []
@@ -189,6 +254,30 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
         for fact in b["facts"]:
             if not fact["ids"]:
                 findings.append(_f("ERROR", "FACT_NO_EVIDENCE", qid, f"a fact cites no evidence ID: {fact['text'][:80]}"))
+            cited_rows = [matrix[i.upper()] for i in fact["ids"] if i.upper() in matrix]
+            card_key = str(card.get("key") or "").upper()
+            for r_ in cited_rows:
+                if r_.get("status") == "NOT_FOUND" and card_key:
+                    keys = set(_REQ_KEY.findall(r_.get("question") or ""))
+                    if keys and card_key not in keys:
+                        findings.append(_f("ERROR", "CITATION_OFF_TOPIC", qid,
+                                           f"{r_['evidence_id']} records an absence for {'/'.join(sorted(keys))}, not for this "
+                                           f"subsection ({card_key}); a NOT_FOUND row supports only the question it was recorded for: "
+                                           f"{fact['text'][:70]}"))
+            if fact["basis"] == "observed" and cited_rows and all(source_class(r_) != "capture" for r_ in cited_rows):
+                classes = sorted({source_class(r_) for r_ in cited_rows})
+                findings.append(_f("WARN", "BASIS_NOT_OBSERVED", qid,
+                                   f"basis is observed but the cited rows come from {'/'.join(classes)}, not a capture: use "
+                                   f"documented or stated: {fact['text'][:70]}"))
+            if cited_rows and all(source_class(r_) == "previous" for r_ in cited_rows):
+                tokens = set(_HOSTTOKEN.findall(fact["text"]))
+                better = [r["id"] for r in card.get("evidence", {}).get(qid, {}).get("rows", [])
+                          if r.get("status") == "VERIFIED" and source_class(matrix.get(r["id"].upper())) == "capture"
+                          and (tokens & set(_HOSTTOKEN.findall(r.get("claim", ""))))]
+                if better:
+                    findings.append(_f("WARN", "PREFER_CAPTURE", qid,
+                                       f"the fact rests on the previous assessment only, while capture rows on the card "
+                                       f"cover the same host(s): {', '.join(better[:4])}: {fact['text'][:60]}"))
             if fact["basis"] not in BASES:
                 findings.append(_f("ERROR", "BAD_BASIS", qid, f"basis must be one of {', '.join(BASES)}: {fact['line'][:90]}"))
             cm = count_mismatch(fact["text"])
@@ -207,6 +296,18 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
                     findings.append(_f("ERROR", "SEMICOLON", qid, f"semicolon in a {where} (\"{s[max(0, i - 30):i + 30].strip()}\"): "
                                        "write two sentences, or join the parts with a comma and 'and' or 'but'"))
                     break
+        # nothing about the framework's own search may reach the document, whatever the question kind
+        prose = [("Text", b.get("text") or "")] + [("fact", f["text"]) for f in b["facts"]] + \
+                [("bullet", x) for x in b["bullets"]] + [("unknown", u) for u in b["unknown"]] + \
+                [("row", " | ".join(c)) for c in b["rows"]]
+        for where, s_ in prose:
+            m = _PROCESS_WORDING.search(s_ or "")
+            if m:
+                findings.append(_f("ERROR", "PROCESS_AS_SUBJECT", qid,
+                                   f"a {where} describes the framework's search (\"{m.group(0)}\"), not the system: say what the "
+                                   "system lacks and name the real sources checked (the discovery captures, the supplied "
+                                   f"documents, the previous assessment): {s_[:80]}"))
+                break
         cited = {i.upper() for fact in b["facts"] for i in fact["ids"]}
         cited |= {i.upper() for row in b["rows"] for c in row for i in _EID.findall(c)}
         cited |= {i.upper() for x in b["bullets"] for i in _EID.findall(x)}
@@ -269,6 +370,19 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
                 if missing:
                     findings.append(_f("ERROR", "HOSTS_MISSING", qid,
                                        f"captured hosts not in the table (see the card's host register): {', '.join(missing)}"))
+    for qid, q in qs.items():
+        b = sheet.get(qid)
+        pack_rows = card.get("evidence", {}).get(qid, {}).get("rows", [])
+        if b and (b["facts"] or b["rows"] or b["bullets"]) and pack_rows:
+            used = block_ids(b)
+            unused = [r["id"] for r in pack_rows if r.get("status") == "VERIFIED" and not r.get("established")
+                      and r["id"].upper() not in used]
+            if unused:
+                findings.append(_f("WARN", "EVIDENCE_UNUSED", qid,
+                                   f"VERIFIED rows on the card for this question are not cited: {', '.join(unused[:5])}. "
+                                   "Use one that adds a fact the answer lacks, or leave it out knowingly."))
+    if previous:
+        findings += regression(previous, sheet, matrix)
     for qid in sheet:
         if qid not in qs:
             findings.append(_f("WARN", "EXTRA_BLOCK", qid, "this question is not on the card"))
@@ -294,13 +408,26 @@ def _sentence(fact: dict) -> str:
 
 
 _EID_PAREN = re.compile(r"\s*\((?:E-\d+(?:\s*,\s*)?)+\)")
+_EMPTY_BR = re.compile(r"[\[\(][\s,;]*[\]\)]")
 
 
 def no_ids(s: str) -> str:
-    """Document text never carries evidence IDs: they stay in Facts, Why and the Fact audit."""
+    """Document text never carries evidence IDs: they stay in Facts, Why and the Fact audit.
+
+    Brackets or parentheses that hold only evidence IDs and punctuation are removed with them,
+    so a cell like "hosts [E-043, E-097]" or "events [E-487]" loses the ID reference without
+    leaving ``[,]`` or ``[]`` behind. Brackets that carry real content are left alone."""
     s = _EID_PAREN.sub("", s)
     s = re.sub(r"\s*\bE-\d+\b", "", s)
-    return re.sub(r"\s+([;,.|])", r"\1", s).strip()
+    while True:
+        t = _EMPTY_BR.sub("", s)
+        t = re.sub(r"\s+([;,.|])", r"\1", t)
+        t = re.sub(r"(?<=\w),+", ",", t)
+        t = re.sub(r"\s{2,}", " ", t).strip(" ,;")
+        if t == s:
+            break
+        s = t
+    return s
 
 
 def _quote(s: str, n: int = 90) -> str:
@@ -517,6 +644,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--matrix", type=Path)
     ap.add_argument("--new-ids", default="", help="validate: evidence IDs appended during this run")
     ap.add_argument("--draft", action="store_true", help="validate: draft lane, only the hard checks are errors")
+    ap.add_argument("--previous", type=Path, help="validate: the sheet this one replaces (regression report)")
     ap.add_argument("--docx", type=Path, help="render: the working document")
     ap.add_argument("--section", help="render: framework section number (3)")
     ap.add_argument("--change-file", type=Path, help="render: the change file to write (merged when it exists)")
@@ -528,8 +656,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     card = json.loads(a.card.read_text(encoding="utf-8"))
     if a.action == "validate":
+        prev = parse(a.previous.read_text(encoding="utf-8")) if a.previous and a.previous.is_file() else None
         res = validate(sheet, card, load_matrix(a.matrix), new_ids={x.strip() for x in a.new_ids.split(",") if x.strip()},
-                       draft=a.draft)
+                       draft=a.draft, previous=prev)
         print(json.dumps(res, indent=1))
         return 0 if res["status"] == "OK" else 1
     from csa_docx import doc_spec, section_card, spec_cli

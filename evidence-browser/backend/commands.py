@@ -34,7 +34,7 @@ class Operation:
     timeout: int = 45
     mutating: bool = False  # compatibility alias; mutation_class is authoritative for new operations
     mutation_class: Literal["read_only", "workspace_write", "document_write"] = "read_only"
-    lock: Literal["none", "section", "docx"] = "none"
+    lock: Literal["none", "section", "docx", "evidence"] = "none"  # evidence: one evidence-matrix job per project
     closes_word: bool = False  # the csa command saves and closes the working DOCX in Word itself
 
     def descriptor(self) -> CommandDescriptor:
@@ -102,7 +102,16 @@ OPERATIONS: dict[str, Operation] = {
     # Draft lane (before V1): index, answer, refresh, freeze.
     "ingest": Operation(
         "ingest", "Ingest new data", "Index new or changed files, sync the evidence matrix, host register and graph, then list stale subsections.",
-        ("ingest",), options={"rebuild": "boolean"}, timeout=3600, mutation_class="workspace_write",
+        ("ingest",), options={"rebuild": "boolean"}, timeout=3600, mutation_class="workspace_write", lock="evidence",
+    ),
+    # Evidence intake: new documents -> evidence (agent, own window), open questions -> candidates (no model).
+    "intake": Operation(
+        "intake", "Turn new documents into evidence", "The evidence agent reads the new and changed files from the last ingest and records what they state in the evidence matrix and graph. It runs in its own window.",
+        ("intake", "--headless"), options={"cli": "identifier"}, timeout=3600, mutation_class="workspace_write", lock="evidence",
+    ),
+    "gap_check": Operation(
+        "gap_check", "Check open questions", "Look up every open question in the evidence matrix and the index; what is found is added as candidate rows to settle (no model).",
+        ("gap-check",), "optional", "section", timeout=1800, mutation_class="workspace_write", lock="evidence",
     ),
     "stale": Operation(
         "stale", "Check for stale answers", "Rebuild each answered card (no model) and compare it with the saved answer.",
@@ -202,13 +211,13 @@ def build_argv(agents_dir: Path, project_key: str, operation_key: str, request: 
         raise HTTPException(422, "drawing must be picture or word")
     if operation.key == "figure_design" and request.options.get("mode") not in (None, "design", "build", "review"):
         raise HTTPException(422, "mode must be design, build or review")
-    if operation.key in ("answer", "refresh_draft", "figure_wording", "figure_design"):
+    if operation.key in ("answer", "refresh_draft", "figure_wording", "figure_design", "intake"):
         if request.options.get("cli") not in (None, *DRAFT_CLIS):
             raise HTTPException(422, "cli must be claude, codex or evo")
     if operation.key == "freeze" and request.target != "v1":
         raise HTTPException(422, "freeze takes the target v1")
     if operation.key not in {"author", "review", "cleanup", "build_preview", "build", "audit",
-                             "ingest", "stale", "answer", "refresh_draft", "freeze"}:
+                             "ingest", "stale", "answer", "refresh_draft", "freeze", "intake", "gap_check"}:
         argv.append("--json")
     return operation, argv
 

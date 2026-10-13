@@ -153,3 +153,21 @@ export type DraftSnapshot = {
   changes: { rows: { day: string; time: string; subsection: string; change: string; open: string }[]; file?: string | null };
   open_questions: { groups: { title: string; items: string[] }[]; total: number; file?: string | null }; spec_error?: string | null;
 };
+
+// Evidence intake page (GET /api/systems/{key}/intake)
+export type IntakeFile = { rel_path: string; ext: string; status: string; reason?: string | null; source_class: string; host?: string | null };
+export type IntakeRecord = { id: string; built_at_utc: string; matrix_last_id: string; carried_from?: string[]; added: IntakeFile[]; changed: IntakeFile[]; removed: string[]; unreadable: IntakeFile[] };
+export type IntakeEvidenceRow = Record<string, string>;
+export type IntakeCandidate = IntakeEvidenceRow & { dr_id: string };
+export type GapQuestion = { number: string; title: string; key: string; qid: string; dr_id: string; text: string; verdict: "ANSWERED" | "CANDIDATES" | "NOT_FOUND"; evidence_ids: string[] };
+export type GapAffected = { number: string; key: string; title: string; answered: number; candidates: number };
+export type GapCheck = { checked_at: string; section: string; questions: GapQuestion[]; affected: GapAffected[] };
+export type IntakeSnapshot = {
+  project_key: string;
+  index: { built_at_utc: string | null; files_by_status: Record<string, number>; complete: boolean };
+  intake: IntakeRecord | null; nothing_new_since: string | null;
+  matrix: { rows: number; by_status: Record<string, number>; pending_review: number; added_since_intake: IntakeEvidenceRow[] };
+  graph: { nodes: number; edges: number };
+  candidates: IntakeCandidate[]; gap_check: GapCheck | null; stale: number;
+  agent_summary: { path: string; text: string; modified_at: string } | null;
+};
