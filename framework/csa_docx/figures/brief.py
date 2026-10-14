@@ -250,12 +250,27 @@ def _paths(row, reqs, sentences, ev, model) -> dict:
     g = 0
     if row.get("archetype") == "C":
         u = sum(1 for e in edges if e["status"] == "unenforced")
+        # A boundary device recorded in the register but not on any captured path: the captions must not
+        # claim "no boundary control is evidenced" -- that would contradict the register and the evidence rows.
+        fw_in_register = {n["id"]: n for n in model.get("nodes", []) if n.get("kind") == "firewall"}
         if u:
             g += 1
-            gaps.append({"id": f"G{g}", "what": "Boundary devices (firewalls, proxies) between these zones are not in the discovery captures",
+            if fw_in_register:
+                what = ("A boundary firewall is recorded in the host register (" + fw_in_register[next(iter(fw_in_register))]["role"] + ") "
+                        "but its address was not captured, so no individually captured path is shown crossing it")
+            else:
+                what = "Boundary devices (firewalls, proxies) between these zones are not in the discovery captures"
+            gaps.append({"id": f"G{g}", "what": what,
                          "requirements": reqs, "why": f"Needed to show whether the {u} cross-zone paths in the {row['number']} figure are controlled."})
-        caption = (f"{len(edges)} captured flow{'s' if len(edges) != 1 else ''} cross a zone boundary; no boundary control is evidenced on "
-                   f"{'any of them' if u == len(edges) else f'{u} of them'}") if edges else "No captured flow crosses a zone boundary"
+        if edges:
+            if fw_in_register and u == len(edges):
+                caption = (f"{len(edges)} captured flows cross a zone boundary; a boundary firewall is evidenced in the register "
+                           "but no captured flow has a recorded firewall address")
+            else:
+                caption = (f"{len(edges)} captured flow{'s' if len(edges) != 1 else ''} cross a zone boundary; no boundary control is evidenced on "
+                           f"{'any of them' if u == len(edges) else f'{u} of them'}")
+        else:
+            caption = "No captured flow crosses a zone boundary"
         purpose = "Shows the captured flows that cross a zone boundary, and whether a boundary control is evidenced on each."
     else:
         jumps = [n["label"] for n in model.get("nodes", []) if n.get("kind") == "jump_host"]

@@ -183,10 +183,21 @@ def conduit_view(over: dict, prof: dict, *, key: str, title: str, subtitle: str,
     groups = [g for g in over.get("groups", []) if g["id"] in used or set(g["members"]) & used]
     gmem = {m for g in groups for m in g["members"]}
     nodes = [dict(n) for n in over["nodes"] if n["id"] in used or n["id"] in gmem]
+    # A boundary firewall recorded in the register but not on any captured edge: keep it in the node list
+    # so the brief can reflect it honestly, and mark it "register-only" so the caption does not claim
+    # "no boundary control is evidenced" while the register and the evidence rows say otherwise.
+    fw_in_over = [n for n in over["nodes"] if n.get("kind") == "firewall"]
+    register_only_fw = [n for n in fw_in_over if n["id"] not in used and n["id"] not in gmem]
+    for n in register_only_fw:
+        nodes.append({**n, "register_only": True})
     notes = []
     if any(e["status"] == "unenforced" for e in keep):
-        notes.append("No firewall, proxy or other boundary device appears in the evidence on these paths. "
-                     "Each red line crosses a zone boundary with no boundary control evidenced.")
+        if register_only_fw:
+            notes.append("A boundary firewall is recorded in the register (" + register_only_fw[0]["role"] + ") "
+                         "but its address was not captured, so no individually drawn path is shown crossing it.")
+        else:
+            notes.append("No firewall, proxy or other boundary device appears in the evidence on these paths. "
+                         "Each red line crosses a zone boundary with no boundary control evidenced.")
     if not keep:
         notes.append("No captured flow crosses a zone boundary for this question.")
     view = {"id": f"figure-{key.lower()}", "title": title, "subtitle": subtitle, "zones": over["zones"], "groups": groups,
