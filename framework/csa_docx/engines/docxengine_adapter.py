@@ -254,7 +254,9 @@ class DocxEngineEditor:
         self.track_changes = track_changes
 
     def apply_change(self, record: ChangeRecord, author: str, initials: str) -> EditResult:
-        where_lower = record.where.lower()
+        # Route on the location only, never on the "currently" quote after it: a paragraph that merely
+        # says "table" (the optional note placeholder: "... does not fit the table ...") is not a table row.
+        where_lower = re.split(r"\s+--\s+currently:", record.where, maxsplit=1)[0].lower()
         if _has_full_table_replacement(record):
             return self._apply_full_table_replacement(record, author, initials)
         if (

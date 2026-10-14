@@ -72,11 +72,25 @@ def add_from_sheet(work_dir: Path, sheet: Path, card_json: Path) -> int:
         for f in block.get("facts", []):
             ids = sorted(set(f.get("ids") or []))
             key = (f["text"], tuple(ids))
+            if f.get("basis") == "background" or any(not i.startswith("E-") for i in ids):
+                continue                            # background knowledge is never an established fact
             if not ids or key in have:
                 continue
             have.add(key)
             new.append({"fact": f["text"], "evidence_ids": ids, "hosts": _hosts(f), "section": card.get("key", ""),
                         "question": qid, "basis": f.get("basis", ""), "sheet_sha": sha, "added": now})
+        # table rows are kept too (kind "row"): the subsection's "Facts to keep" must cover what its tables stated.
+        # They are never offered to other sections as established facts (lookup skips them).
+        for row in (block.get("rows") or [])[1:]:
+            ids = sorted(set(answer_sheet._EID.findall(" ".join(row))))
+            text = " | ".join(answer_sheet.no_ids(c) for c in row)
+            key = (text, tuple(ids))
+            if not ids or key in have:
+                continue
+            have.add(key)
+            new.append({"fact": text, "evidence_ids": ids, "hosts": _hosts({"text": text, "scope": ""}),
+                        "section": card.get("key", ""), "question": qid, "kind": "row", "basis": "",
+                        "sheet_sha": sha, "added": now})
     if new:
         path = store_path(work_dir)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -105,7 +119,7 @@ def lookup(work_dir: Path, words: set[str], hosts: set[str], limit: int = 8, exc
     topic = {w for w in words if w not in _GENERIC and not _HOSTLIKE.match(w)}
     seen_ev: set[tuple] = set()
     for rec in sorted(_read(work_dir), key=lambda r: r.get("added", ""), reverse=True):
-        if exclude_section and rec.get("section") == exclude_section:
+        if (exclude_section and rec.get("section") == exclude_section) or rec.get("kind") == "row":
             continue
         if not rec.get("evidence_ids") or any(i.upper() not in live for i in rec["evidence_ids"]):
             continue

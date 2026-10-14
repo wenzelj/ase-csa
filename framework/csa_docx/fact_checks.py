@@ -27,7 +27,7 @@ from pathlib import Path
 EID_RE = re.compile(r"(?<![\w-])(?:[a-z][a-z0-9-]*:)?E-\d{2,4}\b")   # E-042, or utcdtc:E-088 (sibling project)
 BRACE_RE = re.compile(r"\{([^{}]*)\}\s*$")
 TAG_RE = re.compile(r"^\s*[-*]\s*(\[[^\]]*\]\s*)?")
-BASES = ("observed", "documented", "stated")
+BASES = ("observed", "documented", "stated", "reference")
 HOST_RE = re.compile(r"\b[A-Z][A-Z0-9-]{7,}\b|\b[A-Z][A-Z-]*\d[A-Z0-9-]*\b")
 PATH_RE = re.compile(r"(?:[A-Za-z]:\\|\\\\)[^\s;,)]+")
 PORT_RE = re.compile(r"\b(?:tcp|udp)/(\d{2,5})\b|\bport\s+(\d{2,5})\b", re.I)

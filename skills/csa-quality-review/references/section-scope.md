@@ -86,7 +86,7 @@ Requirement IDs and wording come from the OT35 checklist in the CSA template. **
 
 ### 3.1 General / Asset Inventory
 - **Requirements:** SEP-GEN-01 classified inventory of OT assets and enabling systems (type, role, location, IT/OT dependencies); SEP-GEN-03 dependencies of vital OT systems, including connections outside the OT environment, documented and understood.
-- **Must explain:** What vital OT assets and enabling systems exist, what role each plays, where each sits (site, IT or OT), and which systems outside the OT environment each depends on or exchanges data with.
+- **Must explain:** What vital OT assets and enabling systems exist, what role each plays, where each sits (site, IT or OT), and which systems outside the OT environment each depends on or exchanges data with. Include the non-Windows layers the system relies on (field devices, radios, gateways, appliances) as well as the servers, and say whether anyone actually maintains an inventory.
 - **Owns:** the asset and host inventory; each asset's role, environment and location; the consolidated list of dependencies at summary level; whether that list is documented.
 - **Not here:** the detail of each dependency goes to its own domain (DNS to 3.5, time to 3.4, and so on); 3.1 keeps a one-line entry and points to that domain.
 - **Legacy headings:** Architectural Review
@@ -94,7 +94,7 @@ Requirement IDs and wording come from the OT35 checklist in the CSA template. **
 
 ### 3.2 Identity & Authentication
 - **Requirements:** SEP-ID-01 OT-resident authentication for human users, independent of IT AD (no shared forest or trust); SEP-ID-02 service accounts, processes and devices authenticated independently of IT-domain service accounts; SEP-ID-03 remote and administrative access via OT-resident jump hosts, monitored and authenticated.
-- **Must explain:** How people, services and devices prove who they are; which directory or account store does it; whether that store is OT-resident; and what stops working if the IT directory is unreachable.
+- **Must explain:** How people, services and devices prove who they are; which directory or account store does it; whether that store is OT-resident; and what stops working if the IT directory is unreachable. Say whether the application itself authenticates through the directory (service accounts, database logins, clustering) or only the Windows hosts do.
 - **Owns:** domain membership, forests and trusts; how users and service accounts authenticate; local authentication fallback; the authentication used on remote and admin access.
 - **Not here:** the jump host as a host, and the route to it, go to 3.8; local admin group membership goes to 3.8; hypervisor management accounts go to 3.15; backup administration accounts go to 3.11; vendor accounts go to 3.16; certificates go to 3.3; domain controllers as DNS or time sources go to 3.5 or 3.4.
 - **Legacy headings:** Identity & Authentication, Identity and Authentication
@@ -102,7 +102,7 @@ Requirement IDs and wording come from the OT35 checklist in the CSA template. **
 
 ### 3.3 PKI / Certificates
 - **Requirements:** SEP-PKI-01 certificates from an OT-resident PKI or a tested fallback; SEP-PKI-02 issuance, renewal and revocation checking without IT-hosted CA, CRL or OCSP.
-- **Must explain:** Which certificates the system relies on, who issues and renews them, where revocation is checked, and what breaks as certificates expire during isolation.
+- **Must explain:** Which certificates the system relies on, who issues and renews them, where revocation is checked, and what breaks as certificates expire during isolation. Say whether the application itself uses certificates or TLS, or whether only the Windows hosts and management tools do.
 - **Owns:** which CA issues each certificate; certificate templates and expiry; CRL and OCSP locations; what happens to validation when the CA is unreachable.
 - **Not here:** LDAPS or TLS as an authentication mechanism goes to 3.2; the certificate part stays here.
 - **Legacy headings:** Identity & Authentication, Identity and Authentication
@@ -110,7 +110,7 @@ Requirement IDs and wording come from the OT35 checklist in the CSA template. **
 
 ### 3.4 Time Synchronisation
 - **Requirements:** SEP-TIME-01 time from an OT-resident authoritative source, independent of the IT domain hierarchy.
-- **Must explain:** Where each host takes its time from, what hierarchy sits above that source, and how fast drift becomes a problem if the source is lost.
+- **Must explain:** Where each host takes its time from, what hierarchy sits above that source, and how fast drift becomes a problem if the source is lost. Say whether the application keeps its own time or relies on Windows time, and which records (logs, events, recordings) depend on the clocks agreeing.
 - **Owns:** each host's time source and hierarchy, stratum, drift, and behaviour without the source.
 - **Not here:** log integrity as a monitoring control goes to 3.9 (keep only the time dependency here).
 - **Legacy headings:** Time Synchronization, Time Synchronisation
@@ -118,7 +118,7 @@ Requirement IDs and wording come from the OT35 checklist in the CSA template. **
 
 ### 3.5 DNS
 - **Requirements:** SEP-DNS-01 OT-resident DNS resolvers, independent of IT DNS, or a tested fallback.
-- **Must explain:** Which resolvers each host uses, which zones it must resolve to work, where those zones are hosted, and what fails when they cannot be reached.
+- **Must explain:** Which resolvers each host uses, which zones it must resolve to work, where those zones are hosted, and what fails when they cannot be reached. Say whether the application's own connections use host names or IP addresses, because that decides whether it survives losing DNS.
 - **Owns:** configured resolvers, zones and suffixes; hosts files; name resolution behaviour when IT DNS is unreachable.
 - **Not here:** the domain controllers themselves go to 3.2; host inventory goes to 3.1.
 - **Section skill:** `dns-name-resolution-analysis`

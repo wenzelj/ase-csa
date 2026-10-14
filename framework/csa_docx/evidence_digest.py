@@ -230,6 +230,31 @@ CAVEAT = ("Connections were sampled over a short window per host (about 30 secon
           "connection was not established when sampled. An unnamed address stays an address; say its name was not captured.")
 
 
+# a row that states what something needs: a declared dependency, a required service, an application path or a
+# recorded flow or conduit between named parts (not run notes, inventories or settings that merely mention a register)
+_DECLARED = re.compile(r"\b(declares? (?:the |a )?dependenc\w*|OT dependency|required before migration|application path|"
+                       r"records? (?:an? |the )?(?:\w+ )?(?:flow|conduit|path)\b|depends? on)", re.I)
+_PREVIOUS = re.compile(r"Current_State_Assessment|NetSeg_Current", re.I)
+
+
+def declared_dependencies(rows: list[dict], workspace: Path | None, limit: int = 10) -> tuple[list[str], set[str]]:
+    """VERIFIED rows that declare what a function needs (flow map, system matrix, dependency summaries), newest
+    sources first: captures and supplied documents before the previous assessment. One line per row, with its ID."""
+    picked = []
+    for r in rows:
+        if r.get("status") != "VERIFIED" or not _DECLARED.search(r.get("claim", "")):
+            continue
+        prev = bool(_PREVIOUS.search(r.get("source_title", "")))
+        hosts = len(set(re.findall(r"\b(?=[A-Z0-9]*\d)[A-Z][A-Z0-9]{6,}\b", r.get("claim", ""))))
+        picked.append((prev, -hosts, r["evidence_id"], r))
+    picked.sort(key=lambda t: t[:3])
+    lines, ids = [], set()
+    for _, _, eid, r in picked[:limit]:
+        lines.append(f"- {eid}: {' '.join(r['claim'].split())[:320]}")
+        ids.add(eid)
+    return lines, ids
+
+
 def digest(q: dict, need: str, node: dict, rows: list[dict], workspace: Path | None) -> dict:
     """{"need", "blocks": [[line, ...], ...], "ids"} for one question. The card shows each block once and
     refers back to it from later questions."""
@@ -261,4 +286,11 @@ def digest(q: dict, need: str, node: dict, rows: list[dict], workspace: Path | N
         if need == "isolation" and l:
             blocks.append(["For this question: every connection row whose zone is not 'this system (captured)' is a "
                            "peer an isolation event would cut. Say what each lost peer provides only where the evidence names it."])
+    if need == "isolation":
+        l, i = declared_dependencies(rows, workspace)
+        if l:
+            blocks.append(["Declared dependencies and flows (what each function of the system needs, from the flow map, "
+                           "system matrix and dependency summaries). Use them to say which functions an isolation event "
+                           "stops: a function stops when something it needs is cut, and only where these rows name the need:"] + l)
+            ids |= i
     return {"need": need, "blocks": blocks, "ids": sorted(ids)}

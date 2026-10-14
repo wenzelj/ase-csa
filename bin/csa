@@ -2396,11 +2396,29 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
 
     def answer(extra: list[str]) -> int:
         if sheet.exists() and "answer_s" not in timing:        # .prev.md stays the answer this run replaces
-            sheet.replace(sheet.with_suffix(".prev.md"))
+            # only an applied sheet (its hash is in the manifest) becomes the previous answer: a sheet that failed its
+            # checks is kept aside as .failed.md, so the next run still compares against the last applied answer
+            applied = False
+            try:
+                import hashlib
+                man = json.loads(card_md.with_suffix(".manifest.json").read_text(encoding="utf-8"))
+                applied = man.get("sheet_sha256") == hashlib.sha256(sheet.read_bytes()).hexdigest()
+            except (OSError, ValueError):
+                applied = not sheet.with_suffix(".prev.md").exists()
+            sheet.replace(sheet.with_suffix(".prev.md" if applied else ".failed.md"))
         t0 = time.time()
         rc = launch(p, agent(verb), [number, f"CARD={card_md}", f"SHEET={sheet}", *extra], a)
         sheet_from_last_message(sheet)
         timing["answer_s"] = round(timing.get("answer_s", 0) + time.time() - t0, 1)
+        if rc != 0:
+            # An interactive agent closed with Ctrl+C (or a CLI that exits non-zero after its work) still leaves a
+            # finished sheet: check and apply it. Only stop when this run wrote none, and always say why.
+            if sheet.is_file() and sheet.stat().st_mtime >= t0 - 1:
+                print(f"{C['y']}The {verb} agent exited with code {rc}, but it wrote {sheet.name} in this run; "
+                      f"checking and applying it.{C['0']}")
+                return 0
+            print(f"{C['r']}The {verb} agent exited with code {rc} and wrote no new {sheet.name}; nothing was applied."
+                  f"{C['0']}", file=sys.stderr)
         return rc
 
     def check() -> dict:
@@ -2454,7 +2472,12 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
             rc = answer([])
         elif not fixed:
             fixed = True
-            lines = [f"- {f['level']} {f['code']} {f.get('question') or ''}: {f['message']}" for f in res2.get("findings", [])]
+            # only what blocks the sheet: warnings in the fix list bury the errors the agent must fix
+            blocking = [f for f in res2.get("findings", []) if f.get("level") == "ERROR"]
+            lines = [f"- {f['level']} {f['code']} {f.get('question') or ''}: {f['message']}" for f in blocking]
+            left = len(res2.get("findings", [])) - len(blocking)
+            if left:
+                lines.append(f"- ({left} warning(s) left out: they do not block the sheet; change nothing else)")
             if res2.get("status") == "NEEDS_SEARCH":
                 lines.append("- ERROR SEARCH_USED: the one search round is used; answer with the evidence on the card, or Unknown:")
             errs.write_text("Fix these in the answer sheet and write it again:\n\n" + "\n".join(lines) + "\n", encoding="utf-8")

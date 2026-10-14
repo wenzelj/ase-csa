@@ -2,14 +2,16 @@
 
 The questions come from the document: each requirement row asks for the current state and a rating
 against its requirement text; each observation table and register asks for one row per thing with the
-table's columns; each placeholder paragraph asks its bracket text; each findings list asks for one bullet
-per finding; each reviewer comment under the heading is a C question. The scope map's Must explain and
+table's columns; each placeholder paragraph asks its bracket text; the optional note under a table asks
+for one fact the rows cannot show, or None (note_candidates offers what the data shows); each findings list
+asks for one bullet per finding; each reviewer comment under the heading is a C question. The scope map's Must explain and
 Not here are added when the node's requirement family or heading matches a scope-map domain; a section
 with no entry still gets every question from its own tables.
 
 The section card is the AI's whole input for one node: the questions, the requirement text, columns,
-guidance, reviewer comments, the current text, the scope extras, one worked example for its kind and
-the evidence pack (candidate evidence per question, gathered before the AI starts).
+guidance, reviewer comments, the current text, the scope extras, background knowledge (passages from the
+knowledge folders and the system model, never evidence: see knowledge.py), one worked example for its kind and the evidence pack
+(candidate evidence per question, gathered before the AI starts).
 
     python3 -m csa_docx.section_card --docx D [--workspace W] [--work-dir WD] <target> [--brief] [--no-evidence]
 """
@@ -37,6 +39,17 @@ def _topic(node: dict) -> str:
     return node["title"]
 
 
+_ISOLATION = re.compile(r"\b(drawbridge|isolat\w*)\b", re.I)
+
+
+def isolation_question(topic: str) -> str:
+    """The Drawbridge Impact question, asked about the system's functions rather than the infrastructure
+    capability: "DNS is lost" is not an answer, "Reveloc loses its database, so alerts stop" is."""
+    return (f"Which of the system's functions depend on {topic}? During an isolation event, which of those functions "
+            "stop, which keep working (and why), and what does that mean for operations? Has any fallback been tested "
+            "or documented?")
+
+
 def questions(node: dict, spec: dict | None = None) -> list[dict]:
     """[{id, kind, part, text, req_id?, columns?}] in document order. Reviewer comments become C items."""
     out: list[dict] = []
@@ -60,15 +73,33 @@ def questions(node: dict, spec: dict | None = None) -> list[dict]:
             out.append({"kind": "register", "part": i, "columns": cols,
                         "text": f"{where}: one row per {first.lower()}, with {', '.join(cols[1:]) or 'its details'}."})
         elif k == "narrative":
-            out.append({"kind": "narrative", "part": i,
-                        "text": f"{p.get('facet') or _topic(node)}: {p.get('question') or 'one paragraph'}"})
+            facet = p.get('facet') or _topic(node)
+            ask = p.get('question') or 'one paragraph'
+            if _ISOLATION.search(f"{facet} {ask}"):
+                ask = isolation_question(_topic(node))
+            out.append({"kind": "narrative", "part": i, "text": f"{facet}: {ask}"})
+        elif k == "note":
+            # The optional note under a table: one or two sentences for a fact the rows cannot show, or None
+            # (the placeholder is then removed). The rows of the table above it are carried so the check can
+            # refuse a note that only repeats one of them (NOTE_REPEATS_ROW).
+            table = next((x for x in reversed(node["parts"][:i]) if x.get("columns")), None)
+            tname = (table or {}).get("label") or (table or {}).get("facet") or where
+            out.append({"kind": "note", "part": i, "table_rows": list((table or {}).get("row_texts") or []),
+                        "text": f"{where}: the optional note under the {tname} table. Is there one fact about "
+                                f"{_topic(node)} that the table rows cannot show: a host or role group that differs "
+                                "from the others in its group, sources that disagree, or evidence that covers fewer "
+                                "hosts than the table? Write it in one or two sentences from the evidence (no rating, "
+                                "risk or recommendation, and never a repeat of a row), or write 'None: <why>' and the "
+                                "placeholder is removed."})
         elif k == "findings":
             holders = [b for b in p.get("bullets", []) if doc_spec.is_placeholder(b)]
             hint = holders[0].strip("[] ") if holders else "finding"
             out.append({"kind": "findings", "part": i,
                         "text": f"{p.get('facet') or _topic(node)}: one bullet per {hint.lower()}"
                                 + (" (keep the standard bullets)" if len(holders) < len(p.get("bullets", [])) else "") + "."})
-    for n, q in enumerate(out, start=1):
+    # Notes are numbered after the other questions (still listed in document order), so adding the note
+    # question never renumbers the blocks earlier answers and the fact store were keyed by.
+    for n, q in enumerate([q for q in out if q["kind"] != "note"] + [q for q in out if q["kind"] == "note"], start=1):
         q["id"] = f"B{n}"
     for n, c in enumerate(node.get("comments", []), start=1):
         out.append({"id": f"C{n}", "kind": "comment", "part": None,
@@ -282,6 +313,54 @@ def _current(node: dict) -> list[str]:
 _HOST = re.compile(r"\b(?=[A-Z0-9]*\d)[A-Z][A-Z0-9]{6,}\b")
 
 
+def facts_to_keep(node: dict, workspace: Path | None) -> list[dict]:
+    """Capture-backed facts this subsection's applied answers have stated (from the fact store), newest wording
+    per question and capture evidence: [{question, fact, evidence_ids, capture_ids}]. A re-answer keeps each, or
+    says why it no longer applies (``Dropped:``); the answer-sheet check enforces it (CAPTURE_DROPPED)."""
+    if not workspace:
+        return []
+    from csa_docx import fact_store
+    from csa_docx.answer_sheet import source_class
+    work = Path(workspace) / "csa-work"
+    rows = {r["evidence_id"].upper(): r for r in _matrix_rows(workspace)}
+    rejected = _rejected(workspace)
+    latest: dict[tuple, dict] = {}
+    for f in fact_store._read(work):
+        if f.get("section") != node["key"] or f.get("basis") == "background":
+            continue
+        caps = sorted(i for i in f.get("evidence_ids", []) if (rows.get(i.upper()) or {}).get("status") == "VERIFIED"
+                      and source_class(rows.get(i.upper())) == "capture" and i.upper() not in rejected)
+        if not caps or any(i.upper() not in rows for i in f.get("evidence_ids", [])):
+            continue
+        k = (f.get("question", ""), tuple(caps))
+        if k not in latest or f.get("added", "") >= latest[k].get("added", ""):
+            latest[k] = {"question": f.get("question", ""), "fact": f["fact"], "evidence_ids": f["evidence_ids"],
+                         "capture_ids": caps, "added": f.get("added", ""), "kind": f.get("kind", "fact")}
+    # a capture set already covered by a newer fact of the same question is not asked for twice
+    out = sorted(latest.values(), key=lambda x: (x["question"], x["added"]), reverse=True)
+    seen: dict[str, set] = {}
+    keep = []
+    for x in out:
+        have = seen.setdefault(x["question"], set())
+        if set(x["capture_ids"]) <= have:
+            continue
+        have |= set(x["capture_ids"])
+        keep.append(x)
+    return sorted(keep, key=lambda x: (x["question"], x["capture_ids"]))
+
+
+def _foreign_absence(fact: dict, rows: dict, key: str) -> bool:
+    """True when the fact rests on a NOT_FOUND row recorded for another subsection: an absence found while
+    answering one subsection (no fallback for storage) says nothing about another (DNS)."""
+    from csa_docx.answer_sheet import _REQ_KEY
+    for i in fact.get("evidence_ids", []):
+        r = rows.get(i.upper()) or {}
+        keys = set(_REQ_KEY.findall(r.get("question") or ""))
+        if r.get("status") == "NOT_FOUND" and keys and key.upper() not in keys:
+            return True
+    return False
+
+
 def _established(node: dict, qs: list[dict], pack: dict, workspace: Path | None) -> dict:
     """{question id: facts already established by validated sheets of other sections}, at most 8 per question.
     Their evidence rows join the question's pack (flagged `established`) so the answer may cite them."""
@@ -299,6 +378,7 @@ def _established(node: dict, qs: list[dict], pack: dict, workspace: Path | None)
             continue
         hosts = {h for r in pack[q["id"]]["rows"] for h in _HOST.findall(r.get("claim", ""))}
         found = fact_store.lookup(work, _words(q["text"]) | _words(node["title"]), hosts, 8, exclude_section=node["key"])
+        found = [f for f in found if not _foreign_absence(f, rows, node["key"])]
         if not found:
             continue
         out[q["id"]] = [{k: f[k] for k in ("fact", "evidence_ids", "section", "question", "basis")} for f in found]
@@ -393,6 +473,75 @@ def _register_lines(reg: dict) -> list[str]:
     return out
 
 
+_NOTE_STOP = {"and", "the", "for", "with", "from", "management", "validation", "access", "general", "status"}
+
+
+def _note_words(s: str) -> set[str]:
+    return {w for w in _norm(s).split() if len(w) >= 3 and w not in _NOTE_STOP}
+
+
+def note_candidates(node: dict, workspace: Path | None, reg: dict | None, rows: list[dict] | None = None,
+                    limit: int = 5) -> list[dict]:
+    """Facts the optional note under a table could state, worked out from the data, never by the model:
+    hosts of one role group that differ on an attribute of this topic (csa-work/hosts/host_facts.csv), an
+    attribute of this topic recorded for fewer captured hosts than the register holds, and CONFLICTING
+    evidence rows of this topic. Each candidate carries the capture rows that record it, so the note can
+    cite them. [{"text", "ids"}]"""
+    if not workspace:
+        return []
+    import csv
+    topic = _note_words(node["title"])
+    rows = rows if rows is not None else _matrix_rows(workspace)
+    rejected = _rejected(workspace)
+    live = [r for r in rows if r["evidence_id"].upper() not in rejected]
+    out: list[dict] = []
+
+    def ids_for(host: str, value: str) -> list[str]:
+        v = value.lower()
+        hit = [r["evidence_id"] for r in live if f"_{host}_".lower() in (r.get("source_title") or "").lower()
+               and v in ((r.get("claim") or "") + " " + (r.get("evidence_excerpt") or "")).lower()]
+        return hit[:1]
+
+    hf = Path(workspace) / "csa-work" / "hosts" / "host_facts.csv"
+    role_of = {h: g["role"] for g in (reg or {}).get("groups", []) for h in g["hosts"]}
+    if hf.is_file() and role_of:
+        by_attr: dict[str, dict[str, str]] = {}
+        for r in csv.DictReader(hf.open(encoding="utf-8")):
+            if r.get("host") in role_of and (r.get("value") or "").strip():
+                by_attr.setdefault(r["attribute"], {}).setdefault(r["host"], r["value"].strip())
+        for attr, vals in sorted(by_attr.items()):
+            if not topic & _note_words(attr.replace("_", " ")):
+                continue
+            label = " ".join(attr.replace("_", " ").replace(":", " ").split()).lower()
+            for g in (reg or {}).get("groups", []):
+                have = {h: vals[h] for h in g["hosts"] if h in vals}
+                count = lambda v: list(have.values()).count(v)
+                distinct = sorted(set(have.values()), key=lambda v: (-count(v), v))
+                if len(have) < 2 or len(distinct) < 2:
+                    continue
+                main = distinct[0]
+                odd = sorted(h for h, v in have.items() if v != main)
+                same = sorted(h for h, v in have.items() if v == main)
+                if count(main) == count(distinct[1]):       # no majority: name each value, take no side
+                    text = f"{g['role']}: {label} differs between the hosts, " + ", ".join(
+                        f"{v} on {', '.join(sorted(h for h, x in have.items() if x == v))}" for v in distinct)
+                else:
+                    text = (f"{g['role']}: {label} is {main} on {', '.join(same)} but "
+                            + ", ".join(f"{have[h]} on {h}" for h in odd))
+                ids = {i for h in odd for i in ids_for(h, have[h])}
+                ids |= next((set(x) for x in (ids_for(h, main) for h in same) if x), set())
+                ids = sorted(ids)
+                out.append({"text": text, "ids": ids})
+            missing = sorted(set(role_of) - set(vals))
+            if missing and len(vals) >= 2:
+                out.append({"text": f"{label} is recorded for {len(vals)} of {len(role_of)} captured hosts, "
+                                    f"not for {', '.join(missing)}", "ids": []})
+    for r in live:
+        if r.get("status") == "CONFLICTING" and topic & _note_words(r.get("section", "") + " " + r.get("csa_area", "").replace("_", " ")):
+            out.append({"text": f"sources disagree: {' '.join((r.get('claim') or '').split())[:200]}", "ids": [r["evidence_id"]]})
+    return out[:limit]
+
+
 def system_name(workspace: Path | None) -> str:
     """The system's name as the working document writes it (its "System Name:" line), or "" when the
     document has none. The framework holds no system name of its own: the document is the one place."""
@@ -434,6 +583,20 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
     extra = scope_extras(node)
     kinds = sorted({q["kind"] for q in qs if q["kind"] != "comment"})
     reg = host_register(workspace) if evidence else None
+    note_qs = [q for q in qs if q["kind"] == "note" and q["id"] in pack]
+    if note_qs:
+        all_rows = _matrix_rows(workspace)
+        by_id = {r["evidence_id"].upper(): r for r in all_rows}
+        cands = note_candidates(node, workspace, reg, all_rows)
+        for q in note_qs:
+            p = pack[q["id"]]
+            p["note_candidates"] = cands
+            have = {r["id"].upper() for r in p["rows"]}
+            for c in cands:          # the rows a candidate rests on go on the card, so the note may cite them
+                for i in c["ids"]:
+                    if i.upper() not in have and i.upper() in by_id:
+                        p["rows"].append(_row(by_id[i.upper()]))
+                        have.add(i.upper())
     lines = [f"# Card: {node['title']} (key {node['key']}, section {node['number']})", "",
              f"Kind: {node['kind']}", "", "## Questions", ""]
     for q in qs:
@@ -446,6 +609,10 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
                   f"- The document names the system \"{sysname}\". Use exactly this name, spelled and cased this way, "
                   "whenever you refer to the system as a whole. Evidence rows and quoted sources may spell it another way; "
                   "do not copy that spelling into your text."]
+    from csa_docx import knowledge
+    bg_lines, bg_ids = (knowledge.card_section(node["key"], node["title"], qs, (extra or {}).get("must_explain", ""), workspace)
+                        if evidence else ([], []))
+    lines += bg_lines
     rl = rules(node, spec)
     if rl:
         lines += ["", "## Rules from the template", ""] + [f"- {r}" for r in rl]
@@ -454,6 +621,14 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
     cur = _current(node)
     if cur:
         lines += ["", "## Current text in the document", ""] + [f"- {c}" for c in cur]
+    keep = facts_to_keep(node, workspace) if evidence else []
+    if keep:
+        lines += ["", "## Facts to keep", "",
+                  "This subsection's applied answers stated these facts and table rows from the discovery captures. Keep "
+                  "each in the block shown (a table row as a row of that table), citing its capture evidence, or add `Dropped: E-<n> <why it no longer applies>` to that "
+                  "block. The check refuses an answer that loses one silently (CAPTURE_DROPPED).", ""]
+        lines += [f"- {k['question']}{' (table row)' if k.get('kind') == 'row' else ''}: {k['fact']} "
+                  f"({', '.join(k['evidence_ids'])})" for k in keep]
     if established:
         lines += ["", "## Facts already established", "",
                   "Facts other sections have already validated. Reuse one where it answers a question; still cite its evidence IDs.", ""]
@@ -488,6 +663,12 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
                         shown[key] = qid
                         lines += [""] + block
                 lines += ["", "Rows:"]
+            if "note_candidates" in p:
+                lines.append("Note candidates (worked out from the host facts and the evidence, for the note only; "
+                             "write one only if the table rows do not already show it, and cite its rows):")
+                lines += [f"- {c['text']}" + (f" ({', '.join(c['ids'])})" if c["ids"] else "")
+                          for c in p["note_candidates"]] or ["- none found: write 'None: <why>' unless a row below shows one"]
+                lines.append("")
             for r in p["rows"]:
                 if r.get("established"):
                     continue                    # listed under Facts already established
@@ -506,7 +687,8 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
             lines += ["", f"## Example answer ({k})", "", ex]
     text = "\n".join(lines) + "\n"
     return {"status": "OK", "key": node["key"], "number": node["number"], "title": node["title"], "text": text,
-            "questions": qs, "evidence": pack, "established": established, "tokens": len(text) // 4,
+            "questions": qs, "evidence": pack, "established": established, "background_ids": bg_ids,
+            "keep": [{k: x[k] for k in ("question", "fact", "evidence_ids", "capture_ids")} for x in keep], "tokens": len(text) // 4,
             "ratings": spec.get("ratings") or doc_spec.DEFAULT_RATINGS, "kinds": kinds, "host_register": reg}
 
 

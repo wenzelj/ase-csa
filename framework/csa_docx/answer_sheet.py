@@ -20,7 +20,7 @@
 
 The AI never writes anchors, edit IDs, Where/Do lines, front matter or comment notes: `render` adds them
 from the document spec. `validate` enforces: a block for every question, evidence IDs that exist and were
-on the card (or were appended by this run), a basis of observed / documented / stated, hosts in a fact's
+on the card (or were appended by this run), a basis of observed / documented / stated (background for a K- knowledge passage), hosts in a fact's
 scope that appear in the cited evidence, a rating from the document's own dropdown with a reason, table
 rows with exactly the table's columns.
 
@@ -37,12 +37,16 @@ import sys
 from pathlib import Path
 
 _BLOCK = re.compile(r"^##\s+([BC]\d+)\b[^\n]*$", re.M)
-_FIELD = re.compile(r"^(Facts|Text|Unknown|Rating reason|Rating|Rows|Bullets|Search|Keep|Answer):\s*(.*)$", re.I)
-_FACT = re.compile(r"^[-*]\s+(?P<text>.+?)\s*(?:\((?P<ids>E-\d+(?:\s*,\s*E-\d+)*)\))?\s*(?:\{(?P<meta>[^}]*)\})?\s*$")
+_FIELD = re.compile(r"^(Facts|Text|Unknown|Rating reason|Rating|Rows|Bullets|Search|Keep|Answer|Dropped|None):\s*(.*)$", re.I)
+_ID = r"(?:E-\d+|K-[0-9A-F]{6})"
+_FACT = re.compile(r"^[-*]\s+(?P<text>.+?)\s*(?:\((?P<ids>" + _ID + r"(?:\s*,\s*" + _ID + r")*)\))?\s*(?:\{(?P<meta>[^}]*)\})?\s*$")
 _EID = re.compile(r"\bE-\d+\b")
+_KID = re.compile(r"\bK-[0-9A-F]{6}\b")           # background knowledge passages, never evidence (knowledge.py)
+_QWORD = re.compile(r"\b(whether|which|what|how|where|who|when)\b", re.I)   # question clauses in an Unknown line
+_ANYID = re.compile(r"\b" + _ID + r"\b")
 _HOST = re.compile(r"\b(?=[A-Z0-9]*\d)[A-Z][A-Z0-9]{6,}\b")
 _IP = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}(?:/\d{1,2})?\b")
-BASES = ("observed", "documented", "stated")
+BASES = ("observed", "documented", "stated", "background")
 
 
 # ---------------------------------------------------------------- parse
@@ -54,7 +58,7 @@ def parse(text: str) -> dict[str, dict]:
     for i, m in enumerate(marks):
         body = text[m.end(): marks[i + 1].start() if i + 1 < len(marks) else len(text)]
         b = {"facts": [], "unknown": [], "rating": "", "rating_reason": "", "rows": [], "bullets": [],
-             "search": [], "keep": "", "answer": "", "text": "", "raw": body.strip()}
+             "search": [], "keep": "", "answer": "", "text": "", "dropped": [], "none": "", "raw": body.strip()}
         field = None
         for line in body.splitlines():
             s = line.strip()
@@ -66,6 +70,8 @@ def parse(text: str) -> dict[str, dict]:
                 val = f.group(2).strip()
                 if field == "unknown" and val:
                     b["unknown"].append(val)
+                elif field == "dropped" and val:
+                    b["dropped"].append(val)
                 elif field == "rating":
                     b["rating"] = val
                 elif field == "rating reason":
@@ -74,6 +80,8 @@ def parse(text: str) -> dict[str, dict]:
                     b["search"].append(val)
                 elif field == "keep":
                     b["keep"] = val or "yes"
+                elif field == "none":                # note questions: nothing the table cannot show, remove the placeholder
+                    b["none"] = val or "yes"
                 elif field == "answer":
                     b["answer"] = val
                 elif field == "text" and val:
@@ -87,7 +95,7 @@ def parse(text: str) -> dict[str, dict]:
                 meta = (fm.group("meta") or "") if fm else ""
                 basis, _, scope = meta.partition(";")
                 b["facts"].append({"text": (fm.group("text") if fm else s.lstrip("-* ")).strip(),
-                                   "ids": _EID.findall(fm.group("ids") or "") if fm else _EID.findall(s),
+                                   "ids": _ANYID.findall(fm.group("ids") or "") if fm else _ANYID.findall(s),
                                    "basis": basis.strip().lower(), "scope": scope.strip(), "line": s})
             elif field == "rows" and s.startswith("|"):
                 cells = [c.strip() for c in s.strip().strip("|").split("|")]
@@ -97,6 +105,8 @@ def parse(text: str) -> dict[str, dict]:
                 b["bullets"].append(s.lstrip("-* ").strip())
             elif field == "unknown":
                 b["unknown"].append(s.lstrip("-* "))
+            elif field == "dropped":
+                b["dropped"].append(s.lstrip("-* "))
             elif field == "search":
                 b["search"].append(s.lstrip("-* "))
             elif field in ("rating reason",):
@@ -134,7 +144,9 @@ _PROCESS_WORDING = re.compile(
     r"\b(?:evidence matrix|discovery index|gap lookup|index rows?|matrix rows?|matrix (?:and|or) (?:the )?index|"
     r"(?:the )?(?:matrix|index) (?:search|lookup)|(?:search|lookup)(?:es)? of the (?:evidence )?(?:matrix|index)|"
     r"rows? (?:searched|reviewed|examined)|(?:searched|searching) the (?:evidence )?(?:matrix|index)|"
-    r"(?:matrix|index) (?:rows? )?(?:searched|reviewed|examined)|for this domain)\b", re.IGNORECASE)
+    r"(?:matrix|index) (?:rows? )?(?:searched|reviewed|examined)|for this domain|"
+    r"(?:on|in|from|to) (?:the|this) (?:section )?card|section card|evidence pack|card's|answer sheet|"
+    r"(?:not )?(?:stated|listed|shown|given|offered) (?:on|in) the card)\b", re.IGNORECASE)
 
 _NUMWORDS = {w: i for i, w in enumerate("zero one two three four five six seven eight nine ten eleven twelve thirteen "
              "fourteen fifteen sixteen seventeen eighteen nineteen twenty".split())}
@@ -168,12 +180,16 @@ def count_mismatch(text: str) -> str | None:
 
 #: Draft lane (pre-V1): only these stop a sheet from being written into the document; every other ERROR is
 #: reported as a WARN and left for the next pass or the V1 change lane.
-HARD_CODES = {"QUESTION_MISSING", "EMPTY_ANSWER", "FACT_NO_EVIDENCE", "UNKNOWN_EVIDENCE", "RATING_INVALID",
+HARD_CODES = {"NOTE_TOO_LONG", "NOTE_NONE_AND_TEXT", "NOTE_NO_FACTS", "CAPTURE_DROPPED", "UNKNOWN_BUNDLED", "BACKGROUND_AS_EVIDENCE", "BACKGROUND_MIXED", "BACKGROUND_NOT_ON_CARD", "BACKGROUND_ALONE", "QUESTION_MISSING", "EMPTY_ANSWER", "FACT_NO_EVIDENCE", "UNKNOWN_EVIDENCE", "RATING_INVALID",
               "COLUMNS", "ROW_WIDTH", "NO_ROWS", "REQUIREMENT_NO_FACTS", "SEMICOLON", "PROCESS_AS_SUBJECT",
               "CITATION_OFF_TOPIC"}
 
 
-_CAPTURE_SRC = re.compile(r"_discovery_[^:\s]+_\d{8}T\d{6}Z")
+# a discovery capture, however the row names it: one capture folder (REVELOC_discovery_HOST_20260605T031609Z),
+# the multi-host form (REVELOC_discovery_<host>_<timestamp>: 41_dns_query_tests.txt for ...), or capture file
+# names (NN_name.txt, alone or "in HOST_<timestamp>"). A NOT_FOUND row's "searched ..." scope is not a capture.
+_CAPTURE_SRC = re.compile(r"_discovery_[^:\s]+_\d{8}T\d{6}Z|_discovery_<host>|(?:^|[\s:;,/(])\d{2}_[a-z0-9_]+\.txt\b")
+_NOT_CAPTURE = re.compile(r"^\s*(?:searched\b|search scope\b|discovery index\b)", re.I)
 _PREVIOUS_SRC = re.compile(r"current[ _]state[ _]assessment", re.IGNORECASE)
 _REQ_KEY = re.compile(r"\b[A-Z]{2,5}-([A-Z][A-Z_]*)-[A-Z]?\d+\b")
 _HOSTTOKEN = re.compile(r"\b[A-Z][A-Z0-9]{5,}\d{2,3}\b")
@@ -185,7 +201,7 @@ def source_class(row: dict | None) -> str:
     if not row:
         return ""
     src = row.get("source_title") or ""
-    if _CAPTURE_SRC.search(src):
+    if _CAPTURE_SRC.search(src) and not _NOT_CAPTURE.match(src):
         return "capture"
     if (row.get("gap_or_action") or "").startswith("legacy L-") or _PREVIOUS_SRC.search(src):
         return "previous"
@@ -203,8 +219,9 @@ def block_ids(b: dict) -> set[str]:
 
 
 def regression(old: dict[str, dict], new: dict[str, dict], matrix: dict[str, dict] | None = None) -> list[dict]:
-    """What a re-answer lost against the sheet it replaces. Advisory (WARN): evidence no longer cited, fewer
-    table rows, fewer capture-sourced citations. A re-answer should add or correct, not quietly thin out."""
+    """What a re-answer lost against the sheet it replaces: evidence no longer cited, fewer table rows, fewer
+    capture-sourced citations (WARN). A VERIFIED capture row cited before and dropped without a 'Dropped:' line
+    saying why is an ERROR (CAPTURE_DROPPED): a re-answer should add or correct, not quietly thin out."""
     matrix = matrix or {}
     out: list[dict] = []
     for qid, nb in new.items():
@@ -219,11 +236,120 @@ def regression(old: dict[str, dict], new: dict[str, dict], matrix: dict[str, dic
         if len(nb["rows"]) < len(ob["rows"]):
             out.append(_f("WARN", "ROWS_DROPPED", qid,
                           f"the table has {len(nb['rows']) - 1} row(s), the answer it replaces had {len(ob['rows']) - 1}"))
+        lost = [i for i in dropped if source_class(matrix.get(i)) == "capture"
+                and matrix.get(i, {}).get("status") == "VERIFIED"
+                and not any(i in d for d in nb.get("dropped", []))]
+        if lost and nb.get("keep") == "":
+            said = [f["text"] for f in ob["facts"] if set(f["ids"]) & set(lost)]
+            out.append(_f("ERROR", "CAPTURE_DROPPED", qid,
+                          f"{', '.join(lost)} (capture evidence) supported the answer this replaces and is no longer cited: keep "
+                          f"the fact it supports, or add 'Dropped: {lost[0]} <why it no longer applies>'"
+                          + (f". The fact was: \"{said[0][:200]}\"" if said else "")))
         cap = lambda ids: sum(1 for i in ids if source_class(matrix.get(i)) == "capture")
         if matrix and cap(n_ids) < cap(o_ids):
             out.append(_f("WARN", "SOURCE_DOWNGRADE", qid,
                           f"capture-sourced citations fell from {cap(o_ids)} to {cap(n_ids)}: facts that were observed in the "
                           "captures are now supported by documents or the previous assessment"))
+    return out
+
+
+def kept_facts(sheet: dict[str, dict], card: dict, already: list[dict] | None = None) -> list[dict]:
+    """The card's "Facts to keep" (section_card.facts_to_keep): each capture-backed fact an applied answer of this
+    subsection stated must still be cited in its block, or named on a 'Dropped:' line. ERROR CAPTURE_DROPPED."""
+    reported = {(f.get("question"), i) for f in (already or []) if f["code"] == "CAPTURE_DROPPED"
+                for i in _EID.findall(f["message"].split(" (capture")[0])}
+    out: list[dict] = []
+    for k in card.get("keep", []):
+        qid, b = k["question"], sheet.get(k["question"])
+        if b is None or b.get("keep"):
+            continue
+        cited = block_ids(b)
+        caps = [i for i in k["capture_ids"] if i.upper() not in cited
+                and not any(i in d for d in b.get("dropped", [])) and (qid, i) not in reported]
+        if caps and not (set(i.upper() for i in k["capture_ids"]) & cited):
+            out.append(_f("ERROR", "CAPTURE_DROPPED", qid,
+                          f"{', '.join(caps)} (capture evidence): the card's Facts to keep lists \"{k['fact'][:200]}\" for {qid} "
+                          f"and the answer no longer states it: keep it with its capture evidence, or add "
+                          f"'Dropped: {caps[0]} <why it no longer applies>'"))
+    return out
+
+
+def _background_checks(qid: str, q: dict, b: dict, background: set[str]) -> list[dict]:
+    """Knowledge (knowledge.py) is background, never evidence. A K- passage may only sit on its own fact with basis
+    background, in a narrative block, next to at least one fact from real (E-) evidence, and must be on the card."""
+    out: list[dict] = []
+    stray = [x for x in [c for r in b["rows"] for c in r] + b["bullets"] if _KID.search(x)]
+    if stray:
+        out.append(_f("ERROR", "BACKGROUND_AS_EVIDENCE", qid, f"background knowledge (K-) cited in a table row or bullet, "
+                      f"which need evidence: {stray[0][:80]}"))
+    bg_facts = [f for f in b["facts"] if f["basis"] == "background" or any(_KID.fullmatch(i) for i in f["ids"])]
+    if not bg_facts:
+        return out
+    if q["kind"] != "narrative":
+        out.append(_f("ERROR", "BACKGROUND_AS_EVIDENCE", qid, f"background knowledge (K-) cannot support a {q['kind']} "
+                      f"answer, only a narrative such as Drawbridge Impact: {bg_facts[0]['text'][:80]}"))
+    for f in bg_facts:
+        kids = [i for i in f["ids"] if _KID.fullmatch(i)]
+        if f["basis"] != "background" or not kids or len(kids) != len(f["ids"]):
+            out.append(_f("ERROR", "BACKGROUND_MIXED", qid, "a background fact cites only K- IDs with basis background, "
+                          f"and an evidence fact cites only E- IDs: {f['line'][:90]}"))
+        off = [i for i in kids if i.upper() not in background]
+        if off:
+            out.append(_f("ERROR", "BACKGROUND_NOT_ON_CARD", qid, f"{', '.join(off)} is not among the card's knowledge passages"))
+    if not any(f["ids"] and all(_EID.fullmatch(i) for i in f["ids"]) for f in b["facts"]):
+        out.append(_f("ERROR", "BACKGROUND_ALONE", qid, "background knowledge explains evidence, it never stands alone: "
+                      "add the fact from an E- evidence row that it explains, or write Unknown"))
+    return out
+
+
+_SENTENCE_END = re.compile(r"[.!?](?=\s+[A-Z(]|\s*$)")
+_JUDGEMENT = re.compile(r"\b(should|recommend\w*|must|risks?|risky|rated|rating|(?:non-?)?compliant|adequate|inadequate|"
+                        r"poor|weak|good practice|best practice)\b", re.I)
+_CONTENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9.\-]*[A-Za-z0-9]")
+_FILLER = set("the and are was were for with from this that has have but not its into one two all only".split())
+
+
+def note_text(b: dict) -> str:
+    """The note as it goes into the document: Text if written, else the facts as sentences."""
+    if b.get("text"):
+        return no_ids(" ".join(b["text"].split()))
+    return " ".join(_sentence(f) for f in b["facts"]).strip()
+
+
+def _content(s: str) -> set[str]:
+    return {w.lower().strip(".") for w in _CONTENT.findall(no_ids(s or "")) if len(w) >= 3 and w.lower() not in _FILLER}
+
+
+def _note_checks(qid: str, q: dict, b: dict, sheet: dict[str, dict], qs: dict[str, dict]) -> list[dict]:
+    """The optional note under a table: None, or one or two sentences of evidenced fact the rows do not show."""
+    out: list[dict] = []
+    text = note_text(b)
+    if b["none"]:
+        if b["facts"] or b.get("text"):
+            out.append(_f("ERROR", "NOTE_NONE_AND_TEXT", qid, "write either 'None: <why>' or the note, not both"))
+        return out
+    if b.get("text") and not b["facts"]:
+        out.append(_f("ERROR", "NOTE_NO_FACTS", qid, "the note's Text needs the Facts (with evidence) it is built from"))
+    if not text:
+        return out
+    n = len(_SENTENCE_END.findall(text)) or 1
+    if n > 2:
+        out.append(_f("ERROR", "NOTE_TOO_LONG", qid, f"the note is {n} sentences: one or two only, or put the detail in a table row"))
+    m = _JUDGEMENT.search(text)
+    if m:
+        out.append(_f("ERROR", "NOTE_NOT_A_FACT", qid, f"the note judges or recommends (\"{m.group(0)}\"): Discovery Information "
+                      "holds facts only. Ratings belong in the requirement rows and impact in Drawbridge Impact"))
+    words = _content(text)
+    rows = list(q.get("table_rows") or [])
+    for oid, oq in qs.items():               # the table rows this same sheet writes
+        if oq["kind"] == "observation" and oq.get("part") is not None and oq["part"] < (q.get("part") or 0):
+            rows += [" | ".join(r) for r in (sheet.get(oid) or {}).get("rows", [])[1:]]
+    for r in rows:
+        rw = _content(r)
+        if words and rw and len(words & rw) / len(words) >= 0.75:
+            out.append(_f("ERROR", "NOTE_REPEATS_ROW", qid, f"the note repeats a table row (\"{_quote(r, 80)}\"): "
+                          "say what the rows cannot show, or write 'None: <why>'"))
+            break
     return out
 
 
@@ -240,6 +366,8 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
     allowed |= {i.upper() for p in card.get("evidence", {}).values() for i in p.get("cut", [])}
     allowed |= {i.upper() for p in card.get("evidence", {}).values() for i in p.get("digest_ids", [])}
     allowed |= {i.upper() for i in (new_ids or set())}
+    allowed |= {i.upper() for k in card.get("keep", []) for i in k.get("evidence_ids", [])}
+    background = {i.upper() for i in card.get("background_ids", [])}   # K- passages on the card's background section
     ratings = ratings or card.get("ratings") or ["Met", "Partially Met", "Not Met", "Not Applicable"]
     qs = {q["id"]: q for q in card["questions"]}
     searches = {qid: b["search"] for qid, b in sheet.items() if b["search"]}
@@ -248,12 +376,19 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
         if b is None:
             findings.append(_f("ERROR", "QUESTION_MISSING", qid, f"no '## {qid}' block"))
             continue
-        has = b["facts"] or b["unknown"] or b["keep"] or b["rows"] or b["bullets"] or b["answer"] or b["search"]
+        has = b["facts"] or b["unknown"] or b["keep"] or b["rows"] or b["bullets"] or b["answer"] or b["search"] or b["none"]
         if not has:
-            findings.append(_f("ERROR", "EMPTY_ANSWER", qid, "no Facts, Rows, Bullets, Unknown, Keep or Search"))
+            findings.append(_f("ERROR", "EMPTY_ANSWER", qid, "no Facts, Rows, Bullets, Unknown, Keep, Search"
+                               + (" or None" if q["kind"] == "note" else "")))
+        if q["kind"] == "note":
+            findings += _note_checks(qid, q, b, sheet, qs)
+        elif b["none"]:
+            findings.append(_f("WARN", "NONE_IGNORED", qid, "'None:' answers only the optional note under a table"))
         for fact in b["facts"]:
             if not fact["ids"]:
                 findings.append(_f("ERROR", "FACT_NO_EVIDENCE", qid, f"a fact cites no evidence ID: {fact['text'][:80]}"))
+            if fact["basis"] == "background":
+                continue                            # knowledge passage: _background_checks covers it
             cited_rows = [matrix[i.upper()] for i in fact["ids"] if i.upper() in matrix]
             card_key = str(card.get("key") or "").upper()
             for r_ in cited_rows:
@@ -283,11 +418,17 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
             cm = count_mismatch(fact["text"])
             if cm:
                 findings.append(_f("ERROR", "COUNT_MISMATCH", qid, f"{cm}: {fact['text'][:90]}"))
-            if q["kind"] in ("requirement", "narrative", "findings") and _SOURCE_SUBJECT.search(fact["text"]):
+            if q["kind"] in ("requirement", "narrative", "findings", "note") and _SOURCE_SUBJECT.search(fact["text"]):
                 findings.append(_f("ERROR", "SOURCE_AS_SUBJECT", qid, f"the fact is about the source, not the system: make the application, host or practice the subject and keep the source in the basis braces: {fact['text'][:80]}"))
-            if q["kind"] in ("requirement", "narrative", "findings") and _IP.search(fact["text"]):
+            if q["kind"] in ("requirement", "narrative", "findings", "note") and _IP.search(fact["text"]):
                 findings.append(_f("WARN", "IP_IN_PROSE", qid, f"address in a prose fact: name the host if it has a name; an address alone is right only where no host name is known: {fact['text'][:80]}"))
-        if q["kind"] in ("requirement", "narrative", "findings"):
+        findings += _background_checks(qid, q, b, background)
+        for u in b["unknown"]:
+            n = len(_QWORD.findall(u))
+            if n >= 3:
+                findings.append(_f("ERROR", "UNKNOWN_BUNDLED", qid, f"one Unknown: line holds {n} questions: write one "
+                                   f"Unknown: line per question, so each becomes its own Discovery Required item: {u[:90]}"))
+        if q["kind"] in ("requirement", "narrative", "findings", "note"):
             # no semicolons in anything that becomes document prose: Text, the facts it is built from, bullets
             for where, s in [("Text", b.get("text") or "")] + [("fact", f["text"]) for f in b["facts"]] + \
                     [("bullet", x) for x in b["bullets"]]:
@@ -308,7 +449,7 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
                                    "system lacks and name the real sources checked (the discovery captures, the supplied "
                                    f"documents, the previous assessment): {s_[:80]}"))
                 break
-        cited = {i.upper() for fact in b["facts"] for i in fact["ids"]}
+        cited = {i.upper() for fact in b["facts"] for i in fact["ids"] if _EID.fullmatch(i)}
         cited |= {i.upper() for row in b["rows"] for c in row for i in _EID.findall(c)}
         cited |= {i.upper() for x in b["bullets"] for i in _EID.findall(x)}
         for i in sorted(cited):
@@ -324,7 +465,7 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
                                "but the answer cites none of it; use it or say why it does not answer the question"))
         for fact in b["facts"]:
             hosts = set(_HOST.findall(fact["scope"])) | set(_HOST.findall(fact["text"]))
-            if not hosts or not matrix:
+            if not hosts or not matrix or fact["basis"] == "background":
                 continue
             seen = " ".join((matrix.get(i.upper(), {}).get("claim", "") + " " +
                              matrix.get(i.upper(), {}).get("evidence_excerpt", "") + " " +
@@ -383,6 +524,7 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
                                    "Use one that adds a fact the answer lacks, or leave it out knowingly."))
     if previous:
         findings += regression(previous, sheet, matrix)
+    findings += kept_facts(sheet, card, findings)
     for qid in sheet:
         if qid not in qs:
             findings.append(_f("WARN", "EXTRA_BLOCK", qid, "this question is not on the card"))
@@ -442,14 +584,14 @@ def render_records(sheet: dict[str, dict], card: dict, node: dict, section: str,
     n = start
     parts = node["parts"]
 
-    def record(title, where, current, facts, text, why, note):
+    def record(title, where, current, facts, text, why, note, do="Replace"):
         nonlocal n
         eid = f"S{section}-E{n}"
         n += 1
         fl = "\n".join(facts) if facts else "- (no facts: see Why)"
-        recs.append(f"### {eid} - {title}\n\n**Where:** `{where}` -- currently: \"{_quote(current)}\"\n\n**Do:** Replace\n\n"
-                    f"**Facts:**\n\n{fl}\n\n**Text:**\n\n" + "\n".join("> " + x for x in text.splitlines()) +
-                    f"\n\n**Why:** {why}\n\n**Note:** {note}\n\n---\n")
+        body = ("" if do == "Delete" else "**Text:**\n\n" + "\n".join("> " + x for x in text.splitlines()) + "\n\n")
+        recs.append(f"### {eid} - {title}\n\n**Where:** `{where}` -- currently: \"{_quote(current)}\"\n\n**Do:** {do}\n\n"
+                    f"**Facts:**\n\n{fl}\n\n" + body + f"**Why:** {why}\n\n**Note:** {note}\n\n---\n")
         return eid
 
     for q in card["questions"]:
@@ -469,8 +611,10 @@ def render_records(sheet: dict[str, dict], card: dict, node: dict, section: str,
         p = parts[q["part"]] if q.get("part") is not None and q["part"] < len(parts) else {}
         facts = [f"- [{q['id']}] {f['text']} ({', '.join(f['ids'])}) {{basis: {f['basis']}; scope: {f['scope'] or 'see evidence'}}}"
                  for f in b["facts"]] + [f"- Unknown: {u}" for u in b["unknown"][:1]]
-        ids = sorted({i for f in b["facts"] for i in f["ids"]})
+        ids = sorted({i for f in b["facts"] for i in f["ids"] if _EID.fullmatch(i)})
+        bg = sorted({i for f in b["facts"] for i in f["ids"] if _KID.fullmatch(i)})
         why = (f"Evidence {', '.join(ids)}." if ids else "No evidence row; see the open question.") + (
+            f" Background knowledge (not evidence): {', '.join(bg)}." if bg else "") + (
             f" Rating: {b['rating_reason']}" if b["rating_reason"] else "")
         if q["kind"] == "requirement":
             req = next((r for r in p.get("requirements", []) if r["id"] == q["req_id"]), None)
@@ -512,6 +656,20 @@ def render_records(sheet: dict[str, dict], card: dict, node: dict, section: str,
             eid = record(f"{p.get('facet') or node['title']}", p.get("pid", node["hid"] + "-P1"), p.get("current", ""),
                          facts, text, why, f"{p.get('facet') or node['title']} from the evidence.")
             audit += [f"| {eid} | {_quote(_sentence(f), 160)} | {', '.join(f['ids'])} | {f['basis']} | {f['scope'] or '-'} |" for f in b["facts"]]
+        elif q["kind"] == "note":
+            # The optional note: the note replaces the placeholder (or the note there), 'None' removes it. A
+            # placeholder is never left behind: with no note and no pending search, it is removed too.
+            text = note_text(b)
+            where = p.get("pid") or f"{node['hid']}-P1"
+            label = f"{p.get('facet') or node['title']}: note"
+            if text and not b["none"]:
+                eid = record(label, where, p.get("current", ""), facts, text, why,
+                             f"Note under the {p.get('facet') or node['title']} table from the evidence.")
+                audit += [f"| {eid} | {_quote(_sentence(f), 160)} | {', '.join(f['ids'])} | {f['basis']} | {f['scope'] or '-'} |" for f in b["facts"]]
+            elif b["none"] or (not p.get("answered") and not b["search"]):
+                reason = b["none"] if b["none"] not in ("", "yes") else "the table rows show everything the evidence holds"
+                record(label, where, p.get("current", ""), [], "", f"No note: {reason.rstrip('.')}.",
+                       "Optional note placeholder removed.", do="Delete")
         elif q["kind"] == "findings":
             holders = [(pid, t) for pid, t in zip(p.get("pids", []), p.get("bullets", []))]
             free = [(pid, t) for pid, t in holders if t.startswith("[")]
