@@ -149,6 +149,104 @@ def test_time_source_pairs_reads_address_and_name_from_one_status_block():
     assert hm.time_source_pairs(text) == [("10.40.228.97", "ROTPRDSRV122", 3)]
 
 
+
+def test_resolver_servers_reads_preference_order_from_a_dnsclient_table():
+    text = (
+        "InterfaceAlias              AddressFamily ServerAddresses\r\n"
+        "--------------              ------------- ---------------\r\n"
+        "Ethernet 3                              2 {10.45.228.97, 10.40.228.97}\r\n"
+        "Ethernet 3                             23 {}\r\n"
+        "Loopback Pseudo-Interface 1            23 {fec0:0:0:ffff::1, fec0:0:0:ffff::2, fec0:0:0:ffff::3}\r\n"
+    )
+    rows = hm.resolver_servers(text)
+    assert [ip for ip in rows[0]["servers"]] == ["10.45.228.97", "10.40.228.97"]
+    assert rows[0]["interface"] == "Ethernet 3" and rows[0]["family"] == "IPv4"
+    assert len(rows) == 1 and rows[0]["line"] == 2      # {} rows and the loopback defaults are left out
+
+
+def test_resolver_servers_keeps_every_interface_and_marks_ipv6():
+    text = (
+        "InterfaceAlias AddressFamily ServerAddresses\n"
+        "-------------- ------------- ---------------\n"
+        "Local Area Connection* 10  2 {10.0.1.10}\n"
+        "Ethernet0 2 {10.0.1.10, 10.0.2.10}\n"
+        "Ethernet0 23 {fd00::53}\n"
+    )
+    rows = hm.resolver_servers(text)
+    assert [r["servers"] for r in rows] == [["10.0.1.10"], ["10.0.1.10", "10.0.2.10"], ["fd00::53"]]
+    assert [r["family"] for r in rows] == ["IPv4", "IPv4", "IPv6"]
+    assert rows[0]["interface"] == "Local Area Connection* 10"
+
+
+def test_resolver_servers_marks_a_list_powershell_cut_short():
+    text = "InterfaceAlias AddressFamily ServerAddresses\nEthernet0 2 {10.0.1.10, 10.0.2.10, 10.0.3.10...}\n"
+    rows = hm.resolver_servers(text)
+    assert rows[0]["servers"] == ["10.0.1.10", "10.0.2.10", "10.0.3.10"]
+    assert rows[0]["truncated"] is True
+
+
+def test_resolver_servers_gives_nothing_without_a_table():
+    assert hm.resolver_servers("") == []
+    assert hm.resolver_servers("Ethernet0 is up\nno table here\n") == []
+
+def test_configured_services_reads_resolver_and_time_for_one_capture():
+    resolver = (
+        "InterfaceAlias AddressFamily ServerAddresses\n"
+        "-------------- ------------- ---------------\n"
+        "Ethernet 3 2 {10.0.2.10, 10.0.1.10}\n"
+        "Ethernet 4 2 {10.0.3.10}\n"
+    )
+    time_status = (
+        "Stratum: 5\n"
+        "ReferenceId: 0x0A00010A (source IP:  10.0.1.10)\n"
+        "Last Successful Sync Time: 1/06/2026\n"
+        "Source: SRV1.test.local \n"
+    )
+    folder = "TST_discovery_HOSTA01_20260505T011354Z"
+    records = [(f"Data/{folder}/14_resolver.txt", 1, resolver),
+               (f"Data/{folder}/03_time_status.txt", 1, time_status)]
+    rows = hm.configured_services(records, {"10.0.1.10": "SRV1"})
+    key = lambda r: (r["service"], int(r["preference"]))
+    rows = sorted(rows, key=key)
+    assert rows[0] == {"client_host": "HOSTA01", "service": "dns", "server_ip": "10.0.2.10", "server_host": "",
+                       "preference": 1, "capture": folder,
+                       "source": f"{folder}/14_resolver.txt line 3", "excerpt": "Ethernet 3 2 {10.0.2.10, 10.0.1.10}"}
+    assert rows[1] == {"client_host": "HOSTA01", "service": "dns", "server_ip": "10.0.1.10", "server_host": "SRV1",
+                       "preference": 2, "capture": folder,
+                       "source": f"{folder}/14_resolver.txt line 3", "excerpt": "Ethernet 3 2 {10.0.2.10, 10.0.1.10}"}
+    assert rows[2] == {"client_host": "HOSTA01", "service": "dns", "server_ip": "10.0.3.10", "server_host": "",
+                       "preference": 3, "capture": folder,
+                       "source": f"{folder}/14_resolver.txt line 4", "excerpt": "Ethernet 4 2 {10.0.3.10}"}
+    assert rows[3] == {"client_host": "HOSTA01", "service": "time", "server_ip": "10.0.1.10", "server_host": "SRV1",
+                       "preference": 1, "capture": folder,
+                       "source": f"{folder}/03_time_status.txt line 4", "excerpt": "Source: SRV1.test.local"}
+
+
+def test_configured_services_takes_only_the_newest_capture_of_a_host():
+    new = "Data/TST_discovery_HOSTA01_20260505T011354Z"
+    old = "Data/TST_discovery_HOSTA01_20260401T000000Z"
+    resolver_new = "InterfaceAlias AddressFamily ServerAddresses\nEthernet 3 2 {10.0.2.10, 10.0.1.10}\n"
+    resolver_old = "InterfaceAlias AddressFamily ServerAddresses\nEthernet 3 2 {10.0.7.7}\n"
+    rows = hm.configured_services([(f"{new}/14_resolver.txt", 1, resolver_new),
+                                   (f"{old}/14_resolver.txt", 1, resolver_old)], {})
+    assert [r["server_ip"] for r in rows] == ["10.0.2.10", "10.0.1.10"]
+    assert all(r["capture"] == "TST_discovery_HOSTA01_20260505T011354Z" for r in rows)
+
+
+def test_configured_services_skips_a_capture_folder_without_a_host_name():
+    resolver = "InterfaceAlias AddressFamily ServerAddresses\nEthernet 3 2 {10.0.2.10}\n"
+    rows = hm.configured_services([("Data/tg_discovery_20260317T002440Z/14_resolver.txt", 1, resolver)], {})
+    assert rows == []
+
+
+def test_configured_services_counts_dns_order_across_two_interfaces_and_skips_repeats():
+    resolver = ("InterfaceAlias AddressFamily ServerAddresses\n"
+                "Ethernet 3 2 {10.0.1.10, 10.0.2.10}\n"
+                "Ethernet 4 2 {10.0.1.10, 10.0.3.10}\n")
+    rows = hm.configured_services([("Data/TST_discovery_HOSTA01_20260505T011354Z/14_resolver.txt", 0, resolver)], {})
+    assert [(r["server_ip"], r["preference"]) for r in rows] == [
+        ("10.0.1.10", 1), ("10.0.2.10", 2), ("10.0.3.10", 3)]
+
 def test_name_addresses_ignores_a_prose_line_that_lists_many_addresses(tmp_path):
     con = sqlite3.connect(tmp_path / "t.sqlite")
     con.executescript("""create table files(file_id integer, rel_path text);

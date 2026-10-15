@@ -133,6 +133,11 @@ def _layout(model: dict, profile: dict) -> dict:
     return model
 
 
+def _and(items) -> str:
+    items = [str(x) for x in items if x]
+    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1] if items else ""
+
+
 # ------------------------------------------------------------------ overview
 def overview(net: dict, spec: dict, profile: dict, application: str) -> dict:
     profile = resolve_profile(net, profile)
@@ -145,6 +150,9 @@ def overview(net: dict, spec: dict, profile: dict, application: str) -> dict:
             loose.append(n["id"]); continue
         kind, basis = classify(n.get("role", ""), n.get("kind", ""))
         dc = _dc_for_site(n.get("site", ""), profile)
+        shared = (profile.get("shared_servers") or {}).get(n["id"])
+        if shared:                          # the estate register: other applications use this server too
+            kind, basis = "directory", "Estate register: also used by " + _and(shared.get("labels") or shared.get("projects") or [])
         if kind == "directory":
             zone, under = "shared", dc
         elif dc:
@@ -155,7 +163,10 @@ def overview(net: dict, spec: dict, profile: dict, application: str) -> dict:
         else:
             zone, under = "nosite", None
         role = n.get("role") or "Role not recorded"
-        if kind == "directory":
+        if shared:
+            svc = [{"dns": "DNS", "time": "time"}.get(x, x) for x in shared.get("services") or []]
+            role = f"{_and(svc) or 'Enterprise'} server, shared with {_and(shared.get('labels') or shared.get('projects') or [])}"
+        elif kind == "directory":
             role = "Domain controller" + (f", site {n['site']}" if n.get("site") else "")
         ips = [i.strip() for i in re.split(r"[;,]", n.get("ips") or "") if i.strip() and not i.strip().endswith(".0") and not i.strip().startswith("169.254")]
         nodes.append({"id": n["id"], "label": n["id"], "role": role, "kind": kind, "zone": zone, "under": under,

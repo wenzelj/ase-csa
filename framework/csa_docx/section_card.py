@@ -510,8 +510,8 @@ def note_candidates(node: dict, workspace: Path | None, reg: dict | None, rows: 
             if r.get("host") in role_of and (r.get("value") or "").strip():
                 by_attr.setdefault(r["attribute"], {}).setdefault(r["host"], r["value"].strip())
         for attr, vals in sorted(by_attr.items()):
-            if not topic & _note_words(attr.replace("_", " ")):
-                continue
+            if not topic & _note_words(attr.replace("_", " ")) or attr == "dns_resolver: Secondary":
+                continue                            # the secondary only mirrors the primary in a two-server list
             label = " ".join(attr.replace("_", " ").replace(":", " ").split()).lower()
             for g in (reg or {}).get("groups", []):
                 have = {h: vals[h] for h in g["hosts"] if h in vals}
@@ -536,10 +536,149 @@ def note_candidates(node: dict, workspace: Path | None, reg: dict | None, rows: 
             if missing and len(vals) >= 2:
                 out.append({"text": f"{label} is recorded for {len(vals)} of {len(role_of)} captured hosts, "
                                     f"not for {', '.join(missing)}", "ids": []})
+    if card_service(node) == "dns":           # the site pattern first: it says more than one role group
+        out = _dns_order_candidates(Path(workspace), live) + out
     for r in live:
         if r.get("status") == "CONFLICTING" and topic & _note_words(r.get("section", "") + " " + r.get("csa_area", "").replace("_", " ")):
             out.append({"text": f"sources disagree: {' '.join((r.get('claim') or '').split())[:200]}", "ids": [r["evidence_id"]]})
     return out[:limit]
+
+
+SHARED_HEAD = "## Shared enterprise services (other applications in the estate)"
+SERVICE_NAME = {"dns": "DNS", "time": "time"}
+SHARED_IDS = 3                 # other-project rows cited per use: enough to show it, not enough to drown the card
+
+
+def card_service(node: dict) -> str | None:
+    """The enterprise service a card is about: dns (DNS / Name Resolution) or time (Time ...), else None."""
+    t = (node.get("title") or "").lower()
+    if re.search(r"\bdns\b|name resolution", t):
+        return "dns"
+    if re.search(r"\btime\b", t):
+        return "time"
+    return None
+
+
+def shared_services(node: dict, workspace: Path | None, reg: dict | None) -> tuple[list[str], list[dict]]:
+    """(card lines, citable rows) for the servers this system's hosts use for the card's service that other
+    estate members also use. Rows are the other members' evidence, as context only (<project>:E-nnn)."""
+    svc = card_service(node)
+    if not workspace or not svc:
+        return [], []
+    try:
+        from csa_docx import estate
+        from csa_docx.answer_sheet import load_matrix
+    except ImportError:
+        return [], []
+    key = estate.key_for_work_dir(Path(workspace) / "csa-work")
+    uses = estate.uses_for(key, svc) if key else []
+    if not uses:
+        return [], []
+    matrix = load_matrix(Path(workspace) / "csa-work" / "evidence-matrix.csv")
+    total = (reg or {}).get("total") or 0
+    lines = ["", SHARED_HEAD, "",
+             "Other applications in the estate use these servers too. This is context about those applications, not this "
+             "system's evidence: cite their rows (<project>:E-nnn) only in narrative and note blocks, with the project in "
+             "the fact's scope (CROSS_PROJECT_ONLY, CROSS_PROJECT_SCOPE).", ""]
+    rows, seen = [], set()
+    for u in uses:
+        mine = u["mine"]
+        of = f" of this system's {total} captured hosts" if total else " of this system's captured hosts"
+        line = (f"- {u['server']} ({u['ips'].replace(';', ', ')}): {SERVICE_NAME[svc]} for {mine['clients']}{of} "
+                f"({mine['preference']}).")
+        for o in u["others"]:
+            every = [i for i in (o.get("evidence_ids") or "").split(";") if i]
+            ids = every[:SHARED_IDS]
+            more = f" and {len(every) - len(ids)} more" if len(every) > len(ids) else ""
+            line += (f" Also used by {estate.label_of(o['project'])} ({o['project']}): {o['clients']} host(s), "
+                     f"{o['preference']}" + (f" (for example {', '.join(ids)}{more})" if more else f" ({', '.join(ids)})" if ids else "") + ".")
+            for i in ids:
+                r = matrix.get(i.upper())
+                if r and i.upper() not in seen:
+                    seen.add(i.upper())
+                    rows.append({"id": i, "status": r.get("status", ""), "claim": " ".join((r.get("claim") or "").split())[:EXCERPT],
+                                 "source": (r.get("source_title") or "")[:160],
+                                 "note": f"other application: {estate.label_of(o['project'])}"})
+        lines.append(line)
+    return lines, rows
+
+
+def _primaries(work_dir: Path) -> dict[str, tuple[str, str]]:
+    """{host: (site, primary DNS server)} for a project's captured hosts (hosts.csv + host_services.csv)."""
+    import csv
+    hosts = Path(work_dir) / "hosts"
+    if not (hosts / "host_services.csv").is_file() or not (hosts / "hosts.csv").is_file():
+        return {}
+    with (hosts / "hosts.csv").open(encoding="utf-8-sig", newline="") as fh:
+        site = {r["host"]: (r.get("site") or "").strip() for r in csv.DictReader(fh)
+                if (r.get("capture") or "").strip() and (r.get("in_scope") or "") != "peer"}
+    out = {}
+    with (hosts / "host_services.csv").open(encoding="utf-8-sig", newline="") as fh:
+        for r in csv.DictReader(fh):
+            if r.get("service") == "dns" and str(r.get("preference")) == "1" and site.get(r.get("client_host")):
+                out[r["client_host"]] = (site[r["client_host"]], r.get("server_host") or r.get("server_ip"))
+    return out
+
+
+def _majority(servers: list[str], least: int = 2, share: float = 0.5) -> str | None:
+    counts: dict[str, int] = {}
+    for x in servers:
+        counts[x] = counts.get(x, 0) + 1
+    ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    if not ranked or ranked[0][1] < least or (len(ranked) > 1 and ranked[0][1] == ranked[1][1]) \
+            or ranked[0][1] / len(servers) <= share:
+        return None
+    return ranked[0][0]
+
+
+def _dns_order_candidates(workspace: Path, rows: list[dict]) -> list[dict]:
+    """Hosts whose primary DNS server differs from the one most hosts of their site use. A site this project's
+    own hosts split evenly is compared with the same site in the other estate applications (context only:
+    their evidence is cited as <project>:E-nnn)."""
+    wd = Path(workspace) / "csa-work"
+    mine = _primaries(wd)
+    q = {r.get("question", ""): r["evidence_id"] for r in rows}
+    by_site: dict[str, dict[str, str]] = {}
+    for h, (st, srv) in mine.items():
+        by_site.setdefault(st, {})[h] = srv
+    others: dict[str, list[tuple[str, str, str]]] = {}    # site -> [(project, host, server)]
+    try:
+        from csa_docx import estate
+        for k, owd in estate.citable_projects(wd).items():
+            if estate.estate_of(k):
+                for h, (st, srv) in _primaries(owd).items():
+                    others.setdefault(st, []).append((k, h, srv))
+    except ImportError:
+        estate = None
+    out = []
+    for st, hs in sorted(by_site.items()):
+        main = _majority(list(hs.values()))
+        if main:
+            for h in sorted(x for x, srv in hs.items() if srv != main):
+                ids = [i for i in [q.get(f"Which DNS servers is {h} configured to use?")] if i]
+                out.append({"text": f"{st}: {sum(1 for v in hs.values() if v == main)} of {len(hs)} captured hosts use {main} "
+                                    f"as their primary DNS server, but {h} uses {hs[h]}", "ids": ids})
+            continue
+        ext = others.get(st, [])
+        emain = _majority([srv for _, _, srv in ext], least=3, share=0.75)
+        if not emain or estate is None:
+            continue
+        odd = sorted(h for h, srv in hs.items() if srv != emain)
+        if not odd:
+            continue
+        projs = sorted({k for k, _, srv in ext if srv == emain})
+        labels = " and ".join(estate.label_of(k) for k in projs)
+        prow = {r.get("question", ""): f"{k}:{r['evidence_id']}" for k in projs
+                for r in estate._read(estate.citable_projects(wd)[k] / "evidence-matrix.csv")}
+        ext_ids = [prow[f"Which DNS servers is {h} configured to use?"] for k, h, srv in sorted(ext)
+                   if srv == emain and f"Which DNS servers is {h} configured to use?" in prow][:2]
+        own_ids = [q[f"Which DNS servers is {h} configured to use?"] for h in odd if f"Which DNS servers is {h} configured to use?" in q]
+        n = sum(1 for _, _, srv in ext if srv == emain)
+        out.append({"text": f"{st}: this system's captured hosts split between primary DNS servers, but {n} of {len(ext)} "
+                            f"{st} hosts in {labels} ({', '.join(projs)}) use {emain} first; {', '.join(odd)} use "
+                            f"{', '.join(sorted({hs[h] for h in odd}))} first",
+                    "ids": own_ids + ext_ids})
+    return out
 
 
 def system_name(workspace: Path | None) -> str:
@@ -583,10 +722,20 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
     extra = scope_extras(node)
     kinds = sorted({q["kind"] for q in qs if q["kind"] != "comment"})
     reg = host_register(workspace) if evidence else None
+    shared_lines, shared_rows = shared_services(node, workspace, reg) if evidence else ([], [])
+    for q in qs:                 # other applications' rows join the table and note packs, so the answer may cite them
+        if q["kind"] in ("observation", "note") and q["id"] in pack and shared_rows:
+            have = {r["id"].upper() for r in pack[q["id"]]["rows"]}
+            pack[q["id"]]["rows"] += [dict(r) for r in shared_rows if r["id"].upper() not in have]
     note_qs = [q for q in qs if q["kind"] == "note" and q["id"] in pack]
     if note_qs:
         all_rows = _matrix_rows(workspace)
         by_id = {r["evidence_id"].upper(): r for r in all_rows}
+        try:
+            from csa_docx.estate import peer_rows
+            by_id.update({k.upper(): {**r, "evidence_id": k} for k, r in peer_rows(Path(workspace) / "csa-work").items()})
+        except ImportError:
+            pass
         cands = note_candidates(node, workspace, reg, all_rows)
         for q in note_qs:
             p = pack[q["id"]]
@@ -640,6 +789,7 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
             lines.append(f"- {fact} (section {sec}; {ev}; for {', '.join(qids)})")
     if reg and reg["groups"]:
         lines += _register_lines(reg)
+    lines += shared_lines
     if pack:
         lines += ["", "## Evidence pack", "",
                   "These rows are worded the way the source records them (\"The system matrix records X as ...\"). "

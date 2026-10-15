@@ -38,12 +38,14 @@ from pathlib import Path
 
 _BLOCK = re.compile(r"^##\s+([BC]\d+)\b[^\n]*$", re.M)
 _FIELD = re.compile(r"^(Facts|Text|Unknown|Rating reason|Rating|Rows|Bullets|Search|Keep|Answer|Dropped|None):\s*(.*)$", re.I)
-_ID = r"(?:E-\d+|K-[0-9A-F]{6})"
+_PFX = r"(?:[a-z0-9][a-z0-9-]*:)?"                # another project's row: utcdtc:E-041 (estate member or system sibling)
+_ID = r"(?:" + _PFX + r"E-\d+|K-[0-9A-F]{6})"
 _FACT = re.compile(r"^[-*]\s+(?P<text>.+?)\s*(?:\((?P<ids>" + _ID + r"(?:\s*,\s*" + _ID + r")*)\))?\s*(?:\{(?P<meta>[^}]*)\})?\s*$")
-_EID = re.compile(r"\bE-\d+\b")
+_EID = re.compile(r"(?<![\w:-])" + _PFX + r"E-\d+\b")
+_XID = re.compile(r"^([a-z0-9][a-z0-9-]*):E-\d+$", re.I)   # a prefixed (other project's) ID
 _KID = re.compile(r"\bK-[0-9A-F]{6}\b")           # background knowledge passages, never evidence (knowledge.py)
 _QWORD = re.compile(r"\b(whether|which|what|how|where|who|when)\b", re.I)   # question clauses in an Unknown line
-_ANYID = re.compile(r"\b" + _ID + r"\b")
+_ANYID = re.compile(r"(?<![\w:-])" + _ID + r"\b")
 _HOST = re.compile(r"\b(?=[A-Z0-9]*\d)[A-Z][A-Z0-9]{6,}\b")
 _IP = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}(?:/\d{1,2})?\b")
 BASES = ("observed", "documented", "stated", "background")
@@ -118,10 +120,23 @@ def parse(text: str) -> dict[str, dict]:
 # ---------------------------------------------------------------- validate
 
 def load_matrix(path: Path | None) -> dict[str, dict]:
+    """This project's rows (E-nnn), plus the rows of the projects it may cite as <PROJECT>:E-nnn (estate members
+    and system siblings, csa_docx.estate.citable_projects). Keys are upper case."""
     if not path or not Path(path).is_file():
         return {}
     with Path(path).open(newline="", encoding="utf-8-sig") as fh:
-        return {r["evidence_id"].upper(): r for r in csv.DictReader(fh)}
+        out = {r["evidence_id"].upper(): r for r in csv.DictReader(fh)}
+    try:
+        from csa_docx.estate import peer_rows
+    except ImportError:
+        return out
+    out.update({k.upper(): v for k, v in peer_rows(Path(path).parent).items()})
+    return out
+
+
+def _prefix(i: str) -> str | None:
+    m = _XID.match(i or "")
+    return m[1].lower() if m else None
 
 
 def _f(level: str, code: str, qid: str | None, message: str) -> dict:
@@ -180,7 +195,7 @@ def count_mismatch(text: str) -> str | None:
 
 #: Draft lane (pre-V1): only these stop a sheet from being written into the document; every other ERROR is
 #: reported as a WARN and left for the next pass or the V1 change lane.
-HARD_CODES = {"NOTE_TOO_LONG", "NOTE_NONE_AND_TEXT", "NOTE_NO_FACTS", "CAPTURE_DROPPED", "UNKNOWN_BUNDLED", "BACKGROUND_AS_EVIDENCE", "BACKGROUND_MIXED", "BACKGROUND_NOT_ON_CARD", "BACKGROUND_ALONE", "QUESTION_MISSING", "EMPTY_ANSWER", "FACT_NO_EVIDENCE", "UNKNOWN_EVIDENCE", "RATING_INVALID",
+HARD_CODES = {"CROSS_PROJECT_ONLY", "NOTE_TOO_LONG", "NOTE_NONE_AND_TEXT", "NOTE_NO_FACTS", "CAPTURE_DROPPED", "UNKNOWN_BUNDLED", "BACKGROUND_AS_EVIDENCE", "BACKGROUND_MIXED", "BACKGROUND_NOT_ON_CARD", "BACKGROUND_ALONE", "QUESTION_MISSING", "EMPTY_ANSWER", "FACT_NO_EVIDENCE", "UNKNOWN_EVIDENCE", "RATING_INVALID",
               "COLUMNS", "ROW_WIDTH", "NO_ROWS", "REQUIREMENT_NO_FACTS", "SEMICOLON", "PROCESS_AS_SUBJECT",
               "CITATION_OFF_TOPIC"}
 
@@ -452,6 +467,30 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
         cited = {i.upper() for fact in b["facts"] for i in fact["ids"] if _EID.fullmatch(i)}
         cited |= {i.upper() for row in b["rows"] for c in row for i in _EID.findall(c)}
         cited |= {i.upper() for x in b["bullets"] for i in _EID.findall(x)}
+        # another project's evidence (estate member or system sibling) is context about that project's hosts
+        for fact in b["facts"]:
+            pf = sorted({_prefix(i) for i in fact["ids"]} - {None})
+            low = (fact["scope"] or "").lower()
+            missing = [x for x in pf if not re.search(rf"(?<![\w-]){re.escape(x)}\s*:", low)]
+            if missing:
+                findings.append(_f("ERROR", "CROSS_PROJECT_SCOPE", qid,
+                                   f"the fact cites {', '.join(missing)} evidence: name that project in its scope, e.g. "
+                                   f"{{observed; {missing[0]}: <its hosts>}}: {fact['text'][:70]}"))
+        own = lambda ids: [i for i in ids if _EID.fullmatch(i) and not _prefix(i)]
+        other = lambda ids: [i for i in ids if _prefix(i)]
+        if q["kind"] == "requirement":
+            ids = [i for f in b["facts"] for i in f["ids"]]
+            if other(ids) and not own(ids):
+                findings.append(_f("ERROR", "CROSS_PROJECT_ONLY", qid,
+                                   "the current state rests only on another project's evidence: state this system's own "
+                                   "evidence, or write Unknown. Another application's rows are context for narrative and note blocks"))
+        if q["kind"] in ("observation", "register"):
+            for row in b["rows"][1:]:
+                ids = [i for c in row for i in _EID.findall(c)]
+                if other(ids) and not own(ids):
+                    findings.append(_f("ERROR", "CROSS_PROJECT_ONLY", qid,
+                                       f"a table row rests only on another project's evidence; the table describes this system: "
+                                       f"{' | '.join(row)[:80]}"))
         for i in sorted(cited):
             if matrix and i not in matrix:
                 findings.append(_f("ERROR", "UNKNOWN_EVIDENCE", qid, f"{i} is not in the evidence matrix"))
@@ -549,7 +588,8 @@ def _sentence(fact: dict) -> str:
     return t if t.endswith((".", "!", "?")) else t + "."
 
 
-_EID_PAREN = re.compile(r"\s*\((?:E-\d+(?:\s*,\s*)?)+\)")
+_EID_PAREN = re.compile(r"\s*\((?:" + _PFX + r"E-\d+(?:\s*,\s*)?)+\)")
+_EID_RUN = re.compile(r"\s*(?<![\w:-])" + _PFX + r"E-\d+\b(?:\s*,\s*" + _PFX + r"E-\d+\b)*")
 _EMPTY_BR = re.compile(r"[\[\(][\s,;]*[\]\)]")
 
 
@@ -560,7 +600,7 @@ def no_ids(s: str) -> str:
     so a cell like "hosts [E-043, E-097]" or "events [E-487]" loses the ID reference without
     leaving ``[,]`` or ``[]`` behind. Brackets that carry real content are left alone."""
     s = _EID_PAREN.sub("", s)
-    s = re.sub(r"\s*\bE-\d+\b", "", s)
+    s = _EID_RUN.sub("", s)
     while True:
         t = _EMPTY_BR.sub("", s)
         t = re.sub(r"\s+([;,.|])", r"\1", t)

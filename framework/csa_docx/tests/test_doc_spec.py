@@ -146,7 +146,8 @@ def test_card_and_answer_sheet_round_trip():
     spec = doc_spec.read(_template())
     node = doc_spec.resolve(spec, "TIME")
     card = section_card.card(node, spec, None, evidence=False)
-    assert [q["kind"] for q in card["questions"]] == ["requirement", "observation", "narrative"]
+    assert [q["kind"] for q in card["questions"]] == ["requirement", "observation", "note", "narrative"]
+    assert [q["id"] for q in card["questions"]] == ["B1", "B2", "B4", "B3"]      # the note is numbered last
     card["evidence"] = {"B1": {"rows": [{"id": "E-1"}, {"id": "E-2"}]}}
     sheet = answer_sheet.parse("""## B1 SEP-TIME-01
 Facts:
@@ -162,6 +163,9 @@ Rows:
 ## B3 Drawbridge Impact
 Facts:
 - Hosts run on their own clocks when isolated. (E-2) {observed; all hosts}
+
+## B4 Discovery Information note
+None: every host fits a row of the table.
 """)
     res = answer_sheet.validate(sheet, card, {"E-1": {"claim": "x"}, "E-2": {"claim": "y"}})
     assert res["status"] == "OK", res
@@ -190,7 +194,7 @@ Rows:
     codes = {f["code"] for f in answer_sheet.validate(bad, card, {"E-1": {"claim": "x"}, "E-9": {"claim": "y"}})["findings"]}
     assert {"BAD_BASIS", "EVIDENCE_NOT_ON_CARD", "SCOPE_OUTSIDE_EVIDENCE", "RATING_INVALID", "RATING_NO_REASON",
             "COLUMNS", "QUESTION_MISSING"} <= codes
-    need = answer_sheet.validate(answer_sheet.parse("## B1\nSearch: w32tm fallback\n## B2\nUnknown: x\n## B3\nUnknown: y\n"), card)
+    need = answer_sheet.validate(answer_sheet.parse("## B1\nSearch: w32tm fallback\n## B2\nUnknown: x\n## B3\nUnknown: y\n## B4\nNone: z\n"), card)
     assert need["status"] == "NEEDS_SEARCH" and need["searches"] == {"B1": ["w32tm fallback"]}
 
 

@@ -41,30 +41,18 @@ should system systems machines machine section""".split())
 
 
 def load_matrix(path: Path | None) -> dict[str, dict]:
-    """This project's evidence rows, plus those of the sibling projects of the same system
-    (hosts/roles.csv kind=system_project) under '<project>:E-nnn'. A fact may cite either."""
+    """This project's evidence rows, plus those of the projects it may cite under '<project>:E-nnn': its system
+    siblings (hosts/roles.csv kind=system_project) and the other members of its estate (PROJECTS.yaml estate:).
+    A sibling's row may support a fact; an estate member's row is context only (answer_sheet CROSS_PROJECT_ONLY)."""
     if not path or not Path(path).is_file():
         return {}
     with open(path, newline="", encoding="utf-8-sig") as fh:
         out = {r["evidence_id"].strip(): r for r in csv.DictReader(fh) if r.get("evidence_id")}
-    roles = Path(path).parent / "hosts" / "roles.csv"
-    if roles.is_file():
-        try:
-            from csa_docx.hostmodel import _project_work_dir
-        except ImportError:
-            return out
-        with roles.open(encoding="utf-8-sig", newline="") as fh:
-            for r in csv.DictReader(fh):
-                if (r.get("kind") or "").strip() != "system_project":
-                    continue
-                key = (r.get("match") or "").strip()
-                wd = _project_work_dir(key)
-                m = wd / "evidence-matrix.csv" if wd else None
-                if m and m.is_file():
-                    with m.open(newline="", encoding="utf-8-sig") as fh2:
-                        for row in csv.DictReader(fh2):
-                            if row.get("evidence_id"):
-                                out[f"{key}:{row['evidence_id'].strip()}"] = row
+    try:
+        from csa_docx.estate import peer_rows
+    except ImportError:
+        return out
+    out.update(peer_rows(Path(path).parent))
     return out
 
 

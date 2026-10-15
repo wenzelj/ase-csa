@@ -1,0 +1,10 @@
+server,fqdn,ips,services,projects,shared,conflicts
+10.40.88.242,,10.40.88.242,dns,utcdtc,no,
+10.88.1.1,,10.88.1.1,dns,utcdtc,no,
+10.88.4.1,,10.88.4.1,dns,utcdtc,no,
+10.89.160.11,,10.89.160.11,dns,tetra-reveloc,no,
+10.89.160.12,,10.89.160.12,dns,tetra-reveloc,no,
+IPTPRDSRV123,,10.89.160.13,time,utcdtc,no,
+IPTPRDSRV224,,10.89.160.45,time,tetra-reveloc,no,
+MOTPRDSRV122,,10.45.228.97,dns;time,utcdtc;iamps-08;tetra-reveloc,yes,
+ROTPRDSRV122,,10.40.228.97,dns;time,utcdtc;iamps-08;tetra-reveloc,yes,

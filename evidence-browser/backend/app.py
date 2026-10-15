@@ -728,7 +728,8 @@ def get_summary(system_key: str) -> dict[str, Any]:
     scope, _ = scope_clause(False, False)
     coverage: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     capture_rows = con.execute(
-        f"SELECT coalesce(f.host,'Documents') host, f.rel_path FROM files f WHERE {scope} AND f.status='indexed'"
+        # a duplicate is still that host's capture file (its text is stored once, under the first copy)
+        f"SELECT coalesce(f.host,'Documents') host, f.rel_path FROM files f WHERE {scope} AND f.status IN ('indexed','duplicate')"
     ).fetchall()
     for row in capture_rows:
         coverage[row["host"]][family(row["rel_path"])] += 1

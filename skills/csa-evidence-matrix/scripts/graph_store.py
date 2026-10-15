@@ -59,7 +59,7 @@ NODE_TYPES = (
 PURDUE_LEVELS = ("0", "1", "2", "3", "3.5", "4", "5", "n/a")
 RELATIONSHIP_TYPES = (
     "conduit", "dependency", "trust", "data-flow", "remote-access",
-    "hosting", "replication", "other",
+    "hosting", "replication", "name-resolution", "time-source", "other",
 )
 CONFIDENCES = ("high", "medium", "low")
 REVIEW_STATES = ("pending", "reviewed", "accepted", "disputed")

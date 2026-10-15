@@ -19,6 +19,9 @@ turns the discovery index into three host-keyed files under
                       no capture, marked as not verified).
 * ``evidence_hosts.csv`` evidence_id -> hosts, derived from each matrix row's text
                       (the append-only matrix is not changed).
+* ``host_services.csv`` the DNS and time servers each host is *configured* to
+                      use (resolver and time-status captures; a DNS or time
+                      server often has no captured connection at all).
 
 ``roles.csv`` (project data, editable) maps host-name patterns to
 system/role/site. Standard library only.
@@ -205,8 +208,111 @@ HOSTTOK_RE = re.compile(r"\b([A-Z][A-Z0-9-]*\d[A-Z0-9-]*)\b")
 MAX_PAIRING_ADDRESSES = 3
 
 
-TIME_REF_RE = re.compile(r"ReferenceId:.*?\(source IP:\s*(\d{1,3}(?:\.\d{1,3}){3})\)")
+TIME_REF_RE = re.compile(r"(?:ReferenceId|Source Id):.*?\(source IP:\s*(\d{1,3}(?:\.\d{1,3}){3})\)")
 TIME_SOURCE_RE = re.compile(r"^\s*Source:\s*([A-Za-z][A-Za-z0-9-]{2,30})(?:\.[A-Za-z0-9.-]+)?\s*$")
+
+
+RESOLVER_ROW_RE = re.compile(r"^(?P<interface>.+?)\s+(?P<family>\d+)\s+\{(?P<servers>[^}]*)\}\s*$")
+RESOLVER_WIN6_DEFAULTS = {"fec0:0:0:ffff::1", "fec0:0:0:ffff::2", "fec0:0:0:ffff::3"}
+
+
+def resolver_servers(text: str) -> list[dict]:
+    """The DNS servers a Get-DnsClientServerAddress table (14_resolver.txt) lists, one row per interface
+    and address family that has any: ``{"interface", "family", "servers", "line", "truncated"}``.
+    ``servers`` keep their preference order within ``{...}``; ``line`` is the row's 0-based index in
+    ``text.splitlines()``; a list PowerShell cut short ("...") keeps the addresses shown and sets
+    ``truncated``. Rows with ``{}``, Loopback Pseudo-Interface rows and the Windows default IPv6
+    servers ``fec0:0:0:ffff::1-3`` are left out. Text without such a table gives []."""
+    out = []
+    for i, line in enumerate(text.splitlines()):
+        if "Loopback Pseudo-Interface" in line:
+            continue
+        m = RESOLVER_ROW_RE.match(line.strip())
+        if not m:
+            continue
+        raw = m.group("servers")
+        servers = [x.strip() for x in raw.replace("...", "").split(",") if x.strip()]
+        servers = [x for x in servers if x.lower() not in RESOLVER_WIN6_DEFAULTS]
+        if not servers:
+            continue
+        family = m.group("family").strip()
+        out.append({"interface": m.group("interface").strip(),
+                    "family": {"2": "IPv4", "23": "IPv6"}.get(family, family),
+                    "servers": servers, "line": i, "truncated": "..." in raw})
+    return out
+
+
+CAPTURE_FOLDER_RE = re.compile(r"^(?P<prefix>[A-Za-z0-9]+)_discovery_(?P<host>[A-Za-z0-9-]+)_(?P<ts>\d{8}T\d{6}Z)$")
+
+
+def _capture_host(rel_path: str):
+    """(host, folder, capture timestamp) if the capture folder name is ``<PREFIX>_discovery_<HOST>_<ts>``,
+    else (None, None, None) -- a folder without a host name is never a host's configuration."""
+    folder = Path(rel_path).parent.name
+    m = CAPTURE_FOLDER_RE.match(folder)
+    if not m:
+        return None, None, None
+    return m["host"].upper(), folder, m["ts"]
+
+
+def configured_services(records, names: dict) -> list[dict]:
+    """One row per (host, service, server, preference) each host is configured to use, read from the
+    capture chunks ``[(rel_path, line_start, text)]``. ``names`` is ``{ip: HOST}`` for addresses already
+    named (register hosts, time sources, domain controllers); an unnamed address keeps an empty host.
+    Per host only the newest capture (largest folder timestamp) counts. DNS preference counts across
+    the host's interfaces in row order, skipping repeats; the time preference is 1. Rows carry their
+    capture line (``<folder>/<file> line N``) and that line's text as the excerpt."""
+    # newest capture wins per (host, file): the resolver and the time status are separate files
+    best = {}                                     # (host, file name) -> (timestamp, rel_path, folder)
+    chunks = defaultdict(list)                    # rel_path -> [(line_start, text)]: a file may span several chunks
+    for rel, start, text in records:
+        host, folder, ts = _capture_host(rel)
+        if not host:
+            continue
+        chunks[rel].append((start or 0, text or ""))
+        k = (host, Path(rel).name)
+        if k not in best or ts > best[k][0]:
+            best[k] = (ts, rel, folder)
+    out = []
+    for (host, fname) in sorted(best):
+        _ts, rel, folder = best[(host, fname)]
+        for start, text in sorted(chunks[rel]):
+            out += _services_from(host, fname, folder, start, text, names)
+    return out
+
+
+def _services_from(host: str, fname: str, folder: str, start: int, text: str, names: dict) -> list[dict]:
+    """configured_services rows from one chunk of one capture file (resolver or time status)."""
+    out = []
+    if "resolver" in fname:
+        for ip, d in _resolver_preferences(text):
+            out.append({"client_host": host, "service": "dns", "server_ip": ip,
+                        "server_host": (names.get(ip) or "").upper(),
+                        "preference": d["preference"], "capture": folder,
+                        "source": f"{folder}/{fname} line {(start or 0) + d['line']}",
+                        "excerpt": d["excerpt"].strip()})
+    else:
+        for ip, name, offset in time_source_pairs(text):
+            out.append({"client_host": host, "service": "time", "server_ip": ip,
+                        "server_host": name, "preference": 1, "capture": folder,
+                        "source": f"{folder}/{fname} line {(start or 0) + offset}",
+                        "excerpt": text.splitlines()[offset].strip()})
+    return out
+
+
+def _resolver_preferences(text: str) -> list[tuple[str, dict]]:
+    """(server address, {"preference", "excerpt", "line"}) in the order the host uses its configured
+    DNS servers: preference counts across the interface rows of ``resolver_servers`` in row order,
+    skipping an address already listed by an earlier interface."""
+    lines = text.splitlines()
+    out, seen = [], set()
+    for row in resolver_servers(text):
+        for ip in row["servers"]:
+            if ip in seen:
+                continue
+            seen.add(ip)
+            out.append((ip, {"preference": len(seen), "excerpt": lines[row["line"]].strip(), "line": row["line"]}))
+    return out
 
 
 def time_source_pairs(text: str) -> list[tuple[str, str, int]]:
@@ -649,6 +755,41 @@ def build(work_dir: Path) -> dict:
         if h in procs and not e["role_source"].startswith("evidence"):
             e["conflicts"].append("role: process list captured but no known module running")
 
+    # 7. configured DNS and time servers per host (resolver and time-status captures, newest capture)
+    names = {ip: h for h, e in reg.items() for ip in e["ips"] if IP_RE.fullmatch(ip)}
+    names.update({ip: v["name"] for ip, v in time_source_addresses(con).items() if ip not in names})
+    try:
+        # a file whose content another file already has is stored once (status 'duplicate', dup_of the
+        # original): it still belongs to its own capture, so read it through the original's chunks
+        chunks = con.execute(
+            "select f.rel_path, m.line_start, cc.c0 from files f "
+            "join chunk_map m on m.file_id = coalesce(f.dup_of, f.file_id) join chunks_content cc on cc.id = m.chunk_id "
+            "where f.status in ('indexed', 'duplicate') and (f.archived = 0 or f.archived is null) "
+            "and (f.rel_path like '%resolver%' or f.rel_path like '%time_status%')").fetchall()
+    except sqlite3.OperationalError:      # an index without text chunks has no resolver or time status to read
+        chunks = []
+    svc_rows = configured_services(chunks, names)
+    # host_facts.csv is written from `facts`, so the resolver rows are added before the hosts/ files go to disk
+    # name the DNS servers with the names the name search gave the addresses (a server's own
+    # register entry wins first); keep the address where no name is proven
+    for r in svc_rows:
+        if r["service"] == "dns" and not r["server_host"]:
+            r["server_host"] = (ip2host.get(r["server_ip"]) or "").upper()
+    for r in sorted(svc_rows, key=lambda x: (x["client_host"], x["service"], int(x["preference"]))):
+        if r["service"] != "dns" or int(r["preference"]) not in (1, 2):
+            continue
+        e = reg.get(r["client_host"])
+        if not e:
+            continue
+        server = r["server_host"] or r["server_ip"]
+        e["sources"].add(Path(r["source"]).name)
+        facts.append({"host": r["client_host"],
+                      "attribute": "dns_resolver: Primary" if int(r["preference"]) == 1 else "dns_resolver: Secondary",
+                      "value": server,
+                      "record": f"{r['capture']}#resolver#{r['source'].rsplit(' ', 1)[-1]}",
+                      "listed_as": "capture",
+                      "source": f"{r['capture']}/{Path(r['source']).name}",
+                      "table": "resolver", "line": r["source"].rsplit(" line ", 1)[-1]})
     out = work_dir / "hosts"
     out.mkdir(exist_ok=True)
     with (out / "hosts.csv").open("w", encoding="utf-8", newline="") as fh:
@@ -671,6 +812,12 @@ def build(work_dir: Path) -> dict:
             if k not in seen:          # the same workbook exists in two folders
                 seen.add(k)
                 w.writerow(f)
+    with (out / "host_services.csv").open("w", encoding="utf-8", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=["client_host", "service", "server_ip", "server_host",
+                                          "preference", "capture", "source", "excerpt"])
+        w.writeheader()
+        for r in svc_rows:
+            w.writerow(r)
     with (out / "host_links.csv").open("w", encoding="utf-8", newline="") as fh:
         w = csv.writer(fh)
         w.writerow(["src_host", "dst_host", "dst_port", "connections", "basis", "source"])
@@ -690,7 +837,7 @@ def build(work_dir: Path) -> dict:
             "evidence_rows": ev["rows"], "evidence_without_host": ev["without_host"],
             "addresses_named": sum(1 for e in reg.values() if any(x.startswith("address ") for x in e["sources"])),
             "addresses_ambiguous": ambiguous,
-            "out": str(out)}
+            "host_services": len(svc_rows), "out": str(out)}
 
 
 def build_addresses(work_dir: Path, reg: dict) -> dict:

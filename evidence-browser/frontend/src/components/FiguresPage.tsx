@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactElement } from "react";
 import { api, fetchJob, submitJob } from "../api";
 import type { ReviewJob } from "../types";
 import "./figures.css";
@@ -186,7 +186,7 @@ function RefreshSummary({ r, open }: { r: { at: string; results: Refreshed[] }; 
 
 /* The agent's markdown, shown plainly: headings, bullets and paragraphs. */
 function Md({ text }: { text: string }) {
-  const out: JSX.Element[] = []; let list: string[] = [];
+  const out: ReactElement[] = []; let list: string[] = [];
   const flush = () => { if (list.length) { out.push(<ul key={out.length}>{list.map((l, i) => <li key={i}>{l}</li>)}</ul>); list = []; } };
   text.split("\n").forEach(line => {
     const t = line.trimEnd();

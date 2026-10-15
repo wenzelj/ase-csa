@@ -633,6 +633,26 @@ def cmd_build(args, project, root):
             con.execute("DELETE FROM files WHERE file_id=?", (fid,))
         stats["removed"] = len(stale)
         changes["removed"] = sorted(r[1] for r in stale)
+        # A duplicate holds no content of its own: it is read through the file it copies (dup_of). When that
+        # file is gone (removed above, or in an earlier build), the copy would have no text at all, so index
+        # it in its own right; further copies of the same content then point at it.
+        orphans = con.execute(
+            "SELECT f.file_id, f.rel_path, f.ext, f.sha1 FROM files f WHERE f.status = 'duplicate' AND NOT EXISTS "
+            "(SELECT 1 FROM files o WHERE o.file_id = f.dup_of AND o.status = 'indexed') ORDER BY f.file_id").fetchall()
+        for fid, rel, ext, sha in orphans:
+            d = con.execute("SELECT file_id FROM files WHERE sha1=? AND status='indexed' AND file_id<>? LIMIT 1",
+                            (sha, fid)).fetchone()
+            if d:
+                con.execute("UPDATE files SET dup_of=? WHERE file_id=?", (d[0], fid))
+                continue
+            path = Path(os.path.normpath(root / rel))
+            try:
+                status, reason = index_file(con, fid, path, ext, Path(rel).name)
+            except Exception as e:  # keep going; record why
+                drop_content(con, fid)
+                status, reason = "error", f"{type(e).__name__}: {e}"[:300]
+            con.execute("UPDATE files SET status=?, reason=?, dup_of=NULL WHERE file_id=?", (status, reason, fid))
+            stats["rehomed"] = stats.get("rehomed", 0) + 1
         if previous:      # a rebuild: compare with the old index instead of reporting every file as new
             added, changed = [], list(changes["changed"])
             for f in changes["added"]:

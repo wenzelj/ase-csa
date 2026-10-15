@@ -32,7 +32,7 @@ def test_requirements_split_into_id_and_wording():
 
 def test_the_brief_asks_what_the_document_asks():
     res = ab.build("3.1", spec=_spec())
-    assert res["status"] == "OK" and res["questions"] == 5 and res["comments"] == 0 and res["key"] == "GEN"
+    assert res["status"] == "OK" and res["questions"] == 6 and res["comments"] == 0 and res["key"] == "GEN"
     t = res["text"]
     assert t.startswith("## Section brief")
     for s in ("**Purpose:**", "**Requirements:** SEP-GEN-01, SEP-GEN-03", "- **Questions:**", "B1 SEP-GEN-01",

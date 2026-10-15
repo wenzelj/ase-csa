@@ -2658,18 +2658,53 @@ def cmd_refresh_draft(a):
     return 1 if failed else 0
 
 
+def cmd_shared(a):
+    """Estate view: the enterprise DNS and time servers this project's hosts share with other projects of its
+    estate (`estate:` in PROJECTS.yaml). build | list | show SERVER."""
+    p = project(a.project)
+    argv = [a.action] + ([a.server] if a.server else []) + ["--project", p["key"]]
+    res = _fw_json("csa_docx.estate", *argv)
+    if getattr(a, "json", False):
+        print(json.dumps(res, indent=2))
+        return 0 if res.get("status") in ("OK", "NONE") else 1
+    if res.get("status") != "OK":
+        print(res.get("message") or res)
+        return 0 if res.get("status") == "NONE" else 1
+    if a.action == "build":
+        print(f"Estate {res['estate']}: {res['servers']} servers, {res['shared']} shared")
+    elif a.action == "list":
+        for s_ in res.get("servers", []):
+            print(f"{s_['server']:<16} {s_['ips']:<18} {s_['services']:<9} {s_['projects']}"
+                  + ("  shared" if s_.get("shared") == "yes" else "") + (f"  ! {s_['conflicts']}" if s_.get("conflicts") else ""))
+    else:
+        s_ = res["server"]
+        print(f"{s_['server']} ({s_['ips']}): {s_['services']}, used by {s_['projects']}"
+              + ("  shared" if s_.get("shared") == "yes" else "") + (f"\n  conflicts: {s_['conflicts']}" if s_.get("conflicts") else ""))
+        for u in res.get("uses", []):
+            print(f"  {u['service']:<5} {u['project']:<16} {u['clients']} host(s), {u['preference']}"
+                  + (f"  ({u['evidence_ids']})" if u.get("evidence_ids") else ""))
+    return 0
+
+
 def cmd_ingest(a):
     """New data in: discovery index (only new or changed files), then graph sync (captures -> matrix rows, nodes,
     edges, host register), then the list of answered subsections whose evidence changed."""
     p = project(a.project); banner(p)
-    print(f"{C['b']}1/3 discovery index{C['0']}")
+    print(f"{C['b']}1/4 discovery index{C['0']}")
     if run_script("index", ["--project", p["key"], "build", *(["--rebuild"] if a.rebuild else [])]) != 0:
         die("the discovery index build failed")
-    print(f"{C['b']}2/3 graph sync (captures, links, hosts){C['0']}")
+    print(f"{C['b']}2/4 graph sync (captures, links, configured DNS and time servers, hosts){C['0']}")
     gs = SKILLS / "csa-evidence-matrix" / "scripts" / "graph_sync.py"
     if subprocess.call([framework_python(), str(gs), "--workspace", _ws(p)]) != 0:
         die("graph sync failed")
-    print(f"{C['b']}3/3 stale subsections{C['0']}")
+    if p.get("estate"):
+        print(f"{C['b']}3/4 estate register ({p['estate']}){C['0']}")
+        res = _fw_json("csa_docx.estate", "build", "--project", p["key"])
+        print(f"Estate {res.get('estate')}: {res.get('servers')} servers, {res.get('shared')} shared"
+              if res.get("status") == "OK" else f"{C['y']}estate register not rebuilt: {res.get('message', res)}{C['0']}")
+    else:
+        print(f"{C['d']}3/4 estate register: this project has no estate{C['0']}")
+    print(f"{C['b']}4/4 stale subsections{C['0']}")
     if a.no_stale:
         return 0
     return cmd_stale(argparse.Namespace(project=a.project, json=False))
@@ -4286,7 +4321,7 @@ def main(argv=None) -> int:
     s = sp("pipeline", cmd_pipeline); s.add_argument("section"); s.add_argument("--limit", type=int)
     s.add_argument("--max-batches", type=int, default=50); agent_opts(s)
     sp("close-word", cmd_close_word, help="save and close the working DOCX in Word if it is open, then go on")
-    s = sp("ingest", cmd_ingest, help="new data in: discovery index, graph sync (matrix, hosts, links), then stale subsections")
+    s = sp("ingest", cmd_ingest, help="new data in: discovery index, graph sync (matrix, hosts, links), estate register, then stale subsections")
     s.add_argument("--rebuild", action="store_true", help="rebuild the discovery index from scratch")
     s.add_argument("--no-stale", action="store_true", help="skip the stale check")
     s = sp("stale", cmd_stale, help="answered subsections whose evidence changed since their answer (no model)")
@@ -4299,6 +4334,9 @@ def main(argv=None) -> int:
     agent_opts(s); s.add_argument("--fresh", action="store_true")
     s = sp("freeze", cmd_freeze, help="csa freeze v1: baseline copy of the DOCX and switch the project to the V1 change lane")
     s.add_argument("stage")
+    s = sp("shared", cmd_shared, help="estate view: DNS and time servers shared with other projects of the estate (build | list | show SERVER)")
+    s.add_argument("action", nargs="?", default="list", choices=["build", "list", "show"])
+    s.add_argument("server", nargs="?"); s.add_argument("--json", action="store_true")
     s = sp("hosts", cmd_hosts, help="host register, facts per host and host-to-host links (build | list | show HOST | links [HOST] | group --attr ... | roles [--fix])")
     s.add_argument("action", nargs="?", default="list", choices=["build", "list", "show", "links", "group", "graph", "unresolved", "system", "evidence", "roles"])
     s.add_argument("host", nargs="?"); s.add_argument("--attr", action="append"); s.add_argument("--system")

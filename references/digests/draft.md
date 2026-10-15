@@ -10,7 +10,8 @@ The card (`CARD=`) is your whole input. Write the answer sheet (`SHEET=`) once a
 - Requirement blocks: `Facts:`, `Text:` (the current state, one to three sentences), `Rating:` (one of the card's ratings) and `Rating reason:` (one sentence).
 - Table blocks: `Rows:` starts with the header row exactly as the card gives the columns, then one row per item. Evidence IDs go in brackets in the last cell, and the framework strips them.
 - Findings blocks: `Bullets:` with one finding per bullet.
-- The optional note under a table (a `note` question): either `None: <why>`, which removes the placeholder, or one or two sentences in `Facts:` (and `Text:` in the draft lane) for a fact the table rows cannot show: a host or role group that differs from the others in its group, sources that disagree, or evidence that covers fewer hosts than the table. Start from the card's "Note candidates". Facts only: no rating, risk or recommendation, and never a repeat of a row (NOTE_TOO_LONG, NOTE_NONE_AND_TEXT, NOTE_NO_FACTS, NOTE_NOT_A_FACT, NOTE_REPEATS_ROW).
+- The optional note under a table (`note`): `None: <why>` removes it, or one or two evidenced sentences of a fact the rows cannot show (a host unlike its group, sources that disagree, fewer hosts covered). Start from the card's "Note candidates". Facts only, never a repeat of a row.
+- Another application's rows (`<project>:E-nnn`, from "Shared enterprise services") are context: only in narrative and note blocks, with that project in the scope (`{observed; utcdtc: 8 hosts}`). Never the only support of a current state or table row (CROSS_PROJECT_ONLY).
 - `Unknown:` is one sentence holding one question: what is not known and who could confirm it. Several open points get several `Unknown:` lines, one each, so each becomes its own Discovery Required item (UNKNOWN_BUNDLED). `Keep:` means the current text already answers the question correctly. `Search: <host, service, file>` asks for more evidence once, and only when a specific search would settle it.
 
 ## Never infer
@@ -39,6 +40,6 @@ The card (`CARD=`) is your whole input. Write the answer sheet (`SHEET=`) once a
 
 ## Hard errors (the only ones that stop the write)
 
-QUESTION_MISSING, EMPTY_ANSWER, FACT_NO_EVIDENCE, UNKNOWN_EVIDENCE, RATING_INVALID, COLUMNS, ROW_WIDTH, NO_ROWS, REQUIREMENT_NO_FACTS, NOTE_TOO_LONG, NOTE_NONE_AND_TEXT, NOTE_NO_FACTS, SEMICOLON, PROCESS_AS_SUBJECT, CITATION_OFF_TOPIC, CAPTURE_DROPPED, UNKNOWN_BUNDLED and the BACKGROUND_ codes. Everything else is reported as a warning. `csa check-change` does not run in the draft lane.
+QUESTION_MISSING, EMPTY_ANSWER, FACT_NO_EVIDENCE, UNKNOWN_EVIDENCE, RATING_INVALID, COLUMNS, ROW_WIDTH, NO_ROWS, REQUIREMENT_NO_FACTS, CROSS_PROJECT_ONLY, NOTE_TOO_LONG, NOTE_NONE_AND_TEXT, NOTE_NO_FACTS, SEMICOLON, PROCESS_AS_SUBJECT, CITATION_OFF_TOPIC, CAPTURE_DROPPED, UNKNOWN_BUNDLED and the BACKGROUND_ codes. Everything else is reported as a warning. `csa check-change` does not run in the draft lane.
 
 Do not open other rule files. Report in two lines: questions answered, questions unknown.
