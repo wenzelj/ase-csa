@@ -5,7 +5,7 @@ Design (see README "Figure design"):
   * three full-width bands in Purdue order: IT and Internet at the top, the IT / OT boundary in the middle, OT
     at the bottom; every line out of OT visibly crosses the boundary band;
   * the boundary band holds the systems whose recorded role is a boundary function (jump host, firewall,
-    remote access); when lines cross with no boundary control evidenced, it holds a "None evidenced" marker;
+    remote access); when lines cross with no boundary control evidenced, it holds a "Boundary device: Not captured" marker;
   * OT sites (data centres, other sites, site not recorded, OT-resident services) are panels inside the OT band;
   * one tile per machine role in a site: a large icon, the role in bold, the host names small underneath, and a
     count when several hosts share the role; connections inside one tile are not drawn;
@@ -384,8 +384,8 @@ def render_band_svg(model: dict, band_of: dict | None = None, conduits: bool = F
                         for l in lines)
     if crossing_risk and not any(t["kind"] == "firewall" for t in tiles.values()):
         key = "boundary|boundary|gap|control"
-        tiles[key] = {"id": key, "band": "boundary", "sub": "boundary", "kind": "gap", "role": "Boundary control",
-                      "hosts": [], "labels": ["None evidenced"], "gap": True, "sites": []}
+        tiles[key] = {"id": key, "band": "boundary", "sub": "boundary", "kind": "gap", "role": "Boundary device",
+                      "hosts": [], "labels": ["Not captured"], "gap": True, "sites": [], "gap_text": "Not captured"}
         if "boundary" not in subs["boundary"]:
             subs["boundary"].append("boundary")
 

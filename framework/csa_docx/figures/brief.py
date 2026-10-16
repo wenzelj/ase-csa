@@ -269,11 +269,11 @@ def _paths(row, reqs, sentences, ev, model) -> dict:
                 caption = (f"{len(edges)} captured flows cross a zone boundary; a boundary firewall is evidenced in the register "
                            "but no captured flow has a recorded firewall address")
             else:
-                caption = (f"{len(edges)} captured flow{'s' if len(edges) != 1 else ''} cross a zone boundary; no boundary control is evidenced on "
-                           f"{'any of them' if u == len(edges) else f'{u} of them'}")
+                caption = (f"Captured flows that cross a zone boundary; the boundary devices on "
+                           f"{'them' if u == len(edges) else 'some of them'} are not in the captures")
         else:
             caption = "No captured flow crosses a zone boundary"
-        purpose = "Shows the captured flows that cross a zone boundary, and whether a boundary control is evidenced on each."
+        purpose = "Shows the captured flows that cross a zone boundary, and whether a boundary device is captured on each."
     else:
         jumps = [n["label"] for n in model.get("nodes", []) if n.get("kind") == "jump_host"]
         d = sum(1 for e in edges if e["status"] == "direct")

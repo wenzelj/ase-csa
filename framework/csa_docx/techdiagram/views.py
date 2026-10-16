@@ -179,7 +179,7 @@ def conduit_view(over: dict, prof: dict, *, key: str, title: str, subtitle: str,
         guarded = any(kinds.get(x) == "firewall" for x in (e["s"], e["t"]))
         keep.append({**e, "status": "observed" if guarded else "unenforced",
                      "detail": {**(e.get("detail") or {}), "zones": f"{a} ↔ {b}",
-                                "boundary control": "a boundary device is on this path" if guarded else "none in the evidence"}})
+                                "boundary control": "a boundary device is on this path" if guarded else "not in the captures"}})
     used = {x for e in keep for x in (e["s"], e["t"])} | _zone_hosts(keep, over)
     groups = [g for g in over.get("groups", []) if g["id"] in used or set(g["members"]) & used]
     gmem = {m for g in groups for m in g["members"]}
@@ -197,8 +197,8 @@ def conduit_view(over: dict, prof: dict, *, key: str, title: str, subtitle: str,
             notes.append("A boundary firewall is recorded in the register (" + register_only_fw[0]["role"] + ") "
                          "but its address was not captured, so no individually drawn path is shown crossing it.")
         else:
-            notes.append("No firewall, proxy or other boundary device appears in the evidence on these paths. "
-                         "Each red line crosses a zone boundary with no boundary control evidenced.")
+            notes.append("No firewall, proxy or other boundary device is in the discovery captures on these paths, "
+                         "so whether each crossing is controlled is not known from the evidence.")
     if not keep:
         notes.append("No captured flow crosses a zone boundary for this question.")
     view = {"id": f"figure-{key.lower()}", "title": title, "subtitle": subtitle, "zones": over["zones"], "groups": groups,
