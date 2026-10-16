@@ -399,6 +399,32 @@ def load(work_dir: Path) -> list[dict]:
     return list(csv.DictReader(f.open(encoding="utf-8"))) if f.is_file() else []
 
 
+def peer_hints(rows: list[dict], sigs: list[dict] | None = None) -> dict[str, dict]:
+    """{peer: {"role", "hint", "flows"}} for ends with no role in the register whose flows match a product
+    signature that names the role of the opening side (opener_role) or the listening side (listener_role).
+    Background only: the hint says what to confirm, it never becomes the peer's role. Declared rows are skipped."""
+    sigs = signatures() if sigs is None else sigs
+    seen: dict[str, dict] = {}
+    for r in rows:
+        if r.get("status") == "declared":
+            continue
+        sig = signature_for(r.get("dst_process", ""), r.get("port", ""), sigs)
+        for end, role_key, known in (("src", "opener_role", r.get("src_role")), ("dst", "listener_role", r.get("dst_role"))):
+            peer = r.get(end, "")
+            if not peer or known:
+                continue
+            d = seen.setdefault(peer, {"roles": set(), "flows": [], "confirm": ""})
+            if sig and sig.get(role_key):
+                d["roles"].add(sig[role_key]); d["flows"].append(r["flow_id"]); d["confirm"] = d["confirm"] or sig.get("confirm", "")
+    out = {}
+    for peer, d in seen.items():
+        if len(d["roles"]) == 1:
+            role = next(iter(d["roles"]))
+            out[peer] = {"role": role, "flows": d["flows"],
+                         "hint": f"Likely {role}, confirm: {d['confirm']}" if d["confirm"] else f"Likely {role}, confirm"}
+    return out
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)

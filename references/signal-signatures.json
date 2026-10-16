@@ -5,6 +5,7 @@
    "process": "agentService",
    "port": "7000",
    "mechanism": "backup agent",
+   "opener_role": "Dell PowerProtect Data Manager server",
    "means": "Dell PowerProtect Data Manager (PPDM) agent service, which the PPDM server connects in to for backups",
    "confirm": "which system connects in on TCP 7000, whether it is the backup platform, and which data it copies out"
   },
