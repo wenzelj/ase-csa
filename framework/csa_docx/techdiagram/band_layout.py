@@ -95,6 +95,8 @@ FUNCTIONS.update(FLOW_FUNCTIONS)
 MECH_FAMILY = {"database": "database", "database replication": "database", "file share": "file", "file transfer": "file",
                "backup agent": "backup", "message/API": "message", "web/API": "message", "security agent telemetry": "message",
                "log forwarding": "message", "monitoring": "message", "mail": "mail"}
+MARK_LABEL = {"edr": "EDR", "av": "AV", "tools": "Transfer tools", "usb": "USB not restricted"}
+COMMON_PHRASE = {"edr": "{v} EDR running", "av": "{v} running", "tools": "transfer tools {v}", "usb": "removable storage {v}"}
 DIRECTORY_SVCS = {"DNS", "Time", "NTP", "Kerberos", "LDAP", "LDAPS"}
 MANAGEMENT_SVCS = {"RPC", "SMB", "RDP", "SSH", "WinRM", "VNC", "Telnet", "SNMP", "Syslog", "HealthService", "agentService",
                    "WmiPrvSE", "mstsc"}
@@ -277,9 +279,13 @@ def build(model: dict, band_of: dict | None = None, conduits: bool = False) -> d
         gap = n["kind"] == "gap"
         key = f"{b}|{s}|{n['kind']}|{role}" if not gap else f"{b}|{s}|gap|{n['id']}"
         t = tiles.setdefault(key, {"id": key, "band": b, "sub": s, "kind": n["kind"], "role": role, "hosts": [],
-                                    "labels": [], "gap": gap, "sites": []})
+                                    "labels": [], "gap": gap, "sites": [], "gap_text": n.get("gap_text", "")})
         t["hosts"].append(n["id"])
         t["labels"].append(n["label"])
+        for s_ in n.get("stores") or []:              # data flow figures: the data stores on this role's hosts
+            if s_["what"] not in [x["what"] for x in t.setdefault("stores", [])]:
+                t["stores"].append(s_)
+        t.setdefault("marks", set()).update(k for k in (n.get("marks") or {}) if k not in (model.get("common_marks") or {}))
         if b == "boundary" and n["zone"] in zlabel:
             site = re.sub(r"\s*data centre$", "", zlabel[n["zone"]], flags=re.I)
             if site not in t["sites"]:
@@ -299,7 +305,7 @@ def build(model: dict, band_of: dict | None = None, conduits: bool = False) -> d
         subs[b].sort(key=lambda s: (dcs.index(s) if s in dcs else order.get(s, 50 if s.startswith("site:") else 60), s))
     def sub_label(s):
         if s == "outside":
-            return "Location not captured"
+            return model.get("outside_label") or "Location not captured"
         if s == "shared":
             lab = zlabel.get(s, "")
             return lab if "OT" in lab else "Shared services"
@@ -387,7 +393,7 @@ def render_band_svg(model: dict, band_of: dict | None = None, conduits: bool = F
     for t in tiles.values():
         t["role_lines"] = _wrap(t["role"], CW - 8, F_NAME, True, 2)
         if t["gap"]:
-            host = "None evidenced"
+            host = t.get("gap_text") or "None evidenced"
         elif t["kind"] in ("internal", "internet") and t["hosts"] and t["hosts"][0].startswith("G-"):
             host = t["labels"][0]
         else:
@@ -396,6 +402,10 @@ def render_band_svg(model: dict, band_of: dict | None = None, conduits: bool = F
                 host = f"{sorted(t['labels'])[0]} +{len(t['labels']) - 1}"
         t["host_lines"] = _wrap(host, CW - 4, F_TEXT, False, 2)
         t["h"] = ICON + 6 + LINE_H * (len(t["role_lines"]) + len(t["host_lines"])) + 2
+        t["store_lines"] = [(_wrap(s_["what"], CW - 22, F_TEXT, False, 1)[0], bool(s_.get("flag"))) for s_ in t.get("stores", [])][:3]
+        marks = [MARK_LABEL[k] for k in ("edr", "av", "tools", "usb") if k in t.get("marks", ())]
+        t["mark_lines"] = _wrap(" · ".join(marks), CW - 4, F_TEXT, False, 2) if marks else []
+        t["h"] += LINE_H * (len(t["store_lines"]) + len(t["mark_lines"]))
 
     # pack sub-zones into shelves of columns, tiles row-major inside their sub-zone
     import itertools
@@ -635,7 +645,10 @@ def render_band_svg(model: dict, band_of: dict | None = None, conduits: bool = F
     note = ("Every line crosses a zone boundary with no boundary control evidenced. " if risk == used_status and "unenforced" in risk else "")
     note += ("Arrow: where the data arrives. Ringed dot: the side that opens the connection. ×n: hosts in the role."
              if model.get("flow") else "Arrow: the system that receives. ×n: hosts in the role.")
-    note_lines = _wrap(note, W - 140, F_TEXT, False, 2)
+    cm = model.get("common_marks") or {}
+    if cm:
+        note = "All hosts: " + ", ".join(COMMON_PHRASE[k].format(v=v) for k, v in cm.items() if k in COMMON_PHRASE) + ". " + note
+    note_lines = _wrap(note, W - 140, F_TEXT, False, 3)
     legend_keys = []
     for b in bl:
         if (b["fn"], b["status"]) not in legend_keys:
@@ -741,6 +754,16 @@ def render_band_svg(model: dict, band_of: dict | None = None, conduits: bool = F
             yy += LINE_H
             txt.append(f'<text x="{cx:.1f}" y="{yy - 4:.1f}" font-size="{F_TEXT}" fill="{GAP_COL if t["gap"] else MUTED}" '
                        f'text-anchor="middle">{esc(ln)}</text>')
+        for ln, flag in t.get("store_lines", []):     # a store glyph (cylinder) and the store's name
+            yy += LINE_H
+            gx0, sc_ = x + 4, (GAP_COL if flag else TEAL)
+            txt.append(f'<path d="M{gx0:.1f},{yy - 14:.1f} a6,2.5 0 0,0 12,0 a6,2.5 0 0,0 -12,0 v10 a6,2.5 0 0,0 12,0 v-10" '
+                       f'fill="none" stroke="{sc_}" stroke-width="1.5" data-id="store"/>'
+                       f'<text x="{gx0 + 17:.1f}" y="{yy - 4:.1f}" font-size="{F_TEXT}" fill="{GAP_COL if flag else NAVY}">{esc(ln)}</text>')
+        for ln in t.get("mark_lines", []):
+            yy += LINE_H
+            txt.append(f'<text x="{cx:.1f}" y="{yy - 4:.1f}" font-size="{F_TEXT}" fill="{MUTED}" text-anchor="middle" '
+                       f'data-id="marks">{esc(ln)}</text>')
         o.append(f'<g class="node" data-id="{esc(t["id"])}">{bg}'
                  f'<g transform="translate({cx - ICON / 2:.1f},{y0:.1f}) scale({sc:.4f})" fill="none" stroke="{col}" '
                  f'stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" color="{col}">{ICONS[icon]}</g>'
