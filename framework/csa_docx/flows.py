@@ -19,6 +19,7 @@ Every observed row keeps the capture lines it came from. Standard library only.
 
     python3 -m csa_docx.flows build --work-dir <work_dir>
     python3 -m csa_docx.flows show  --work-dir <work_dir> [--data] [--cross-zone] [--host H]
+    python3 -m csa_docx.flows peers --work-dir <work_dir>     (hosts/unrecorded-peers.csv, for the zones review)
 """
 
 from __future__ import annotations
@@ -425,17 +426,62 @@ def peer_hints(rows: list[dict], sigs: list[dict] | None = None) -> dict[str, di
     return out
 
 
+PEER_FIELDS = ["peer", "side", "ports", "mechanisms", "processes", "talks_to", "flows", "flow_ids", "hint"]
+
+
+def unrecorded_peers(rows: list[dict], hints: dict[str, dict] | None = None) -> list[dict]:
+    """One row per end whose zone is not recorded (zone kind unknown) in observed or attempted flows: which side
+    it is on (opens, receives, both), the ports, mechanisms and processes, the hosts it talks to and the flows."""
+    hints = hints or {}
+    acc: dict[str, dict] = {}
+    for r in rows:
+        if r.get("status") == "declared":
+            continue
+        for end, other, side in (("src", "dst", "opens"), ("dst", "src", "receives")):
+            if r.get(f"{end}_zone_kind") != "unknown":
+                continue
+            d = acc.setdefault(r[end], {"sides": set(), "ports": set(), "mechanisms": set(), "processes": set(),
+                                        "talks_to": set(), "flow_ids": []})
+            d["sides"].add(side); d["ports"].add(str(r.get("port", ""))); d["mechanisms"].add(r.get("mechanism", ""))
+            proc = r.get("dst_process") or r.get("src_process") or ""
+            if proc:
+                d["processes"].add(proc)
+            d["talks_to"].add(r[other]); d["flow_ids"].append(r["flow_id"])
+    out = []
+    for peer, d in acc.items():
+        side = "both" if len(d["sides"]) > 1 else next(iter(d["sides"]))
+        out.append({"peer": peer, "side": side, "ports": ";".join(sorted(d["ports"], key=lambda p: (len(p), p))),
+                    "mechanisms": ";".join(sorted(d["mechanisms"])), "processes": ";".join(sorted(d["processes"])),
+                    "talks_to": ";".join(sorted(d["talks_to"])), "flows": len(d["flow_ids"]),
+                    "flow_ids": ";".join(d["flow_ids"]), "hint": (hints.get(peer) or {}).get("hint", "")})
+    out.sort(key=lambda x: (-x["flows"], x["peer"]))
+    return out
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("build"); s.add_argument("--work-dir", type=Path, required=True)
     s = sub.add_parser("show"); s.add_argument("--work-dir", type=Path, required=True)
     s.add_argument("--data", action="store_true"); s.add_argument("--cross-zone", action="store_true"); s.add_argument("--host")
+    s = sub.add_parser("peers"); s.add_argument("--work-dir", type=Path, required=True)
     a = ap.parse_args(argv)
     if a.cmd == "build":
         out = build(a.work_dir)
         print(json.dumps(out, indent=1))
         return 0 if out["status"] == "OK" else 1
+    if a.cmd == "peers":
+        rows = load(a.work_dir)
+        peers = unrecorded_peers(rows, peer_hints(rows))
+        f = Path(a.work_dir) / "hosts" / "unrecorded-peers.csv"
+        with f.open("w", encoding="utf-8", newline="") as fh:
+            w = csv.DictWriter(fh, fieldnames=PEER_FIELDS)
+            w.writeheader(); w.writerows(peers)
+        for p in peers:
+            print(f"{p['peer']:18} {p['side']:8} ports {p['ports']:14} {p['mechanisms']:28} talks to {p['talks_to']}"
+                  + (f"  [{p['hint']}]" if p["hint"] else ""))
+        print(f"{len(peers)} unrecorded peers written to {f}")
+        return 0
     for r in load(a.work_dir):
         if a.data and r["data"] != "yes":
             continue
