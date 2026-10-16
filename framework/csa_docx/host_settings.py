@@ -176,6 +176,7 @@ def latest_texts(con, like: str, keep_empty: bool = False) -> dict[str, dict]:
 
 
 _DB_SERVICE = re.compile(r"^\s*(MSSQL\$\S+|MSSQLSERVER|MySQL\S*|postgresql\S*|OracleService\S*)\s+(.+?)\s+Running\b", re.I)
+_DB_NAME = re.compile(r"^(MSSQL\$\S+|MSSQLSERVER|MySQL\S*|MariaDB\S*|postgresql\S*|OracleService\S*)$", re.I)
 _DEFAULT_SHARE = re.compile(r"^(?:[A-Z]\$|ADMIN\$|IPC\$|print\$)$", re.I)
 TRANSFER_TOOLS = re.compile(r"\b(WinSCP|FileZilla|Tftpd\d*|SolarWinds TFTP|PuTTY|SuperPuTTY|ExtraPuTTY|Cyberduck|rclone|AzCopy|"
                             r"Core ?FTP|SmartFTP|Bitvise|MobaXterm|TeraCopy|GoodSync|Syncthing|Dropbox|Google Drive|Box Drive)\b", re.I)
@@ -210,6 +211,15 @@ def storage_settings(caps: dict[str, dict[str, dict]]) -> list[dict]:
                     found.append(m.group(2).strip()); offs.append(i); cap0 = cap0 or (cap, lines)
             if found:
                 break
+        if not found:                                # services listed as Win32_Service blocks (Name / DisplayName / State)
+            cap = caps.get("services", {}).get(h)
+            if cap:
+                for b in service_blocks(cap["text"]):
+                    if _DB_NAME.match(b.get("Name", "")) and (b.get("State") or "").lower() == "running":
+                        name = b.get("DisplayName") or b["Name"]
+                        if name not in found:
+                            found.append(name); offs.append(b["_lines"]["Name"])
+                            cap0 = cap0 or (cap, cap["text"].splitlines())
         if not found and (caps.get("sql", {}).get(h) or caps.get("services", {}).get(h)):
             cap = caps.get("sql", {}).get(h) or caps.get("services", {}).get(h)
             out.append(_row(h, "storage.database", "None found", cap, [], cap["text"].splitlines(), "storage"))
