@@ -23,7 +23,7 @@ from csa_docx.techdiagram.print_layout import render_print_svg
 from csa_docx.techdiagram.render import render_svg
 
 
-DRAWING_VERSION = "bands-2"                     # bump when the drawn output changes for the same model
+DRAWING_VERSION = "bands-3"                     # bump when the drawn output changes for the same model
 
 
 class NotBuilt(Exception):
@@ -65,6 +65,12 @@ def draw(row: dict, work_dir: Path, project_key: str, net: dict, spec: dict | No
             m = V.conduit_view(over, prof, key=row["key"], title=p["caption"], subtitle=sub, scope=p.get("scope", "all"))
         else:
             m = V.access_view(over, prof, key=row["key"], title=p["caption"], subtitle=sub)
+    elif p["archetype"] == "F":
+        from csa_docx.figures import flowview as FV
+        prof = M.resolve_profile(net, layout)
+        over = M.overview(net, spec or {}, prof, app)
+        sub = f"{p['question']}" + (f" ({ids})" if ids else "") + ". From the flow inventory and host settings."
+        m = FV.view(work_dir, over, prof, p, key=row["key"], title=p["caption"], subtitle=sub)
     else:
         raise NotBuilt(f"archetype {p['archetype']} is not built yet")
     # which band (IT, boundary, OT) a shared service sits in: the project's residency rule, never guessed

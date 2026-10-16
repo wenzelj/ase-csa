@@ -1,5 +1,5 @@
 {
-  "_about": "What a CSA figure should show, per kind of section. Used by csa_docx/figures (need, brief, draw) and the Evidence Workspace Figures page. Generic for every project: a profile matches a section by its requirement family (the SEP-<FAMILY>-nn IDs in its requirement table) or by its key, never by section number. archetype: A system overview, B service dependency, C zones and conduits, D access path, E numbered flow, none = a table says it better. service: which relationships a B figure draws (csa_docx/figures/relations.py). built: false until that figure kind can be drawn. scope (archetype C): all | internet | transfer, which captured flows the figure keeps.",
+  "_about": "What a CSA figure should show, per kind of section. Used by csa_docx/figures (need, brief, draw) and the Evidence Workspace Figures page. Generic for every project: a profile matches a section by its requirement family (the SEP-<FAMILY>-nn IDs in its requirement table) or by its key, never by section number. archetype: A system overview, B service dependency, C zones and conduits, D access path, E numbered flow, F data flow (stores and directed data flows from hosts/flows.csv and host settings; flows: the flows filter, else from_topic's), none = a table says it better. service: which relationships a B figure draws (csa_docx/figures/relations.py). built: false until that figure kind can be drawn. scope (archetype C): all | internet | transfer, which captured flows the figure keeps.",
   "profiles": [
     {"id": "overview", "keys": ["EXECUTIVE_SUMMARY"], "archetype": "A", "built": true,
      "question": "What the system is and how its parts connect",
@@ -30,10 +30,11 @@
      "question": "Zones, conduits between them, and whether the boundaries are enforced",
      "must_show": ["Zones and sites", "Cross-zone and cross-site flows", "Boundary devices, or a marker where none is evidenced", "Conduits to external networks"],
      "caption": "Zones and conduits of the system"},
-    {"id": "storage-transfer", "families": ["STOR"], "archetype": "C", "built": true, "scope": "transfer",
-     "question": "How data moves between IT and OT, and in which direction",
-     "must_show": ["IT-OT transfer paths with direction (push or pull)", "File shares used"],
-     "caption": "Data transfer between OT and IT"},
+    {"id": "storage-transfer", "families": ["STOR"], "archetype": "F", "built": true, "from_topic": "storage-data-transfer",
+     "flows": {"data": true, "status": ["observed", "both", "declared", "attempted"], "cross_zone": ["yes", "unknown"]},
+     "question": "Where the system holds its data, and how data moves in and out of OT: which side opens each transfer and what is on the path",
+     "must_show": ["Data stores and their zone", "Data flows in and out of OT with the side that opens each one", "Proxies, firewalls or scanning points on the path, or a marker where none is captured", "Transfer tools and removable media"],
+     "caption": "Data stores and data flows in and out of OT"},
     {"id": "admin-access", "families": ["MGT"], "archetype": "D", "built": true,
      "question": "How administrative and SaaS access reaches the vital OT hosts",
      "must_show": ["Jump hosts and gateways", "Admin protocols used (RDP, RPC, SMB)", "Any direct IT path"],

@@ -137,3 +137,95 @@ def controls(edges: list[dict], kinds: dict[str, str] | None = None) -> list[dic
             out.append({"edge": e["id"], "kind": "not captured", "label": "Boundary device not captured",
                         "basis": "the captures do not cover the boundary"})
     return out
+
+
+# ------------------------------------------------------------------ the figure model (archetype F)
+import csv as _csv
+import json as _json
+from pathlib import Path as _Path
+
+TOPIC_TABLES = _Path(__file__).resolve().parents[3] / "references" / "topic-tables"
+BAND_OF_KIND = {"ot": "ot", "it": "it", "internet": "it", "cloud": "it", "vendor": "it", "unknown": "it"}
+
+
+def _settings(work_dir) -> list[dict]:
+    f = _Path(work_dir) / "hosts" / "host_settings.csv"
+    return list(_csv.DictReader(f.open(encoding="utf-8"))) if f.is_file() else []
+
+
+def _register(work_dir) -> set[str]:
+    f = _Path(work_dir) / "hosts" / "hosts.csv"
+    return {r["host"].upper() for r in _csv.DictReader(f.open(encoding="utf-8"))} if f.is_file() else set()
+
+
+def _frame(work_dir, key: str) -> dict | None:
+    try:
+        return _json.loads((_Path(work_dir) / "topic-frames" / f"{key}.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def topic_flows(name: str | None) -> dict | None:
+    """The flows filter of a topic table profile (references/topic-tables/<name>.json), so table and figure agree."""
+    try:
+        return _json.loads((TOPIC_TABLES / f"{name}.json").read_text(encoding="utf-8")).get("flows") if name else None
+    except (OSError, ValueError):
+        return None
+
+
+def view(work_dir, over: dict, prof: dict, p: dict, *, key: str, title: str, subtitle: str) -> dict:
+    """Archetype F: data stores and data flows. p: the figure profile (its "flows" filter, else its topic table's)."""
+    from csa_docx import zones as Z
+    from csa_docx.techdiagram import model as M
+    rows = F.load(work_dir)
+    flt = p.get("flows") or topic_flows(p.get("from_topic")) or {"data": True}
+    es = edges(rows, flt, _register(work_dir), _frame(work_dir, key))
+    zs = Z.for_project(work_dir)
+    hints = F.peer_hints(rows)
+    known = {n["id"]: n for n in over["nodes"]}
+    nodes: dict[str, dict] = {}
+
+    def node(x: str) -> str:
+        if x not in nodes:
+            if x in known:
+                nodes[x] = dict(known[x])
+            else:
+                zk = zs.of(x).get("kind", "unknown")
+                named = not re.fullmatch(r"[\d.:a-fA-F%]+", x)     # a declared end named in the flow map, not an address
+                role = (f"{hints[x]['role']} (likely, confirm)" if x in hints else
+                        "Internet" if zk == "internet" else "Cloud service" if zk == "cloud" else
+                        x if named else "Role not recorded")
+                nodes[x] = {"id": x, "label": x, "kind": {"internet": "internet", "cloud": "cloud"}.get(zk, "server"),
+                            "role": role, "zone": "outside" if zk == "unknown" else ("nosite" if zk == "ot" else "it"),
+                            "band": BAND_OF_KIND.get(zk, "it")}
+        return x
+
+    medges = []
+    for e in es:
+        s, t = node(e["s"]), node(e["t"])
+        base = {"status": e["status"], "mechanism": e["mechanism"], "data": e["data"], "evidence": e["evidence"],
+                "label": e["mechanism"], "detail": {"flows": e["flows"], "ports": e["ports"], "zones": e["zones"],
+                                                     "declared_id": e["declared_id"]}}
+        if e.get("via"):                              # the flow map says the path goes through a proxy or broker
+            v = f"VIA:{e['via']}"
+            nodes.setdefault(v, {"id": v, "label": e["via"], "kind": "server", "role": f"{e['via']} (declared)",
+                                 "zone": "boundary", "band": "boundary"})
+            medges += [{**base, "id": e["id"] + "a", "s": s, "t": v}, {**base, "id": e["id"] + "b", "s": v, "t": t}]
+        else:
+            medges.append({**base, "id": e["id"], "s": s, "t": t})
+    ctl = controls(es, {n["id"]: n.get("kind", "") for n in nodes.values()})
+    if any(c["kind"] == "not captured" for c in ctl):
+        nodes["GAP:boundary"] = {"id": "GAP:boundary", "label": "Boundary device", "kind": "gap", "role": "Boundary device",
+                                 "gap_text": "Not captured", "zone": "boundary", "band": "boundary"}
+    settings = _settings(work_dir)
+    st, mk = stores(settings), markers(settings)
+    for n in nodes.values():
+        n["stores"] = st.get(n["id"], [])
+        n["marks"] = mk.get(n["id"], {})
+    zones = list(over["zones"])
+    if any(n["zone"] == "outside" for n in nodes.values()) and not any(z["id"] == "outside" for z in zones):
+        zones.append({"id": "outside", "label": "Zone not recorded"})
+    model = {"id": f"figure-{key.lower()}", "title": title, "subtitle": subtitle, "zones": zones, "groups": [],
+             "nodes": list(nodes.values()), "edges": medges, "notes": [], "flow": True, "controls": ctl,
+             "common_marks": common({h: m for h, m in mk.items() if h in nodes}), "outside_label": "Zone not recorded"}
+    return M._layout(model, prof)
