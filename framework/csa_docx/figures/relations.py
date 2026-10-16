@@ -53,6 +53,8 @@ def _usable(row: dict) -> bool:
 
 # ---------------------------------------------------------------- time
 ACTIVE_PEER = re.compile(r"^\s*([A-Za-z][A-Za-z0-9-]+):\s*Active NTP peer\s+([A-Za-z0-9.-]+)", re.I)
+# per-host row from a w32tm capture, written in prose: "<HOST> synchronises its time from <PROVIDER> (<ip>)."
+SYNC_FROM = re.compile(r"^\s*([A-Za-z][A-Za-z0-9-]+)\s+synchronises?\s+(?:its|the)\s+time\s+from\s+([A-Za-z0-9.-]+)", re.I)
 PENDING_PEER = re.compile(r"^\s*([A-Za-z0-9.-]+)\s+is configured as a pending peer on\s+(.+?)\.", re.I)
 
 
@@ -62,7 +64,7 @@ def _time(ev: dict) -> list[dict]:
         if not _usable(r):
             continue
         claim = r.get("claim") or ""
-        m = ACTIVE_PEER.match(claim)
+        m = ACTIVE_PEER.match(claim) or SYNC_FROM.match(claim)
         if m:
             out.append({"service": "time", "consumer": m.group(1).upper(), "provider": _short(m.group(2)), "order": 1,
                         "state": "active", "evidence": [r["evidence_id"]], "text": claim})

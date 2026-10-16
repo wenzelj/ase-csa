@@ -121,7 +121,8 @@ def service_view(net: dict, spec: dict, layout: dict, rows: list[dict], *, key: 
 
 
 # ------------------------------------------------------------------ C: zones and conduits
-TRANSFER_PORTS = {"20", "21", "22", "445", "989", "990", "2049", "139"}
+TRANSFER_PORTS = {"20", "21", "22", "445", "989", "990", "2049", "139",
+               "7000"}   # 7000: the recorded agentService backup data path (PPDM) the STOR section asks about
 MAIL_WEB_PORTS = {"25", "465", "587", "80", "443", "8080", "3128"}
 ADMIN_PORTS = {"3389": "RDP", "22": "SSH", "5985": "WinRM", "5986": "WinRM", "135": "RPC", "445": "SMB", "23": "Telnet",
                "5900": "VNC", "443": "HTTPS"}

@@ -259,3 +259,29 @@ def test_print_layout_keeps_text_at_8pt_or_more():
     svg, info = render_print_svg(model)
     assert info["min_text_pt"] >= 8 and info["fits_page"] and 'width="170.0mm"' in svg
     assert "HOSTNAME000–005" in svg and "PROVIDER1" in svg          # one icon for the role, its hosts as a range
+
+
+def test_transfer_scope_keeps_the_recorded_backup_path(tmp_path):
+    from csa_docx.techdiagram import views as V
+    assert "7000" in V.TRANSFER_PORTS                                  # the PPDM agentService data path is a transfer
+    over = {
+        "nodes": [{"id": "ROTPRDPDM101", "kind": "named", "zone": "nosite"},
+                  {"id": "MOTPRDCLU101", "kind": "app_server", "zone": "mky"}],
+        "edges": [
+            {"id": "E1", "s": "ROTPRDPDM101", "t": "MOTPRDCLU101", "dir": "forward", "status": "observed",
+             "detail": {"ports": {"7000": 1}, "hosts": ["MOTPRDCLU101"]}},
+            {"id": "E2", "s": "ROTPRDPDM101", "t": "MOTPRDCLU101", "dir": "forward", "status": "observed",
+             "detail": {"ports": {"135": 1}, "hosts": ["MOTPRDCLU101"]}},
+        ],
+        "groups": [], "notes": [],
+        "zones": [{"id": "nosite", "label": "Site not recorded"},
+                  {"id": "mky", "label": "Mackay"}],
+    }
+    prof = {"data_centres": [{"key": "mky", "label": "Mackay", "sites": ["OT Mackay"]}]}
+    # the model passed to conduit_view has already rolled same-zone ends to Z:<zone>
+    over["edges"][0]["t"] = "Z:mky"
+    over["edges"][1]["t"] = "Z:mky"
+    v = V.conduit_view(over, prof, key="STOR", title="t", subtitle="s", scope="transfer")
+    kept = {(e["s"], e["t"]) for e in v["edges"]}
+    assert ("ROTPRDPDM101", "Z:mky") in kept and "MOTPRDCLU101" in {n["id"] for n in v["nodes"]}
+    assert not any(str(135) in {str(p) for p in (e.get("detail") or {}).get("ports", {})} for e in v["edges"])
