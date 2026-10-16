@@ -116,6 +116,8 @@ def build(row: dict, node: dict, ev: dict, layout: dict, rel_rows: list[dict] | 
         b = _paths(row, reqs, sentences, ev, model or {})
     elif row.get("archetype") == "A":
         b = _overview(row, reqs, sentences, ev, model or {})
+    elif row.get("archetype") == "F":
+        b = _flows(row, reqs, sentences, ev, model or {})
     else:
         b = {"purpose": f"Shows {_lc(row.get('question') or row['title'])}.", "caption": row.get("caption") or row["title"],
              "source": "Source: discovery captures.", "items": [], "gaps": [], "allowed": []}
@@ -292,6 +294,56 @@ def _paths(row, reqs, sentences, ev, model) -> dict:
     source = f"Source: connection captures{(', ' + when) if when else ''}" + (f"; evidence {_ranges(ids)}." if ids else ".")
     return {"purpose": purpose, "caption": caption, "source": source, "items": items, "gaps": gaps, "allowed": allowed}
 
+
+def _flows(row, reqs, sentences, ev, model) -> dict:
+    """F (data flow): one item per data store and per drawn line; gaps for what the captures do not show."""
+    items, gaps, allowed = [], [], set()
+    k = 0
+    for n in model.get("nodes", []):
+        for s in n.get("stores", []):
+            k += 1
+            items.append({"id": f"I{k}", "what": f"{n['id']} holds {s['what']}", "requirements": reqs, "status": "shown",
+                          "evidence": [], "include": True, "section_says": says(sentences, n["id"])})
+    for e in model.get("edges", []):
+        k += 1
+        st = {"declared": " (declared in the flow map, not seen)", "attempted": " (attempted, no reply seen)"}.get(e["status"], "")
+        way = {"to_s": f"data goes to {e['s']}", "to_t": f"data goes to {e['t']}",
+               "both": "data can go either way"}.get(e.get("data"), "data direction not known")
+        ends = [x for x in (e["s"], e["t"]) if not x.startswith(("VIA:", "GAP:"))]
+        items.append({"id": f"I{k}", "what": f"{e['s']} opens {e['mechanism']} connections to {e['t']}, {way}{st}",
+                      "requirements": reqs, "status": "shown", "evidence": list(e.get("evidence", []))[:40], "include": True,
+                      "section_says": says(sentences, *ends) if ends else None})
+        allowed |= {e["s"], e["t"]}
+    allowed |= {n["label"] for n in model.get("nodes", [])}
+    g = 0
+    not_captured = any(c["kind"] == "not captured" for c in model.get("controls", []))
+    if not_captured:
+        g += 1
+        gaps.append({"id": f"G{g}", "what": "Boundary devices (firewalls, proxies, transfer or scanning servers) on the flows that "
+                                            "cross a zone are not in the discovery captures", "requirements": reqs,
+                     "why": f"Needed to show whether the data entering or leaving OT in the {row['number']} figure is controlled or scanned."})
+    unz = sorted({n["id"] for n in model.get("nodes", []) if n.get("zone") == "outside"})
+    if unz:
+        g += 1
+        gaps.append({"id": f"G{g}", "what": "The zone of " + ", ".join(unz[:6]) + (" and other addresses" if len(unz) > 6 else "")
+                                            + " is not recorded", "requirements": reqs,
+                     "why": f"Needed to show whether these flows in the {row['number']} figure cross the IT/OT boundary."})
+    for n in model.get("nodes", []):
+        if "(likely, confirm)" in (n.get("role") or ""):
+            g += 1
+            gaps.append({"id": f"G{g}", "what": f"The role of {n['id']} is not recorded ({n['role']})", "requirements": reqs,
+                         "why": f"Needed to name the system at that end of the {row['number']} figure's flows."})
+    caption = "Data stores and data flows in and out of OT"
+    if not_captured:
+        caption += ". No proxy, firewall or scanning point is captured on the crossing flows"
+    hosts = sorted({n["id"] for n in model.get("nodes", []) if not n["id"].startswith(("VIA:", "GAP:"))})
+    when = _dates(hosts, ev)
+    ids = [i for e in model.get("edges", []) for i in e.get("evidence", [])]
+    source = (f"Source: flow inventory and host settings from the discovery captures{(', ' + when) if when else ''}"
+              + (f"; evidence {_ranges(ids)}." if ids else "."))
+    return {"purpose": "Shows where the system holds its data, the data flows that enter or leave OT, which side opens each "
+                       "one, and what is evidenced on each crossing.",
+            "caption": caption, "source": source, "items": items, "gaps": gaps, "allowed": allowed}
 
 # ------------------------------------------------------------------ wording from an agent or from you
 def wording_check(brief: dict, **texts: str) -> list[str]:
