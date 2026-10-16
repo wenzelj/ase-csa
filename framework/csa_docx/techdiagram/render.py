@@ -21,6 +21,10 @@ STATUS = {  # line style per evidence status
     "unenforced": {"stroke": "#c4432b", "dash": "",        "w": 2.0, "label": "Cross-zone · no control evidenced"},
     "direct":     {"stroke": "#c4432b", "dash": "",        "w": 2.0, "label": "From outside OT · no jump host"},
     "via-jump":   {"stroke": "#1a7f37", "dash": "",        "w": 1.6, "label": "Through a jump host"},
+    # data flow figures (archetype F)
+    "seen":       {"stroke": "#167d8d", "dash": "",        "w": 1.4, "label": "Seen in the captures"},
+    "declared":   {"stroke": "#203a55", "dash": "7 4",     "w": 1.4, "label": "Declared in the flow map, not seen"},
+    "attempted":  {"stroke": "#8c959f", "dash": "2 4",     "w": 1.4, "label": "Attempted, no reply seen"},
 }
 TOP, LEFT = 92, 170          # title strip; left margin holds the tier labels
 ROLE_CH = 34                 # role text that fits on a card at 12.5px

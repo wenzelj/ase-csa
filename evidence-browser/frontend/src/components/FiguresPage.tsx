@@ -239,6 +239,8 @@ function AgentBox({ d, busy, run }: { d: Detail; busy: string; run: (mode: strin
   );
 }
 
+const lastMeaningfulLine = (s?: string): string =>
+  (s || "").split("\n").map(l => l.replace(/[\u001b\u009b][[()#;?]{1,2}[0-9;]*[A-Za-z]/g, "").trim()).filter(Boolean).pop() || (s || "").trim().slice(-240) || "";
 function Panel({ d, busy, job, fit, setFit, openEvidenceId, save, edit, place, reword, designer, system }: {
   d: Detail; busy: string; job: ReviewJob | null; fit: boolean; setFit: (b: boolean) => void; openEvidenceId?: (id: string) => void;
   save: () => void; edit: (b: Record<string, unknown>) => void; place: (drawing: string, layout: string) => void; reword: (cli: string) => void;
@@ -355,7 +357,7 @@ function Panel({ d, busy, job, fit, setFit, openEvidenceId, save, edit, place, r
           <small className="fg-muted">Choose which version of the figure goes into the document. "As printed" is the readable-at-print-width layout; "Screen view" is the on-screen explorer layout. This is separate from Picture vs Word drawing above.</small>
         </div>
         {jobRunning && <div className="fg-note">Running: {job!.operation.replace("figure_", "")} ({job!.state})…</div>}
-        {job && DONE.includes(job.state) && job.state !== "succeeded" && <div className="fg-msg">The job {job.state}: {(job.stderr_tail || job.stdout_tail || job.message || "").slice(-400)}</div>}
+        {job && DONE.includes(job.state) && job.state !== "succeeded" && <div className="fg-msg">The job {job.state}: {lastMeaningfulLine(job.stderr_tail) || lastMeaningfulLine(job.stdout_tail) || job.message || ""}</div>}
         {view === "print" && d.print_svg
           ? <div className="fg-paper"><div className="fg-sheet" dangerouslySetInnerHTML={{ __html: d.print_svg }} />
               {d.print && <small className="fg-muted">In the document: {Math.round(d.print.width_mm)} × {Math.round(d.print.height_mm)} mm at the text width; smallest text {d.print.min_text_pt} pt.</small>}</div>
@@ -364,7 +366,7 @@ function Panel({ d, busy, job, fit, setFit, openEvidenceId, save, edit, place, r
       </>}
       {!d.svg && r.status === "not-built" && <div className="fg-note">This section needs {r.archetype && KIND[r.archetype] ? (/^[AEIOU]/.test(KIND[r.archetype]) ? "an " : "a ") + KIND[r.archetype].toLowerCase() : "a"} figure. Drawing that kind is not built yet, so nothing is drawn.</div>}
       {!d.svg && jobRunning && <div className="fg-note">Running: {job!.operation.replace("figure_", "")} ({job!.state})…</div>}
-      {!d.svg && job && DONE.includes(job.state) && job.state !== "succeeded" && <div className="fg-msg">The job {job.state}: {(job.stderr_tail || job.stdout_tail || job.message || "").slice(-400)}</div>}
+      {!d.svg && job && DONE.includes(job.state) && job.state !== "succeeded" && <div className="fg-msg">The job {job.state}: {lastMeaningfulLine(job.stderr_tail) || lastMeaningfulLine(job.stdout_tail) || job.message || ""}</div>}
       <AgentBox d={d} busy={busy} run={designer} />
 
       {d.svg && <div className="fg-box">

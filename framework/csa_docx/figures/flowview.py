@@ -225,7 +225,13 @@ def view(work_dir, over: dict, prof: dict, p: dict, *, key: str, title: str, sub
     zones = list(over["zones"])
     if any(n["zone"] == "outside" for n in nodes.values()) and not any(z["id"] == "outside" for z in zones):
         zones.append({"id": "outside", "label": "Zone not recorded"})
+    boundary = any(n["zone"] == "boundary" for n in nodes.values())
+    if boundary and not any(z["id"] == "boundary" for z in zones):
+        zones.append({"id": "boundary", "label": "IT / OT boundary"})
     model = {"id": f"figure-{key.lower()}", "title": title, "subtitle": subtitle, "zones": zones, "groups": [],
              "nodes": list(nodes.values()), "edges": medges, "notes": [], "flow": True, "controls": ctl,
              "common_marks": common({h: m for h, m in mk.items() if h in nodes}), "outside_label": "Zone not recorded"}
-    return M._layout(model, prof)
+    model = M._layout(model, prof)
+    if boundary and "boundary" not in model["layout"]["top"]:   # the screen view puts boundary nodes in its top band
+        model["layout"]["top"].append("boundary")
+    return model
