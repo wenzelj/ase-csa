@@ -56,6 +56,8 @@ PORT_CLASS = {
 }
 DATA_MECHANISMS = {"file share", "file transfer", "database", "database replication", "mail", "web/API", "backup agent",
                    "message/API", "security agent telemetry"}
+
+DB_ENGINES = re.compile(r"^(sqlservr|mysqld|mariadbd|postgres|oracle|tnslsnr|mongod)(?:\.exe)?$", re.I)
 _MAP = re.compile(r"^\s*(\S+?):(\d+)\s*->\s*(\S+?):(\d+)\s+PID=(\d+)\s+PROC=(\S+)")
 _LISTEN = re.compile(r"^\s*(\S+)\s+(\d+)\s+(\d+)\s*$")
 _HOST = re.compile(r"\b[A-Z][A-Z0-9]{5,}\d{2,3}\b")
@@ -84,10 +86,18 @@ def signature_for(process: str, port: str, sigs: list[dict]) -> dict | None:
     return None
 
 
-def mechanism(port: str, process: str, sig: dict | None) -> str:
+def mechanism(port: str, process: str, sig: dict | None, listener: str = "", opener: str = "") -> str:
+    """The flow's mechanism: a product signature first, then the service port, then the database engine that
+    listens (listener) and opens (opener) the connection, from the capture's process names."""
     if sig and sig.get("mechanism"):
         return sig["mechanism"]
-    return PORT_CLASS.get(str(port), "other")
+    if str(port) in PORT_CLASS:
+        return PORT_CLASS[str(port)]
+    lm = DB_ENGINES.match(listener or "")
+    if lm:
+        om = DB_ENGINES.match(opener or "")
+        return "database replication" if om and om.group(1).lower() == lm.group(1).lower() else "database"
+    return "other"
 
 
 def listeners(text: str) -> set[str]:
@@ -255,7 +265,7 @@ def build(work_dir: Path, con=None) -> dict:
         proc = r["dst_process"] or r["src_process"]
         sig = signature_for(r["dst_process"], r["port"], sigs) or signature_for(r["src_process"], r["port"], sigs) \
             or signature_for(proc, "", sigs)
-        mech = mechanism(r["port"], proc, sig)
+        mech = mechanism(r["port"], proc, sig, r["dst_process"], r["src_process"])
         if str(r["port"]) in rdp_ports and mech in ("other", "management"):
             mech, sig = "remote administration", {"means": "Remote Desktop on the port the RDP service listens on",
                                                    "confirm": "who uses this RDP path and from where"}
