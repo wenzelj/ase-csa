@@ -87,6 +87,8 @@ def main(argv=None) -> int:
     f.add_argument("--no-png", action="store_true"); f.add_argument("--author")
     f.add_argument("--drawing", choices=["picture", "word"], default="picture",
                    help="--place: picture (the saved PNG) or word (editable Word shapes, same layout)")
+    f.add_argument("--layout", choices=["print", "screen"], default="print",
+                   help="which saved layout to put in the document: print (as printed) or screen (screen view)")
     f.add_argument("--brief-prompt", metavar="OUT", help="print the wording agent's prompt; it writes its JSON to OUT")
     f.add_argument("--wording", metavar="FILE", help="apply the wording agent's JSON (checked first)")
     a = ap.parse_args(argv)
@@ -140,7 +142,7 @@ def main(argv=None) -> int:
         return 0
     if a.place:
         from csa_docx.figures.place import _author_from_cli
-        res = WK.place(ctx, key, a.author or _author_from_cli(AGENTS), drawing=a.drawing)
+        res = WK.place(ctx, key, a.author or _author_from_cli(AGENTS), drawing=a.drawing, layout=a.layout)
         _print(res, a.json, f"{res['status']}: {res.get('message', '')}" + (f"\nBackup: {res['backup']}" if res.get("backup") else ""))
         return 0 if res["status"] == "OK" else 2
     res = WK.figure(ctx, key, save=a.save, png=not a.no_png)

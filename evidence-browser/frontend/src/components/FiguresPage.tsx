@@ -11,7 +11,7 @@ import "./figures.css";
  * from the latest evidence; the figure design agent designs, builds or reviews a figure (csa figure KEY --design). */
 
 type Req = { id: string; text: string; current_state: string; rating: string };
-type Saved = { at?: string; drawn?: string; hash: string; fit?: Record<string, number>; gaps?: number; placed?: { at: string; hash: string; drawing?: string }; docx?: string | null } | null;
+type Saved = { at?: string; drawn?: string; hash: string; fit?: Record<string, number>; gaps?: number; placed?: { at: string; hash: string; drawing?: string; layout?: string }; docx?: string | null } | null;
 type Row = { key: string; number: string; title: string; level: number; status: string; reason: string; profile: string | null;
   archetype: string | null; question?: string; must_show?: string[]; caption?: string; requirements: Req[]; hosts_in_text: string[];
   slot: { placeholder: boolean; caption: string | null } | null; saved: Saved };
@@ -155,7 +155,7 @@ export default function FiguresPage({ system, openEvidenceId }: { system: string
           {!detail ? <p className="fg-muted">{key ? "Drawing from the current evidence…" : "Choose a section."}</p>
             : <Panel d={detail} busy={busy} job={job} fit={fit} setFit={setFit} openEvidenceId={openEvidenceId}
                 save={() => post("save", {}, "save")} edit={b => post("brief", b, "brief")}
-                system={system} place={drawing => run("figure_place", "place", { drawing })} reword={cli => run("figure_wording", "agent", cli ? { cli } : {})}
+                system={system} place={(drawing, layout) => run("figure_place", "place", { drawing, layout })} reword={cli => run("figure_wording", "agent", cli ? { cli } : {})}
                 designer={(mode, cli) => run("figure_design", "design-" + mode, { mode, cli })} />}
         </section>
       </div>
@@ -164,6 +164,8 @@ export default function FiguresPage({ system, openEvidenceId }: { system: string
 }
 
 const DRAWING_KEY = "csa-figure-drawing";
+const LAYOUT_KEY = "csa-figure-layout";
+const readLayout = (): "print" | "screen" => { try { return localStorage.getItem(LAYOUT_KEY) === "screen" ? "screen" : "print"; } catch { return "print"; } };
 const readDrawing = (): "picture" | "word" => { try { return localStorage.getItem(DRAWING_KEY) === "word" ? "word" : "picture"; } catch { return "picture"; } };
 
 const ACTION: Record<string, string> = { created: "Created", redrawn: "Redrawn", unchanged: "Unchanged", "not-built": "Kind not built yet", error: "Error" };
@@ -239,7 +241,7 @@ function AgentBox({ d, busy, run }: { d: Detail; busy: string; run: (mode: strin
 
 function Panel({ d, busy, job, fit, setFit, openEvidenceId, save, edit, place, reword, designer, system }: {
   d: Detail; busy: string; job: ReviewJob | null; fit: boolean; setFit: (b: boolean) => void; openEvidenceId?: (id: string) => void;
-  save: () => void; edit: (b: Record<string, unknown>) => void; place: (drawing: string) => void; reword: (cli: string) => void;
+  save: () => void; edit: (b: Record<string, unknown>) => void; place: (drawing: string, layout: string) => void; reword: (cli: string) => void;
   designer: (mode: string, cli: string) => void; system: string }) {
   const r = d.row, b = d.brief;
   const [draft, setDraft] = useState<{ purpose: string; caption: string } | null>(null);
@@ -247,6 +249,9 @@ function Panel({ d, busy, job, fit, setFit, openEvidenceId, save, edit, place, r
   const [view, setView] = useState<"print" | "screen">("print");
   const [drawing, setDrawingState] = useState<"picture" | "word">(readDrawing);
   const setDrawing = (v: "picture" | "word") => { setDrawingState(v); try { localStorage.setItem(DRAWING_KEY, v); } catch { /* per-browser only */ } };
+  const [layout, setLayoutState] = useState<"print" | "screen">(readLayout);
+  const setLayout = (v: "print" | "screen") => { setLayoutState(v); try { localStorage.setItem(LAYOUT_KEY, v); } catch { /* per-browser only */ } };
+  const placedLayout = d.saved?.placed?.layout === "screen" ? "screen" : "print";
   const placedAs = d.saved?.placed?.drawing === "word" ? "word" : "picture";
   const canPlace = d.freshness === "current" && (d.placement !== "placed" || placedAs !== drawing);
   const fileUrl = (name: string) => `/api/systems/${system}/figures/${r.key}/file/${name}`;
@@ -310,7 +315,7 @@ function Panel({ d, busy, job, fit, setFit, openEvidenceId, save, edit, place, r
               : "Drawn now from the evidence, not saved yet"}
           </span>
           <span className={`fg-fresh ${d.placement === "placed" ? "current" : d.placement === "out-of-date" ? "changed" : "not-saved"}`}>
-            {d.placement === "placed" ? `In the document as ${placedAs === "word" ? "a Word drawing" : "a picture"} (tracked)`
+            {d.placement === "placed" ? `In the document as ${placedAs === "word" ? "a Word drawing" : "a picture"}, ${placedLayout === "screen" ? "screen view" : "as printed"} (tracked)`
               : d.placement === "out-of-date" ? "In the document, out of date" : "Not in the document"}
           </span>
           <span className="fg-tools">
@@ -321,7 +326,7 @@ function Panel({ d, busy, job, fit, setFit, openEvidenceId, save, edit, place, r
             <button className="primary" disabled={!!busy || d.freshness === "current"} onClick={save}>
               {busy === "save" ? "Saving…" : d.freshness === "changed" ? "Save the new version" : d.freshness === "current" ? "Saved" : "Save figure"}
             </button>
-            <button className="primary" disabled={!!busy || !canPlace} onClick={() => place(drawing)}
+            <button className="primary" disabled={!!busy || !canPlace} onClick={() => place(drawing, layout)}
               title="Inserts the figure, caption and source as a tracked change. Accept or reject it in Word.">
               {busy === "place" ? "Putting in document…" : d.placement === "not-placed" ? "Put in document" : "Replace in document"}
             </button>
@@ -340,6 +345,14 @@ function Panel({ d, busy, job, fit, setFit, openEvidenceId, save, edit, place, r
             <a href={fileUrl("figure.docx")} download>Word file (editable drawing)</a>
             <a href={fileUrl("figure-print.svg")} download>SVG</a>
             <a href={fileUrl("figure.png")} download>PNG</a></span>}
+        </div>
+        <div className="fg-drawopt">
+          <span className="fg-label">Layout in the document</span>
+          <span className="fg-seg">
+            <button className={layout === "print" ? "on" : ""} onClick={() => setLayout("print")}>As printed</button>
+            <button className={layout === "screen" ? "on" : ""} onClick={() => setLayout("screen")}>Screen view</button>
+          </span>
+          <small className="fg-muted">Choose which version of the figure goes into the document. "As printed" is the readable-at-print-width layout; "Screen view" is the on-screen explorer layout. This is separate from Picture vs Word drawing above.</small>
         </div>
         {jobRunning && <div className="fg-note">Running: {job!.operation.replace("figure_", "")} ({job!.state})…</div>}
         {job && DONE.includes(job.state) && job.state !== "succeeded" && <div className="fg-msg">The job {job.state}: {(job.stderr_tail || job.stdout_tail || job.message || "").slice(-400)}</div>}

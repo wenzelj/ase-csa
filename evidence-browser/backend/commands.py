@@ -139,7 +139,7 @@ OPERATIONS: dict[str, Operation] = {
     ),
     "figure_place": Operation(
         "figure_place", "Put figure in document", "Insert the saved figure into the working DOCX as a tracked change (approve in Word).",
-        ("figure", "--place"), "required", "section", {"drawing": "identifier"}, timeout=300, mutating=True,
+        ("figure", "--place"), "required", "section", {"drawing": "identifier", "layout": "identifier"}, timeout=300, mutating=True,
         mutation_class="document_write",
         lock="docx", closes_word=True,
     ),
@@ -209,6 +209,8 @@ def build_argv(agents_dir: Path, project_key: str, operation_key: str, request: 
             argv += [flag, _validate_identifier(value, "section")]
     if operation.key == "figure_place" and request.options.get("drawing") not in (None, "picture", "word"):
         raise HTTPException(422, "drawing must be picture or word")
+    if operation.key == "figure_place" and request.options.get("layout") not in (None, "print", "screen"):
+        raise HTTPException(422, "layout must be print or screen")
     if operation.key == "figure_design" and request.options.get("mode") not in (None, "design", "build", "review"):
         raise HTTPException(422, "mode must be design, build or review")
     if operation.key in ("answer", "refresh_draft", "figure_wording", "figure_design", "intake"):

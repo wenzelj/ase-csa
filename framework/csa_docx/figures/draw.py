@@ -104,6 +104,9 @@ def save(row: dict, out: dict, work_dir: Path, png: bool = True) -> dict:
         if src.name.startswith("."):
             src.unlink(missing_ok=True)
         files["png"] = rel(p) if p else None
+        # figure-screen.png is the on-screen explorer layout, for the author who wants the screen view in the document
+        sp, _ = to_png(d / "figure.svg", d / "figure-screen.png", scale=2)
+        files["png_screen"] = rel(sp) if sp else None
         files["png_renderer"] = how
     man_path = work_dir / "figures" / "manifest.json"
     try:

@@ -219,9 +219,10 @@ def all_gaps(work: Path) -> list[dict]:
 
 # ------------------------------------------------------------------ into the document
 DRAWINGS = ("picture", "word")
+LAYOUTS = ("print", "screen")
 
 
-def place(ctx: Ctx, key: str, author: str, close_word: bool = True, drawing: str = "picture") -> dict:
+def place(ctx: Ctx, key: str, author: str, close_word: bool = True, drawing: str = "picture", layout: str = "print") -> dict:
     """drawing: "picture" puts the saved PNG in; "word" draws the figure as editable Word shapes (same layout)."""
     """Put the saved figure into the working document (tracked). The figure must be saved and still match the
     evidence, so what goes into the document is exactly what was checked."""
@@ -232,9 +233,13 @@ def place(ctx: Ctx, key: str, author: str, close_word: bool = True, drawing: str
     if cur["freshness"] != "current":
         return {"status": "BLOCKED", "message": "Save the figure first: the saved figure does not match the current evidence"
                 if cur["freshness"] == "changed" else "Save the figure first"}
-    png = ctx.work / "figures" / key / "figure.png"
+    if layout not in LAYOUTS:
+        return {"status": "BLOCKED", "message": f"layout must be one of {', '.join(LAYOUTS)}"}
+    png = ctx.work / "figures" / key / ("figure-screen.png" if layout == "screen" else "figure.png")
     if not png.is_file():
-        return {"status": "BLOCKED", "message": "the saved figure has no PNG (no renderer was available when it was saved)"}
+        name = "screen-view PNG" if layout == "screen" else "PNG"
+        return {"status": "BLOCKED", "message": f"the saved figure has no {name} (save the figure first)"
+                if layout == "screen" else "the saved figure has no PNG (no renderer was available when it was saved)"}
     if drawing not in DRAWINGS:
         return {"status": "BLOCKED", "message": f"drawing must be one of {', '.join(DRAWINGS)}"}
     node = ctx.node(key)
@@ -244,7 +249,7 @@ def place(ctx: Ctx, key: str, author: str, close_word: bool = True, drawing: str
     if res["status"] == "OK":
         import time
         _manifest_update(ctx.work, key, {"placed": {"hash": cur["hash"], "at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-                                                    "mode": res["mode"], "document": ctx.docx.name, "drawing": drawing}})
+                                                    "mode": res["mode"], "document": ctx.docx.name, "drawing": drawing, "layout": layout}})
     return res
 
 
