@@ -471,9 +471,14 @@ def render_band_svg(model: dict, band_of: dict | None = None, conduits: bool = F
         # service figures keep one line per provider, so who takes the service from whom stays visible
         key = (l["fn"], l["status"], l["t"] if per_target else "")
         b = buses.setdefault(key, {"fn": l["fn"], "status": l["status"], "ends": {}, "svcs": [], "more": 0})
-        for e, info, into in ((l["s"], si, l["both"]), (l["t"], ti, True)):
-            d = b["ends"].setdefault(e, {"info": info, "in": False})
+        if model.get("flow"):                         # data flow: arrow where the data arrives, dot where it is opened
+            ends = ((l["s"], si, l["to_s"], True), (l["t"], ti, l["to_t"], False))
+        else:
+            ends = ((l["s"], si, l["both"], False), (l["t"], ti, True, False))
+        for e, info, into, opens in ends:
+            d = b["ends"].setdefault(e, {"info": info, "in": False, "opens": False})
             d["in"] = d["in"] or into
+            d["opens"] = d["opens"] or opens
         b["svcs"] += l["svcs"]; b["more"] += l["more"]
     order_fn = list(FUNCTIONS)
     bl = sorted(buses.values(), key=lambda b: (order_fn.index(b["fn"]), b["status"]))
@@ -628,7 +633,8 @@ def render_band_svg(model: dict, band_of: dict | None = None, conduits: bool = F
     styles = sorted({STATUS_DASH.get(st, ("", ""))[0] for st in used_status})
     risk = [st for st in used_status if st in ("unenforced", "direct", "unknown")]
     note = ("Every line crosses a zone boundary with no boundary control evidenced. " if risk == used_status and "unenforced" in risk else "")
-    note += "Arrow: the system that receives. ×n: hosts in the role."
+    note += ("Arrow: where the data arrives. Ringed dot: the side that opens the connection. ×n: hosts in the role."
+             if model.get("flow") else "Arrow: the system that receives. ×n: hosts in the role.")
     note_lines = _wrap(note, W - 140, F_TEXT, False, 2)
     legend_keys = []
     for b in bl:
@@ -689,6 +695,9 @@ def render_band_svg(model: dict, band_of: dict | None = None, conduits: bool = F
                 o.append(line([(min(xs), ly), (max(xs), ly)], fn, st, False, f"bus-{fn}-{st}"))
             for x, e, d in taps:
                 o.append(line([(x, ly), (x, port_y(d["info"]) - (1 if d["in"] else 0))], fn, st, d["in"], f"tap-{e}"))
+                if d.get("opens"):                    # a ringed dot halfway down the tap: this side opens the connection
+                    dots.append(f'<circle cx="{x:.1f}" cy="{(ly + port_y(d["info"])) / 2:.1f}" r="5" fill="{col}" '
+                                f'stroke="#ffffff" stroke-width="1.6" data-id="opens-{esc(e)}"/>')
                 dots.append(f'<circle cx="{x:.1f}" cy="{ly:.1f}" r="3.6" fill="{col}"/>')
             if b["trunk"]:
                 dots.append(f'<circle cx="{gx:.1f}" cy="{ly:.1f}" r="3.6" fill="{col}"/>')
@@ -740,7 +749,7 @@ def render_band_svg(model: dict, band_of: dict | None = None, conduits: bool = F
     # legend: line colour = function (with the services on it), line style = evidence, then how to read it
     y = body_h + 14
     # one row per line: its colour and style, the function, the services on it and, when it matters, its status
-    say_status = not (len(used_status) == 1 and used_status[0] in ("observed", "unenforced"))
+    say_status = not (len(used_status) == 1 and used_status[0] in ("observed", "unenforced", "seen"))
     cells = []
     for j, (fn_, st_) in enumerate(legend_keys):
         same = [b for b in bl if (b["fn"], b["status"]) == (fn_, st_)]
