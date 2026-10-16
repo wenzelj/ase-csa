@@ -89,6 +89,13 @@ def figure(ctx: Ctx, key: str, save: bool = False, png: bool = True, edits: dict
     names = set(ctx.ev["register"])
     fit = F.check(ctx.node(key), brief, out["model"], rel, names,
                                       {h: r.get("ips") or "" for h, r in ctx.ev["register"].items()}) if out else {"checks": [], "counts": {}}
+    if out and row.get("archetype") == "F":            # data flow figures: the figure against the Discovery Information tables
+        from csa_docx import flows as FL
+        from csa_docx.figures import flowview as FV
+        prof_ = next((p for p in N.load_profiles() if p["id"] == row.get("profile")), {})
+        flt_ = prof_.get("flows") or FV.topic_flows(prof_.get("from_topic"))
+        fit["checks"] += F.check_flow_tables(out["model"], FL.load(ctx.work), FV._settings(ctx.work), flt_, set(names))
+        fit["counts"] = {lv: sum(1 for c in fit["checks"] if c["level"] == lv) for lv in ("ok", "note", "flag")}
     if out and out.get("print"):
         F.print_checks(fit, out["print"])
     saved = manifest(ctx.work).get(key)

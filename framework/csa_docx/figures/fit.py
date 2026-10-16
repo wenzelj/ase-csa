@@ -137,3 +137,26 @@ def save(work_dir: Path, key: str, result: dict) -> Path:
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(result, indent=1, ensure_ascii=False), encoding="utf-8")
     return p
+
+
+def check_flow_tables(model: dict, flow_rows: list[dict], settings_rows: list[dict], flt: dict | None,
+                      register: set[str] | None = None) -> list[dict]:
+    """Archetype F against the Discovery Information tables: every flow the profile selects is drawn, every database
+    the role table lists on a drawn host has a store mark, and the markers every host shares are on the legend line."""
+    from csa_docx import flows as FL
+    out: list[dict] = []
+    add = lambda level, kind, text: out.append({"level": level, "kind": kind, "text": text, "evidence": []})
+    drawn = {f for e in model.get("edges", []) for f in (e.get("detail") or {}).get("flows", [])}
+    for r in FL.select(flow_rows, flt or {"data": True}, register):
+        if r["flow_id"] not in drawn:
+            add("flag", "tables", f"In the flows table but not drawn: {r['flow_id']} {r['mechanism']} {r['src']} to {r['dst']}.")
+    nodes = {n["id"]: n for n in model.get("nodes", [])}
+    for r in settings_rows:
+        if r["host"] in nodes and r["attribute"] == "storage.database" and r["value"] != "None found":
+            if not any(s["what"] == r["value"] for s in nodes[r["host"]].get("stores", [])):
+                add("flag", "tables", f"The role table lists {r['value']} on {r['host']}, which has no store mark.")
+    if model.get("common_marks"):
+        add("ok", "tables", "Markers every host shares are on one legend line: " + ", ".join(sorted(model["common_marks"])) + ".")
+    if not any(c["level"] == "flag" for c in out):
+        add("ok", "tables", "Every flow and data store in the Discovery Information tables is drawn.")
+    return out
