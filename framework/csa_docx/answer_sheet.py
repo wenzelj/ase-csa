@@ -36,7 +36,7 @@ import re
 import sys
 from pathlib import Path
 
-_BLOCK = re.compile(r"^##\s+([BC]\d+)\b[^\n]*$", re.M)
+_BLOCK = re.compile(r"^##\s+([BCF]\d+)\b[^\n]*$", re.M)
 _FIELD = re.compile(r"^(Facts|Text|Unknown|Rating reason|Rating|Rows|Bullets|Search|Keep|Answer|Dropped|None):\s*(.*)$", re.I)
 _PFX = r"(?:[a-z0-9][a-z0-9-]*:)?"                # another project's row: utcdtc:E-041 (estate member or system sibling)
 _ID = r"(?:" + _PFX + r"E-\d+|K-[0-9A-F]{6})"
@@ -61,6 +61,17 @@ def parse(text: str) -> dict[str, dict]:
         body = text[m.end(): marks[i + 1].start() if i + 1 < len(marks) else len(text)]
         b = {"facts": [], "unknown": [], "rating": "", "rating_reason": "", "rows": [], "bullets": [],
              "search": [], "keep": "", "answer": "", "text": "", "dropped": [], "none": "", "raw": body.strip()}
+        if m.group(1).startswith("F"):          # the analysis frame: one line per slot, blocks or Unknown:
+            b["frame"] = {}
+            for line in body.splitlines():
+                fm = re.match(r"^\s*[-*]?\s*(S\d+)\s*:\s*(.+?)\s*$", line)
+                if fm:
+                    b["frame"][fm.group(1)] = fm.group(2)
+                    u = re.match(r"(?i)unknown:\s*(.+)$", fm.group(2))
+                    if u:
+                        b["unknown"].append(u.group(1).strip())
+            out[m.group(1)] = b
+            continue
         field = None
         for line in body.splitlines():
             s = line.strip()
@@ -197,7 +208,65 @@ def count_mismatch(text: str) -> str | None:
 #: reported as a WARN and left for the next pass or the V1 change lane.
 HARD_CODES = {"CROSS_PROJECT_ONLY", "NOTE_TOO_LONG", "NOTE_NONE_AND_TEXT", "NOTE_NO_FACTS", "CAPTURE_DROPPED", "UNKNOWN_BUNDLED", "BACKGROUND_AS_EVIDENCE", "BACKGROUND_MIXED", "BACKGROUND_NOT_ON_CARD", "BACKGROUND_ALONE", "QUESTION_MISSING", "EMPTY_ANSWER", "FACT_NO_EVIDENCE", "UNKNOWN_EVIDENCE", "RATING_INVALID",
               "COLUMNS", "ROW_WIDTH", "NO_ROWS", "REQUIREMENT_NO_FACTS", "SEMICOLON", "PROCESS_AS_SUBJECT",
-              "CITATION_OFF_TOPIC"}
+              "CITATION_OFF_TOPIC", "NO_TOTALS", "ROLE_TABLE_REPEAT", "FRAME_UNCOVERED", "ATTEMPT_AS_ESTABLISHED"}
+
+# counts and totals of hosts ("9 of 12", "all 12 captured hosts", "nine hosts", "two RevViewer Jump Hosts"): CSA text
+# names the role groups instead. "stratum 5 hosts" and port numbers are not counts.
+_NUMWORD = r"(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|twenty)"
+_TOTALS = re.compile(r"\b\d+\s+of\s+(?:the\s+)?\d+\b|(?<!stratum )(?<!port )(?<!ports )\b" + _NUMWORD +
+                     r"\s+(?:[A-Za-z/-]+\s+){0,3}?(?:hosts?|servers?|nodes?|machines?)\b", re.I)
+
+
+def totals_in(text: str) -> str | None:
+    """The first host count or total in ``text`` (None when there is none)."""
+    m = _TOTALS.search(text or "")
+    return m.group(0) if m else None
+
+
+def frame_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
+    """FRAME_UNCOVERED: every slot of the card's analysis frame needs a line in the F1 block naming an answered
+    block, or Unknown:. FLOW_NOT_COVERED (warning): a cross-zone data flow the frame found is named nowhere."""
+    fr = card.get("frame") or {}
+    slots = fr.get("slots") or []
+    if not slots:
+        return []
+    fb = next((b for k, b in sheet.items() if k.startswith("F")), None)
+    if fb is None:
+        return [_f("ERROR", "FRAME_UNCOVERED", None, f"no '## F1 Analysis frame' block: give every slot of the card's analysis "
+                   f"frame ({', '.join(slots)}) a line naming the blocks that answer it, or Unknown: <what is not known>")]
+    out, bad = [], []
+    for s in slots:
+        v = (fb.get("frame") or {}).get(s, "")
+        if not v:
+            bad.append(f"{s} has no line")
+            continue
+        if re.match(r"(?i)unknown:\s*\S", v):
+            continue
+        refs = re.findall(r"\b([BC]\d+)\b", v)
+        ok = [r for r in refs if r in sheet and (sheet[r]["facts"] or sheet[r]["rows"] or sheet[r]["bullets"]
+                                                  or sheet[r].get("text") or sheet[r]["keep"])]
+        if not ok:
+            bad.append(f"{s} names no answered block ({v[:40]})")
+    if bad:
+        out.append(_f("ERROR", "FRAME_UNCOVERED", "F1", "; ".join(bad) + ": name the B blocks that answer each slot, "
+                      "or write Unknown: <what is not known>"))
+    text = " ".join(" ".join([b.get("text") or ""] + [f["text"] for f in b["facts"]] + [" | ".join(r) for r in b["rows"]]
+                             + b["bullets"] + b["unknown"] + b.get("dropped", []))
+                    for k, b in sheet.items() if not k.startswith("F"))
+    for c in fr.get("coverage", []):
+        if not any(t and t in text for t in c.get("tokens", [])):
+            out.append(_f("WARN", "FLOW_NOT_COVERED", None, f"a cross-zone data flow is not addressed in any block: {c['text'][:150]}"))
+    return out
+
+
+def role_table_tokens(card: dict) -> set[str]:
+    """Host and server names the card's role tables already show (empty when the card has none)."""
+    out = set()
+    for r in [r for t in (card.get("role_tables") or [card.get("role_table") or {}]) for r in t.get("rows", [])]:
+        out |= {h.rstrip("\u2020\u2021") for h in r.get("hosts", [])}
+        for c in r.get("cells", []) + r.get("hosts", []):
+            out |= set(_HOSTTOKEN.findall(c))
+    return out
 
 
 # a discovery capture, however the row names it: one capture folder (REVELOC_discovery_HOST_20260605T031609Z),
@@ -206,6 +275,7 @@ HARD_CODES = {"CROSS_PROJECT_ONLY", "NOTE_TOO_LONG", "NOTE_NONE_AND_TEXT", "NOTE
 _CAPTURE_SRC = re.compile(r"_discovery_[^:\s]+_\d{8}T\d{6}Z|_discovery_<host>|(?:^|[\s:;,/(])\d{2}_[a-z0-9_]+\.txt\b")
 _NOT_CAPTURE = re.compile(r"^\s*(?:searched\b|search scope\b|discovery index\b)", re.I)
 _PREVIOUS_SRC = re.compile(r"current[ _]state[ _]assessment", re.IGNORECASE)
+_ATTEMPTED = re.compile(r"\battempted\b.*\bSYN_SENT\b|\bSYN_SENT\b.*\bno reply\b", re.I)
 _REQ_KEY = re.compile(r"\b[A-Z]{2,5}-([A-Z][A-Z_]*)-[A-Z]?\d+\b")
 _HOSTTOKEN = re.compile(r"\b[A-Z][A-Z0-9]{5,}\d{2,3}\b")
 
@@ -233,7 +303,30 @@ def block_ids(b: dict) -> set[str]:
     return ids
 
 
-def regression(old: dict[str, dict], new: dict[str, dict], matrix: dict[str, dict] | None = None) -> list[dict]:
+_IPV4 = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
+
+
+def table_covers(claim: str, card: dict | None) -> bool:
+    """True when a per-host fact is what the card's role tables state: the hosts it is about are table rows and a
+    value it gives (a server name or an address) is in the table's cells or its common line."""
+    tables = [t for t in ((card or {}).get("role_tables") or [(card or {}).get("role_table") or {}]) if t]
+    if not tables:
+        return False
+    row_hosts, values = set(), set()
+    for t in tables:
+        for r in t.get("rows", []):
+            row_hosts |= {h.rstrip("\u2020\u2021") for h in r.get("hosts", [])}
+            for c in r.get("cells", []):
+                values |= set(_HOSTTOKEN.findall(c)) | set(_IPV4.findall(c))
+        values |= set(_HOSTTOKEN.findall(t.get("common", ""))) | set(_IPV4.findall(t.get("common", "")))
+    hosts = set(_HOSTTOKEN.findall(claim or ""))
+    about = hosts & row_hosts
+    given = (hosts - about) | set(_IPV4.findall(claim or ""))
+    return bool(about) and bool(given & values) and not (hosts - row_hosts - values)
+
+
+def regression(old: dict[str, dict], new: dict[str, dict], matrix: dict[str, dict] | None = None,
+               card: dict | None = None) -> list[dict]:
     """What a re-answer lost against the sheet it replaces: evidence no longer cited, fewer table rows, fewer
     capture-sourced citations (WARN). A VERIFIED capture row cited before and dropped without a 'Dropped:' line
     saying why is an ERROR (CAPTURE_DROPPED): a re-answer should add or correct, not quietly thin out."""
@@ -254,6 +347,12 @@ def regression(old: dict[str, dict], new: dict[str, dict], matrix: dict[str, dic
         lost = [i for i in dropped if source_class(matrix.get(i)) == "capture"
                 and matrix.get(i, {}).get("status") == "VERIFIED"
                 and not any(i in d for d in nb.get("dropped", []))]
+        tabled = [i for i in lost if table_covers(matrix.get(i, {}).get("claim", ""), card)]
+        if tabled:                      # per-host facts the role table states now: not lost, and not to be repeated
+            out.append(_f("WARN", "CAPTURE_IN_TABLE", qid,
+                          f"{', '.join(tabled[:8])}{' and others' if len(tabled) > 8 else ''} (capture evidence) are no longer "
+                          f"cited in the prose: the role table under Discovery Information states them"))
+            lost = [i for i in lost if i not in tabled]
         if lost and nb.get("keep") == "":
             said = [f["text"] for f in ob["facts"] if set(f["ids"]) & set(lost)]
             out.append(_f("ERROR", "CAPTURE_DROPPED", qid,
@@ -274,10 +373,14 @@ def kept_facts(sheet: dict[str, dict], card: dict, already: list[dict] | None = 
     reported = {(f.get("question"), i) for f in (already or []) if f["code"] == "CAPTURE_DROPPED"
                 for i in _EID.findall(f["message"].split(" (capture")[0])}
     out: list[dict] = []
+    shown = role_table_tokens(card)
+    obs = {q["id"] for q in card.get("questions", []) if q["kind"] == "observation"}
     for k in card.get("keep", []):
         qid, b = k["question"], sheet.get(k["question"])
         if b is None or b.get("keep"):
             continue
+        if qid in obs and shown and set(_HOSTTOKEN.findall(k["fact"])) & shown:
+            continue                    # a per-host row of the old table: the role table states it now
         cited = block_ids(b)
         caps = [i for i in k["capture_ids"] if i.upper() not in cited
                 and not any(i in d for d in b.get("dropped", [])) and (qid, i) not in reported]
@@ -382,6 +485,7 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
     allowed |= {i.upper() for p in card.get("evidence", {}).values() for i in p.get("digest_ids", [])}
     allowed |= {i.upper() for i in (new_ids or set())}
     allowed |= {i.upper() for k in card.get("keep", []) for i in k.get("evidence_ids", [])}
+    allowed |= {i.upper() for i in (card.get("frame") or {}).get("ids", [])}   # the analysis frame's findings
     background = {i.upper() for i in card.get("background_ids", [])}   # K- passages on the card's background section
     ratings = ratings or card.get("ratings") or ["Met", "Partially Met", "Not Met", "Not Applicable"]
     qs = {q["id"]: q for q in card["questions"]}
@@ -406,8 +510,14 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
                 continue                            # knowledge passage: _background_checks covers it
             cited_rows = [matrix[i.upper()] for i in fact["ids"] if i.upper() in matrix]
             card_key = str(card.get("key") or "").upper()
+            frame_ids = {i.upper() for i in (card.get("frame") or {}).get("ids", [])}
+            tried = [r_["evidence_id"] for r_ in cited_rows if _ATTEMPTED.search(r_.get("claim") or "")]
+            if tried and re.search(r"\bestablished\b", fact["text"], re.I) and not re.search(r"\battempt", fact["text"], re.I):
+                findings.append(_f("ERROR", "ATTEMPT_AS_ESTABLISHED", qid,
+                                   f"{', '.join(tried[:6])} record only connection attempts (SYN_SENT, no reply seen), but the fact "
+                                   f"says established: say attempted for those endpoints, or split the fact: {fact['text'][:70]}"))
             for r_ in cited_rows:
-                if r_.get("status") == "NOT_FOUND" and card_key:
+                if r_.get("status") == "NOT_FOUND" and card_key and r_["evidence_id"].upper() not in frame_ids:
                     keys = set(_REQ_KEY.findall(r_.get("question") or ""))
                     if keys and card_key not in keys:
                         findings.append(_f("ERROR", "CITATION_OFF_TOPIC", qid,
@@ -524,6 +634,22 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
                 findings.append(_f("ERROR", "RATING_NO_REASON", qid, "a rating needs a 'Rating reason:'"))
             if not b["facts"] and not b["keep"] and b["rating"] not in ("Not Applicable",):
                 findings.append(_f("ERROR", "REQUIREMENT_NO_FACTS", qid, "a current state needs at least one fact"))
+        rendered = [("Text", b.get("text") or "")] + [("fact", f["text"]) for f in b["facts"]] + \
+                   [("bullet", x) for x in b["bullets"]] + [("row", " | ".join(c)) for c in b["rows"][1:]]
+        for where, s_ in rendered:
+            hit = totals_in(s_)
+            if hit:
+                findings.append(_f("ERROR", "NO_TOTALS", qid, f"a {where} counts hosts (\"{hit}\"): name the role groups "
+                                   f"or the hosts instead of giving a number or total: {s_[:80]}"))
+                break
+        shown = role_table_tokens(card)
+        if q["kind"] == "observation" and shown:
+            for r in b["rows"][1:]:
+                named = sorted(set(_HOSTTOKEN.findall(" | ".join(r))) & shown)
+                if len(named) >= 2:
+                    findings.append(_f("ERROR", "ROLE_TABLE_REPEAT", qid,
+                                       f"this row repeats per-host settings the role table above already shows ({', '.join(named[:4])}): "
+                                       "keep Aspect rows for points that are not per host, or drop the row: " + " | ".join(r)[:80]))
         if q["kind"] in ("observation", "register") and b["rows"]:
             want = [c.strip().lower() for c in q.get("columns", [])]
             header, data = b["rows"][0], b["rows"][1:]
@@ -562,10 +688,11 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
                                    f"VERIFIED rows on the card for this question are not cited: {', '.join(unused[:5])}. "
                                    "Use one that adds a fact the answer lacks, or leave it out knowingly."))
     if previous:
-        findings += regression(previous, sheet, matrix)
+        findings += regression(previous, sheet, matrix, card)
     findings += kept_facts(sheet, card, findings)
+    findings += frame_checks(sheet, card)
     for qid in sheet:
-        if qid not in qs:
+        if qid not in qs and not qid.startswith("F"):
             findings.append(_f("WARN", "EXTRA_BLOCK", qid, "this question is not on the card"))
     if draft:
         for x in findings:

@@ -1,0 +1,67 @@
+{
+ "topic": "Patch & Lifecycle",
+ "key": "PATCH",
+ "headings": [
+  "Patch & Lifecycle Management",
+  "Patch and Lifecycle Management",
+  "Patch & Lifecycle"
+ ],
+ "requirements": [
+  "SEP-PATCH-01",
+  "SEP-PATCH-02"
+ ],
+ "columns": [
+  {
+   "label": "Operating system",
+   "attribute": "platform.os",
+   "explains": "what is being patched",
+   "common": "run {value}"
+  },
+  {
+   "label": "Support",
+   "attribute": "platform.support",
+   "explains": "Microsoft extended support end",
+   "common": "have Microsoft extended support to {value}"
+  },
+  {
+   "label": "Latest update installed",
+   "attribute": "patch.latest",
+   "explains": "how current the host is",
+   "common": "last installed {value}",
+   "noun": "installed update"
+  },
+  {
+   "label": "Update source",
+   "attribute": "patch.source",
+   "explains": "where updates come from",
+   "common": "take updates from {value}"
+  },
+  {
+   "label": "Patch client",
+   "attribute": "patch.client",
+   "explains": "the tooling that applies updates",
+   "common": "run the {value}",
+   "noun": "patch client"
+  },
+  {
+   "label": "Automatic Updates",
+   "attribute": "patch.auto",
+   "explains": "whether Windows patches itself",
+   "common": "have {value}"
+  }
+ ],
+ "common_values": {
+  "Automatic Updates off": "have Windows Automatic Updates turned off by policy",
+  "Automatic Updates on": "have Windows Automatic Updates turned on"
+ },
+ "flows": {
+  "mechanisms": [
+   "patch management"
+  ],
+  "status": [
+   "observed",
+   "both",
+   "declared"
+  ]
+ }
+}

@@ -12,8 +12,9 @@ The framework checks the sheet, writes it into the working document as plain tex
 2. For each question, pick the evidence rows on the card that are about the same hosts and the same thing, and write the block in the shape the digest gives.
 3. Write `Text:` as the paragraph a reader will see. Tell the story of how this part of the system works, using only that block's facts.
    Use the card's "Background knowledge (not evidence)" section to understand what each observation means and which functions it affects. Its K- IDs follow the digest's rule: never a substitute for an E- evidence row.
-4. Write the sheet to `SHEET=` and stop. If `ERRORS=` is given, fix exactly those and write the sheet again.
-5. If `ONLY=` is given (for example `B2,B5`), the evidence changed for those questions only. Rewrite those blocks and copy every other block unchanged from `ANSWER=`.
+4. If the card has an "Analysis frame", end the sheet with a `## F1 Analysis frame` block: one line per slot (`- S3: B2, B3`) naming the blocks whose text answers it, or `- S9: Unknown: <what is not known>`. Cite the frame's evidence IDs in those blocks. A "Likely" note is never a fact: turn what it asks you to confirm into an Unknown: line.
+5. Write the sheet to `SHEET=` and stop. If `ERRORS=` is given, fix exactly those and write the sheet again.
+6. If `ONLY=` is given (for example `B2,B5`), the evidence changed for those questions only. Rewrite those blocks and copy every other block unchanged from `ANSWER=`.
 
 ## Output
 

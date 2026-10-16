@@ -64,9 +64,17 @@ def questions(node: dict, spec: dict | None = None) -> list[dict]:
                                     f"requirement, and how does it rate ({ratings}; Not Applicable needs a justification)?"})
         elif k == "observation":
             cols = p.get("columns") or []
-            out.append({"kind": "observation", "part": i, "columns": cols,
-                        "text": f"{where}: which aspects of {_topic(node)} were observed? One row per aspect with "
-                                f"{', '.join(cols[1:]) or 'what was observed'}."})
+            prof = _topic_profile(node)
+            if prof:
+                shows = ", ".join(c["label"].lower() for c in prof["columns"])
+                text = (f"{where}: the role table above this table already shows {_topic(node)} per role group "
+                        f"({shows}). Which points about {_topic(node)} are not per host: what exists or is missing across "
+                        f"the system, and what was not tested? One row per point with "
+                        f"{', '.join(cols[1:]) or 'what was observed'}. Never repeat a host's setting from the role table.")
+            else:
+                text = (f"{where}: which aspects of {_topic(node)} were observed? One row per aspect with "
+                        f"{', '.join(cols[1:]) or 'what was observed'}.")
+            out.append({"kind": "observation", "part": i, "columns": cols, "text": text})
         elif k == "register":
             cols = p.get("columns") or []
             first = cols[0] if cols else "item"
@@ -105,6 +113,52 @@ def questions(node: dict, spec: dict | None = None) -> list[dict]:
         out.append({"id": f"C{n}", "kind": "comment", "part": None,
                     "text": f"Reviewer comment ({c['author'] or 'unknown'}): \"{' '.join(c['text'].split())[:240]}\""})
     return out
+
+
+def count_hint(fact: str) -> str:
+    """' [restate without "nine captured hosts": ...]' when a fact the card hands on counts hosts, else ''.
+    Old answers were written before NO_TOTALS; the agent keeps their evidence but must not copy the count."""
+    from csa_docx.answer_sheet import totals_in
+    hit = totals_in(fact or "")
+    return f' [restate without "{hit}": name the role group or the hosts]' if hit else ""
+
+
+def _topic_profile(node: dict) -> dict | None:
+    """The topic-table profile for this subsection's heading (references/topic-tables), if there is one."""
+    try:
+        from csa_docx import topic_tables
+        return topic_tables.profile_for(node.get("title", ""))
+    except (ImportError, OSError, ValueError):
+        return None
+
+
+def role_table(node: dict, workspace: Path | None) -> dict | None:
+    """The role table topic_tables.py builds for this subsection from the captures (None without a profile or data)."""
+    if not workspace or not _topic_profile(node):
+        return None
+    from csa_docx import topic_tables
+    ts = [t for t in topic_tables.build_all(Path(workspace) / "csa-work", node["title"], node.get("key", "")) if t.get("status") == "OK"]
+    return ts or None
+
+
+def _role_table_lines(ts) -> list[str]:
+    ts = ts if isinstance(ts, list) else [ts]
+    t = ts[0]
+    out = ["", "## Role table (built by the framework from the captures)", "",
+           "The framework puts this table under Discovery Information, above the Aspect table, every time this subsection "
+           "is written. It is the per-host description of the system for this topic. Do not repeat its settings in the "
+           "Aspect rows (ROLE_TABLE_REPEAT), and write about hosts by these role groups, never by a number of hosts "
+           "(NO_TOTALS). Use it in the Current State and Drawbridge Impact text, citing the evidence rows for the same facts.",
+           "", topic_markdown(ts)]
+    if t.get("gaps"):
+        out += ["", "Already raised as Discovery Required by the framework (do not write these as Unknown: lines):"]
+        out += [f"- {g['dr_id']}: {g['text']}" for g in t["gaps"]]
+    return out
+
+
+def topic_markdown(t: dict) -> str:
+    from csa_docx import topic_tables
+    return topic_tables.markdown(t)
 
 
 def scope_extras(node: dict) -> dict | None:
@@ -445,12 +499,11 @@ def host_register(workspace: Path | None) -> dict | None:
 
 
 def _register_lines(reg: dict) -> list[str]:
-    counts = " + ".join(f"{len(g['hosts'])} {g['role']}" for g in reg["groups"])
     out = ["", "## Host register (captured hosts, grouped by role)", "",
-           f"{reg['total']} captured hosts = {counts}.",
-           "Any host table uses one row per role group below, never one row per host. Any count you write must add up to these groups.", ""]
+           "Any host table uses one row per role group below, never one row per host. Write about hosts by role group or "
+           "by name, never by a number or total of hosts (NO_TOTALS).", ""]
     for g in reg["groups"]:
-        out.append(f"- {g['role']} ({len(g['hosts'])}): {', '.join(g['hosts'])}" + (f"; site: {', '.join(g['sites'])}" if g["sites"] else ""))
+        out.append(f"- {g['role']}: {', '.join(g['hosts'])}" + (f"; site: {', '.join(g['sites'])}" if g["sites"] else ""))
     if reg["uncaptured"]:
         out += ["", "Named in the sources for this system but not captured (scope to be confirmed):"]
         for u in reg["uncaptured"]:
@@ -775,9 +828,11 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
         lines += ["", "## Facts to keep", "",
                   "This subsection's applied answers stated these facts and table rows from the discovery captures. Keep "
                   "each in the block shown (a table row as a row of that table), citing its capture evidence, or add `Dropped: E-<n> <why it no longer applies>` to that "
-                  "block. The check refuses an answer that loses one silently (CAPTURE_DROPPED).", ""]
+                  "block. The check refuses an answer that loses one silently (CAPTURE_DROPPED). Keep the fact and its evidence, "
+                  "not its old wording: restate it in your own words, and where it counts hosts (marked below) name the role "
+                  "groups or the hosts instead of any number or total (NO_TOTALS).", ""]
         lines += [f"- {k['question']}{' (table row)' if k.get('kind') == 'row' else ''}: {k['fact']} "
-                  f"({', '.join(k['evidence_ids'])})" for k in keep]
+                  f"({', '.join(k['evidence_ids'])}){count_hint(k['fact'])}" for k in keep]
     if established:
         lines += ["", "## Facts already established", "",
                   "Facts other sections have already validated. Reuse one where it answers a question; still cite its evidence IDs.", ""]
@@ -786,9 +841,21 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
             for f in facts:
                 by_fact.setdefault((f["fact"], f["section"], ", ".join(f["evidence_ids"])), []).append(qid)
         for (fact, sec, ev), qids in by_fact.items():
-            lines.append(f"- {fact} (section {sec}; {ev}; for {', '.join(qids)})")
+            lines.append(f"- {fact} (section {sec}; {ev}; for {', '.join(qids)}){count_hint(fact)}")
     if reg and reg["groups"]:
         lines += _register_lines(reg)
+    rtables = role_table(node, workspace) if evidence else None
+    rtable = rtables[0] if rtables else None
+    if rtables:
+        lines += _role_table_lines(rtables)
+    frame = None
+    if evidence and workspace:
+        from csa_docx import topic_frames
+        fr = topic_frames.build(Path(workspace), node["title"], node.get("key", ""))
+        if fr.get("status") == "OK":
+            lines += topic_frames.card_lines(fr)
+            frame = {"slots": [s["id"] for s in fr["slots"]], "ids": sorted(topic_frames.all_ids(fr)),
+                     "coverage": topic_frames.coverage_targets(fr)}
     lines += shared_lines
     if pack:
         lines += ["", "## Evidence pack", "",
@@ -839,7 +906,8 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
     return {"status": "OK", "key": node["key"], "number": node["number"], "title": node["title"], "text": text,
             "questions": qs, "evidence": pack, "established": established, "background_ids": bg_ids,
             "keep": [{k: x[k] for k in ("question", "fact", "evidence_ids", "capture_ids")} for x in keep], "tokens": len(text) // 4,
-            "ratings": spec.get("ratings") or doc_spec.DEFAULT_RATINGS, "kinds": kinds, "host_register": reg}
+            "ratings": spec.get("ratings") or doc_spec.DEFAULT_RATINGS, "kinds": kinds, "host_register": reg,
+            "role_table": rtable, "role_tables": rtables or [], "frame": frame}
 
 
 def main(argv: list[str] | None = None) -> int:

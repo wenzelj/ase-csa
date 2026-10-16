@@ -17,6 +17,18 @@ Before applying anything below, read a paragraph or two of the section's surroun
 
 Match the register (formality, level of detail), not the structural habits. Spelling and technical terms always follow `australian-it-ot-terminology` (`.agents/skills/australian-it-ot-terminology/SKILL.md`): Australian English and the terminology table, even where the surrounding text uses US spelling or looser terms. If the surrounding text breaks the "Say it once, say it first" rules below (bullet fragments, restated facts, announcing lead-ins), do not copy those habits into new text.
 
+## Write terms in full
+
+A reader must not have to decode an abbreviation to understand a heading or a short passage.
+
+- Write technical terms in full in headings, captions, table headers and finding labels. Prefer `Server Message Block connections to unnamed peers`, not `SMB connections to unnamed peers`.
+- In body prose, use the full term without an abbreviation when the term appears only once.
+- Introduce an abbreviation only when it will be reused. On first use in each independently readable subsection, write the full term followed by the abbreviation in parentheses, for example `Server Message Block (SMB)`. Use the abbreviation alone only after that introduction.
+- Do not assume that a glossary makes an unexplained abbreviation clear at the point of reading.
+- Preserve official product names, host names, executable names, service names, configuration keys and quoted source wording. Do not invent an expanded form for an identifier or vendor name.
+
+Run `term_lint.py` before returning the draft. Resolve every `UNEXPANDED_ABBREVIATION` finding by spelling out the term or, where the token is genuinely an official name or identifier, documenting why it must remain.
+
 ## Tell the story
 
 A reader should be able to read a paragraph aloud to a colleague and have it make sense. Write each paragraph as a short explanation of how this part of the system works, not as a list of what the evidence contains. Follow this order, and leave out any step that has nothing to say:

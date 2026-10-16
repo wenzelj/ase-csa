@@ -52,7 +52,10 @@ def build(work_dir: Path, agents: Path) -> dict[str, Any]:
             captured = (r.get("in_scope") or "") != "peer" and bool(r.get("capture"))
             kind = "captured" if captured else ("dc" if "domain controller" in (r.get("sources") or "").lower() else "named")
             nodes[name] = {"id": name, "kind": kind,
-                           "role": roles.get(name) or ("Domain controller" if kind == "dc" else ""),
+                           # host_register groups captured hosts and selected peers.  An in-scope inventory
+                           # host can legitimately have a recorded role without a discovery capture, so keep
+                           # the role already carried by hosts.csv instead of turning it into "not recorded".
+                           "role": roles.get(name) or r.get("role") or ("Domain controller" if kind == "dc" else ""),
                            "site": r.get("site") or r.get("ad_site") or "", "ips": r.get("ips") or "",
                            "listed": _listed(r)}
             return

@@ -1,0 +1,62 @@
+{
+ "topic": "Monitoring & Logging",
+ "key": "MON",
+ "headings": [
+  "Monitoring & Logging",
+  "Monitoring and Logging"
+ ],
+ "requirements": [
+  "SEP-MON-01",
+  "SEP-MON-02",
+  "SEP-MON-03"
+ ],
+ "columns": [
+  {
+   "label": "EDR",
+   "attribute": "agent.edr",
+   "explains": "endpoint detection coverage",
+   "common": "run {value}",
+   "noun": "EDR agent"
+  },
+  {
+   "label": "Antivirus",
+   "attribute": "agent.antivirus",
+   "explains": "antivirus coverage",
+   "common": "run {value}",
+   "noun": "antivirus"
+  },
+  {
+   "label": "Log forwarding",
+   "attribute": "agent.log_forwarding",
+   "explains": "which logs leave the host and how",
+   "common": "forward logs with {value}",
+   "noun": "log forwarder"
+  },
+  {
+   "label": "Monitoring agent",
+   "attribute": "agent.monitoring",
+   "explains": "central monitoring",
+   "common": "report to {value}",
+   "noun": "monitoring agent"
+  },
+  {
+   "label": "Security telemetry",
+   "attribute": "agent.security_telemetry",
+   "explains": "workload telemetry leaving the host",
+   "common": "send telemetry with {value}",
+   "noun": "workload telemetry agent"
+  }
+ ],
+ "flows": {
+  "mechanisms": [
+   "log forwarding",
+   "monitoring",
+   "security agent telemetry"
+  ],
+  "status": [
+   "observed",
+   "both",
+   "declared"
+  ]
+ }
+}

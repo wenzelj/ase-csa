@@ -1,0 +1,91 @@
+{
+ "topic": "Identity & Authentication",
+ "key": "ID",
+ "area": "identity_and_authentication",
+ "section": "identity and authentication",
+ "headings": [
+  "Identity & Authentication",
+  "Identity and Authentication"
+ ],
+ "basis": "Scope map 3.2 Must explain; SEP-ID-01, 02 and 03.",
+ "slots": [
+  {
+   "id": "S1",
+   "question": "Which directory do the hosts and users authenticate against, and is it the IT directory or an OT-resident one?",
+   "requirements": [
+    "SEP-ID-01"
+   ],
+   "source": {
+    "settings": [
+     "identity.domain",
+     "identity.kdc"
+    ]
+   }
+  },
+  {
+   "id": "S2",
+   "question": "Which domain controllers answer the hosts, and where are they (site, zone)?",
+   "requirements": [
+    "SEP-ID-01"
+   ],
+   "source": {
+    "settings": [
+     "identity.kdc"
+    ],
+    "flows": {
+     "mechanisms": [
+      "authentication",
+      "directory (SYSVOL, Group Policy)",
+      "directory (RPC)"
+     ],
+     "status": [
+      "observed",
+      "both",
+      "declared"
+     ]
+    }
+   }
+  },
+  {
+   "id": "S3",
+   "question": "Which services, application components and clusters run as domain accounts, and which accounts are they?",
+   "requirements": [
+    "SEP-ID-02"
+   ],
+   "source": {
+    "settings": [
+     "identity.service_accounts"
+    ]
+   }
+  },
+  {
+   "id": "S4",
+   "question": "Which local accounts are enabled, and could they be used to log on if the directory were unreachable?",
+   "requirements": [
+    "SEP-ID-01"
+   ],
+   "source": {
+    "settings": [
+     "identity.local_users"
+    ]
+   }
+  },
+  {
+   "id": "S5",
+   "question": "Does the application itself authenticate users (application logins, database logins), and against what?",
+   "requirements": [
+    "SEP-ID-02"
+   ],
+   "source": {}
+  },
+  {
+   "id": "S6",
+   "question": "What stops working if the IT directory is unreachable?",
+   "requirements": [
+    "SEP-ID-01",
+    "SEP-ID-02"
+   ],
+   "source": {}
+  }
+ ]
+}

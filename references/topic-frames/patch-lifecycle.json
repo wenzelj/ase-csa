@@ -1,0 +1,88 @@
+{
+ "topic": "Patch & Lifecycle",
+ "key": "PATCH",
+ "area": "patch_and_lifecycle",
+ "section": "patch and lifecycle management",
+ "headings": [
+  "Patch & Lifecycle Management",
+  "Patch and Lifecycle Management",
+  "Patch & Lifecycle"
+ ],
+ "basis": "Scope map 3.10 Must explain; SEP-PATCH-01 and 02.",
+ "slots": [
+  {
+   "id": "S1",
+   "question": "Where do updates come from (WSUS or MECM server, Windows Update) and which client applies them?",
+   "requirements": [
+    "SEP-PATCH-01"
+   ],
+   "source": {
+    "settings": [
+     "patch.source",
+     "patch.client",
+     "patch.auto"
+    ]
+   }
+  },
+  {
+   "id": "S2",
+   "question": "Which patch management connections were seen, to which servers, and do they cross from OT into IT?",
+   "requirements": [
+    "SEP-PATCH-01"
+   ],
+   "source": {
+    "flows": {
+     "mechanisms": [
+      "patch management"
+     ],
+     "status": [
+      "observed",
+      "both",
+      "declared"
+     ]
+    }
+   }
+  },
+  {
+   "id": "S3",
+   "question": "How current is each host (latest installed update)?",
+   "requirements": [
+    "SEP-PATCH-02"
+   ],
+   "source": {
+    "settings": [
+     "patch.latest"
+    ]
+   }
+  },
+  {
+   "id": "S4",
+   "question": "Which operating systems are near or past end of support?",
+   "requirements": [
+    "SEP-PATCH-02"
+   ],
+   "source": {
+    "settings": [
+     "platform.os",
+     "platform.support"
+    ]
+   }
+  },
+  {
+   "id": "S5",
+   "question": "What is the patch cadence and maintenance window, and how are urgent patches escalated? Who patches the application software?",
+   "requirements": [
+    "SEP-PATCH-02"
+   ],
+   "source": {}
+  },
+  {
+   "id": "S6",
+   "question": "How would hosts be patched during an isolation event, without the IT patch servers?",
+   "requirements": [
+    "SEP-PATCH-01"
+   ],
+   "source": {}
+  }
+ ]
+}

@@ -38,7 +38,7 @@ def _sheet(card, note_block):
         "## B1 SEP-TIME-01\nFacts:\n- Every captured host takes its time from an enterprise server. (E-001) {observed; all 12 hosts}\n"
         "Rating: Not Met\nRating reason: no OT source was identified.\n\n"
         "## B2 Discovery Information\nRows:\n| Aspect | Configuration Observed | Coverage / Source |\n"
-        "| Time source | ROTPRDSRV122 for the Rockhampton hosts | nine captured hosts (E-001) |\n\n"
+        "| Time source | ROTPRDSRV122 for the Rockhampton hosts | the RevServer and RevBroadcast nodes (E-001) |\n\n"
         "## B3 Drawbridge Impact\nFacts:\n- The hosts run on their own clocks during isolation. (E-002) {observed; all 12 hosts}\n\n"
         f"## {qid} Discovery Information note\n{note_block}\n")
 
@@ -199,3 +199,19 @@ def test_note_candidates_find_a_role_group_member_that_differs(tmp_path):
     assert any("recorded for 3 of 4 captured hosts" in t and "ROKPRDOPS110" in t for t in texts)
     assert any(t.startswith("sources disagree") for t in texts)
     assert not any("caption" in t for t in texts)          # not about time
+
+
+def test_a_kept_fact_that_counts_hosts_is_marked_for_restating():
+    hint = section_card.count_hint("Nine captured hosts synchronise from ROTPRDSRV122.")
+    assert 'restate without "Nine captured hosts"' in hint and "role group" in hint
+    assert section_card.count_hint("The RevServer nodes synchronise from ROTPRDSRV122.") == ""
+
+
+def test_a_restated_kept_fact_passes_when_it_cites_the_same_capture():
+    node = _node()
+    card = _card(node)
+    card["keep"] = [{"question": "B1", "fact": "Nine captured hosts synchronise from ROTPRDSRV122.",
+                     "evidence_ids": ["E-001"], "capture_ids": ["E-001"]}]
+    sheet = _sheet(card, "None: every captured host fits a row of the table.")
+    res = A.validate(sheet, card)
+    assert "CAPTURE_DROPPED" not in _codes(res) and "NO_TOTALS" not in _codes(res)

@@ -228,6 +228,7 @@ def read(path: Path | str) -> dict:
     hpath = "0"
     all_ratings: list[str] = []
     pending_bullets: list[dict] = []
+    topic_lines = False  # the TableNote lines right after a framework-built role table belong to it
 
     def flush_bullets():
         nonlocal pending_bullets
@@ -245,6 +246,16 @@ def read(path: Path | str) -> dict:
             table_ord += 1
             if topic is None:
                 continue                                   # cover block
+            cap = el.find("w:tblPr/w:tblCaption", NS)
+            if cap is not None and cap.get(_q("val")) == "csa-topic-table":
+                # the role table topic_tables.py builds from the captures: counted, so table ordinals still match
+                # the stable-ID manifest, but not a part anyone answers (no columns, no placeholders)
+                topic["parts"].append({"kind": "topic-table", "facet": facet, "label": None,
+                                       "table": f"@H{hpath}-T{table_ord}", "topic_columns": (_rows(el) or [[]])[0]})
+                label = None
+                topic_lines = True
+                continue
+            topic_lines = False
             ratings = _ratings_in(el)
             all_ratings += [r for r in ratings if r not in all_ratings]
             part = _table_part(_rows(el), facet, label, ratings)
@@ -259,6 +270,7 @@ def read(path: Path | str) -> dict:
         m = _HEADING.match(style)
         if m:
             flush_bullets()
+            topic_lines = False
             level = int(m.group(1))
             ordinals[level] = ordinals.get(level, 0) + 1
             for deeper in [k for k in ordinals if k > level]:
@@ -312,6 +324,11 @@ def read(path: Path | str) -> dict:
             continue
         p_ord += 1
         pid = f"@H{hpath}-P{p_ord}"
+        if topic_lines and style == "TableNote" and topic is not None:
+            # the role table's common sentence and marker lines: the framework writes them, nobody answers them
+            topic["parts"].append({"kind": "topic-note", "facet": facet, "label": None, "pid": pid, "text": text[:300]})
+            continue
+        topic_lines = False
         if topic is not None:
             _attach(topic, notes, (text.rstrip(':').strip() if style == 'Label' else facet))
         if topic is not None and style in FIGURE_STYLES:

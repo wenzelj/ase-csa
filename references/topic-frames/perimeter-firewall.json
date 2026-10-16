@@ -1,0 +1,83 @@
+{
+ "topic": "Perimeter / Firewall",
+ "key": "PERIM",
+ "area": "perimeter_firewall",
+ "section": "perimeter and firewall",
+ "headings": [
+  "Perimeter / Firewall & Network Boundary Validation",
+  "Perimeter / Firewall and Network Boundary Validation",
+  "Perimeter / Firewall"
+ ],
+ "basis": "Scope map 3.13 Must explain; SEP-PERIM-01, 02 and 03.",
+ "slots": [
+  {
+   "id": "S1",
+   "question": "Is the host firewall on, and what are its default inbound and outbound actions?",
+   "requirements": [
+    "SEP-PERIM-01"
+   ],
+   "source": {
+    "settings": [
+     "fw.profiles"
+    ]
+   }
+  },
+  {
+   "id": "S2",
+   "question": "Which inbound allow rules were added beyond the stock Windows set, and what do they open?",
+   "requirements": [
+    "SEP-PERIM-01"
+   ],
+   "source": {
+    "settings": [
+     "fw.custom_inbound"
+    ]
+   }
+  },
+  {
+   "id": "S3",
+   "question": "What does each host listen on across every interface?",
+   "requirements": [
+    "SEP-PERIM-02"
+   ],
+   "source": {
+    "settings": [
+     "fw.exposed",
+     "admin.rdp_port"
+    ]
+   }
+  },
+  {
+   "id": "S4",
+   "question": "Which connections reach the hosts from addresses outside the system?",
+   "requirements": [
+    "SEP-PERIM-02"
+   ],
+   "source": {
+    "flows": {
+     "direction": "inbound",
+     "status": [
+      "observed",
+      "both"
+     ]
+    }
+   }
+  },
+  {
+   "id": "S5",
+   "question": "Which boundary firewalls sit between the system's zones and IT, and do their rules allow only the approved conduits?",
+   "requirements": [
+    "SEP-PERIM-01"
+   ],
+   "source": {}
+  },
+  {
+   "id": "S6",
+   "question": "Who administers the boundary firewalls, from where, and with which accounts?",
+   "requirements": [
+    "SEP-PERIM-03"
+   ],
+   "source": {}
+  }
+ ]
+}

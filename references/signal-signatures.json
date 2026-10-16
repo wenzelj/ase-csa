@@ -1,0 +1,86 @@
+{
+ "about": "What a capture signal usually means, to tell the agent what to confirm. Background only: never evidence, never cited. Match on process and/or port (service side).",
+ "signatures": [
+  {
+   "process": "agentService",
+   "port": "7000",
+   "mechanism": "backup agent",
+   "means": "Dell PowerProtect Data Manager (PPDM) agent service, which the PPDM server connects in to for backups",
+   "confirm": "which system connects in on TCP 7000, whether it is the backup platform, and which data it copies out"
+  },
+  {
+   "process": "TetSen|tet-main|TetEnfC|TetUpdate",
+   "mechanism": "security agent telemetry",
+   "means": "Cisco Secure Workload (Tetration) agent processes, which send flow and process telemetry to the Secure Workload service",
+   "confirm": "where the Secure Workload service runs (SaaS or on premises) and what telemetry leaves the host"
+  },
+  {
+   "process": "splunkd",
+   "port": "9997",
+   "mechanism": "log forwarding",
+   "means": "Splunk universal forwarder sending events to an indexer",
+   "confirm": "where the indexer sits and which logs are sent"
+  },
+  {
+   "process": "CcmExec",
+   "mechanism": "patch management",
+   "means": "Microsoft Configuration Manager (MECM/SCCM) client talking to its management point",
+   "confirm": "the management point and what content it delivers"
+  },
+  {
+   "process": "HealthService",
+   "port": "5723",
+   "mechanism": "monitoring",
+   "means": "System Center Operations Manager agent reporting to its management server",
+   "confirm": "where the management server sits"
+  },
+  {
+   "process": "RevBroadcast",
+   "port": "443",
+   "mechanism": "message/API",
+   "means": "the RevBroadcast service sending radio data out over HTTPS (Azure Service Bus in the flow map)",
+   "confirm": "the destination service and what data each message carries"
+  },
+  {
+   "process": "System",
+   "port": "445",
+   "mechanism": "file share",
+   "means": "a Windows SMB client session (file share, cluster witness, backup target or software share)",
+   "confirm": "what share is opened on the peer and what data moves"
+  },
+  {
+   "process": "sqlservr",
+   "port": "1433",
+   "mechanism": "database",
+   "means": "SQL Server database connections",
+   "confirm": "which application or user reads or writes which database"
+  },
+  {
+   "process": "sqlservr",
+   "port": "5022",
+   "mechanism": "database replication",
+   "means": "SQL Server availability group endpoint replicating databases between replicas",
+   "confirm": "which replicas and whether replication crosses sites or zones"
+  },
+  {
+   "process": "mysqld",
+   "port": "3306",
+   "mechanism": "database",
+   "means": "MySQL database connections",
+   "confirm": "which application uses the database and what it holds"
+  },
+  {
+   "process": "tomcat|Apache|httpd",
+   "mechanism": "web/API",
+   "means": "a web application or API served or called over HTTP(S)",
+   "confirm": "which application and what data it serves or sends"
+  },
+  {
+   "process": "svchost|smartscreen|MsMpEng|SearchApp|SecurityHealthService|wuauclt|backgroundTaskHost",
+   "port": "80|443",
+   "mechanism": "Windows platform services",
+   "means": "Windows' own services (update, licensing, SmartScreen, Defender) reaching Microsoft and CDN endpoints",
+   "confirm": "that no system data leaves through these connections"
+  }
+ ]
+}

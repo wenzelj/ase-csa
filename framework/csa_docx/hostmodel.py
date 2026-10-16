@@ -827,6 +827,12 @@ def build(work_dir: Path) -> dict:
                      "dst listens on port (seen from the server's capture)" if (s, d_, p) in served else
                      "dst not captured; port not verified")
             w.writerow([s, d_, p, n, basis, lsrc[(s, d_, p)]])
+    from csa_docx import host_settings          # per-host setting values for the topic tables
+    settings = host_settings.build(work_dir, con, svc_rows)
+    from csa_docx import flows as flows_mod      # the data-flow inventory (zones from hosts/zones.csv, if any)
+    flow_res = flows_mod.build(work_dir, con)
+    from csa_docx import isolation              # the isolation dependency matrix (3.12), from settings and flows
+    iso_res = isolation.build(work_dir)
     addrs = build_addresses(work_dir, reg)
     ev = link_evidence(work_dir, set(reg), set(addrs))
     return {"status": "OK", "hosts": len(reg), "unnamed_addresses": len(addrs), "with_capture": sum(1 for e in reg.values() if e["capture"]),
@@ -837,7 +843,8 @@ def build(work_dir: Path) -> dict:
             "evidence_rows": ev["rows"], "evidence_without_host": ev["without_host"],
             "addresses_named": sum(1 for e in reg.values() if any(x.startswith("address ") for x in e["sources"])),
             "addresses_ambiguous": ambiguous,
-            "host_services": len(svc_rows), "out": str(out)}
+            "host_services": len(svc_rows), "host_settings": settings.get("rows", 0), "flows": flow_res.get("flows", 0),
+            "isolation": iso_res.get("rows", 0), "out": str(out)}
 
 
 def build_addresses(work_dir: Path, reg: dict) -> dict:

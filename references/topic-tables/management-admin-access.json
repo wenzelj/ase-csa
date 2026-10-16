@@ -1,0 +1,51 @@
+{
+ "topic": "Management & Admin Access",
+ "key": "MGT",
+ "headings": [
+  "Management & Administrative Access",
+  "Management and Administrative Access",
+  "Management & Admin Access"
+ ],
+ "requirements": [
+  "SEP-MGT-01",
+  "SEP-MGT-02"
+ ],
+ "columns": [
+  {
+   "label": "Local Administrators",
+   "attribute": "admin.local_admins",
+   "explains": "who holds local administrator rights",
+   "list": true,
+   "common_shared": "have {value} in local Administrators",
+   "rest_none": "No others"
+  },
+  {
+   "label": "Remote Desktop Users",
+   "attribute": "admin.rdp_users",
+   "explains": "who may log on remotely",
+   "list": true,
+   "common_shared": "have {value} in Remote Desktop Users",
+   "rest_none": "No others"
+  },
+  {
+   "label": "Admin listeners",
+   "attribute": "admin.listeners",
+   "explains": "remote administration ports open on the host",
+   "common": "listen on {value} for remote administration",
+   "noun": "remote administration listener"
+  }
+ ],
+ "common_values": {
+  "No members": "have no members in Remote Desktop Users"
+ },
+ "flows": {
+  "mechanisms": [
+   "remote administration"
+  ],
+  "status": [
+   "observed",
+   "both",
+   "declared"
+  ]
+ }
+}

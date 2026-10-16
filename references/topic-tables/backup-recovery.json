@@ -1,0 +1,44 @@
+{
+ "topic": "Backup & Recovery",
+ "key": "BAK",
+ "headings": [
+  "Backup & Recovery",
+  "Backup and Recovery"
+ ],
+ "requirements": [
+  "SEP-BAK-01",
+  "SEP-BAK-02"
+ ],
+ "columns": [
+  {
+   "label": "Backup agent",
+   "attribute": "agent.backup",
+   "explains": "what backs the host up",
+   "common": "run {value}",
+   "noun": "backup agent"
+  },
+  {
+   "label": "Runs as",
+   "attribute": "agent.backup_account",
+   "explains": "under whose account backup runs",
+   "common": "run backup as {value}"
+  },
+  {
+   "label": "Database",
+   "attribute": "storage.database",
+   "explains": "what data needs backing up",
+   "common": "run {value}",
+   "noun": "database service"
+  }
+ ],
+ "flows": {
+  "mechanisms": [
+   "backup agent"
+  ],
+  "status": [
+   "observed",
+   "both",
+   "declared"
+  ]
+ }
+}

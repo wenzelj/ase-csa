@@ -1,0 +1,39 @@
+{
+ "topic": "Infrastructure Dependencies",
+ "key": "INFRA",
+ "headings": [
+  "Infrastructure Dependencies (Virtualisation / Hardware)",
+  "Infrastructure Dependencies (Virtualisation and Hardware)",
+  "Infrastructure Dependencies (Virtualization / Hardware)"
+ ],
+ "requirements": [
+  "SEP-INFRA-01"
+ ],
+ "columns": [
+  {
+   "label": "Platform",
+   "attribute": "platform.hardware",
+   "explains": "physical server or virtual machine",
+   "common": "run as a {value}"
+  },
+  {
+   "label": "Guest tools",
+   "attribute": "agent.virtualisation_tools",
+   "explains": "hypervisor integration on the guest",
+   "common": "run {value}",
+   "noun": "virtualisation guest tools"
+  },
+  {
+   "label": "Operating system",
+   "attribute": "platform.os",
+   "explains": "what the platform carries",
+   "common": "run {value}"
+  },
+  {
+   "label": "Support",
+   "attribute": "platform.support",
+   "explains": "Microsoft extended support end",
+   "common": "have Microsoft extended support to {value}"
+  }
+ ]
+}

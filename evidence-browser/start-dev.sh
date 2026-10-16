@@ -14,6 +14,9 @@ command -v npm >/dev/null || { echo "npm not found (brew install node)"; exit 1;
 [ -d .venv ] || uv sync
 [ -d frontend/node_modules ] || (cd frontend && npm install)
 
+echo "Building frontend..."
+(cd frontend && npm run build)
+
 pids=()
 cleanup() {
   echo; echo "Stopping..."

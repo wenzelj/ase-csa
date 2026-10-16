@@ -1,0 +1,73 @@
+{
+ "topic": "Backup & Recovery",
+ "key": "BAK",
+ "area": "backup_and_recovery",
+ "section": "backup and recovery",
+ "headings": [
+  "Backup & Recovery",
+  "Backup and Recovery"
+ ],
+ "basis": "Scope map 3.11 Must explain; SEP-BAK-01 and 02.",
+ "slots": [
+  {
+   "id": "S1",
+   "question": "What is backed up (databases, hosts, application data) and by which tool?",
+   "requirements": [
+    "SEP-BAK-01"
+   ],
+   "source": {
+    "settings": [
+     "agent.backup",
+     "storage.database"
+    ]
+   }
+  },
+  {
+   "id": "S2",
+   "question": "Which system collects the backups, from which zone, and which side opens the connection?",
+   "requirements": [
+    "SEP-BAK-01"
+   ],
+   "source": {
+    "flows": {
+     "mechanisms": [
+      "backup agent"
+     ],
+     "status": [
+      "observed",
+      "both",
+      "declared"
+     ]
+    }
+   }
+  },
+  {
+   "id": "S3",
+   "question": "Under whose accounts does backup run, and are they privileged corporate IT accounts?",
+   "requirements": [
+    "SEP-BAK-01"
+   ],
+   "source": {
+    "settings": [
+     "agent.backup_account"
+    ]
+   }
+  },
+  {
+   "id": "S4",
+   "question": "How often do backups run, where are the copies kept, and do recent jobs succeed?",
+   "requirements": [
+    "SEP-BAK-01"
+   ],
+   "source": {}
+  },
+  {
+   "id": "S5",
+   "question": "Has a restore been proven, and could the system be rebuilt from offline, OT-held, known-good copies alone?",
+   "requirements": [
+    "SEP-BAK-02"
+   ],
+   "source": {}
+  }
+ ]
+}

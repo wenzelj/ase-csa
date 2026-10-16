@@ -1,0 +1,67 @@
+{
+ "topic": "PKI / Certificates",
+ "key": "PKI",
+ "area": "pki_and_certificates",
+ "section": "pki and certificates",
+ "headings": [
+  "PKI / Certificates",
+  "PKI and Certificates",
+  "PKI & Certificates"
+ ],
+ "basis": "Scope map 3.3 Must explain; SEP-PKI-01 and 02.",
+ "slots": [
+  {
+   "id": "S1",
+   "question": "Which certificates do the hosts hold, and which CA issued each (enterprise IT CA, OT CA, self-signed, vendor)?",
+   "requirements": [
+    "SEP-PKI-01"
+   ],
+   "source": {
+    "settings": [
+     "cert.machine",
+     "cert.other"
+    ]
+   }
+  },
+  {
+   "id": "S2",
+   "question": "Which private root CAs do the hosts trust (enterprise, OT, product, TLS inspection)?",
+   "requirements": [
+    "SEP-PKI-01"
+   ],
+   "source": {
+    "settings": [
+     "cert.private_roots"
+    ]
+   }
+  },
+  {
+   "id": "S3",
+   "question": "Which certificates expire within a three-month isolation, or have already expired, and how are they renewed (auto-enrolment from the IT CA)?",
+   "requirements": [
+    "SEP-PKI-02"
+   ],
+   "source": {
+    "settings": [
+     "cert.machine"
+    ]
+   }
+  },
+  {
+   "id": "S4",
+   "question": "Does the application itself use certificates or TLS (web services, SQL encryption, radio management), and which certificates?",
+   "requirements": [
+    "SEP-PKI-01"
+   ],
+   "source": {}
+  },
+  {
+   "id": "S5",
+   "question": "Where is revocation checked (CRL distribution points, OCSP), and are those reachable during isolation?",
+   "requirements": [
+    "SEP-PKI-02"
+   ],
+   "source": {}
+  }
+ ]
+}

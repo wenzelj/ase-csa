@@ -1,0 +1,67 @@
+{
+ "topic": "General / Asset Inventory",
+ "key": "GEN",
+ "area": "asset_inventory",
+ "section": "general and asset inventory",
+ "headings": [
+  "General / Asset Inventory",
+  "General and Asset Inventory",
+  "Asset Inventory"
+ ],
+ "basis": "Scope map 3.1 Must explain; SEP-GEN-01 and 03.",
+ "slots": [
+  {
+   "id": "S1",
+   "question": "Which hosts make up the system, what role does each play, where are they, and what platform and operating system does each run on?",
+   "requirements": [
+    "SEP-GEN-01"
+   ],
+   "source": {
+    "settings": [
+     "platform.hardware",
+     "platform.os"
+    ]
+   }
+  },
+  {
+   "id": "S2",
+   "question": "Which systems outside the OT zones does the system depend on or exchange data with, by which mechanism?",
+   "requirements": [
+    "SEP-GEN-03"
+   ],
+   "source": {
+    "flows": {
+     "cross_zone": [
+      "yes"
+     ],
+     "status": [
+      "observed",
+      "both",
+      "declared",
+      "attempted"
+     ],
+     "exclude_mechanisms": [
+      "other"
+     ]
+    }
+   }
+  },
+  {
+   "id": "S3",
+   "question": "Which non-Windows layers does the system rely on (radios, base stations, gateways, appliances, licence dongles)?",
+   "requirements": [
+    "SEP-GEN-01"
+   ],
+   "source": {}
+  },
+  {
+   "id": "S4",
+   "question": "Is an inventory of these assets and dependencies maintained, and by whom?",
+   "requirements": [
+    "SEP-GEN-01",
+    "SEP-GEN-03"
+   ],
+   "source": {}
+  }
+ ]
+}

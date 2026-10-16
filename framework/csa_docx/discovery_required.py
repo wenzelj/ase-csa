@@ -65,6 +65,11 @@ def _collect(work: Path) -> list[dict]:
     for g in all_gaps(work):
         items.setdefault(g["dr_id"], {"dr_id": g["dr_id"], "text": g["text"], "reqs": list(g.get("reqs") or []),
                                       "fact": g.get("fact", ""), "scope": f"figure in {g.get('section', '')}".strip()})
+    # hosts a role table could not show from a capture (csa-work/topic-tables/gaps.json, written when it is placed)
+    from csa_docx.topic_tables import all_gaps as topic_gaps
+    for g in topic_gaps(work):
+        items.setdefault(g["dr_id"], {"dr_id": g["dr_id"], "text": g["text"], "reqs": list(g.get("reqs") or []),
+                                      "fact": g.get("fact", ""), "scope": f"role table in {g.get('section', '')}".strip()})
     return list(items.values())
 
 

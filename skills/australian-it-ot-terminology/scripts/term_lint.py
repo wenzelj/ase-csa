@@ -11,9 +11,12 @@ Reads a CSA .docx or a Markdown draft and reports, per Heading 1 section:
                         three or more times in one section
   IT_OT_REVIEW          an enterprise IT service described as OT or as part of the application
                         ("OT DNS", "Active Directory is part of the application")
+  UNEXPANDED_ABBREVIATION
+                        known abbreviation used before its full term in an independently
+                        readable subsection, or used in a standalone heading or label
   AU_SPELLING           US spelling outside code, quotes, paths and product names
 
-The phrase lists come from ../references/terminology.md (parts 12, 13 and 14), so the
+The phrase lists come from ../references/terminology.md (parts 12 to 15), so the
 reference and the lint cannot drift apart. Every result needs a person to decide: the
 lint cannot tell a legitimate use (an appendix really about discovery; a target-state
 "OT DNS") from a wrong one.
@@ -66,21 +69,23 @@ def _table(md: str, heading_re: str) -> list[list[str]]:
     return rows[1:]  # drop header
 
 
-def load_terms() -> tuple[list[tuple[str, str, str]], list[str], list[tuple[re.Pattern, str]]]:
+def load_terms() -> tuple[list[tuple[str, str, str]], list[tuple[str, str]], list[str], list[tuple[re.Pattern, str]]]:
     md = TERMS.read_text(encoding="utf-8")
     review = []
-    for row in _table(md, r"12\. Terms that need review"):
+    for row in _table(md, r"13\. Terms that need review"):
         phrase, why, ask = (row + ["", "", ""])[:3]
         code = "SPECIFICITY_REVIEW" if why.lower().startswith("vague") else "TERM_REVIEW_REQUIRED"
         review.append((phrase.lower(), code, ask))
     review.sort(key=lambda r: len(r[0]), reverse=True)  # longest phrase wins
+    abbreviations = [(row[0].strip(), row[1].strip())
+                     for row in _table(md, r"12\. Abbreviations requiring expansion") if len(row) >= 2]
     evidence = [re.compile(rf"(?<!\w){r[0].replace(chr(92) + '|', '|')}(?!\w)", re.I)
-                for r in _table(md, r"13\. Evidence-centric phrases")]
+                for r in _table(md, r"14\. Evidence-centric phrases")]
     spelling = []
-    for row in _table(md, r"14\. Australian spelling"):
+    for row in _table(md, r"15\. Australian spelling"):
         stem, au = row[0].strip("`"), row[1]
         spelling.append((re.compile(rf"(?<![\w_-])({stem})\w*", re.I), au))
-    return review, evidence, spelling
+    return review, abbreviations, evidence, spelling
 
 
 def _mask(text: str) -> str:
@@ -99,9 +104,10 @@ def _snip(text: str, start: int, end: int) -> str:
     return ("..." if a else "") + text[a:b].replace("\n", " ") + ("..." if b < len(text) else "")
 
 
-def lint_section(sec: Section, review, evidence, spelling) -> list[dict]:
+def lint_section(sec: Section, review, abbreviations, evidence, spelling) -> list[dict]:
     out: list[dict] = []
     ev_hits: list[tuple[int, str, int, bool]] = []
+    introduced: set[str] = set()
     for i, p in enumerate(sec.paras):
         text = p.text or ""
         if not text.strip():
@@ -109,6 +115,26 @@ def lint_section(sec: Section, review, evidence, spelling) -> list[dict]:
         masked = _mask(text)
         low = masked.lower()
         where = "heading" if p.kind == "heading" else p.kind
+        if p.kind == "heading":
+            introduced.clear()
+        for abbreviation, full_term in abbreviations:
+            matches = list(re.finditer(rf"(?<![\w/]){re.escape(abbreviation)}(?![\w/])", masked))
+            if p.kind == "heading":
+                for m in matches:
+                    out.append({"code": "UNEXPANDED_ABBREVIATION", "where": where, "para": i,
+                                "found": text[m.start():m.end()],
+                                "ask": f'write "{full_term}" without the abbreviation in this standalone label',
+                                "context": _snip(text, m.start(), m.end())})
+                continue
+            full_here = bool(re.search(rf"(?<!\w){re.escape(full_term)}(?!\w)", masked, re.I))
+            if full_here:
+                introduced.add(abbreviation)
+            for m in matches:
+                if abbreviation not in introduced:
+                    ask = f'write "{full_term}"; add ({abbreviation}) only if the abbreviation is reused'
+                    out.append({"code": "UNEXPANDED_ABBREVIATION", "where": where, "para": i,
+                                "found": text[m.start():m.end()], "ask": ask,
+                                "context": _snip(text, m.start(), m.end())})
         taken: list[tuple[int, int]] = []
         for phrase, code, ask in review:
             for m in re.finditer(rf"(?<!\w){re.escape(phrase)}(?!\w)", low):
@@ -157,7 +183,7 @@ def main() -> int:
     path = Path(a.path)
     if not path.exists():
         sys.exit(f"not found: {path}")
-    review, evidence, spelling = load_terms()
+    review, abbreviations, evidence, spelling = load_terms()
     paras = read_docx(path) if path.suffix.lower() == ".docx" else read_markdown(path)
     sections = split_sections(paras)
     if not any(s.index for s in sections):
@@ -170,7 +196,7 @@ def main() -> int:
         chosen = [s for s in sections if s.index and (a.section is None or s.index == a.section)]
     results = []
     for s in chosen:
-        items = lint_section(s, review, evidence, spelling)
+        items = lint_section(s, review, abbreviations, evidence, spelling)
         results.append({"section": s.index, "title": s.title, "counts": dict(Counter(i["code"] for i in items)), "items": items})
     if a.json:
         print(json.dumps({"file": str(path), "sections": results}, indent=2))

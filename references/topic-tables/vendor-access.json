@@ -1,0 +1,50 @@
+{
+ "topic": "Vendor Access",
+ "key": "SUPPLY",
+ "headings": [
+  "Supply Chain & Third-Party / Vendor Access",
+  "Supply Chain and Third-Party / Vendor Access",
+  "Supply Chain & Third Party / Vendor Access",
+  "Vendor Access"
+ ],
+ "requirements": [
+  "SEP-SUPPLY-01"
+ ],
+ "columns": [
+  {
+   "label": "Remote control tools",
+   "attribute": "agent.remote_support",
+   "explains": "tools a vendor could use to reach the host",
+   "common": "run {value}",
+   "noun": "remote control tool"
+  },
+  {
+   "label": "Enabled local accounts",
+   "attribute": "identity.local_users",
+   "explains": "accounts outside the directory, some may belong to vendors",
+   "list": true,
+   "common_shared": "have the enabled local account{s} {value}",
+   "rest_none": "No others"
+  },
+  {
+   "label": "Admin listeners",
+   "attribute": "admin.listeners",
+   "explains": "ports a remote session could use",
+   "common": "listen on {value} for remote administration",
+   "noun": "remote administration listener"
+  }
+ ],
+ "common_values": {
+  "None enabled": "have no enabled local accounts"
+ },
+ "flows": {
+  "mechanisms": [
+   "remote administration"
+  ],
+  "status": [
+   "observed",
+   "both",
+   "declared"
+  ]
+ }
+}

@@ -1,0 +1,77 @@
+{
+ "topic": "Time Synchronisation",
+ "key": "TIME",
+ "area": "time_synchronisation",
+ "section": "time synchronisation",
+ "headings": [
+  "Time Synchronisation",
+  "Time Synchronization",
+  "Time Sync"
+ ],
+ "basis": "Scope map 3.4 Must explain; SEP-TIME-01.",
+ "slots": [
+  {
+   "id": "S1",
+   "question": "Where does each host take its time from, through which service, and at what stratum?",
+   "requirements": [
+    "SEP-TIME-01"
+   ],
+   "source": {
+    "settings": [
+     "time.source",
+     "time.service",
+     "time.stratum",
+     "time.source_stratum"
+    ]
+   }
+  },
+  {
+   "id": "S2",
+   "question": "Does each host have a fallback time source, and how often does it poll (how fast drift shows if the source is lost)?",
+   "requirements": [
+    "SEP-TIME-01"
+   ],
+   "source": {
+    "settings": [
+     "time.fallback",
+     "time.poll"
+    ]
+   }
+  },
+  {
+   "id": "S3",
+   "question": "Which time connections were seen, to which servers, and do they cross from OT into IT?",
+   "requirements": [
+    "SEP-TIME-01"
+   ],
+   "source": {
+    "flows": {
+     "mechanisms": [
+      "time"
+     ],
+     "status": [
+      "observed",
+      "both",
+      "declared"
+     ]
+    }
+   }
+  },
+  {
+   "id": "S4",
+   "question": "What hierarchy sits above the time source (PDC emulator, external NTP, GPS clock), and is any of it OT-resident?",
+   "requirements": [
+    "SEP-TIME-01"
+   ],
+   "source": {}
+  },
+  {
+   "id": "S5",
+   "question": "Does the application keep its own time or rely on Windows time, and which records (logs, call records, recordings) depend on the clocks agreeing?",
+   "requirements": [
+    "SEP-TIME-01"
+   ],
+   "source": {}
+  }
+ ]
+}

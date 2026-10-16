@@ -1,0 +1,74 @@
+{
+ "topic": "Vendor Access",
+ "key": "SUPPLY",
+ "area": "vendor_access",
+ "section": "supply chain and vendor access",
+ "headings": [
+  "Supply Chain & Third-Party / Vendor Access",
+  "Supply Chain and Third-Party / Vendor Access",
+  "Supply Chain & Third Party / Vendor Access",
+  "Vendor Access"
+ ],
+ "basis": "Scope map 3.16 Must explain; SEP-SUPPLY-01.",
+ "slots": [
+  {
+   "id": "S1",
+   "question": "Which remote control or remote support tools are installed, and on which hosts?",
+   "requirements": [
+    "SEP-SUPPLY-01"
+   ],
+   "source": {
+    "settings": [
+     "agent.remote_support"
+    ]
+   }
+  },
+  {
+   "id": "S2",
+   "question": "Which enabled local accounts could belong to vendors or be shared?",
+   "requirements": [
+    "SEP-SUPPLY-01"
+   ],
+   "source": {
+    "settings": [
+     "identity.local_users"
+    ]
+   }
+  },
+  {
+   "id": "S3",
+   "question": "Which remote administration connections reach the system from outside its zones?",
+   "requirements": [
+    "SEP-SUPPLY-01"
+   ],
+   "source": {
+    "flows": {
+     "mechanisms": [
+      "remote administration"
+     ],
+     "status": [
+      "observed",
+      "both",
+      "declared"
+     ]
+    }
+   }
+  },
+  {
+   "id": "S4",
+   "question": "Which vendors support the system, and how does their access work (route, approval, monitoring)?",
+   "requirements": [
+    "SEP-SUPPLY-01"
+   ],
+   "source": {}
+  },
+  {
+   "id": "S5",
+   "question": "Is there any vendor path that bypasses the internal admin route, or any direct OT-to-internet connection?",
+   "requirements": [
+    "SEP-SUPPLY-01"
+   ],
+   "source": {}
+  }
+ ]
+}

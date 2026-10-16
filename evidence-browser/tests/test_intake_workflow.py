@@ -102,6 +102,18 @@ def test_snapshot_hides_settled_candidates(tmp_path):
     assert [(c["evidence_id"], c["dr_id"]) for c in snap["candidates"]] == [("E-001", "DR-BAK-B1")]
 
 
+def test_snapshot_retires_candidates_the_gap_check_no_longer_asks(tmp_path):
+    rows = [_row("E-001", "UNCONFIRMED", "Possible answer to DR-BAK-B1: the source reads: x"),
+            _row("E-002", "UNCONFIRMED", "Possible answer to DR-OLD-B9: the source reads: y")]
+    project = _work(tmp_path, rows)
+    intake = Path(project["work_dir"]) / "intake"
+    intake.mkdir(exist_ok=True)
+    (intake / "gap-check-latest.json").write_text(json.dumps(
+        {"checked_at": "2026-10-16T00:00:00Z", "questions": [{"dr_id": "DR-BAK-B1", "verdict": "CANDIDATES"}],
+         "affected": []}), encoding="utf-8")
+    assert [c["evidence_id"] for c in intake_workflow.snapshot(project)["candidates"]] == ["E-001"]
+
+
 def test_snapshot_without_intake(tmp_path):
     snap = intake_workflow.snapshot(_work(tmp_path))
     assert snap["intake"] is None and snap["gap_check"] is None and snap["agent_summary"] is None

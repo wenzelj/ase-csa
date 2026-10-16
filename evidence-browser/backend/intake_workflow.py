@@ -117,6 +117,12 @@ def snapshot(project: dict[str, str]) -> dict[str, Any]:
         m = _CANDIDATE.match(r.get("claim", ""))
         if r.get("status") == "UNCONFIRMED" and m and reviews.get(r.get("evidence_id", "").upper()) not in ("rejected", "reviewed"):
             candidates.append({**r, "dr_id": m.group(1)})
+    # a candidate for a question the latest gap check no longer asks is retired: the question was answered or
+    # renumbered by a later draft, so there is nothing left to settle (the row stays in the matrix)
+    latest_gaps = _json(intake_dir / "gap-check-latest.json") or {}
+    if latest_gaps.get("questions"):
+        asked = {q.get("dr_id") for q in latest_gaps["questions"]}
+        candidates = [c for c in candidates if c["dr_id"] in asked]
 
     summary = None
     if record and record.get("id"):

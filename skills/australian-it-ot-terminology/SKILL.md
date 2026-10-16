@@ -143,7 +143,7 @@ Use Australian spelling and conventions (Macquarie Dictionary; Australian Govern
 
 ## 8. Keep established technical terms
 
-Australian English does not mean inventing local alternatives. Keep internationally established terms: server, client, host, virtual machine, hypervisor, firewall, router, switch, VLAN, subnet, TCP/IP, DNS, DHCP, NTP, Active Directory, Group Policy, domain controller, certificate authority, application server, database server, file server, SCADA, DCS, PLC, RTU, HMI, historian, OPC, Modbus, DNP3, network segmentation, high availability, failover, redundancy. Expand an abbreviation on first use in a section.
+Australian English does not mean inventing local alternatives. Keep internationally established terms: server, client, host, virtual machine, hypervisor, firewall, router, switch, VLAN, subnet, TCP/IP, DNS, DHCP, NTP, Active Directory, Group Policy, domain controller, certificate authority, application server, database server, file server, SCADA, DCS, PLC, RTU, HMI, historian, OPC, Modbus, DNP3, network segmentation, high availability, failover, redundancy. Write the full term in headings and standalone labels. In body prose, introduce an abbreviation only when it will be reused, as the full term followed by the abbreviation in parentheses on first use in each independently readable subsection.
 
 ## 9. Source hierarchy for terminology
 
@@ -167,7 +167,7 @@ Run the lint, then read the section. The lint only proposes.
 python3 .agents/skills/australian-it-ot-terminology/scripts/term_lint.py <draft.md | working.docx> [--heading "<Heading 1 title>"] [--json]
 ```
 
-Codes: `TERM_REVIEW_REQUIRED` (consulting or data-analysis phrase: decide what technical concept is meant), `EVIDENCE_CENTRIC` (evidence phrase as a subject or opener, or used too often), `SPECIFICITY_REVIEW` (vague generic term such as "technology asset"), `IT_OT_REVIEW` (an enterprise service described as part of the OT application or as OT), `AU_SPELLING` (US spelling outside code, quotes and product names).
+Codes: `TERM_REVIEW_REQUIRED` (consulting or data-analysis phrase: decide what technical concept is meant), `EVIDENCE_CENTRIC` (evidence phrase as a subject or opener, or used too often), `SPECIFICITY_REVIEW` (vague generic term such as "technology asset"), `IT_OT_REVIEW` (an enterprise service described as part of the OT application or as OT), `UNEXPANDED_ABBREVIATION` (a known abbreviation used without its full term in the current subsection), `AU_SPELLING` (US spelling outside code, quotes and product names).
 
 Check, in this order:
 

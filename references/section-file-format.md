@@ -72,6 +72,14 @@ The `## Evidence` table is never rendered. It is the traceability record, and ev
 
 Document Control (1.1) and the cover come from the document properties, which `new_csa.py` sets. The build adds one revision-history row (1.2) from its own arguments. Appendix A (the OT 3.5 destinations) is pre-filled in the template and is not a block.
 
+## Role tables (topic tables)
+
+Where the topic has a profile in `.agents/references/topic-tables/` (Time Synchronisation, DNS), the framework itself puts a role table under the Discovery Information heading, above the Aspect table: rows are role groups, columns follow the captured data, no counts, hosts without a capture marked †. It is never written in a section file and never answered by an agent. The Aspect table keeps only points that are not per host. Spec: `.agents/docs/topic-tables-spec.md`; command: `csa topic-table <section> [--place]`.
+
+## Analysis frames
+
+Where the topic has a frame in `.agents/references/topic-frames/` (Storage & Data Transfer), the section card carries an "Analysis frame": explicit sub-questions filled from the captures (host settings and the data-flow inventory), each finding citable by evidence ID. The draft agent answers every slot in a `## F1 Analysis frame` block of the answer sheet (`- S3: B2, B3` or `- S9: Unknown: ...`); FRAME_UNCOVERED blocks a sheet that skips a slot, FLOW_NOT_COVERED warns about a cross-zone data flow named nowhere. Plan: `.agents/docs/topic-analysis-storage-plan.md`.
+
 ## Rules that `csa check-section` enforces
 
 - `block:` is one of the kinds above, and `heading:` exists in the template for that kind (from `template-blocks.json`; straight and curly quotes match).

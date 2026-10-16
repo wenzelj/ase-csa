@@ -1,0 +1,44 @@
+{
+ "topic": "Network / Segmentation",
+ "key": "NET",
+ "headings": [
+  "Network / Segmentation",
+  "Network and Segmentation",
+  "Network Segmentation"
+ ],
+ "requirements": [
+  "SEP-NET-01",
+  "SEP-NET-02",
+  "SEP-NET-03"
+ ],
+ "columns": [
+  {
+   "label": "Zone",
+   "attribute": "net.zone",
+   "explains": "where the host sits (project zone list)",
+   "common": "sit in {value}"
+  },
+  {
+   "label": "Address",
+   "attribute": "net.address",
+   "explains": "IPv4 address and prefix"
+  },
+  {
+   "label": "Gateway",
+   "attribute": "net.gateway",
+   "explains": "default route",
+   "common": "route through {value}"
+  }
+ ],
+ "flows": {
+  "cross_zone": [
+   "yes"
+  ],
+  "status": [
+   "observed",
+   "both",
+   "declared",
+   "attempted"
+  ]
+ }
+}

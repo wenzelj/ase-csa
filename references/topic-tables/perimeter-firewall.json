@@ -1,0 +1,47 @@
+{
+ "topic": "Perimeter / Firewall",
+ "key": "PERIM",
+ "headings": [
+  "Perimeter / Firewall & Network Boundary Validation",
+  "Perimeter / Firewall and Network Boundary Validation",
+  "Perimeter / Firewall"
+ ],
+ "requirements": [
+  "SEP-PERIM-01",
+  "SEP-PERIM-02",
+  "SEP-PERIM-03"
+ ],
+ "columns": [
+  {
+   "label": "Host firewall",
+   "attribute": "fw.profiles",
+   "explains": "Windows Firewall state and default actions",
+   "common": "have the Windows Firewall {value}"
+  },
+  {
+   "label": "Added inbound allow rules",
+   "attribute": "fw.custom_inbound",
+   "explains": "enabled inbound allow rules beyond the stock Windows set",
+   "list": true,
+   "common_shared": "allow {value} inbound",
+   "rest_none": "No others",
+   "noun": "added inbound allow rule"
+  },
+  {
+   "label": "Listening on every interface",
+   "attribute": "fw.exposed",
+   "explains": "what a host reachable through the boundary would answer on",
+   "list": true,
+   "common_shared": "listen on {value} on every interface",
+   "rest_none": "No others"
+  }
+ ],
+ "flows": {
+  "direction": "inbound",
+  "status": [
+   "observed",
+   "both",
+   "declared"
+  ]
+ }
+}

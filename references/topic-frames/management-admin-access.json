@@ -1,0 +1,78 @@
+{
+ "topic": "Management & Admin Access",
+ "key": "MGT",
+ "area": "management_and_admin_access",
+ "section": "management and administrative access",
+ "headings": [
+  "Management & Administrative Access",
+  "Management and Administrative Access",
+  "Management & Admin Access"
+ ],
+ "basis": "Scope map 3.8 Must explain; SEP-MGT-01 and 02.",
+ "slots": [
+  {
+   "id": "S1",
+   "question": "Who holds local administrator rights, and are those groups defined in the IT directory?",
+   "requirements": [
+    "SEP-MGT-02"
+   ],
+   "source": {
+    "settings": [
+     "admin.local_admins"
+    ]
+   }
+  },
+  {
+   "id": "S2",
+   "question": "Who may log on remotely (Remote Desktop Users), and are those groups defined in the IT directory?",
+   "requirements": [
+    "SEP-MGT-02"
+   ],
+   "source": {
+    "settings": [
+     "admin.rdp_users"
+    ]
+   }
+  },
+  {
+   "id": "S3",
+   "question": "Which remote administration listeners and remote control tools are on each host?",
+   "requirements": [
+    "SEP-MGT-01"
+   ],
+   "source": {
+    "settings": [
+     "admin.listeners",
+     "agent.remote_support"
+    ]
+   }
+  },
+  {
+   "id": "S4",
+   "question": "Which administration connections were seen, from which hosts and zones?",
+   "requirements": [
+    "SEP-MGT-01"
+   ],
+   "source": {
+    "flows": {
+     "mechanisms": [
+      "remote administration"
+     ],
+     "status": [
+      "observed",
+      "both",
+      "declared"
+     ]
+    }
+   }
+  },
+  {
+   "id": "S5",
+   "question": "Through which jump or management hosts do administrators reach the system, and is there a gateway or privileged access tool in front of them?",
+   "requirements": [
+    "SEP-MGT-01"
+   ],
+   "source": {}
+  }
+ ]
+}

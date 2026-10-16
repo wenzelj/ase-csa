@@ -123,6 +123,11 @@ def open_questions(work: Path) -> dict:
         if gaps:
             lines += [f"## Figure for {gaps[0].get('section') or key}", ""] + [f"- [{g['dr_id']}] {g['text']}" for g in gaps] + [""]
             total += len(gaps)
+    from csa_docx.topic_tables import load_gaps as topic_gaps
+    for key, gaps in topic_gaps(Path(work)).items():         # hosts the role tables could not show from a capture
+        if gaps:
+            lines += [f"## Role table for {gaps[0].get('section') or key}", ""] + [f"- [{g['dr_id']}] {g['text']}" for g in gaps] + [""]
+            total += len(gaps)
     out = Path(work) / "draft" / "open-questions.md"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text("\n".join(lines), encoding="utf-8")

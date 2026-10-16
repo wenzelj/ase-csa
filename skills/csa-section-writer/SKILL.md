@@ -50,7 +50,7 @@ When a subsection would only restate another, reduce it to one sentence that poi
 - Use approved evidence as the factual basis.
 - Do not put evidence IDs (`E-nnn`) or any other citation marker inside the drafted section text itself -- that text is what a reader sees in the assessment document, and it should read as plain prose, not a citation trail. Evidence traceability lives in the accompanying change record (and from there, in the Word comment attached to the edit when it's applied), never inline in the body.
 - State `INFERRED`, `UNCONFIRMED`, `CONFLICTING`, and `NOT_FOUND` matters transparently -- as plain wording in the sentence itself (e.g. "has not been directly observed" rather than a bracketed tag), not as a citation-style marker.
-- Expand an abbreviation on first use, for example Operational Technology (OT).
+- Write technical terms in full in headings, captions, table headers and finding labels. In body prose, use the full term alone when it appears once. Only introduce an abbreviation when it will be reused, as `full term (abbreviation)` on first use in each independently readable subsection.
 - Keep current state, interpretation, gap, risk observation, and recommendation distinct.
 - Before writing a requirement finding, complete the requirement-assessment object and decision sequence in `current-state-reasoning.md` section 8. Assess applicability and each mandatory obligation before selecting a rating. If the result is `unable_to_determine`, do not force it into the document's four-value rating schema; retain it as an open question for human review.
 - Do not copy stale facts from a prior assessment merely to complete a section.

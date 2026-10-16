@@ -1,0 +1,63 @@
+{
+ "topic": "Identity & Authentication",
+ "key": "ID",
+ "headings": [
+  "Identity & Authentication",
+  "Identity and Authentication"
+ ],
+ "requirements": [
+  "SEP-ID-01",
+  "SEP-ID-02",
+  "SEP-ID-03"
+ ],
+ "columns": [
+  {
+   "label": "Domain",
+   "attribute": "identity.domain",
+   "explains": "which directory the host belongs to",
+   "common": "are members of the {value} domain"
+  },
+  {
+   "label": "Answering DC",
+   "attribute": "identity.kdc",
+   "explains": "which domain controller issued the Kerberos tickets",
+   "common": "got Kerberos tickets from {value}"
+  },
+  {
+   "label": "Kerberos",
+   "attribute": "identity.kerberos",
+   "explains": "ticket encryption",
+   "common": "use {value} Kerberos ticket encryption"
+  },
+  {
+   "label": "Service accounts",
+   "attribute": "identity.service_accounts",
+   "explains": "non-built-in accounts that services log on as",
+   "common": "run services as {value}"
+  },
+  {
+   "label": "Enabled local accounts",
+   "attribute": "identity.local_users",
+   "explains": "local fallback logons",
+   "list": true,
+   "common_shared": "have the enabled local account{s} {value}",
+   "rest_none": "No others"
+  }
+ ],
+ "common_values": {
+  "Built-in accounts only": "run every service as a built-in account",
+  "None enabled": "have no enabled local accounts"
+ },
+ "flows": {
+  "mechanisms": [
+   "authentication",
+   "directory (SYSVOL, Group Policy)",
+   "directory (RPC)"
+  ],
+  "status": [
+   "observed",
+   "both",
+   "declared"
+  ]
+ }
+}
