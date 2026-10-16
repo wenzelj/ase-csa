@@ -66,3 +66,74 @@ def edges(rows: list[dict], flt: dict | None = None, register: set[str] | None =
                     if f.get("mechanism") == e["mechanism"] and e["s"] in f.get("hosts", []) and e["t"] in f.get("hosts", []):
                         e["evidence"] += [i for i in f.get("ids", []) if i not in e["evidence"]]
     return out
+
+
+# ------------------------------------------------------------------ stores, markers, controls
+_SHARE = re.compile(r"\s*([^,()]+?)\s+\(([^)]*)\)")
+_WHOLE_DRIVE = re.compile(r"^[A-Z]:\\?$", re.I)
+_USERS = re.compile(r"\\Users(?:\\|$)", re.I)
+_ITEMS = re.compile(r",(?![^()]*\))")              # split on commas that are not inside brackets
+MARK_LABEL = {"edr": "EDR", "av": "Antivirus", "tools": "Transfer tools", "usb": "USB storage not restricted"}
+
+
+def stores(settings: list[dict]) -> dict[str, list[dict]]:
+    """{host: [{"kind": "database" | "share", "what", "flag", "source"}]} from storage.database and storage.shares.
+    flag: a share of a whole drive or of user folders (drawn with a muted orange edge)."""
+    out: dict[str, list[dict]] = {}
+    for r in settings:
+        if r["attribute"] == "storage.database" and r["value"] != "None found":
+            out.setdefault(r["host"], []).append({"kind": "database", "what": r["value"], "flag": False, "source": r["source"]})
+        elif r["attribute"] == "storage.shares" and r["value"] != "Default and administrative shares only":
+            for m in _SHARE.finditer(r["value"]):
+                name, p = m.group(1).strip(), m.group(2).strip()
+                out.setdefault(r["host"], []).append({"kind": "share", "what": f"Share {name} ({p})",
+                                                      "flag": bool(_WHOLE_DRIVE.match(p) or _USERS.search(p)),
+                                                      "source": r["source"]})
+    return out
+
+
+def markers(settings: list[dict]) -> dict[str, dict]:
+    """{host: {"edr", "av", "tools", "usb"}}: products running (stopped ones left out), transfer tools, and
+    "not restricted" when removable storage is not set in applied Group Policy. A key is absent when none is found."""
+    out: dict[str, dict] = {}
+    for r in settings:
+        a, v = r["attribute"], r["value"]
+        m = out.setdefault(r["host"], {})
+        if a == "agent.edr" and v != "None found":
+            run = [x.strip() for x in _ITEMS.split(v) if x.strip() and "stopped" not in x]
+            if run:
+                m["edr"] = ", ".join(run)
+        elif a == "agent.antivirus" and v != "None found":
+            m["av"] = v
+        elif a == "transfer.tools" and v != "None found":
+            m["tools"] = v
+        elif a == "transfer.removable":
+            m["usb"] = "not restricted" if v == "Not set in applied Group Policy" else "policy set"
+    return {h: m for h, m in out.items() if m}
+
+
+def common(marks: dict[str, dict]) -> dict[str, str]:
+    """The markers every host shares, with the same value: drawn once, on a legend line, not on each tile."""
+    if not marks:
+        return {}
+    keys = set.intersection(*(set(m) for m in marks.values()))
+    return {k: next(iter(marks.values()))[k] for k in sorted(keys) if len({m[k] for m in marks.values()}) == 1}
+
+
+def controls(edges: list[dict], kinds: dict[str, str] | None = None) -> list[dict]:
+    """What is evidenced or declared on each edge that crosses (or may cross) a zone: a proxy or broker the flow map
+    names ("via ..."), a boundary firewall at one end in the host register, or "not captured"."""
+    kinds = kinds or {}
+    out = []
+    for e in edges:
+        if e.get("cross") not in ("yes", "unknown"):
+            continue
+        if e.get("via"):
+            kind = "proxy" if re.search(r"proxy", e["via"], re.I) else "broker"
+            out.append({"edge": e["id"], "kind": kind, "label": e["via"], "basis": "declared in the flow map"})
+        elif any(kinds.get(x) == "firewall" for x in (e["s"], e["t"])):
+            out.append({"edge": e["id"], "kind": "firewall", "label": "Boundary firewall", "basis": "in the host register"})
+        else:
+            out.append({"edge": e["id"], "kind": "not captured", "label": "Boundary device not captured",
+                        "basis": "the captures do not cover the boundary"})
+    return out
