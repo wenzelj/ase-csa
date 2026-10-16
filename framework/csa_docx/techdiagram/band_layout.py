@@ -67,6 +67,11 @@ STATUS_PHRASE = {"observed": "observed", "configured": "configured setting", "in
                  "unenforced": "crosses a zone, no control evidenced", "direct": "from outside OT, no jump host",
                  "via-jump": "through a jump host", "unknown": "path not captured", "inferred": "inferred, to validate",
                  "documented": "documented only"}
+STATUS_DASH.update({"seen": ("", 2.8), "declared": ("9 5", 2.6), "attempted": ("2.5 4.5", 2.6)})
+STATUS_LABEL.update({"seen": "Solid: seen in the captures", "declared": "Dashed: declared in the flow map, not seen",
+                     "attempted": "Dotted: attempted, no reply seen"})
+STATUS_PHRASE.update({"seen": "seen in the captures", "declared": "declared in the flow map, not seen",
+                      "attempted": "attempted, no reply seen"})
 BUS_GAP = 12.0
 GAP_COL = "#b4602a"                             # a missing control or service: muted orange, not alarm red
 # Line colour is the function of the traffic; the line style is its evidence status. Muted colours that stay
@@ -78,6 +83,18 @@ FUNCTIONS = {
     "application": ("#167d8d", "Application and database"),
     "other": ("#6b7785", "Other ports (no service name captured)"),
 }
+# data flow figures (archetype F): the line colour is the mechanism family
+FLOW_FUNCTIONS = {
+    "database": ("#167d8d", "Database and replication"),
+    "file": ("#7b5ea7", "File share and file transfer"),
+    "backup": ("#b7791f", "Backup"),
+    "message": ("#2f6fb0", "Message, API, web and telemetry"),
+    "mail": ("#5a7d2a", "Mail"),
+}
+FUNCTIONS.update(FLOW_FUNCTIONS)
+MECH_FAMILY = {"database": "database", "database replication": "database", "file share": "file", "file transfer": "file",
+               "backup agent": "backup", "message/API": "message", "web/API": "message", "security agent telemetry": "message",
+               "log forwarding": "message", "monitoring": "message", "mail": "mail"}
 DIRECTORY_SVCS = {"DNS", "Time", "NTP", "Kerberos", "LDAP", "LDAPS"}
 MANAGEMENT_SVCS = {"RPC", "SMB", "RDP", "SSH", "WinRM", "VNC", "Telnet", "SNMP", "Syslog", "HealthService", "agentService",
                    "WmiPrvSE", "mstsc"}
@@ -307,6 +324,17 @@ def build(model: dict, band_of: dict | None = None, conduits: bool = False) -> d
                     for x in (a, b))
         if a == b:
             inside += 1; continue
+        if model.get("flow"):                         # data flow figures: one line per mechanism, both directions kept
+            fn = MECH_FAMILY.get(e.get("mechanism", ""), "other")
+            d = agg.setdefault((a, b, e["status"], fn), {"s": a, "t": b, "status": e["status"], "fn": fn, "svcs": [],
+                                                         "more": 0, "both": False, "evidence": set(), "ids": [],
+                                                         "to_s": False, "to_t": False})
+            if e.get("mechanism") and e["mechanism"] not in d["svcs"]:
+                d["svcs"].append(e["mechanism"])
+            d["to_s"] = d["to_s"] or e.get("data") in ("to_s", "both")
+            d["to_t"] = d["to_t"] or e.get("data") in ("to_t", "both")
+            d["evidence"].update(e.get("evidence", [])); d["ids"].append(e["id"])
+            continue
         svcs, more = service_names(e)
         kinds = {tiles[x]["kind"] for x in (a, b) if not x.startswith("Z:")}
         if e["status"] in ("configured", "inactive"):
@@ -326,7 +354,7 @@ def build(model: dict, band_of: dict | None = None, conduits: bool = False) -> d
                 d["more"] += more
             d["both"] = d["both"] or e.get("dir") == "both"
             d["evidence"].update(e.get("evidence", [])); d["ids"].append(e["id"])
-    for (a, b, st, fn), d in list(agg.items()):       # a line in each direction is one two-way line
+    for (a, b, st, fn), d in (list(agg.items()) if not model.get("flow") else []):   # one two-way line (not in flow figures)
         if (b, a, st, fn) in agg and a < b:
             o = agg.pop((b, a, st, fn)); d["both"] = True; d["svcs"] += o["svcs"]; d["more"] += o["more"]
             d["evidence"] |= o["evidence"]; d["ids"] += o["ids"]
