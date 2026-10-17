@@ -76,3 +76,16 @@
 .sx-ev button:hover { border-color: var(--teal); color: var(--teal); }
 
 @media (prefers-reduced-motion: reduce) { .sx-drawing svg .node, .sx-drawing svg .edge, .sx-drawing svg .group { transition: none; } }
+
+/* S326 — portrait layout: selection, keyboard focus, and dimming.
+ * Band/site backgrounds (.zone) are intentionally never dimmed so a selected
+ * system keeps its location context. Selection and focus styling is equivalent
+ * to the detailed layout's .node:focus-visible / .node.sel rules. */
+.sx-drawing.portrait svg .edge { cursor: pointer; }
+.sx-drawing.portrait svg .node:hover { opacity: .82; }
+.sx-drawing.portrait svg .node.sel rect:first-child { stroke: var(--teal); stroke-width: 2.6; }
+.sx-drawing.portrait svg .node:focus-visible rect:first-child { stroke: var(--ase-signal); stroke-width: 3; }
+.sx-drawing.portrait svg .edge.sel { stroke: var(--teal) !important; stroke-width: 3.2 !important; }
+.sx-drawing.portrait svg .edge.on { stroke-width: 2.6 !important; }
+.sx-drawing.portrait svg.dim .node:not(.on) { opacity: .14; }
+.sx-drawing.portrait svg.dim .edge:not(.on) { opacity: .14; }

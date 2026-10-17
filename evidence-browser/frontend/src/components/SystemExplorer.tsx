@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { api } from "../api";
 import "./explorer.css";
 
@@ -27,7 +27,7 @@ type DModel = { id: string; title: string; zones: DZone[]; groups: DGroup[]; nod
 type Diagram = { id: string; title: string; svg: string; model: DModel;
   print_svg?: string; print?: { width_mm: number; height_mm: number; fits_page: boolean; min_text_pt: number; tiles?: number; lines?: number } };
 type Diagrams = { application: string; diagrams: Diagram[] };
-type Sel = { type: "node" | "edge" | "group"; id: string } | null;
+type Sel = { type: "node" | "edge" | "group"; id: string } | { type: "pcard" | "pline"; id: string } | null;
 
 const SAYS: Record<string, string> = { observed: "Observed in connection captures", configured: "Configured setting (DNS, Kerberos, time)",
   inferred: "Inferred — validate", documented: "Documented only, not observed", unknown: "Path not captured" };
@@ -42,6 +42,57 @@ const PORT_NAME: Record<string, string> = { "56420": "SQL", "56522": "SQL cluste
 const ipsOf = (h: Host) => (h.ips || "").split(/[;,]\s*/).map(x => x.trim()).filter(x => x && !/\.0$/.test(x) && !x.startsWith("169.254") && x !== h.id);
 const captureDate = (c: string) => { const m = c.match(/_(\d{4})(\d{2})(\d{2})T/); return m ? new Date(`${m[1]}-${m[2]}-${m[3]}T00:00:00`).toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" }) : ""; };
 const cssId = (s: string) => (window.CSS && CSS.escape ? CSS.escape(s) : s.replace(/"/g, '\\"'));
+
+/* S326: pure helpers for the portrait selection mapping (S323 metadata on the printed SVG). */
+const pHostsOf = (el: Element | null): string[] => (el?.getAttribute("data-hosts") || "").split(/\s+/).filter(Boolean);
+const pLineId = (el: Element | null): string => el?.getAttribute("data-line-id") || "";
+const pEdgeIds = (el: Element | null): string[] => (el?.getAttribute("data-edge-ids") || "").split(/\s+/).filter(Boolean);
+const pEnds = (el: Element | null): [string, string] => [el?.getAttribute("data-s") || "", el?.getAttribute("data-t") || ""];
+const pCardMeta = (svg: SVGSVGElement, cardId: string) => {
+  const el = svg.querySelector(`.node[data-id="${cssId(cardId)}"]`) as Element | null;
+  if (!el) return { hosts: [], edges: [], cards: new Set<string>() };
+  const hosts = pHostsOf(el), edges: string[] = [], cards = new Set<string>();
+  svg.querySelectorAll(".edge").forEach(e => {
+    const [ss, tt] = pEnds(e);
+    if (ss === cardId || tt === cardId) {
+      pEdgeIds(e).forEach(id => { if (!edges.includes(id)) edges.push(id); });
+      [ss, tt].forEach(c => { if (c && c !== cardId) cards.add(c); });
+    }
+  });
+  return { hosts, edges, cards };
+};
+const pLineMeta = (svg: SVGSVGElement, lineId: string) => {
+  const edges: string[] = [], cards = new Set<string>();
+  svg.querySelectorAll(`.edge[data-line-id="${cssId(lineId)}"]`).forEach(e => {
+    pEdgeIds(e).forEach(id => { if (!edges.includes(id)) edges.push(id); });
+    pEnds(e).forEach(c => { if (c) cards.add(c); });
+  });
+  return { edges, cards };
+};
+const pHighlight = (svg: SVGSVGElement, sel: NonNullable<Sel>) => {
+  let cards = new Set<string>(), edges = new Set<string>(), lines = new Set<string>();
+  if (sel.type === "pcard") {
+    const m = pCardMeta(svg, sel.id);
+    cards = new Set([sel.id, ...m.cards]); edges = new Set(m.edges);
+    svg.querySelectorAll(".edge").forEach(e => { if (m.edges.some(id => pEdgeIds(e).includes(id))) lines.add(pLineId(e) || "-"); });
+  } else if (sel.type === "pline") {
+    const m = pLineMeta(svg, sel.id);
+    cards = m.cards; edges = new Set(m.edges); lines = new Set([sel.id]);
+  }
+  cards.forEach(id => svg.querySelector(`.node[data-id="${cssId(id)}"]`)?.classList.add("on"));
+  // Dimming applies only to portrait cards and line fragments (story item 7: keep band/site
+  // backgrounds undimmed so the selected systems retain their location context).
+  svg.querySelectorAll(".edge[data-line-id]").forEach(e => {
+    if (lines.has(pLineId(e)) || pEdgeIds(e).some(id => edges.has(id))) e.classList.add("on");
+  });
+  const selEl = sel.type === "pcard" ? svg.querySelector(`.node[data-id="${cssId(sel.id)}"]`)
+    : svg.querySelector(`.edge[data-line-id="${cssId(sel.id)}"]`);
+  if (selEl) {
+    selEl.classList.add("sel");
+    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    (selEl as Element).scrollIntoView?.({ block: "nearest", inline: "nearest", behavior: reduce ? "auto" : "smooth" });
+  }
+};
 
 function cardSection(card: string, title: string): string[] {
   const m = (card || "").split(/\n## /).find(s => s.toLowerCase().startsWith(title.toLowerCase()));
@@ -89,6 +140,15 @@ export default function SystemExplorer({ system, openEvidenceId }: { system: str
   const cur = dg?.diagrams[tab] || null;
   const model = cur?.model || null;
   const byId = useMemo(() => Object.fromEntries((data?.hosts || []).map(h => [h.id, h])), [data]);
+  const byCard = useMemo(() => {
+    const m: Record<string, string[]> = {};
+    cur?.model.nodes.forEach(n => { if (n.host) m[n.id] = []; });
+    (cur?.model.edges || []).forEach(e => {
+      if (e.s in m) (m[e.s] ||= []).push(e.id);
+      if (e.t in m) (m[e.t] ||= []).push(e.id);
+    });
+    return m;
+  }, [cur]);
 
   const members = (end: string): string[] => {
     if (!model) return [];
@@ -110,6 +170,10 @@ export default function SystemExplorer({ system, openEvidenceId }: { system: str
     svg.classList.toggle("dim", !!sel);
     if (!sel) return;
     let nodes: string[] = [], edges: string[] = [];
+    if (sel.type === "pcard" || sel.type === "pline") {
+      pHighlight(svg as unknown as SVGSVGElement, sel);
+      return;
+    }
     if (sel.type === "edge") {
       const e = model.edges.find(x => x.id === sel.id); if (!e) return;
       nodes = [...members(e.s), ...members(e.t)]; edges = [e.id];
@@ -141,6 +205,31 @@ export default function SystemExplorer({ system, openEvidenceId }: { system: str
     const e = el.closest(".edge") as HTMLElement | null; if (e?.dataset.id) { setSel({ type: "edge", id: e.dataset.id }); return; }
     const g = el.closest(".group") as HTMLElement | null; if (g?.dataset.id) { setSel({ type: "group", id: g.dataset.id }); return; }
     setSel(null);
+  };
+
+  /* S326: the portrait SVG uses S323 metadata (data-hosts / data-line-id / data-edge-ids / data-s / data-t)
+   * because the tile IDs and fragment IDs are not the detailed model IDs. */
+  const pickPortrait = (target: EventTarget | null) => {
+    const el = target as Element | null; if (!el?.closest) return;
+    const e = el.closest(".edge") as HTMLElement | null;
+    if (e?.dataset.lineId) { setSel({ type: "pline", id: e.dataset.lineId }); return; }
+    const n = el.closest(".node") as HTMLElement | null;
+    if (n?.dataset.id) { setSel({ type: "pcard", id: n.dataset.id }); return; }
+    setSel(null);
+  };
+  const portraitKey = (e: ReactKeyboardEvent) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    const el = e.target as Element;
+    const hit = (el.closest?.(".edge[data-line-id]") || el.closest?.(".node[data-id]")) as HTMLElement | null;
+    if (!hit) return;
+    e.preventDefault();
+    if (hit.dataset.lineId) setSel({ type: "pline", id: hit.dataset.lineId });
+    else setSel({ type: "pcard", id: hit.dataset.id || "" });
+  };
+  const pEdgesFor = (cardId: string): DEdge[] => {
+    if (!model) return [];
+    const m = byCard[cardId];
+    return m ? model.edges.filter(x => m.includes(x.id)) : [];
   };
 
   if (error) return <section className="sx"><div className="sx-msg">The system explorer could not load: {error}</div></section>;
@@ -181,14 +270,20 @@ export default function SystemExplorer({ system, openEvidenceId }: { system: str
 
     <div className={`sx-body${sel ? " has-panel" : ""}`}>
       <div className={`sx-stage sx-drawing${fit ? " fit" : ""}${layout === "portrait" ? " portrait" : ""}`} ref={stage}
-        onClick={layout === "detailed" ? (e => pick(e.target)) : undefined}
-        onKeyDown={layout === "detailed" ? (e => { if (e.key === "Enter" || e.key === " ") { const n = (e.target as Element).closest?.(".node"); if (n) { e.preventDefault(); pick(n); } } }) : undefined}
+        onClick={e => (layout === "detailed" ? pick(e.target) : pickPortrait(e.target))}
+        onKeyDown={e => { if (e.key === "Enter" || e.key === " ") {
+          if (layout === "detailed") { const n = (e.target as Element).closest?.(".node"); if (n) { e.preventDefault(); pick(n); } }
+          else portraitKey(e);
+        } }}
         dangerouslySetInnerHTML={{ __html: activeSvg }} />
 
       {sel && <aside className="sx-panel" aria-live="polite">
         <button className="sx-close" onClick={() => setSel(null)} aria-label="Close">×</button>
         {selHost ? <HostDetail host={selHost} data={data} byId={byId} go={id => setSel({ type: "node", id })} />
           : selNode ? <OtherDetail node={selNode} />
+          : sel?.type === "pcard" ? <PCardDetail cardId={sel.id} model={model} byId={byId}
+              pEdges={pEdgesFor(sel.id)} data={data} openEvidenceId={openEvidenceId} go={id => setSel({ type: "node", id })} />
+          : sel?.type === "pline" ? <PLineDetail lineId={sel.id} model={model} byId={byId} openEvidenceId={openEvidenceId} />
           : selGroup ? <div className="sx-detail"><p className="sx-kind">Group</p><h3 className="plain">{selGroup.label}</h3>
               <section><h4>Members</h4><ul className="sx-plain">{selGroup.members.map(m => <li key={m}>
                 <button className="sx-link" onClick={() => setSel({ type: "node", id: m })}>{m}</button></li>)}</ul></section></div>
@@ -297,5 +392,78 @@ function HostDetail({ host, data, byId, go }: { host: Host; data: Data; byId: Re
       {Object.entries(factGroups).map(([k, fs]) => <div key={k} className="sx-facts"><b>{k}</b>
         <dl>{fs.map((f, i) => <div key={i}><dt>{f.attribute.split(":").slice(1).join(":").trim() || f.attribute}</dt><dd>{f.value}</dd></div>)}</dl></div>)}
     </details>}
+  </div>;
+}
+
+/* S326: the portrait card detail shows the recorded role, the full host list, and lets the user
+ * pick an individual host to open in the existing HostDetail. Single-host cards open directly. */
+function PCardDetail({ cardId, model, byId, pEdges, data, openEvidenceId, go }: {
+  cardId: string; model: DModel; byId: Record<string, Host>; pEdges: DEdge[]; data: Data;
+  openEvidenceId?: (id: string) => void; go: (id: string) => void;
+}) {
+  const node = model.nodes.find(n => n.id === cardId);
+  const role = node?.role || "Role not recorded";
+  const svgEl = typeof document !== "undefined" ? document.querySelector(".sx-drawing svg") as SVGSVGElement | null : null;
+  const hosts = (svgEl ? pHostsOf(svgEl.querySelector(`.node[data-id="${cssId(cardId)}"]`) as Element | null) : [cardId]);
+  const single = hosts.length === 1 ? byId[hosts[0]] : undefined;
+  if (single) return <HostDetail host={single} data={data} byId={byId} go={go} />;
+  const ev = [...new Set(pEdges.flatMap(e => e.evidence))].sort();
+  return <div className="sx-detail">
+    <p className="sx-kind">{role}</p>
+    <h3 className="plain">{cardId}</h3>
+    <p className="sx-meta">{pEdges.length} underlying connection{pEdges.length === 1 ? "" : "s"}</p>
+    <section><h4>Hosts on this card ({hosts.length})</h4>
+      <ul className="sx-plain">{hosts.map(h => <li key={h}>
+        <button className="sx-link" onClick={() => go(h)}>{h}</button>
+        {byId[h]?.role ? <small>{byId[h].role}</small> : null}</li>)}</ul></section>
+    {ev.length > 0 && <section><h4>Evidence ({ev.length})</h4>
+      <div className="sx-ev">{ev.map(id => <button key={id} onClick={() => openEvidenceId?.(id)}>{id}</button>)}</div></section>}
+  </div>;
+}
+
+/* S326: the portrait line detail shows each underlying model edge verbatim rather than inventing
+ * a common direction / port / status when they differ. */
+function PLineDetail({ lineId, model, byId, openEvidenceId }: {
+  lineId: string; model: DModel; byId: Record<string, Host>;
+  openEvidenceId?: (id: string) => void;
+}) {
+  // Resolve the underlying model edges via the S323 metadata recorded on the first fragment of this line.
+  const svgEl = typeof document !== "undefined" ? document.querySelector(".sx-drawing svg") as SVGSVGElement | null : null;
+  const frag = svgEl?.querySelector(`.edge[data-line-id="${cssId(lineId)}"]`) as Element | null;
+  const edgeIds = pEdgeIds(frag);
+  const edges = model.edges.filter(e => edgeIds.includes(e.id));
+  const ev = [...new Set(edges.flatMap(e => e.evidence))].sort();
+  const dirSet = new Set(edges.map(e => e.dir));
+  const statusSet = new Set(edges.map(e => e.status));
+  const portSet = new Set<string>();
+  edges.forEach(e => {
+    const d = (e.detail || {}) as Record<string, unknown>;
+    const ports = d.ports as Record<string, number> | undefined;
+    if (ports) Object.keys(ports).forEach(p => portSet.add(p));
+  });
+  const s0 = edges[0]?.s, t0 = edges[0]?.t;
+  const end = (x: string) => {
+    const n = model.nodes.find(nn => nn.id === x);
+    return <b>{n?.label || x}</b>;
+  };
+  return <div className="sx-detail">
+    <p className="sx-kind">Portrait line</p>
+    <h3 className="plain edge-title">{s0 ? end(s0) : ""} <span>{dirSet.size === 1 && [...dirSet][0] === "both" ? "↔" : "→"}</span> {t0 ? end(t0) : ""}</h3>
+    <p className="sx-meta">This portrait line represents {edges.length} underlying model connection{edges.length === 1 ? "" : "s"}.
+      {edges.length > 1 && " Where the underlying connections differ, each value is listed below."}</p>
+    {dirSet.size === 1 && <p className="sx-meta">Direction: {SAYS[edges[0]?.dir || ""] || edges[0]?.dir}</p>}
+    {statusSet.size === 1 && <p className="sx-meta">Status: {SAYS[edges[0]?.status || ""] || edges[0]?.status}</p>}
+    {portSet.size > 0 && <section><h4>Ports / services</h4>
+      <ul className="sx-plain">{[...portSet].map(p => <li key={p}>{PORT_NAME[p] ? `${PORT_NAME[p]} (${p})` : `port ${p}`}</li>)}</ul></section>}
+    {edges.length > 0 && <section><h4>Underlying connections ({edges.length})</h4>
+      <ul className="sx-plain small">{edges.map(e => {
+        const d = (e.detail || {}) as Record<string, unknown>;
+        const ports = d.ports as Record<string, number> | undefined;
+        const plist = ports ? Object.keys(ports).map(p => PORT_NAME[p] ? `${PORT_NAME[p]} (${p})` : `port ${p}`).join(", ") : "—";
+        return <li key={e.id}><b>{e.id}</b> · {e.s} → {e.t} · {SAYS[e.status] || e.status} · {plist}</li>;
+      })}</ul></section>}
+    <section><h4>Evidence ({ev.length})</h4>
+      {ev.length ? <div className="sx-ev">{ev.map(id => <button key={id} onClick={() => openEvidenceId?.(id)}>{id}</button>)}</div>
+        : <p className="sx-quiet">No evidence ID recorded.</p>}</section>
   </div>;
 }
