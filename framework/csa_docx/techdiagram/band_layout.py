@@ -666,7 +666,8 @@ def render_band_svg(model: dict, band_of: dict | None = None, conduits: bool = F
     styles = sorted({STATUS_DASH.get(st, ("", ""))[0] for st in used_status})
     risk = [st for st in used_status if st in ("unenforced", "direct", "unknown")]
     note = ("Every line crosses a zone boundary with no boundary control evidenced. " if risk == used_status and "unenforced" in risk else "")
-    note += ("Arrow: where the data arrives. ×n: hosts in the role."
+    note += ("Arrow: where the data arrives. Ringed dot: the side that opens the connection. "
+             "×n: hosts in the role."
              if model.get("flow") else "Arrow: the system that receives. ×n: hosts in the role.")
     cm = model.get("common_marks") or {}
     if cm:
