@@ -243,9 +243,8 @@ def service_names(e: dict) -> tuple[list[str], int]:
 
 def _join_label(svcs: list[str], more: int, width: float) -> list[str]:
     svcs = [s for s in dict.fromkeys(svcs) if s]
-    shown, extra = svcs[:3], len(svcs) - 3 + more
-    text = ", ".join(shown) + (f" +{extra}" if extra > 0 else "")
-    return _wrap(text, width, F_TEXT, lines=2) if text else []
+    text = ", ".join(svcs)
+    return _wrap(text, width, F_TEXT, lines=len(svcs) + 1) if text else []
 
 
 # ------------------------------------------------------------------ bands and tiles
@@ -414,21 +413,20 @@ def render_band_svg(model: dict, band_of: dict | None = None, conduits: bool = F
 
     # tile text
     for t in tiles.values():
-        t["role_lines"] = _wrap(t["role"], CW - 8, F_NAME, True, 2)
+        t["role_lines"] = _wrap(t["role"], CW - 8, F_NAME, True, len(t["role"].split()) + 1)
         if t["gap"]:
             host = t.get("gap_text") or "None evidenced"
         elif t["kind"] in ("internal", "internet") and t["hosts"] and t["hosts"][0].startswith("G-"):
             host = t["labels"][0]
         else:
             host = members_label(t["labels"])
-            if len(t["labels"]) > 1 and _tw(host, F_TEXT) > CW - 4:    # several hosts: one line, the first and a count
-                host = f"{sorted(t['labels'])[0]} +{len(t['labels']) - 1}"
-        t["host_lines"] = _wrap(host, CW - 4, F_TEXT, False, 2)
+        t["host_lines"] = _wrap(host, CW - 4, F_TEXT, False, lines=len(t["labels"]) + 1) if host else []
         t["h"] = ICON + 6 + LINE_H * (len(t["role_lines"]) + len(t["host_lines"])) + 2
-        t["store_lines"] = [(_wrap(s_["what"], CW - 22, F_TEXT, False, 1)[0], bool(s_.get("flag"))) for s_ in t.get("stores", [])][:2]
+        t["store_lines"] = [(_wrap(s_["what"], CW - 10, F_TEXT, False, lines=len(s_["what"].split()) + 1), bool(s_.get("flag")))
+                            for s_ in t.get("stores", [])]
         marks = [MARK_LABEL[k] for k in ("edr", "av", "tools", "usb") if k in t.get("marks", ())]
-        t["mark_lines"] = _wrap(" · ".join(marks), CW - 4, F_TEXT, False, 2) if marks else []
-        t["h"] += LINE_H * (len(t["store_lines"]) + len(t["mark_lines"]))
+        t["mark_lines"] = _wrap(" · ".join(marks), CW - 4, F_TEXT, False, len(marks) + 1) if marks else []
+        t["h"] += LINE_H * (sum(len(ls) for ls, _ in t["store_lines"]) + len(t["mark_lines"]))
 
     # pack sub-zones into shelves of columns, tiles row-major inside their sub-zone
     import itertools
@@ -673,15 +671,17 @@ def render_band_svg(model: dict, band_of: dict | None = None, conduits: bool = F
     cm = model.get("common_marks") or {}
     if cm:
         note = "All hosts: " + ", ".join(COMMON_PHRASE[k].format(v=v) for k, v in cm.items() if k in COMMON_PHRASE) + ". " + note
-    note_lines = _wrap(note, W - 140, F_TEXT, False, 1)
+    note_lines = _wrap(note, W - 140, F_TEXT, False, lines=len(note.split()) + 1)
     # compact legend: group the flows by how they were evidenced, not one row per function/status
     legend_keys = []
     for f in used_fn:                                   # used_fn is already mechanisms present in the figure
         sts = [st_ for st_ in used_status if any(b["fn"] == f and b["status"] == st_ for b in bl)]
         if sts:
             legend_keys.append((f, sts))
-    legend_rows = len(legend_keys) + len(note_lines)
-    H = body_h + 14 + 10 + legend_rows * 24
+    legend_cells = [(FUNCTIONS[f][1] + ("" if len(sts) == 1 else "  -  " + ", ".join(STATUS_PHRASE.get(s_, s_) for s_ in sts)))
+                    for f, sts in legend_keys]
+    legend_rows = sum(max(1, len(_wrap(lab, W - 160, F_TEXT, False, lines=len(lab.split()) + 1))) for lab in legend_cells)
+    H = body_h + 14 + 10 + legend_rows * 26 + len(note_lines) * LINE_H
     o = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W:.0f} {H:.0f}" width="{W * MM:.1f}mm" height="{H * MM:.1f}mm" '
          f'font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, sans-serif" class="tdiag print band" data-diagram="{esc(stem)}">', "<defs>"]
     for k, (col, _) in FUNCTIONS.items():
@@ -789,12 +789,13 @@ def render_band_svg(model: dict, band_of: dict | None = None, conduits: bool = F
             yy += LINE_H
             txt.append(f'<text x="{cx:.1f}" y="{yy - 4:.1f}" font-size="{F_TEXT}" fill="{GAP_COL if t["gap"] else MUTED}" '
                        f'text-anchor="middle">{esc(ln)}</text>')
-        for ln, flag in t.get("store_lines", []):     # a store glyph (cylinder) and the store's name
-            yy += LINE_H
-            gx0, sc_ = x + 4, (GAP_COL if flag else TEAL)
-            txt.append(f'<path d="M{gx0:.1f},{yy - 14:.1f} a6,2.5 0 0,0 12,0 a6,2.5 0 0,0 -12,0 v10 a6,2.5 0 0,0 12,0 v-10" '
-                       f'fill="none" stroke="{sc_}" stroke-width="1.5" data-id="store"/>'
-                       f'<text x="{gx0 + 17:.1f}" y="{yy - 4:.1f}" font-size="{F_TEXT}" fill="{GAP_COL if flag else NAVY}">{esc(ln)}</text>')
+        for st_lines, flag in t.get("store_lines", []):   # a store glyph (cylinder) and the store's name
+            for sl in st_lines:
+                yy += LINE_H
+                gx0, sc_ = x + 4, (GAP_COL if flag else TEAL)
+                txt.append(f'<path d="M{gx0:.1f},{yy - 14:.1f} a6,2.5 0 0,0 12,0 a6,2.5 0 0,0 -12,0 v10 a6,2.5 0 0,0 12,0 v-10" '
+                           f'fill="none" stroke="{sc_}" stroke-width="1.5" data-id="store"/>'
+                           f'<text x="{gx0 + 17:.1f}" y="{yy - 4:.1f}" font-size="{F_TEXT}" fill="{GAP_COL if flag else NAVY}">{esc(sl)}</text>')
         for ln in t.get("mark_lines", []):
             yy += LINE_H
             txt.append(f'<text x="{cx:.1f}" y="{yy - 4:.1f}" font-size="{F_TEXT}" fill="{MUTED}" text-anchor="middle" '
@@ -812,14 +813,17 @@ def render_band_svg(model: dict, band_of: dict | None = None, conduits: bool = F
         st_ = sts[0]
         lab = FUNCTIONS[f][1] + ("" if len(sts) == 1 else "  -  " + ", ".join(STATUS_PHRASE.get(s_, s_) for s_ in sts))
         cells.append((FUNCTIONS[f][0], STATUS_DASH.get(st_, ("", 2.6))[0], lab))
-    for j, (col, dash, lab) in enumerate(cells):
-        xx = 8
-        yy = y + j * 26 + 18
+    cells_lines = [((_wrap(lab, W - 160, F_TEXT, False, lines=len(lab.split()) + 1) if lab else [""]), col, dash)
+                   for col, dash, lab in cells]
+    yy = y + 18
+    for labs, col, dash in cells_lines:
         da = f' stroke-dasharray="{dash}"' if dash else ""
-        lab = _wrap(lab, W - 160, F_TEXT, False, 1)[0]
-        o.append(f'<line x1="{xx:.1f}" y1="{yy - 6:.1f}" x2="{xx + 44:.1f}" y2="{yy - 6:.1f}" stroke="{col}" stroke-width="3.2" stroke-linecap="round"{da}/>'
-                 f'<text x="{xx + 54:.1f}" y="{yy:.1f}" font-size="{F_TEXT}" fill="{MUTED}">{esc(lab)}</text>')
-    yy = y + len(cells) * 26 + 18
+        for l in labs:
+            o.append(f'<line x1="8.0" y1="{yy - 6:.1f}" x2="52.0" y2="{yy - 6:.1f}" stroke="{col}" stroke-width="3.2" stroke-linecap="round"{da}/>'
+                     f'<text x="62.0" y="{yy:.1f}" font-size="{F_TEXT}" fill="{MUTED}">{esc(l)}</text>')
+            yy += LINE_H
+        yy += 4
+    yy = y + sum(max(1, len(labs)) + 4 for labs, _, _ in cells_lines) + 18
     for j, ln in enumerate(note_lines):
         o.append(f'<text x="8" y="{yy + j * 22:.1f}" font-size="{F_TEXT}" fill="{MUTED}">{esc(ln)}</text>')
     o.append("</svg>")
