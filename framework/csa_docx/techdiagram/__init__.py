@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 
 from .model import build_models
+from .print_layout import render_print_svg
 from .render import render_svg
 
 PROFILES = Path(__file__).resolve().parents[3] / "csa-context" / "system-diagrams.json"
@@ -36,8 +37,10 @@ def load_profile(project_key: str) -> dict:
 
 
 def diagrams(net: dict, spec: dict | None, project_key: str, application: str) -> list[dict]:
-    """Every diagram for a project as {id, title, model, svg}."""
+    """Every diagram for a project as {id, title, model, svg, print_svg, print}."""
     out = []
     for m in build_models(net, spec or {}, load_profile(project_key), application):
-        out.append({"id": m["id"], "title": m["title"], "model": m, "svg": render_svg(m)})
+        print_svg, print_info = render_print_svg(m)
+        out.append({"id": m["id"], "title": m["title"], "model": m, "svg": render_svg(m),
+                    "print_svg": print_svg, "print": print_info})
     return out

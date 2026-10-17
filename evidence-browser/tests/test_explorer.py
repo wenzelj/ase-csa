@@ -95,6 +95,23 @@ def test_diagrams_draw_every_host_and_journey(tmp_path: Path, monkeypatch) -> No
     over = out["diagrams"][0]
     assert {n["id"] for n in over["model"]["nodes"]} >= {"H1", "H2", "G-INTERNET"}
     assert 'data-id="H1"' in over["svg"] and over["svg"].startswith("<svg")
+    flow = out["diagrams"][1]
+    for d in (over, flow):
+        # Both keep the detailed screen SVG and add the A4 portrait rendering of the same model.
+        assert d["svg"].startswith("<svg") and 'data-id="H1"' in d["svg"]
+        assert d["print_svg"].startswith("<svg") and ' width="170.0mm"' in d["print_svg"]
+        assert d["print"]["width_mm"] == 170.0
+        assert d["print"]["height_mm"] > 0
+        assert d["print"]["min_text_pt"] > 0
+        assert isinstance(d["print"]["fits_page"], bool)
+        assert d["model"] is (over["model"] if d is over else flow["model"])  # one model object per diagram
+    # The portrait (S323) exposes the grouped hosts and their source edges as interaction metadata.
+    import re
+    assert re.search(r'<g class="node"[^>]*data-hosts="([^"]*)"', over["print_svg"])
+    assert re.search(r'data-line-id="([^"]+)"[^>]*data-s="([^"]*)"[^>]*data-t="([^"]*)"[^>]*data-edge-ids="([^"]*)"',
+                     over["print_svg"])
+    assert re.search(r'data-line-id="([^"]+)"[^>]*data-s="([^"]*)"[^>]*data-t="([^"]*)"[^>]*data-edge-ids="([^"]*)"',
+                     flow["print_svg"])
 
 
 def test_system_types_come_from_the_recorded_role() -> None:
