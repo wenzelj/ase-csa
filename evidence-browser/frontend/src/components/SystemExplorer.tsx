@@ -24,7 +24,8 @@ type DEdge = { id: string; s: string; t: string; dir: string; label: string; sta
 type DGroup = { id: string; label: string; members: string[] };
 type DZone = { id: string; label: string };
 type DModel = { id: string; title: string; zones: DZone[]; groups: DGroup[]; nodes: DNode[]; edges: DEdge[]; notes?: string[] };
-type Diagram = { id: string; title: string; svg: string; model: DModel };
+type Diagram = { id: string; title: string; svg: string; model: DModel;
+  print_svg?: string; print?: { width_mm: number; height_mm: number; fits_page: boolean; min_text_pt: number; tiles?: number; lines?: number } };
 type Diagrams = { application: string; diagrams: Diagram[] };
 type Sel = { type: "node" | "edge" | "group"; id: string } | null;
 
@@ -51,13 +52,13 @@ function download(name: string, blob: Blob) {
   const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
-function savePng(d: Diagram) {
-  const m = d.svg.match(/viewBox="0 0 ([\d.]+) ([\d.]+)"/); const w = m ? +m[1] : 1600, h = m ? +m[2] : 1200;
-  const img = new Image(); const url = URL.createObjectURL(new Blob([d.svg], { type: "image/svg+xml" }));
+function savePng(name: string, svg: string) {
+  const m = svg.match(/viewBox="0 0 ([\d.]+) ([\d.]+)"/); const w = m ? +m[1] : 1600, h = m ? +m[2] : 1200;
+  const img = new Image(); const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
   img.onload = () => {
     const c = document.createElement("canvas"); c.width = w * 2; c.height = h * 2;
     const g = c.getContext("2d")!; g.scale(2, 2); g.drawImage(img, 0, 0, w, h); URL.revokeObjectURL(url);
-    c.toBlob(b => b && download(`${d.id}.png`, b), "image/png");
+    c.toBlob(b => b && download(name, b), "image/png");
   };
   img.src = url;
 }
@@ -69,10 +70,18 @@ export default function SystemExplorer({ system, openEvidenceId }: { system: str
   const [tab, setTab] = useState(0);
   const [sel, setSel] = useState<Sel>(null);
   const [fit, setFit] = useState(true);
+  const [layout, setLayout] = useState<"portrait" | "detailed">(() => {
+    try { return localStorage.getItem("sx-layout") === "detailed" ? "detailed" : "portrait"; }
+    catch { return "portrait"; }
+  });
+  const setLayoutChoice = (v: "portrait" | "detailed") => {
+    setLayout(v); setSel(null);
+    try { localStorage.setItem("sx-layout", v); } catch { /* keep the choice for this visit only */ }
+  };
   const stage = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    setData(null); setDg(null); setError(""); setSel(null); setTab(0);
+    setData(null); setDg(null); setError(""); setSel(null); setTab(0); setLayoutChoice("portrait");
     Promise.all([api<Data>(`/api/systems/${system}/explorer`), api<Diagrams>(`/api/systems/${system}/diagram`)])
       .then(([d, g]) => { setData(d); setDg(g); }).catch(e => setError(String(e.message || e)));
   }, [system]);
@@ -137,6 +146,7 @@ export default function SystemExplorer({ system, openEvidenceId }: { system: str
   if (error) return <section className="sx"><div className="sx-msg">The system explorer could not load: {error}</div></section>;
   if (!data || !dg || !cur || !model) return <section className="sx"><div className="loading"><span /><strong>Drawing the system…</strong></div></section>;
 
+  const activeSvg = layout === "portrait" ? (cur.print_svg || cur.svg) : cur.svg;
   const hostCount = model.nodes.filter(n => n.host).length;
   const dcs = model.zones.filter(z => (model as unknown as { layout?: { dcs?: string[] } }).layout?.dcs?.includes(z.id)).map(z => z.label);
   const selNode = sel?.type === "node" ? model.nodes.find(n => n.id === sel.id) : undefined;
@@ -147,11 +157,14 @@ export default function SystemExplorer({ system, openEvidenceId }: { system: str
   return <section className="sx">
     <header className="sx-head">
       <div><h2>{dg.application}</h2>
-        <p>{tab === 0 ? `${hostCount} systems${dcs.length ? ` across ${dcs.join(" and ")}` : ""}. ` : ""}Select a system or a line to see its evidence. The same drawing is the CSA figure.</p></div>
-      <div className="sx-tools">
+        <p>{tab === 0 ? `${hostCount} systems${dcs.length ? ` across ${dcs.join(" and ")}` : ""}. ` : ""}
+          A4 portrait groups hosts by recorded role; Detailed network shows individual hosts. Select a system or a line to see its evidence. The same drawing is the CSA figure.</p></div>
+      <div className="sx-tools" role="group" aria-label="Layout">
+        <button className={layout === "portrait" ? "on" : ""} aria-pressed={layout === "portrait"} onClick={() => setLayoutChoice("portrait")}>A4 portrait</button>
+        <button className={layout === "detailed" ? "on" : ""} aria-pressed={layout === "detailed"} onClick={() => setLayoutChoice("detailed")}>Detailed network</button>
         <button onClick={() => setFit(f => !f)}>{fit ? "Actual size" : "Fit to width"}</button>
-        <button onClick={() => download(`${cur.id}.svg`, new Blob([cur.svg], { type: "image/svg+xml" }))}>Download SVG</button>
-        <button onClick={() => savePng(cur)}>Download PNG</button>
+        <button onClick={() => download(`${cur.id}-${layout === "portrait" ? "a4" : "detailed"}.svg`, new Blob([activeSvg], { type: "image/svg+xml" }))}>Download SVG</button>
+        <button onClick={() => savePng(`${cur.id}-${layout === "portrait" ? "a4" : "detailed"}.png`, activeSvg)}>Download PNG</button>
       </div>
     </header>
 
@@ -160,11 +173,17 @@ export default function SystemExplorer({ system, openEvidenceId }: { system: str
         onClick={() => { setTab(i); setSel(null); }}>{i === 0 ? "System" : d.title}</button>)}
     </nav>}
 
+    {layout === "portrait" && cur.print && <p className="sx-printline" aria-live="polite">
+      {cur.print.width_mm} × {cur.print.height_mm} mm · smallest text {cur.print.min_text_pt} pt ·{" "}
+      <b className={cur.print.fits_page ? "ok" : "over"}>{cur.print.fits_page ? "Fits A4" : "Exceeds one A4 page"}</b>
+      {typeof cur.print.tiles === "number" && typeof cur.print.lines === "number" ? ` · ${cur.print.tiles} tiles, ${cur.print.lines} lines` : ""}
+    </p>}
+
     <div className={`sx-body${sel ? " has-panel" : ""}`}>
-      <div className={`sx-stage sx-drawing${fit ? " fit" : ""}`} ref={stage}
-        onClick={e => pick(e.target)}
-        onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { const n = (e.target as Element).closest?.(".node"); if (n) { e.preventDefault(); pick(n); } } }}
-        dangerouslySetInnerHTML={{ __html: cur.svg }} />
+      <div className={`sx-stage sx-drawing${fit ? " fit" : ""}${layout === "portrait" ? " portrait" : ""}`} ref={stage}
+        onClick={layout === "detailed" ? (e => pick(e.target)) : undefined}
+        onKeyDown={layout === "detailed" ? (e => { if (e.key === "Enter" || e.key === " ") { const n = (e.target as Element).closest?.(".node"); if (n) { e.preventDefault(); pick(n); } } }) : undefined}
+        dangerouslySetInnerHTML={{ __html: activeSvg }} />
 
       {sel && <aside className="sx-panel" aria-live="polite">
         <button className="sx-close" onClick={() => setSel(null)} aria-label="Close">×</button>

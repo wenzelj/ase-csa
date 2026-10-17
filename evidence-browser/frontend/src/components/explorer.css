@@ -10,7 +10,12 @@
 .sx-tools button, .sx-tabs button { font: inherit; font-size: .86rem; padding: 7px 14px; border-radius: 18px; border: 1.5px solid var(--line);
   background: #fff; color: var(--ink); cursor: pointer; }
 .sx-tools button:hover, .sx-tabs button:hover { border-color: var(--teal); color: var(--teal); }
+.sx-tools button.on { background: var(--ink); border-color: var(--ink); color: #fff; }
+.sx-tools button.on:hover { background: var(--ink); border-color: var(--ink); color: #fff; }
 .sx-tabs { display: flex; gap: 8px; flex-wrap: wrap; }
+.sx-printline { margin: 0; font-size: .82rem; color: var(--muted); }
+.sx-printline b.ok { color: var(--teal); }
+.sx-printline b.over { color: var(--red); }
 .sx-tabs button.on { background: var(--ink); border-color: var(--ink); color: #fff; }
 
 .sx-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; }
@@ -21,6 +26,9 @@
 .sx-drawing { overflow: auto; max-height: calc(100vh - 210px); padding: 8px; }
 .sx-drawing svg { display: block; height: auto; }
 .sx-drawing.fit svg { width: 100%; }
+.sx-drawing.portrait { display: flex; justify-content: center; }
+.sx-drawing.portrait svg { max-width: 720px; height: auto; }
+.sx-drawing.portrait.fit svg { width: 100%; max-width: 720px; }
 .sx-drawing svg .node, .sx-drawing svg .edge, .sx-drawing svg .group { cursor: pointer; transition: opacity .15s; }
 .sx-drawing svg.dim .node:not(.on), .sx-drawing svg.dim .edge:not(.on), .sx-drawing svg.dim .group:not(.on) { opacity: .14; }
 .sx-drawing svg .node:hover rect:first-child { stroke: var(--teal); }
