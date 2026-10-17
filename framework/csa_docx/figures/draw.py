@@ -23,7 +23,7 @@ from csa_docx.techdiagram.print_layout import render_print_svg
 from csa_docx.techdiagram.render import render_svg
 
 
-DRAWING_VERSION = "bands-3"                     # bump when the drawn output changes for the same model
+DRAWING_VERSION = "bands-4"                     # bump when the drawn output changes for the same model
 
 
 class NotBuilt(Exception):

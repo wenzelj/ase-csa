@@ -115,3 +115,55 @@ def test_band_design_puts_jump_hosts_in_the_boundary_and_joins_sites_for_conduit
     B = build(m, conduits=True)
     assert any(t["band"] == "boundary" and t["kind"] == "jump_host" for t in B["tiles"].values())
     assert any(l["t"].startswith("Z:ot|dc1") and l["fn"] == "management" for l in B["lines"])
+
+def test_portrait_svg_exposes_hosts_and_source_edges():
+    from csa_docx.techdiagram.band_layout import render_band_svg
+    # Two same-role hosts (same band, sub, kind, role) group into one tile;
+    # two underlying edges between the group and a directory host.
+    nodes = [
+        {"id": "APPSRV101", "label": "APPSRV101", "role": "Application server", "kind": "app_server", "zone": "dc1"},
+        {"id": "APPSRV102", "label": "APPSRV102", "role": "Application server", "kind": "app_server", "zone": "dc1"},
+        {"id": "DCSRV101", "label": "DCSRV101", "role": "Domain controller", "kind": "directory", "zone": "it"},
+    ]
+    edges = [
+        {"id": "E10", "s": "APPSRV101", "t": "DCSRV101", "dir": "forward", "label": "Time", "short": "", "status": "configured"},
+        {"id": "E11", "s": "APPSRV102", "t": "DCSRV101", "dir": "forward", "label": "Time", "short": "", "status": "configured"},
+    ]
+    m = {"id": "pm", "title": "Time", "zones": [{"id": "it", "label": "IT"}, {"id": "dc1", "label": "DC1"}],
+         "groups": [], "nodes": nodes, "edges": edges, "notes": [], "layout": {"dcs": ["dc1"]}}
+    svg, info = render_band_svg(m)
+
+    # The grouped node carries both host IDs in data-hosts
+    import re
+    node_m = re.search(r'<g class="node"[^>]*data-id="[^"]*app_server[^"]*"[^>]*data-hosts="([^"]*)"', svg)
+    assert node_m, "app_server node not found"
+    hosts = node_m.group(1).split()
+    assert "APPSRV101" in hosts and "APPSRV102" in hosts
+
+    # Every edge fragment for one logical portrait line shares one data-line-id
+    line_ids = set(re.findall(r'data-line-id="([^"]+)"', svg))
+    assert line_ids, "no data-line-id attributes found"
+    # All fragments with the same data-line-id are one logical line
+    for lid in line_ids:
+        fragments = re.findall(rf'data-line-id="{lid}"[^>]*data-s="([^"]*)"[^>]*data-t="([^"]*)"', svg)
+        assert fragments, f"no fragments for {lid}"
+        # all fragments share the same s and t
+        s_vals = {f[0] for f in fragments}
+        t_vals = {f[1] for f in fragments}
+        assert len(s_vals) == 1 and len(t_vals) == 1, f"inconsistent endpoints for {lid}"
+
+    # The line metadata contains the original model-edge IDs and both portrait endpoint IDs
+    for lid in line_ids:
+        frag = re.search(rf'data-line-id="{lid}"[^>]*data-s="([^"]*)"[^>]*data-t="([^"]*)"[^>]*data-edge-ids="([^"]*)"', svg)
+        assert frag, f"no full metadata for {lid}"
+        s, t, edge_ids = frag.group(1), frag.group(2), frag.group(3).split()
+        # The two same-role hosts both feed into one aggregated line to the directory host
+        assert "E10" in edge_ids or "E11" in edge_ids, f"expected E10 or E11 in {edge_ids}"
+        # both original edge IDs should be on the aggregated line
+        assert "E10" in edge_ids and "E11" in edge_ids, f"expected both E10 and E11 in {edge_ids}"
+
+    # width_mm, height_mm, fits_page and min_text_pt are unchanged in shape and remain valid
+    assert isinstance(info["width_mm"], (int, float)) and info["width_mm"] == 170.0
+    assert isinstance(info["height_mm"], (int, float)) and info["height_mm"] > 0
+    assert isinstance(info["fits_page"], bool)
+    assert isinstance(info["min_text_pt"], (int, float)) and info["min_text_pt"] >= 8

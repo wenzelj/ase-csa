@@ -72,7 +72,7 @@ STATUS_LABEL.update({"seen": "Solid: seen in the captures", "declared": "Dashed:
                      "attempted": "Dotted: attempted, no reply seen"})
 STATUS_PHRASE.update({"seen": "seen in the captures", "declared": "declared in the flow map, not seen",
                       "attempted": "attempted, no reply seen"})
-BUS_GAP = 12.0
+BUS_GAP = 9.0
 GAP_COL = "#b4602a"                             # a missing control or service: muted orange, not alarm red
 # Line colour is the function of the traffic; the line style is its evidence status. Muted colours that stay
 # apart in print and for the common colour-vision deficiencies; no alarm red.
@@ -95,7 +95,7 @@ FUNCTIONS.update(FLOW_FUNCTIONS)
 MECH_FAMILY = {"database": "database", "database replication": "database", "file share": "file", "file transfer": "file",
                "backup agent": "backup", "message/API": "message", "web/API": "message", "security agent telemetry": "message",
                "log forwarding": "message", "monitoring": "message", "mail": "mail"}
-MARK_LABEL = {"edr": "EDR", "av": "AV", "tools": "Transfer tools", "usb": "USB not restricted"}
+MARK_LABEL = {"edr": "EDR", "av": "AV", "tools": "tools", "usb": "USB"}
 COMMON_PHRASE = {"edr": "{v} EDR running", "av": "{v} running", "tools": "transfer tools {v}", "usb": "removable storage {v}"}
 DIRECTORY_SVCS = {"DNS", "Time", "NTP", "Kerberos", "LDAP", "LDAPS"}
 MANAGEMENT_SVCS = {"RPC", "SMB", "RDP", "SSH", "WinRM", "VNC", "Telnet", "SNMP", "Syslog", "HealthService", "agentService",
@@ -179,8 +179,20 @@ def short_role(n: dict) -> str:
     role = re.sub(r",\s*site\s+\S+", "", role)
     role = re.sub(r"\s*\((instance|site)\b[^)]*\)", "", role)
     role = re.sub(r"\bcluster nodes?\b", "cluster", role, flags=re.I)
+    role = re.sub(r"\s+Always On\s+Availability Group\b", " cluster", role, flags=re.I)
+    role = re.sub(r"\bGeneral Purpose\b", "", role, flags=re.I)
+    role = re.sub(r"\bSystem\s+Application Server\b", " Application Server", role, flags=re.I)
+    role = re.sub(r",\s*DAAM\s+Node\s+Controller\b", ", DAAM ctrl", role, flags=re.I)
     role = re.sub(r"\s*\(\d+\)\s*$", "", role)
-    return role.strip() or KINDS.get(kind, KINDS["unknown"])[1]
+    # tighten long product/server names to one line without dropping what the machine does
+    role = re.sub(r"^Dell\s+", "", role, flags=re.I)
+    role = re.sub(r"\bData\s+Manager\s+server\b", "Data Manager", role, flags=re.I)
+    role = re.sub(r"\s*/\s*[A-Za-z0-9.\-]+\.(com|net|org|au)[A-Za-z0-9.\-]*$", "", role, flags=re.I)
+    role = re.sub(r"\s*/\s*[A-Za-z0-9._\-]+$", "", role, flags=re.I)
+    role = re.sub(r"^IT\s+SOE\s+", "SOE ", role, flags=re.I)
+    role = re.sub(r"\bRadio\s+Management\s+Server\b", "Radio Mgmt Server", role, flags=re.I)
+    role = re.sub(r"\bManagement\s+Server\b", "Mgmt Server", role, flags=re.I)
+    return re.sub(r"\s{2,}", " ", role).strip() or KINDS.get(kind, KINDS["unknown"])[1]
 
 
 def members_label(ids: list[str]) -> str:
@@ -272,11 +284,22 @@ def build(model: dict, band_of: dict | None = None, conduits: bool = False) -> d
     dcs = list((model.get("layout") or {}).get("dcs") or [])
     tiles: dict[str, dict] = {}
     tile_of: dict[str, str] = {}
+    # a boundary role shared by hosts in different sites, and an OT cluster repeated across sites, are one system
+    counts: dict[tuple, list] = {}
+    for n in model["nodes"]:
+        b = _band(n, model, band_of)
+        k = (b, short_role(n), n["kind"])
+        if n["kind"] != "gap":
+            counts.setdefault(k, []).append(n)
+    shared = {k for k, ns in counts.items() if len({n["zone"] for n in ns}) > 1}
+
     for n in model["nodes"]:
         b = _band(n, model, band_of)
         s = _sub(n, b, model)
         role = short_role(n)
         gap = n["kind"] == "gap"
+        if not gap and (b, role, n["kind"]) in shared:
+            b, s = b, "shared"
         key = f"{b}|{s}|{n['kind']}|{role}" if not gap else f"{b}|{s}|gap|{n['id']}"
         t = tiles.setdefault(key, {"id": key, "band": b, "sub": s, "kind": n["kind"], "role": role, "hosts": [],
                                     "labels": [], "gap": gap, "sites": [], "gap_text": n.get("gap_text", "")})
@@ -305,10 +328,10 @@ def build(model: dict, band_of: dict | None = None, conduits: bool = False) -> d
         subs[b].sort(key=lambda s: (dcs.index(s) if s in dcs else order.get(s, 50 if s.startswith("site:") else 60), s))
     def sub_label(s):
         if s == "outside":
-            return model.get("outside_label") or "Location not captured"
+            return model.get("outside_label") or "Location not recorded"
         if s == "shared":
             lab = zlabel.get(s, "")
-            return lab if "OT" in lab else "Shared services"
+            return lab if "OT" in lab else "Shared across sites"
         return zlabel.get(s, s.replace("site:", ""))
     # lines between tiles (zone ends kept as zones)
     def end(x):
@@ -402,7 +425,7 @@ def render_band_svg(model: dict, band_of: dict | None = None, conduits: bool = F
                 host = f"{sorted(t['labels'])[0]} +{len(t['labels']) - 1}"
         t["host_lines"] = _wrap(host, CW - 4, F_TEXT, False, 2)
         t["h"] = ICON + 6 + LINE_H * (len(t["role_lines"]) + len(t["host_lines"])) + 2
-        t["store_lines"] = [(_wrap(s_["what"], CW - 22, F_TEXT, False, 1)[0], bool(s_.get("flag"))) for s_ in t.get("stores", [])][:3]
+        t["store_lines"] = [(_wrap(s_["what"], CW - 22, F_TEXT, False, 1)[0], bool(s_.get("flag"))) for s_ in t.get("stores", [])][:2]
         marks = [MARK_LABEL[k] for k in ("edr", "av", "tools", "usb") if k in t.get("marks", ())]
         t["mark_lines"] = _wrap(" · ".join(marks), CW - 4, F_TEXT, False, 2) if marks else []
         t["h"] += LINE_H * (len(t["store_lines"]) + len(t["mark_lines"]))
@@ -480,7 +503,7 @@ def render_band_svg(model: dict, band_of: dict | None = None, conduits: bool = F
             continue
         # service figures keep one line per provider, so who takes the service from whom stays visible
         key = (l["fn"], l["status"], l["t"] if per_target else "")
-        b = buses.setdefault(key, {"fn": l["fn"], "status": l["status"], "ends": {}, "svcs": [], "more": 0})
+        b = buses.setdefault(key, {"fn": l["fn"], "status": l["status"], "ends": {}, "svcs": [], "more": 0, "ids": []})
         if model.get("flow"):                         # data flow: arrow where the data arrives, dot where it is opened
             ends = ((l["s"], si, l["to_s"], True), (l["t"], ti, l["to_t"], False))
         else:
@@ -489,9 +512,11 @@ def render_band_svg(model: dict, band_of: dict | None = None, conduits: bool = F
             d = b["ends"].setdefault(e, {"info": info, "in": False, "opens": False})
             d["in"] = d["in"] or into
             d["opens"] = d["opens"] or opens
-        b["svcs"] += l["svcs"]; b["more"] += l["more"]
+        b["svcs"] += l["svcs"]; b["more"] += l["more"]; b["ids"] += l.get("ids", [])
     order_fn = list(FUNCTIONS)
     bl = sorted(buses.values(), key=lambda b: (order_fn.index(b["fn"]), b["status"]))
+    for bi, b in enumerate(bl):
+        b["line_id"] = f"portrait-line-{bi + 1}"
 
     def end_cx(info):
         if info["kind"] == "tile":
@@ -589,25 +614,25 @@ def render_band_svg(model: dict, band_of: dict | None = None, conduits: bool = F
         first = i == 0 or shelves[i - 1]["band"] != band
         if first:
             if i:
-                y += 12
+                y += 7
             band_box.setdefault(band, [y, y])
-            y += 36                                     # band title
+            y += 32                                     # band title
         def chan(ckey):
             nonlocal y
             c = chan_index[ckey]
-            h = 12 + sum(BUS_GAP + lane_room[(c, k)] for k in range(chan_n.get(c, 0))) + 8
+            h = 8 + sum(BUS_GAP + lane_room[(c, k)] for k in range(chan_n.get(c, 0))) + 3
             chan_y[c], chan_h[c] = y, h
             y += h
         if (i, "head") in chan_index:
             chan((i, "head"))
             top = y
             nl = max(len(sub_title(i, s_, c0, sp)) for s_, c0, sp in sh["subs"])
-            y += head_h + LINE_H * (nl - 1)
+            y += head_h - 10 + LINE_H * (nl - 1)
             for s, c0, sp in sh["subs"]:
                 sub_box[(i, s)] = [top, None, c0, sp]
         for r in range(sh["rows"]):
             chan((i, r))
-            rh = max([t["h"] for t in tiles.values() if t.get("shelf") == i and t["row"] == r] + [60])
+            rh = max([t["h"] for t in tiles.values() if t.get("shelf") == i and t["row"] == r] + [52])
             shelf_rows_y[(i, r)] = (y, rh)
             y += rh
         if not sh["rows"]:
@@ -617,14 +642,14 @@ def render_band_svg(model: dict, band_of: dict | None = None, conduits: bool = F
                 nr = max([t["row"] for t in tiles.values() if t.get("shelf") == i and t["sub"] == s] + [0])
                 yy, rh = shelf_rows_y.get((i, nr), (y, 0))
                 sub_box[(i, s)][1] = yy + rh + 8
-        y += 10
+        y += 4
         band_box[band][1] = y
     body_h = y
 
     # coordinates
     def lane_y(c, key):
         k = chan_lane.get((c, key), 0)
-        return chan_y[c] + 12 + sum(BUS_GAP + lane_room[(c, j)] for j in range(k)) + lane_room[(c, k)]
+        return chan_y[c] + 6 + sum(BUS_GAP + lane_room[(c, j)] for j in range(k)) + lane_room[(c, k)]
     def gut_x(g, bi):
         n = gut_n.get(g, 1)
         k = gut_lane.get(("g", bi), 0)
@@ -643,18 +668,20 @@ def render_band_svg(model: dict, band_of: dict | None = None, conduits: bool = F
     styles = sorted({STATUS_DASH.get(st, ("", ""))[0] for st in used_status})
     risk = [st for st in used_status if st in ("unenforced", "direct", "unknown")]
     note = ("Every line crosses a zone boundary with no boundary control evidenced. " if risk == used_status and "unenforced" in risk else "")
-    note += ("Arrow: where the data arrives. Ringed dot: the side that opens the connection. ×n: hosts in the role."
+    note += ("Arrow: where the data arrives. ×n: hosts in the role."
              if model.get("flow") else "Arrow: the system that receives. ×n: hosts in the role.")
     cm = model.get("common_marks") or {}
     if cm:
         note = "All hosts: " + ", ".join(COMMON_PHRASE[k].format(v=v) for k, v in cm.items() if k in COMMON_PHRASE) + ". " + note
-    note_lines = _wrap(note, W - 140, F_TEXT, False, 3)
+    note_lines = _wrap(note, W - 140, F_TEXT, False, 1)
+    # compact legend: group the flows by how they were evidenced, not one row per function/status
     legend_keys = []
-    for b in bl:
-        if (b["fn"], b["status"]) not in legend_keys:
-            legend_keys.append((b["fn"], b["status"]))
+    for st_ in used_status:
+        fns = [f for f in FUNCTIONS if any(b["fn"] == f and b["status"] == st_ for b in bl)]
+        if fns:
+            legend_keys.append((fns, st_))
     legend_rows = len(legend_keys) + len(note_lines)
-    H = body_h + 14 + legend_rows * 26 + 8
+    H = body_h + 14 + 10 + legend_rows * 24
     o = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W:.0f} {H:.0f}" width="{W * MM:.1f}mm" height="{H * MM:.1f}mm" '
          f'font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, sans-serif" class="tdiag print band" data-diagram="{esc(stem)}">', "<defs>"]
     for k, (col, _) in FUNCTIONS.items():
@@ -670,7 +697,7 @@ def render_band_svg(model: dict, band_of: dict | None = None, conduits: bool = F
     for (i, s), (y1, y2, c0, sp) in sub_box.items():
         band = shelves[i]["band"]
         x1, x2 = colx(c0) - 12, colx(c0 + sp - 1) + CW + 12
-        dashed = ' stroke-dasharray="6 4"' if s in ("outside", "nosite") else ""
+        dashed = ' stroke-dasharray="6 4"' if s in ("outside", "nosite", "shared") else ""
         labs = sub_title(i, s, c0, sp)
         o.append(f'<g class="zone" data-id="{esc(s)}"><rect x="{x1:.1f}" y="{y1:.1f}" width="{x2 - x1:.1f}" height="{y2 - y1:.1f}" rx="9" '
                  f'fill="{SUB_FILL[band]}" fill-opacity="0.7" stroke="{BORDER}" stroke-width="1.3"{dashed}/>'
@@ -685,18 +712,26 @@ def render_band_svg(model: dict, band_of: dict | None = None, conduits: bool = F
             if abs(p[0] - clean[-1][0]) > 0.05 or abs(p[1] - clean[-1][1]) > 0.05:
                 clean.append(p)
         return "M" + " L".join(f"{x:.1f},{yy:.1f}" for x, yy in clean)
-    def line(pts, fn, st, a1, eid):
+    def line(pts, fn, st, a1, eid, meta=None):
         col = FUNCTIONS[fn][0]
         dash, w = STATUS_DASH.get(st, ("", 2.6))
         mk = f' marker-end="url(#b-{esc(stem)}-{fn})"' if a1 else ""
         da = f' stroke-dasharray="{dash}"' if dash else ""
-        return (f'<path class="edge" data-id="{esc(eid)}" d="{path(pts)}" fill="none" stroke="{col}" stroke-width="{w}" '
+        ma = ""
+        if meta:
+            ma = (f' data-line-id="{esc(meta["line_id"])}"'
+                  f' data-s="{esc(meta["s"])}"'
+                  f' data-t="{esc(meta["t"])}"'
+                  f' data-edge-ids="{esc(meta["edge_ids"])}"')
+        return (f'<path class="edge" data-id="{esc(eid)}"{ma} d="{path(pts)}" fill="none" stroke="{col}" stroke-width="{w}" '
                 f'stroke-linecap="round"{da}{mk}/>')
     label_svg = []
     dots = []
     for bi, b in enumerate(bl):
         fn, st = b["fn"], b["status"]
         col = FUNCTIONS[fn][0]
+        meta = {"line_id": b["line_id"], "s": sorted(b["ends"])[0], "t": sorted(b["ends"])[1],
+                "edge_ids": " ".join(sorted(set(b["ids"])))}
         gx = gut_x(b["g"], bi)
         ys = []
         for c in b["chans"]:
@@ -705,9 +740,9 @@ def render_band_svg(model: dict, band_of: dict | None = None, conduits: bool = F
             taps = [(port_x[(e, bi)], e, d) for e, d in b["ends"].items() if d["info"]["chan"] == c]
             xs = [x for x, _, _ in taps] + ([gx] if b["trunk"] else [])
             if max(xs) - min(xs) > 0.1:
-                o.append(line([(min(xs), ly), (max(xs), ly)], fn, st, False, f"bus-{fn}-{st}"))
+                o.append(line([(min(xs), ly), (max(xs), ly)], fn, st, False, f"bus-{fn}-{st}", meta))
             for x, e, d in taps:
-                o.append(line([(x, ly), (x, port_y(d["info"]) - (1 if d["in"] else 0))], fn, st, d["in"], f"tap-{e}"))
+                o.append(line([(x, ly), (x, port_y(d["info"]) - (1 if d["in"] else 0))], fn, st, d["in"], f"tap-{e}", meta))
                 if d.get("opens"):                    # a ringed dot halfway down the tap: this side opens the connection
                     dots.append(f'<circle cx="{x:.1f}" cy="{(ly + port_y(d["info"])) / 2:.1f}" r="5" fill="{col}" '
                                 f'stroke="#ffffff" stroke-width="1.6" data-id="opens-{esc(e)}"/>')
@@ -715,7 +750,7 @@ def render_band_svg(model: dict, band_of: dict | None = None, conduits: bool = F
             if b["trunk"]:
                 dots.append(f'<circle cx="{gx:.1f}" cy="{ly:.1f}" r="3.6" fill="{col}"/>')
         if b["trunk"]:
-            o.append(line([(gx, min(ys)), (gx, max(ys))], fn, st, False, f"trunk-{fn}-{st}"))
+            o.append(line([(gx, min(ys)), (gx, max(ys))], fn, st, False, f"trunk-{fn}-{st}", meta))
     o += dots
     o.append("</g>")
     o += label_svg
@@ -764,36 +799,27 @@ def render_band_svg(model: dict, band_of: dict | None = None, conduits: bool = F
             yy += LINE_H
             txt.append(f'<text x="{cx:.1f}" y="{yy - 4:.1f}" font-size="{F_TEXT}" fill="{MUTED}" text-anchor="middle" '
                        f'data-id="marks">{esc(ln)}</text>')
-        o.append(f'<g class="node" data-id="{esc(t["id"])}">{bg}'
+        o.append(f'<g class="node" data-id="{esc(t["id"])}" data-hosts="{esc(" ".join(sorted(set(t["hosts"]))))}">{bg}'
                  f'<g transform="translate({cx - ICON / 2:.1f},{y0:.1f}) scale({sc:.4f})" fill="none" stroke="{col}" '
                  f'stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" color="{col}">{ICONS[icon]}</g>'
                  f'{badge}{"".join(txt)}</g>')
 
     # legend: line colour = function (with the services on it), line style = evidence, then how to read it
-    y = body_h + 14
-    # one row per line: its colour and style, the function, the services on it and, when it matters, its status
-    say_status = not (len(used_status) == 1 and used_status[0] in ("observed", "unenforced", "seen"))
+    y = body_h + 14 + 10
+    # one row per evidence status: colour = data function, style = how it was evidenced
     cells = []
-    for j, (fn_, st_) in enumerate(legend_keys):
-        same = [b for b in bl if (b["fn"], b["status"]) == (fn_, st_)]
-        b = {"fn": fn_, "status": st_, "svcs": [x for bb in same for x in bb["svcs"]], "more": sum(bb["more"] for bb in same)}
-        svcs = list(dict.fromkeys(x for x in b["svcs"] if x))
-        extra = max(0, len(svcs) - 6) + b["more"]
-        shown = ", ".join(svcs[:6])
-        if extra:
-            shown = (shown + " and " if shown else "") + f"{extra} more ports not listed in the capture"
-        lab = FUNCTIONS[b["fn"]][1] + (f": {shown}" if shown else "")
-        if say_status:
-            lab += f" ({STATUS_PHRASE.get(b['status'], b['status'])})"
-        cells.append((0, j, (FUNCTIONS[b["fn"]][0], STATUS_DASH.get(b["status"], ("", 2.6))[0], lab, True)))
-    for colno, j, (col, dash, lab, bold) in cells:
+    for j, (fns, st_) in enumerate(legend_keys):
+        lab = ", ".join(FUNCTIONS[f][1] for f in fns) + f"  -  {STATUS_PHRASE.get(st_, st_)}"
+        col = FUNCTIONS[fns[0]][0]
+        cells.append((col, STATUS_DASH.get(st_, ("", 2.6))[0], lab))
+    for j, (col, dash, lab) in enumerate(cells):
         xx = 8
         yy = y + j * 26 + 18
         da = f' stroke-dasharray="{dash}"' if dash else ""
         lab = _wrap(lab, W - 160, F_TEXT, False, 1)[0]
         o.append(f'<line x1="{xx:.1f}" y1="{yy - 6:.1f}" x2="{xx + 44:.1f}" y2="{yy - 6:.1f}" stroke="{col}" stroke-width="3.2" stroke-linecap="round"{da}/>'
                  f'<text x="{xx + 54:.1f}" y="{yy:.1f}" font-size="{F_TEXT}" fill="{MUTED}">{esc(lab)}</text>')
-    yy = y + (max([j for _, j, _ in cells] + [-1]) + 1) * 26 + 18
+    yy = y + len(cells) * 26 + 18
     for j, ln in enumerate(note_lines):
         o.append(f'<text x="8" y="{yy + j * 22:.1f}" font-size="{F_TEXT}" fill="{MUTED}">{esc(ln)}</text>')
     o.append("</svg>")
