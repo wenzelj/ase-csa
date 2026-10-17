@@ -676,10 +676,10 @@ def render_band_svg(model: dict, band_of: dict | None = None, conduits: bool = F
     note_lines = _wrap(note, W - 140, F_TEXT, False, 1)
     # compact legend: group the flows by how they were evidenced, not one row per function/status
     legend_keys = []
-    for st_ in used_status:
-        fns = [f for f in FUNCTIONS if any(b["fn"] == f and b["status"] == st_ for b in bl)]
-        if fns:
-            legend_keys.append((fns, st_))
+    for f in used_fn:                                   # used_fn is already mechanisms present in the figure
+        sts = [st_ for st_ in used_status if any(b["fn"] == f and b["status"] == st_ for b in bl)]
+        if sts:
+            legend_keys.append((f, sts))
     legend_rows = len(legend_keys) + len(note_lines)
     H = body_h + 14 + 10 + legend_rows * 24
     o = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W:.0f} {H:.0f}" width="{W * MM:.1f}mm" height="{H * MM:.1f}mm" '
@@ -808,10 +808,10 @@ def render_band_svg(model: dict, band_of: dict | None = None, conduits: bool = F
     y = body_h + 14 + 10
     # one row per evidence status: colour = data function, style = how it was evidenced
     cells = []
-    for j, (fns, st_) in enumerate(legend_keys):
-        lab = ", ".join(FUNCTIONS[f][1] for f in fns) + f"  -  {STATUS_PHRASE.get(st_, st_)}"
-        col = FUNCTIONS[fns[0]][0]
-        cells.append((col, STATUS_DASH.get(st_, ("", 2.6))[0], lab))
+    for f, sts in legend_keys:
+        st_ = sts[0]
+        lab = FUNCTIONS[f][1] + ("" if len(sts) == 1 else "  -  " + ", ".join(STATUS_PHRASE.get(s_, s_) for s_ in sts))
+        cells.append((FUNCTIONS[f][0], STATUS_DASH.get(st_, ("", 2.6))[0], lab))
     for j, (col, dash, lab) in enumerate(cells):
         xx = 8
         yy = y + j * 26 + 18
