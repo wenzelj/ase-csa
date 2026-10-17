@@ -192,10 +192,17 @@ def view(work_dir, over: dict, prof: dict, p: dict, *, key: str, title: str, sub
             else:
                 zk = zs.of(x).get("kind", "unknown")
                 named = not re.fullmatch(r"[\d.:a-fA-F%]+", x)     # a declared end named in the flow map, not an address
-                role = (f"{hints[x]['role']} (likely, confirm)" if x in hints else
-                        "Internet" if zk == "internet" else "Cloud service" if zk == "cloud" else
-                        x if named else "Role not recorded")
-                nodes[x] = {"id": x, "label": x, "kind": {"internet": "internet", "cloud": "cloud"}.get(zk, "server"),
+                if x in hints:
+                    role, kind = f"{hints[x]['role']} (likely, confirm)", "unknown"
+                elif zk == "internet":
+                    role, kind = "Internet", "internet"
+                elif zk == "cloud":
+                    role, kind = "Cloud service", "cloud"
+                elif named:
+                    role, kind = x, "unknown"
+                else:
+                    role, kind = "Role not recorded", "unknown"
+                nodes[x] = {"id": x, "label": x, "kind": kind,
                             "role": role, "zone": "outside" if zk == "unknown" else ("nosite" if zk == "ot" else "it"),
                             "band": BAND_OF_KIND.get(zk, "it")}
         return x
