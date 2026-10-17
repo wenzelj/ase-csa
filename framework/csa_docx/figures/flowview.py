@@ -56,6 +56,10 @@ def edges(rows: list[dict], flt: dict | None = None, register: set[str] | None =
                     e["ports"].append(r["port"])
                 e["via"] = e["via"] or via_s or via_t
                 e["declared_id"] = e["declared_id"] or r.get("declared_id", "")
+                for cit in [c for c in [r.get("sources"), r.get("declared_id")] if c]:
+                    for part in [p.strip() for p in re.split(r"[;]", str(cit)) if p.strip()]:
+                        if part not in e["evidence"]:
+                            e["evidence"].append(part)
     out = list(acc.values())
     for n, e in enumerate(out, 1):
         e["id"] = f"D{n}"
