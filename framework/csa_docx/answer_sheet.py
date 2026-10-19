@@ -208,7 +208,8 @@ def count_mismatch(text: str) -> str | None:
 #: reported as a WARN and left for the next pass or the V1 change lane.
 HARD_CODES = {"CROSS_PROJECT_ONLY", "NOTE_TOO_LONG", "NOTE_NONE_AND_TEXT", "NOTE_NO_FACTS", "CAPTURE_DROPPED", "UNKNOWN_BUNDLED", "BACKGROUND_AS_EVIDENCE", "BACKGROUND_MIXED", "BACKGROUND_NOT_ON_CARD", "BACKGROUND_ALONE", "QUESTION_MISSING", "EMPTY_ANSWER", "FACT_NO_EVIDENCE", "UNKNOWN_EVIDENCE", "RATING_INVALID",
               "COLUMNS", "ROW_WIDTH", "NO_ROWS", "REQUIREMENT_NO_FACTS", "SEMICOLON", "PROCESS_AS_SUBJECT",
-              "CITATION_OFF_TOPIC", "NO_TOTALS", "ROLE_TABLE_REPEAT", "FRAME_UNCOVERED", "ATTEMPT_AS_ESTABLISHED"}
+              "CITATION_OFF_TOPIC", "NO_TOTALS", "ROLE_TABLE_REPEAT", "FRAME_UNCOVERED", "ATTEMPT_AS_ESTABLISHED",
+              "SLOT_NOT_ANSWERED"}
 
 # counts and totals of hosts ("9 of 12", "all 12 captured hosts", "nine hosts", "two RevViewer Jump Hosts"): CSA text
 # names the role groups instead. "stratum 5 hosts" and port numbers are not counts.
@@ -231,10 +232,13 @@ def frame_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
     if not slots:
         return []
     fb = next((b for k, b in sheet.items() if k.startswith("F")), None)
-    if fb is None:
+    out = slot_answers(sheet, fr, fb)
+    if fr.get("must_address"):
+        slots = []                  # the requirement blocks answer the slots themselves: the F1 block is optional
+    elif fb is None:
         return [_f("ERROR", "FRAME_UNCOVERED", None, f"no '## F1 Analysis frame' block: give every slot of the card's analysis "
                    f"frame ({', '.join(slots)}) a line naming the blocks that answer it, or Unknown: <what is not known>")]
-    out, bad = [], []
+    bad = []
     for s in slots:
         v = (fb.get("frame") or {}).get(s, "")
         if not v:
@@ -256,6 +260,39 @@ def frame_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
     for c in fr.get("coverage", []):
         if not any(t and t in text for t in c.get("tokens", [])):
             out.append(_f("WARN", "FLOW_NOT_COVERED", None, f"a cross-zone data flow is not addressed in any block: {c['text'][:150]}"))
+    return out
+
+
+def slot_answers(sheet: dict[str, dict], fr: dict, fb: dict | None = None) -> list[dict]:
+    """SLOT_NOT_ANSWERED (an error when the frame is "strict", else a warning): each requirement block cites the evidence of every frame finding the card says it must
+    address, or has an Unknown: line naming it (one of its hosts, addresses or evidence IDs). A slot the captures do
+    not answer needs an Unknown: line in the block (or on its F1 line)."""
+    out = []
+    level = "ERROR" if fr.get("strict") else "WARN"      # a frame tuned for its topic ("strict": true) blocks; others warn
+    f1 = (fb or {}).get("frame") or {}
+    for qid, items in (fr.get("must_address") or {}).items():
+        b = sheet.get(qid)
+        if b is None:
+            continue                                  # QUESTION_MISSING reports it
+        cited = block_ids(b)
+        unk = " ".join(b.get("unknown", [])).lower()
+        miss = []
+        for x in items:
+            if x["ids"] and {i.upper() for i in x["ids"]} & cited:
+                continue
+            if x.get("empty"):
+                if b.get("unknown") or re.match(r"(?i)unknown:", f1.get(x["slot"], "")):
+                    continue
+            elif unk and any(t and t.lower() in unk for t in list(x.get("tokens", [])) + list(x["ids"])):
+                continue
+            miss.append(x)
+        if miss:
+            listed = "; ".join(f"{x['slot']} {x['text'][:110]}" + (f" ({', '.join(x['ids'][:3])})" if x["ids"] else "")
+                               for x in miss[:6])
+            out.append(_f(level, "SLOT_NOT_ANSWERED", qid,
+                          f"{len(miss)} finding(s) the card lists under 'Must address' are neither cited nor raised as Unknown: "
+                          f"{listed}{' …' if len(miss) > 6 else ''}. Cite each one's evidence in this block, or add an "
+                          "Unknown: line naming it"))
     return out
 
 
