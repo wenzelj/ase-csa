@@ -82,12 +82,14 @@ def test_frame_card_asks_every_slot_and_flags_likely_notes_as_background():
          "findings": [{"text": "Database service on DB1: SQL Server (S01)", "ids": ["E-901"], "hint": "", "tokens": ["DB1"]}]},
         {"id": "S3", "question": "Which flows cross zones?", "requirements": ["SEP-STOR-03"], "cross_zone": True,
          "findings": [{"text": "Backup agent: BKP1 opens connections to DB1", "ids": ["E-902"], "cross_zone": "yes",
-                       "hint": "Likely: a backup agent. Confirm which data it copies.", "tokens": ["BKP1", "DB1"]}]},
+                       "hint": "Likely: a backup agent. Confirm which data it copies.", "tokens": ["BKP1", "DB1"],
+                       "direction": "pull_into_ot"}]},
         {"id": "S9", "question": "Retention?", "requirements": [], "cross_zone": False, "findings": []}]}
     text = "\n".join(topic_frames.card_lines(res))
     assert "## F1 Analysis frame" in text and "### S9 Retention?" in text and "nothing in the captures" in text
     assert "(E-902)" in text and "Likely:" in text and "not evidence" in text
-    assert topic_frames.coverage_targets(res) == [{"text": "Backup agent: BKP1 opens connections to DB1", "tokens": ["BKP1", "DB1"]}]
+    assert topic_frames.coverage_targets(res) == [{"text": "Backup agent: BKP1 opens connections to DB1", "tokens": ["BKP1", "DB1"],
+                                                   "ids": ["E-902"], "direction": "pull_into_ot"}]
     assert topic_frames.all_ids(res) == {"E-901", "E-902"}
 
 

@@ -148,10 +148,49 @@ def settings_findings(work_dir: Path, attr: str, req: str, area: str, section: s
     return out
 
 
+# which way a flow crosses the OT boundary, worked out from the side that opens it and the way its data goes
+DIRECTION_LABEL = {"ot_push": "OT push", "pull_into_ot": "Pull out of OT", "into_ot": "Into OT",
+                   "inside_ot": "Inside OT", "unknown_zone": "Zone not recorded", "not_ot": "Outside OT, context only"}
+CROSSING = ("ot_push", "pull_into_ot", "into_ot", "unknown_zone")
+
+
+def flow_direction(g: dict, side) -> tuple[str, bool]:
+    """(direction, far_end_unknown) for a flow group. ``side`` is flows.ot_sides(work_dir).
+    ot_push: OT opens and data leaves OT. pull_into_ot: a system outside OT opens and data leaves OT (a backup
+    server pulling, a database client reading). into_ot: data comes into OT. inside_ot: both ends in OT.
+    not_ot: neither end is in OT (IT to the internet): context, never an OT push. unknown_zone: no end is known
+    to be in OT and at least one end has no zone recorded."""
+    from csa_docx.figures.flowview import DATA_DIRECTION
+
+    def one(ends: list[str]) -> str:
+        ss = {side(p.strip()) for e in ends for p in e.split(",") if p.strip()}
+        if ss == {"ot"}:
+            return "ot"
+        if "ot" in ss:
+            return "mixed"
+        return "outside" if ss == {"outside"} else "unknown"
+    s, t = one(g["srcs"]), one(g["dsts"])
+    if s in ("ot", "mixed") and t in ("ot", "mixed"):
+        return "inside_ot", "mixed" in (s, t)
+    if s not in ("ot", "mixed") and t not in ("ot", "mixed"):
+        return ("not_ot", False) if (s, t) == ("outside", "outside") else ("unknown_zone", True)
+    d = DATA_DIRECTION.get(g["mechanism"], "both")
+    if s in ("ot", "mixed"):                       # OT opens the connection
+        return ("ot_push" if d in ("from_opener", "both") else "into_ot"), t != "outside"
+    return ("pull_into_ot" if d in ("to_opener", "both") else "into_ot"), s != "outside"
+
+
 def flow_findings(work_dir: Path, flt: dict, req: str, area: str, section: str) -> list[dict]:
     rows = flows_mod.select(flows_mod.load(work_dir), flt, {h.upper() for h in _register(work_dir)})
+    side = flows_mod.ot_sides(work_dir)
+    # group within one pair of sides only: a client in OT and a client outside OT of the same listener are two findings
+    parts: dict[tuple, list[dict]] = {}
+    for r in rows:
+        k = tuple(sorted({side(x.strip()) for x in r["src"].split(",") if x.strip()})),             tuple(sorted({side(x.strip()) for x in r["dst"].split(",") if x.strip()}))
+        parts.setdefault(k, []).append(r)
+    grouped = [g for rs in parts.values() for g in flows_mod.groups(rs)]
     out = []
-    for g in flows_mod.groups(rows):
+    for g in grouped:
         zones = f"{'/'.join(g['src_zones']) or 'zone not recorded'} to {'/'.join(g['dst_zones']) or 'zone not recorded'}"
         port = f"TCP {g['port']}" if str(g["port"]).isdigit() else f"ports {g['port']}"
         if g["status"] == "declared":
@@ -194,8 +233,15 @@ def flow_findings(work_dir: Path, flt: dict, req: str, area: str, section: str) 
                            "confidence": "high", "inference_reason": "", "gap_or_action": ""})
         hint = f"Likely: {g['signature']}. Confirm {g['confirm']}." if g["signature"] else ""
         toks = [x for x in g["srcs"] + g["dsts"]]
+        direction, far_unknown = flow_direction(g, side)
+        text = f"[{DIRECTION_LABEL[direction]}] {text}"
+        if far_unknown and direction in CROSSING:
+            text += " The zone of the far end is not recorded: say so and raise it as Unknown."
         out.append({"text": text, "hosts": g["srcs"] + g["dsts"], "evidence": ev, "hint": hint, "tokens": toks,
-                    "cross_zone": g["cross_zone"], "mechanism": g["mechanism"], "status": g["status"]})
+                    "cross_zone": g["cross_zone"], "mechanism": g["mechanism"], "status": g["status"],
+                    "direction": direction, "far_unknown": far_unknown})
+    order = {"pull_into_ot": 0, "ot_push": 1, "into_ot": 2, "unknown_zone": 3, "inside_ot": 4, "not_ot": 5}
+    out.sort(key=lambda f: order.get(f["direction"], 9))     # stable: crossings first, context last
     return out
 
 
@@ -301,15 +347,22 @@ def card_lines(res: dict) -> list[str]:
 
 
 def coverage_targets(res: dict | None) -> list[dict]:
-    """Cross-zone data flows the answer must address: [{text, tokens}]."""
-    out = []
+    """Data flows that cross the OT boundary (or may: far end with no zone) the answer must address:
+    [{text, tokens, ids, direction}]. A flow with no OT end (IT to the internet) is context, never a target."""
+    out, seen = [], set()
     for s in (res or {}).get("slots", []):
-        if not s.get("cross_zone"):
-            continue
         for f in s["findings"]:
-            if f.get("cross_zone") == "yes":
-                out.append({"text": f["text"], "tokens": f.get("tokens", [])})
+            if f.get("direction") in CROSSING and f["text"] not in seen:
+                seen.add(f["text"])
+                out.append({"text": f["text"], "tokens": f.get("tokens", []), "ids": f.get("ids", []),
+                            "direction": f["direction"]})
     return out
+
+
+def context_ids(res: dict | None) -> list[str]:
+    """Evidence IDs of flows with no OT end: context for an OT section, never an OT push or pull."""
+    return sorted({i for s in (res or {}).get("slots", []) for f in s["findings"] if f.get("direction") == "not_ot"
+                   for i in f.get("ids", [])})
 
 
 def main(argv: list[str] | None = None) -> int:
