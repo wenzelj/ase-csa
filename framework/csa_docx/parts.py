@@ -169,6 +169,66 @@ def named(text: str, ns: list[str]) -> bool:
     return any(_norm(n).strip() and _norm(n) in t for n in ns)
 
 
+# What each part keeps and loses when OT is isolated: worked out from the flows, never written by the model.
+_LOSS_KEYS = ("cut", "may_cut")
+
+
+def isolation(work_dir: Path, doc: dict | None = None) -> dict[str, dict]:
+    """{part id: {"effect": one line, "kept": [...], "cut": [...], "may_cut": [...], "unaffected": [...]}}. Each item is
+    {"mechanism", "port", "other" (the part at the far end), "flows"}. A flow is cut when one end is in OT and the other
+    is outside it, may be cut when an end's zone is not recorded, kept when both ends are in OT, and not affected when
+    neither end is in OT (an IT server talking to the internet is not touched by isolating OT)."""
+    from csa_docx import flows as F
+    work = Path(work_dir)
+    doc = doc or load(work)
+    idx, side = index(doc), F.ot_sides(work)
+    out: dict[str, dict] = {p["id"]: {"kept": {}, "cut": {}, "may_cut": {}, "unaffected": {}} for p in doc.get("parts", [])}
+    for r in F.load(work):
+        for s in (end_name(x) for x in r["src"].split(",") if x.strip()):
+            for d in (end_name(x) for x in r["dst"].split(",") if x.strip()):
+                ps, pd = idx.get(s.upper()), idx.get(d.upper())
+                if not ps or not pd:
+                    continue
+                sides = {side(s), side(d)}
+                key = ("kept" if sides == {"ot"} else "cut" if sides == {"ot", "outside"}
+                       else "unaffected" if "ot" not in sides and "unknown" not in sides else "may_cut")
+                for me, other in ((ps, pd), (pd, ps)):
+                    item = out[me["id"]][key].setdefault((r["mechanism"], other["id"]), {
+                        "mechanism": r["mechanism"], "port": r["port"], "other": other["name"], "flows": []})
+                    if r["flow_id"] not in item["flows"]:
+                        item["flows"].append(r["flow_id"])
+    res = {}
+    for p in doc.get("parts", []):
+        o = {k: list(v.values()) for k, v in out[p["id"]].items()}
+        lost = [f"{x['mechanism']} with {x['other']}" for x in o["cut"]]
+        maybe = [f"{x['mechanism']} with {x['other']}" for x in o["may_cut"]]
+        if p["side"] == "outside":
+            effect = ("loses its paths into OT: " + "; ".join(lost) if lost else "is not affected by isolating OT")
+        elif lost:
+            effect = "loses " + "; ".join(lost)
+        elif o["kept"]:
+            effect = "keeps working inside OT"
+        else:
+            effect = "" if maybe else "has no observed or declared flows"
+        if maybe:
+            effect += (", and may lose" if effect else "may lose") + " (zone not recorded): " + "; ".join(maybe)
+        res[p["id"]] = {"effect": effect, **o}
+    return res
+
+
+def isolation_tokens(iso: dict) -> dict[str, list[str]]:
+    """{"loss": words that name what the part loses, "safe": words that name only what it keeps}: the mechanisms and
+    far-end parts of its cut flows against those of its unaffected flows, words shared by both left out."""
+    def words(items: list[dict]) -> set[str]:
+        ws = set()
+        for x in items:
+            ws |= {w for w in re.findall(r"[a-z]{4,}", (x["mechanism"] + " " + x["other"]).lower())}
+        return ws
+    loss = words(iso.get("cut", []) + iso.get("may_cut", []))
+    safe = words(iso.get("unaffected", []) + iso.get("kept", [])) - loss
+    return {"loss": sorted(loss), "safe": sorted(safe)}
+
+
 def show(doc: dict) -> str:
     out = [f"# System parts ({'reviewed ' + doc.get('reviewed_on', '') if doc.get('reviewed') else 'not reviewed yet'})", ""]
     for p in doc.get("parts", []):
