@@ -403,6 +403,35 @@ def facts_to_keep(node: dict, workspace: Path | None) -> list[dict]:
     return sorted(keep, key=lambda x: (x["question"], x["capture_ids"]))
 
 
+def filter_keep(keep: list[dict], fr: dict | None) -> tuple[list[dict], list[dict]]:
+    """(keep, correct) against the subsection's analysis frame. Keep (enforced by CAPTURE_DROPPED): a fact whose capture
+    evidence is one of the frame's findings. Correct: a fact that says a setting has its baseline value ("default and
+    administrative shares", "none found") for hosts where the frame found more; it carries the findings it contradicts.
+    Any other old fact is not offered: it does not answer this topic's frame. Without a frame, everything is kept."""
+    if not fr:
+        return keep, []
+    from csa_docx import topic_frames
+    ids = {i.upper() for i in topic_frames.all_ids(fr)}
+    rules = []                       # (baseline phrase, non-baseline findings of the same slot)
+    for s in fr.get("slots", []):
+        base = [f for f in s["findings"] if f.get("value") and not f.get("requirements")]
+        more = [f for f in s["findings"] if f.get("value") and f.get("requirements")]
+        for f in base:
+            phrase = " ".join(f["value"].lower().split()[:3])
+            if phrase and more:
+                rules.append((phrase, more))
+    kept, correct = [], []
+    for k in keep:
+        low = k["fact"].lower()
+        hit = [f for phrase, more in rules if phrase in low for f in more
+               if any(t.lower() in low for t in (f.get("roles") or []) + (f.get("hosts") or []))]
+        if hit:
+            correct.append({**k, "contradicts": [{"text": f["text"], "ids": f.get("ids", [])} for f in hit]})
+        elif {i.upper() for i in k["capture_ids"]} & ids:
+            kept.append(k)
+    return kept, correct
+
+
 def _foreign_absence(fact: dict, rows: dict, key: str) -> bool:
     """True when the fact rests on a NOT_FOUND row recorded for another subsection: an absence found while
     answering one subsection (no fallback for storage) says nothing about another (DNS)."""
@@ -862,7 +891,15 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
     cur = _current(node)
     if cur:
         lines += ["", "## Current text in the document", ""] + [f"- {c}" for c in cur]
-    keep = facts_to_keep(node, workspace) if evidence else []
+    keep, correct = filter_keep(facts_to_keep(node, workspace) if evidence else [], fr)
+    if correct:
+        lines += ["", "## Facts to correct or drop", "",
+                  "Earlier answers stated these, but the analysis frame shows otherwise. Do not repeat them: state the "
+                  "finding instead, citing its evidence, and add `Dropped: E-<n> contradicted by <finding>` to the block.", ""]
+        for c in correct:
+            lines.append(f"- {c['question']}: {c['fact']} ({', '.join(c['evidence_ids'])})")
+            lines += [f"  Contradicted by: {x['text'][:220]}" + (f" ({', '.join(x['ids'])})" if x["ids"] else "")
+                      for x in c["contradicts"]]
     if keep:
         lines += ["", "## Facts to keep", "",
                   "This subsection's applied answers stated these facts and table rows from the discovery captures. Keep "
@@ -945,6 +982,7 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
     return {"status": "OK", "key": node["key"], "number": node["number"], "title": node["title"], "text": text,
             "questions": qs, "evidence": pack, "established": established, "background_ids": bg_ids,
             "keep": [{k: x[k] for k in ("question", "fact", "evidence_ids", "capture_ids")} for x in keep], "tokens": len(text) // 4,
+            "correct": [{k: x[k] for k in ("question", "fact", "evidence_ids", "capture_ids", "contradicts")} for x in correct],
             "ratings": spec.get("ratings") or doc_spec.DEFAULT_RATINGS, "kinds": kinds, "host_register": reg,
             "role_table": rtable, "role_tables": rtables or [], "frame": frame}
 
