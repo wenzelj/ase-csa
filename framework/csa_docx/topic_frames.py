@@ -268,7 +268,7 @@ def build(workspace: Path, heading: str, key: str = "", evidence: bool = True) -
         slots.append({"id": s["id"], "question": s["question"], "requirements": s.get("requirements", []),
                       "findings": found, "cross_zone": bool(src.get("flows", {}).get("cross_zone"))})
     res = {"status": "OK", "key": key, "heading": heading, "frame": fr.get("_file", ""), "slots": slots,
-           "strict": bool(fr.get("strict"))}
+           "strict": bool(fr.get("strict")), "zone_conflicts": zone_conflicts(work)}
     if evidence:
         _ensure_evidence(workspace, res)
     out = work / "topic-frames"
@@ -320,6 +320,32 @@ def _ensure_evidence(workspace: Path, res: dict) -> None:
             f["ids"] = list(dict.fromkeys(ids[e["claim"]] for e in f["evidence"] if ids.get(e["claim"])))
 
 
+def zone_conflicts(work_dir: Path) -> list[dict]:
+    """Hosts whose role name says OT (or IT) while the zone list puts them on the other side: [{host, role, zone,
+    side, text}]. The zone list wins: the text says how to write about the host."""
+    from csa_docx import zones as Z
+    zs = Z.for_project(work_dir)
+    out = []
+    for h, r in sorted(_register(work_dir).items()):
+        role = (r.get("role") or "").strip()
+        if not role or (r.get("in_scope") or "").strip() == "peer":
+            continue
+        words = set(re.findall(r"\b(OT|IT)\b", role))
+        z = zs.of(r.get("host") or h)
+        kind = z.get("kind", "unknown")
+        if "OT" in words and kind in ("it", "internet", "cloud", "vendor"):
+            side, said = "IT", "OT"
+        elif "IT" in words and kind == "ot":
+            side, said = "OT", "IT"
+        else:
+            continue
+        host = r.get("host") or h
+        out.append({"host": host, "role": role, "zone": z.get("zone", ""), "side": side,
+                    "text": f"{host} ({role}) is in {z.get('zone', '')}, an {side} zone, although its role name says {said}: "
+                            f"write about it as {side}-hosted. Never call it {said}-resident or say it is in {said}."})
+    return out
+
+
 def bind_requirements(slot: dict, findings: list[dict]) -> None:
     """Give each finding the requirements its answer must address. A flow takes the slot's "bind" entry for its
     direction (e.g. a pull out of OT binds to the outward-only requirement), else the slot's requirements. A flow
@@ -368,6 +394,9 @@ def card_lines(res: dict) -> list[str]:
            "List the blocks whose text answers the slot, or write Unknown: with what is not known (it becomes Discovery "
            "Required). Every slot needs a line (FRAME_UNCOVERED). Cross-zone data flows must be addressed in a requirement "
            "or the Drawbridge Impact (FLOW_NOT_COVERED).", ""]
+    if res.get("zone_conflicts"):
+        out += ["Zone conflicts (the zone list wins over the role name; ZONE_CONTRADICTED):"]
+        out += [f"- {c['text']}" for c in res["zone_conflicts"]] + [""]
     for s in res["slots"]:
         reqs = f" ({', '.join(s['requirements'])})" if s["requirements"] else ""
         out.append(f"### {s['id']} {s['question']}{reqs}")
