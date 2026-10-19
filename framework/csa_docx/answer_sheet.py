@@ -440,6 +440,17 @@ def regression(old: dict[str, dict], new: dict[str, dict], matrix: dict[str, dic
                           f"{', '.join(tabled[:8])}{' and others' if len(tabled) > 8 else ''} (capture evidence) are no longer "
                           f"cited in the prose: the role table under Discovery Information states them"))
             lost = [i for i in lost if i not in tabled]
+        if lost and (card or {}).get("frame"):
+            # with an analysis frame, only evidence on the frame or on the card's Facts to keep must stay: an old fact
+            # on another topic's evidence (or one the frame contradicts) may go without a 'Dropped:' line
+            relevant = {i.upper() for i in card["frame"].get("ids", [])}
+            relevant |= {i.upper() for k in card.get("keep", []) for i in k.get("capture_ids", [])}
+            off = [i for i in lost if i.upper() not in relevant]
+            if off:
+                out.append(_f("WARN", "CAPTURE_LEFT_OUT", qid,
+                              f"{', '.join(off[:8])}{' and others' if len(off) > 8 else ''} (capture evidence) supported the "
+                              "answer this replaces but is not on this topic's analysis frame: left out"))
+                lost = [i for i in lost if i.upper() in relevant]
         if lost and nb.get("keep") == "":
             said = [f["text"] for f in ob["facts"] if set(f["ids"]) & set(lost)]
             out.append(_f("ERROR", "CAPTURE_DROPPED", qid,
