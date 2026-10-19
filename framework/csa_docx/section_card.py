@@ -489,21 +489,29 @@ def host_register(workspace: Path | None) -> dict | None:
         if site and site not in g["sites"]:
             g["sites"].append(site)
     gl = sorted(groups.values(), key=lambda g: (-len(g["hosts"]), g["role"]))
+    from csa_docx import topic_frames, zones as zones_mod
+    zs = zones_mod.for_project(d.parent)
     for g in gl:
         g["hosts"].sort()
+        g["zones"] = list(dict.fromkeys(zs.of(h).get("zone", "") or "zone not recorded" for h in g["hosts"]))
     unnamed = []
     af = d / "addresses.csv"
     if af.is_file():
         unnamed = list(csv.DictReader(af.open(encoding="utf-8")))
-    return {"groups": gl, "total": sum(len(g["hosts"]) for g in gl), "uncaptured": uncaptured, "unnamed": unnamed}
+    return {"groups": gl, "total": sum(len(g["hosts"]) for g in gl), "uncaptured": uncaptured, "unnamed": unnamed,
+            "zone_conflicts": topic_frames.zone_conflicts(d.parent)}
 
 
 def _register_lines(reg: dict) -> list[str]:
     out = ["", "## Host register (captured hosts, grouped by role)", "",
            "Any host table uses one row per role group below, never one row per host. Write about hosts by role group or "
-           "by name, never by a number or total of hosts (NO_TOTALS).", ""]
+           "by name, never by a number or total of hosts (NO_TOTALS). The zone is the side of the OT boundary the host "
+           "is on: it wins over any OT or IT in a role name.", ""]
+    for c in reg.get("zone_conflicts") or []:
+        out.append(f"- ZONE CONFLICT: {c['text']}")
     for g in reg["groups"]:
-        out.append(f"- {g['role']}: {', '.join(g['hosts'])}" + (f"; site: {', '.join(g['sites'])}" if g["sites"] else ""))
+        out.append(f"- {g['role']}: {', '.join(g['hosts'])}" + (f"; site: {', '.join(g['sites'])}" if g["sites"] else "")
+                   + (f"; zone: {', '.join(g['zones'])}" if g.get("zones") else ""))
     if reg["uncaptured"]:
         out += ["", "Named in the sources for this system but not captured (scope to be confirmed):"]
         for u in reg["uncaptured"]:
