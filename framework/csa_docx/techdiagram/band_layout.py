@@ -684,13 +684,10 @@ def render_band_svg(model: dict, band_of: dict | None = None, conduits: bool = F
     risk = [st for st in used_status if st in ("unenforced", "direct", "unknown")]
     note = ("Every line crosses a zone boundary with no boundary control evidenced. " if risk == used_status and "unenforced" in risk else "")
     note += ("Arrow: where the data arrives. Ringed dot: the side that opens the connection. "
-             "×n: hosts in the role."
-             if model.get("flow") else "Arrow: the system that receives. ×n: hosts in the role.")
+             "×n: hosts in the role. "
+             if model.get("flow") else "Arrow: the system that receives. ×n: hosts in the role. ")
     cm = model.get("common_marks") or {}
-    pm = model.get("partial_marks") or {}
-    for k, (v, hosts) in sorted(pm.items()):                       # held by some represented hosts: name them
-        if k in COMMON_PHRASE:
-            note += COMMON_PHRASE[k].format(v=v) + f" on {', '.join(hosts)}. "
+    # a marker held by only some hosts is already on those hosts' tiles: it is not repeated here
     for k, v in cm.items():                                        # held by every represented host: state it once
         if k in COMMON_PHRASE:
             note += "Every host: " + COMMON_PHRASE[k].format(v=v) + ". "
@@ -704,7 +701,11 @@ def render_band_svg(model: dict, band_of: dict | None = None, conduits: bool = F
     legend_cells = [(FUNCTIONS[f][1] + ("" if len(sts) == 1 else "  -  " + ", ".join(STATUS_PHRASE.get(s_, s_) for s_ in sts)))
                     for f, sts in legend_keys]
     legend_rows = sum(max(1, len(_wrap(lab, W - 160, F_TEXT, False, lines=len(lab.split()) + 1))) for lab in legend_cells)
-    H = body_h + 14 + 10 + legend_rows * 26 + len(note_lines) * LINE_H
+    # the height counts the legend rows exactly as they are drawn below: one per (function, status)
+    _cells = [FUNCTIONS[f][1] + " - " + STATUS_PHRASE.get(st_, st_) for f, sts in legend_keys for st_ in sts]
+    _lines = [max(1, len(_wrap(lab, W - 160, F_TEXT, False, lines=len(lab.split()) + 1))) for lab in _cells]
+    H = (body_h + 14 + 10 + 18 + sum(_lines) * LINE_H + max(0, len(_lines) - 1) * 4 + 8
+         + max(0, len(note_lines) - 1) * 22 + 10)
     o = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W:.0f} {H:.0f}" width="{W * MM:.1f}mm" height="{H * MM:.1f}mm" '
          f'font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, sans-serif" class="tdiag print band" data-diagram="{esc(stem)}">', "<defs>"]
     for k, (col, _) in FUNCTIONS.items():

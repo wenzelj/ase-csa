@@ -195,6 +195,23 @@ def view(work_dir, over: dict, prof: dict, p: dict, *, key: str, title: str, sub
     flt = p.get("flows") or topic_flows(p.get("from_topic")) or {"data": True}
     es = edges(rows, flt, _register(work_dir), _frame(work_dir, key))
     zs = Z.for_project(work_dir)
+    if p.get("ot_crossing_only"):
+        # in and out of OT only: one end in OT and the other not (an end whose zone is not recorded may cross).
+        # An end is in OT when its zone rule says so, or the host register puts it at one of the OT data centres.
+        dcs = [z["label"].lower() for z in over.get("zones", []) if re.search(r"data cent(re|er)$", z.get("label", ""), re.I)]
+        regf = _Path(work_dir) / "hosts" / "hosts.csv"
+        reg_rows = {r["host"].upper(): r for r in _csv.DictReader(regf.open(encoding="utf-8"))} if regf.is_file() else {}
+
+        def in_ot(x: str) -> bool:
+            if zs.of(x).get("kind") == "ot":
+                return True
+            r = reg_rows.get(x.upper())
+            site = ((r or {}).get("site") or "").strip().lower()
+            return bool(r and (r.get("system") or "").strip() and site and any(d.startswith(site) for d in dcs))
+        not_crossing = sorted({f for e in es if in_ot(e["s"]) == in_ot(e["t"]) for f in e["flows"]})
+        es = [e for e in es if in_ot(e["s"]) != in_ot(e["t"])]
+    else:
+        not_crossing = []
     hints = F.peer_hints(rows)
     known = {n["id"]: n for n in over["nodes"]}
     nodes: dict[str, dict] = {}
@@ -245,7 +262,7 @@ def view(work_dir, over: dict, prof: dict, p: dict, *, key: str, title: str, sub
     # stores together, and the legend note says which hosts, so no site is silently merged into a shared store.
     host_stores: dict[str, list] = {n["id"]: st.get(n["id"], []) for n in nodes.values()}
     for n in nodes.values():
-        n["stores"] = host_stores[n["id"]]
+        n["stores"] = host_stores[n["id"]] if p.get("show_stores", True) else []
         n["marks"] = mk.get(n["id"], {})
     zones = list(over["zones"])
     if any(n["zone"] == "outside" for n in nodes.values()) and not any(z["id"] == "outside" for z in zones):
@@ -263,7 +280,8 @@ def view(work_dir, over: dict, prof: dict, p: dict, *, key: str, title: str, sub
             partial[k] = (" · ".join(holders), holders)
     model = {"id": f"figure-{key.lower()}", "title": title, "subtitle": subtitle, "zones": zones, "groups": [],
              "nodes": list(nodes.values()), "edges": medges, "notes": [], "flow": True, "controls": ctl,
-             "common_marks": common_mk, "partial_marks": partial, "outside_label": "Zone not recorded"}
+             "common_marks": common_mk, "partial_marks": partial, "outside_label": "Zone not recorded",
+             "not_crossing": not_crossing, "show_stores": p.get("show_stores", True)}
     model = M._layout(model, prof)
     if boundary and "boundary" not in model["layout"]["top"]:   # the screen view puts boundary nodes in its top band
         model["layout"]["top"].append("boundary")

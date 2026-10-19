@@ -116,8 +116,12 @@ def build(row: dict, node: dict, ev: dict, layout: dict, rel_rows: list[dict] | 
         b = _paths(row, reqs, sentences, ev, model or {})
     elif row.get("archetype") == "A":
         b = _overview(row, reqs, sentences, ev, model or {})
-    elif row.get("archetype") in ("F", "G"):
+    elif row.get("archetype") == "F":
         b = _flows(row, reqs, sentences, ev, model or {})
+        if row.get("part") and row.get("caption"):        # a second figure in the section says what it is
+            b["caption"] = row["caption"] + b["caption"][len("Data stores and data flows in and out of OT"):]
+    elif row.get("archetype") == "G":
+        b = _stores(row, reqs, sentences, ev, model or {})
     else:
         b = {"purpose": f"Shows {_lc(row.get('question') or row['title'])}.", "caption": row.get("caption") or row["title"],
              "source": "Source: discovery captures.", "items": [], "gaps": [], "allowed": []}
@@ -344,6 +348,67 @@ def _flows(row, reqs, sentences, ev, model) -> dict:
     return {"purpose": "Shows where the system holds its data, the data flows that enter or leave OT, which side opens each "
                        "one, and what is evidenced on each crossing.",
             "caption": caption, "source": source, "items": items, "gaps": gaps, "allowed": allowed}
+
+def _stores(row, reqs, sentences, ev, model) -> dict:
+    """G (store-centric): one item per store, per replication and per use of a store; gaps for ends whose zone or
+    role is not recorded, and for declared database access that does not name the database it reaches."""
+    items, gaps, allowed = [], [], set()
+    k = 0
+
+    def item(what, names, evidence=()):
+        nonlocal k
+        k += 1
+        items.append({"id": f"I{k}", "what": what, "requirements": reqs, "status": "shown", "evidence": list(evidence)[:40],
+                      "include": True, "section_says": says(sentences, *names) if names else None})
+
+    cards = model.get("cards", [])
+    for c in cards:
+        hosts = [h["host"] for h in c["hosts"]]
+        allowed |= set(hosts)
+        for s in c["stores"]:
+            flag = {"drive": ", a share of a whole drive", "users": ", a share of a user folder"}.get(s.get("flag") or "", "")
+            held = sorted({i["host"] for i in s["instances"]})
+            item(f"{c['role']} ({', '.join(held)}) holds {s['label']}{flag}", held)
+        for r in c.get("replication", []):
+            st = " (declared in the flow map, not seen)" if r["status"] == "declared" else ""
+            item(f"{c['role']} replicates its database between {', '.join(r['hosts'])}{st}", r["hosts"])
+        for u in c["uses"]:
+            st = {"declared": " (declared in the flow map, not seen)", "attempted": " (attempted, no reply seen)"}.get(u["status"], "")
+            what = "backs up" if u["store"].startswith("backup") else f"uses {u['store']} ({u['mechanism']}) on"
+            item(f"{', '.join(u['hosts'])} ({u['role']}) {what} {', '.join(u['on'])}{st}", u["hosts"] + u["on"], u["evidence"])
+            allowed |= set(u["hosts"]) | set(u["on"])
+    g = 0
+    unz = sorted({h for c in cards for u in c["uses"] for h, z in (u.get("host_zones") or {}).items() if z[0] == "unknown"})
+    if unz:
+        g += 1
+        gaps.append({"id": f"G{g}", "what": "The zone of " + ", ".join(unz[:6]) + (" and other ends" if len(unz) > 6 else "")
+                                            + ", which use the system's data stores, is not recorded", "requirements": reqs,
+                     "why": f"Needed to show whether the use of these stores in the {row['number']} figure crosses the IT/OT boundary."})
+    unr = sorted({h for c in cards for u in c["uses"] if u["role"] == "Role not recorded" for h in u["hosts"]})
+    if unr:
+        g += 1
+        gaps.append({"id": f"G{g}", "what": "The role of " + ", ".join(unr[:6]) + (" and other ends" if len(unr) > 6 else "")
+                                            + " is not recorded", "requirements": reqs,
+                     "why": f"Needed to name the system that reads or backs up the data in the {row['number']} figure."})
+    if model.get("unmatched"):
+        g += 1
+        ids = sorted({u.split(" ")[0] for u in model["unmatched"]})
+        gaps.append({"id": f"G{g}", "what": f"Database access declared in the flow map ({', '.join(ids)}) does not name the "
+                                            "database it reaches", "requirements": reqs,
+                     "why": f"Needed to draw which store that access reaches in the {row['number']} figure."})
+    caption = row.get("caption") or "Where the system holds its data and which hosts use each store"
+    if any(s.get("flag") for c in cards for s in c["stores"]):
+        caption += ". Whole-drive and user-folder shares are marked"
+    hosts = sorted(allowed)
+    when = _dates(hosts, ev)
+    ids = [i for c in cards for u in c["uses"] for i in u.get("evidence", [])]
+    source = (f"Source: host settings and flow inventory from the discovery captures{(', ' + when) if when else ''}"
+              + (f"; evidence {_ranges(ids)}." if ids else "."))
+    return {"purpose": "Shows where the system holds its data, grouped by the role that holds it, which hosts read, write or "
+                       "back up each store, and which side opens each connection.",
+            "caption": caption, "source": source, "items": items, "gaps": gaps,
+            "allowed": allowed | {c["role"] for c in cards}}
+
 
 # ------------------------------------------------------------------ wording from an agent or from you
 def wording_check(brief: dict, **texts: str) -> list[str]:

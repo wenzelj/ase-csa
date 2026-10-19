@@ -41,6 +41,8 @@ def draw(row: dict, work_dir: Path, project_key: str, net: dict, spec: dict | No
     """brief: items you left out of the brief are not drawn."""
     profiles = {p["id"]: p for p in N.load_profiles()}
     p = profiles.get(row.get("profile") or "")
+    if p and row.get("part"):
+        p = N.profile_of(row)
     if not p or not p.get("built"):
         raise NotBuilt(f"{row['number']} {row['title']}: this kind of figure is not built yet")
     layout = N.load_layout(project_key)

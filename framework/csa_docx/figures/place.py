@@ -79,7 +79,7 @@ def _heading_level(style: str) -> int | None:
     return int(m.group(1)) if m else None
 
 
-def locate(xml: bytes, title: str, level: int, key: str) -> dict:
+def locate(xml: bytes, title: str, level: int, key: str, after_key: str | None = None) -> dict:
     kids = _body_children(xml)
     heads = [i for i, (s, e, t) in enumerate(kids) if t == b"w:p" and _heading_level(_style(xml[s:e])) and _text(xml[s:e]) == title]
     if len(heads) != 1:
@@ -96,6 +96,13 @@ def locate(xml: bytes, title: str, level: int, key: str) -> dict:
         i = ours[0]
         block = [i] + [j for j in (i + 1, i + 2) if j < end and _style(xml[kids[j][0]:kids[j][1]]) in ("Caption", "FigureSource")]
         return {"mode": "replace", "kids": kids, "block": block}
+    if after_key:                                    # a second figure: straight after the section's first one
+        first = [i for i in span if f'w:name="_CSAFig_{after_key}"'.encode() in xml[kids[i][0]:kids[i][1]]]
+        if not first:
+            raise Blocked(f"place the section's first figure ({after_key}) before this one")
+        i = first[0]
+        block = [i] + [j for j in (i + 1, i + 2) if j < end and _style(xml[kids[j][0]:kids[j][1]]) in ("Caption", "FigureSource")]
+        return {"mode": "insert", "kids": kids, "after": block[-1], "after_figure": True}
     for i in figs:
         chunk = xml[kids[i][0]:kids[i][1]]
         if b"<w:drawing" in chunk:
@@ -268,7 +275,7 @@ def _author_from_cli(agents: Path) -> str:
 
 
 def place(docx: Path, title: str, level: int, key: str, png: Path, caption: str, source: str, author: str,
-          close_word: bool = True, backup: bool = True, word: dict | None = None) -> dict:
+          close_word: bool = True, backup: bool = True, word: dict | None = None, after_key: str | None = None) -> dict:
     """word: {"model": ..., "aggregate": bool} draws the figure as editable Word shapes (the picture is kept as the
     fallback for readers without Word 2010 drawing support); None inserts the picture."""
     docx, png = Path(docx), Path(png)
@@ -284,7 +291,7 @@ def place(docx: Path, title: str, level: int, key: str, png: Path, caption: str,
         infos = {i.filename: i for i in z.infolist()}
     xml = parts["word/document.xml"]
     try:
-        where = locate(xml, title, level, key)
+        where = locate(xml, title, level, key, after_key)
     except Blocked as e:
         return {"status": "BLOCKED", "message": str(e)}
     date = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -362,8 +369,9 @@ def place(docx: Path, title: str, level: int, key: str, png: Path, caption: str,
     finally:
         tmp.unlink(missing_ok=True)
     return {"status": "OK", "mode": where["mode"], "backup": str(bak) if bak else None, "media": media,
-            "message": {"slot": "filled the section's figure slot", "insert": "added a figure block after Discovery Information",
-                        "replace": "replaced the figure placed earlier"}[where["mode"]] + " (tracked)"
+            "message": ("added a figure block after the section's first figure" if where.get("after_figure") else
+                        {"slot": "filled the section's figure slot", "insert": "added a figure block after Discovery Information",
+                         "replace": "replaced the figure placed earlier"}[where["mode"]]) + " (tracked)"
                        + (", drawn as Word shapes" if word else ", as a picture")}
 
 

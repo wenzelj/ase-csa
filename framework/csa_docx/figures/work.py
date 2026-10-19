@@ -41,7 +41,8 @@ class Ctx:
         return r
 
     def node(self, key: str) -> dict:
-        return next(n for n in self.spec["nodes"] if n["key"] == key)
+        nk = next((r.get("node_key") for r in self.rows if r["key"] == key and r.get("node_key")), key)
+        return next(n for n in self.spec["nodes"] if n["key"] == nk)
 
 
 def open_ctx(project_key: str, work: Path, docx: Path, net: dict) -> Ctx:
@@ -92,13 +93,16 @@ def figure(ctx: Ctx, key: str, save: bool = False, png: bool = True, edits: dict
     if out and row.get("archetype") == "F":            # data flow figures: the figure against the Discovery Information tables
         from csa_docx import flows as FL
         from csa_docx.figures import flowview as FV
-        prof_ = next((p for p in N.load_profiles() if p["id"] == row.get("profile")), {})
+        prof_ = N.profile_of(row) or {}
         flt_ = prof_.get("flows") or FV.topic_flows(prof_.get("from_topic"))
         fit["checks"] += F.check_flow_tables(out["model"], FL.load(ctx.work), FV._settings(ctx.work), flt_, set(names))
         fit["counts"] = {lv: sum(1 for c in fit["checks"] if c["level"] == lv) for lv in ("ok", "note", "flag")}
-    if out and row.get("archetype") == "G":            # store-centric: stores drawn and every consumer registered
+    if out and row.get("archetype") == "G":            # store-centric: every store drawn, every use backed by a flow
+        from csa_docx import flows as FL
         from csa_docx.figures import flowview as FV
-        fit["checks"] += F.check_store_tables(out["model"], FV._settings(ctx.work), set(names))
+        prof_ = N.profile_of(row) or {}
+        fit["checks"] += F.check_store_tables(out["model"], FV._settings(ctx.work), set(names), FL.load(ctx.work),
+                                              prof_.get("store_exclude"))
         fit["counts"] = {lv: sum(1 for c in fit["checks"] if c["level"] == lv) for lv in ("ok", "note", "flag")}
     if out and out.get("print"):
         F.print_checks(fit, out["print"])
@@ -256,7 +260,8 @@ def place(ctx: Ctx, key: str, author: str, close_word: bool = True, drawing: str
     node = ctx.node(key)
     word = {"model": cur["model"], "aggregate": cur["row"].get("archetype") in ("A", "C")} if drawing == "word" else None
     res = P.place(ctx.docx, node["title"], node["level"], key, png, cur["brief"]["caption"]["text"],
-                  cur["brief"]["source"]["text"], author, close_word=close_word, word=word)
+                  cur["brief"]["source"]["text"], author, close_word=close_word, word=word,
+                  after_key=cur["row"].get("node_key") if cur["row"].get("part") else None)
     if res["status"] == "OK":
         import time
         _manifest_update(ctx.work, key, {"placed": {"hash": cur["hash"], "at": time.strftime("%Y-%m-%dT%H:%M:%S"),

@@ -34,6 +34,16 @@ def load_layout(project_key: str) -> dict:
         return {}
 
 
+def profile_of(row: dict) -> dict | None:
+    """The figure profile a need row draws from; a part (a second figure in the section) overrides its profile."""
+    p = next((x for x in load_profiles() if x["id"] == row.get("profile")), None)
+    if p and row.get("part"):
+        part = next((x for x in p.get("parts", []) if x["suffix"] == row["part"]), None)
+        if part:
+            return {**p, **part, "parts": []}
+    return p
+
+
 def match(node: dict, profiles: list[dict]) -> dict | None:
     fams = set(doc_spec.families(node))
     for p in profiles:
@@ -146,6 +156,16 @@ def assess(spec: dict, work_dir: Path, project_key: str, ev: dict | None = None)
                     row.update(status="helpful", reason=f"{ask}: {_lc(p['question'])}. The evidence names no "
                                                         f"provider yet, so the figure would show the gap.")
         out.append(row)
+        # further figures the profile asks for in the same section (key <KEY>_<suffix>), drawn after the first
+        if p is not None and row.get("status") in ("needed", "helpful", "placed") and p.get("built"):
+            for part in p.get("parts", []):
+                pr = {**row, "key": f"{n['key']}_{part['suffix']}", "node_key": n["key"], "part": part["suffix"],
+                      "archetype": part.get("archetype", p["archetype"]), "question": part.get("question", p.get("question")),
+                      "must_show": part.get("must_show", []), "caption": part.get("caption"), "slot": None,
+                      "status": "needed",
+                      "reason": f"A second figure in this section: {_lc(part.get('question') or part.get('caption') or '')}. "
+                                f"{_a(ARCHETYPE[part.get('archetype', p['archetype'])]).capitalize()} figure, drawn after the first."}
+                out.append(pr)
     return out
 
 

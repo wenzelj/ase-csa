@@ -147,11 +147,15 @@ def check_flow_tables(model: dict, flow_rows: list[dict], settings_rows: list[di
     out: list[dict] = []
     add = lambda level, kind, text: out.append({"level": level, "kind": kind, "text": text, "evidence": []})
     drawn = {f for e in model.get("edges", []) for f in (e.get("detail") or {}).get("flows", [])}
+    inside = set(model.get("not_crossing", []))          # left out on purpose: both ends on the same side of OT
+    if inside:
+        add("ok", "tables", f"Flows with both ends on the same side of the OT boundary are left out of this figure "
+                            f"({', '.join(sorted(inside)[:8])}{' …' if len(inside) > 8 else ''}).")
     for r in FL.select(flow_rows, flt or {"data": True}, register):
-        if r["flow_id"] not in drawn:
+        if r["flow_id"] not in drawn and r["flow_id"] not in inside:
             add("flag", "tables", f"In the flows table but not drawn: {r['flow_id']} {r['mechanism']} {r['src']} to {r['dst']}.")
     nodes = {n["id"]: n for n in model.get("nodes", [])}
-    for r in settings_rows:
+    for r in (settings_rows if model.get("show_stores", True) else []):   # stores drawn in the section's other figure
         if r["host"] in nodes and r["attribute"] == "storage.database" and r["value"] != "None found":
             if not any(s["what"] == r["value"] for s in nodes[r["host"]].get("stores", [])):
                 add("flag", "tables", f"The role table lists {r['value']} on {r['host']}, which has no store mark.")
@@ -162,25 +166,49 @@ def check_flow_tables(model: dict, flow_rows: list[dict], settings_rows: list[di
     return out
 
 
-def check_store_tables(model: dict, settings_rows: list[dict], register: set[str] | None = None) -> list[dict]:
-    """Archetype G against the Discovery Information tables: every store the host-settings
-    inventory lists appears as a store node, and every drawn consumer is a registered host."""
+def check_store_tables(model: dict, settings_rows: list[dict], register: set[str] | None = None,
+                       flow_rows: list[dict] | None = None, exclude: list[str] | None = None) -> list[dict]:
+    """Archetype G against the Discovery Information tables:
+      * every store the host settings list is drawn (shares the profile leaves out are noted, not flagged);
+      * every drawn use rests on flow rows that exist and are a use of a store (database, backup agent, file share);
+      * every database or backup-agent flow that reaches a host holding a store is drawn, or noted when the
+        flow does not name the database it reaches."""
+    from csa_docx.figures import storeview as SV
     out: list[dict] = []
     add = lambda level, kind, text: out.append({"level": level, "kind": kind, "text": text, "evidence": []})
-    store_nodes = [n for n in model.get("nodes", []) if n.get("id", "").startswith("ST-")]
-    listed = {(r["host"], r["value"]) for r in settings_rows
-              if r["attribute"] == "storage.database" and r["value"] != "None found"}
-    listed |= {(r["host"], r["value"]) for r in settings_rows
-               if r["attribute"] == "storage.shares" and r["value"] != "Default and administrative shares only"}
-    if store_nodes:
-        add("ok", "stores", f"{len(store_nodes)} data store(s) drawn from the host-settings inventory.")
-    else:
-        add("flag", "stores", "The host-settings inventory lists data stores, but none are drawn.")
-    reg = {h.upper() for h in (register or set())}
-    unreg = sorted({e["s"] for e in model.get("edges", []) if reg and e["s"].upper() not in reg})
-    if unreg:
-        add("flag", "consumers", f"Consumer(s) not in the host register: {', '.join(unreg)}.")
-    else:
-        add("ok", "consumers", "Every drawn consumer is a registered host.")
+    cards = model.get("cards", [])
+    drawn = {(i["host"].upper(), i["what"].lower()) for c in cards for s in c["stores"] for i in s["instances"]}
+    listed, left = SV.store_rows(settings_rows, exclude)
+    missing = [r for r in listed if (r["host"].upper(), r["what"].lower()) not in drawn]
+    for r in missing:
+        add("flag", "stores", f"In the host settings but not drawn: {r['what']} on {r['host']}.")
+    if listed and not missing:
+        add("ok", "stores", "Every data store in the host settings is drawn, on the role that holds it.")
+    elif not listed:
+        add("flag", "stores", "The host settings list no data store, so the figure has nothing to show.")
+    for r in left:
+        add("note", "stores", f"Left out by the figure profile: share {r['what']} on {r['host']}.")
+    if flow_rows is not None:
+        by_id = {r["flow_id"]: r for r in flow_rows}
+        used = {f: u for c in cards for u in c["uses"] for f in u["flows"]}
+        bad = [f for f, u in used.items() if f not in by_id or by_id[f]["mechanism"] not in SV.USE_MECH]
+        for f in bad:
+            add("flag", "uses", f"Drawn use {f} is not a database, backup or file share flow in the flows table.")
+        if used and not bad:
+            add("ok", "uses", "Every drawn use rests on a database, backup or file share flow in the flows table.")
+        holders = {i["host"].upper() for c in cards for s in c["stores"] for i in s["instances"]}
+        reps = {f for c in cards for r in c.get("replication", []) for f in r["flows"]}
+        unmatched = {u.split(" ")[0] for u in model.get("unmatched", [])}
+        for r in flow_rows:
+            if r["mechanism"] not in ("database", "backup agent", "database replication") or r.get("data") != "yes":
+                continue
+            if not any(d.strip().split(" via ")[0].upper() in holders for d in r["dst"].split(",")):
+                continue
+            if r["flow_id"] in used or r["flow_id"] in reps:
+                continue
+            if r["flow_id"] in unmatched:
+                add("note", "uses", f"Not drawn: {r['flow_id']} {r['mechanism']} {r['src']} to {r['dst']} does not name the "
+                                    f"database it reaches ({r.get('port') or 'no port'}).")
+            else:
+                add("flag", "uses", f"In the flows table but not drawn: {r['flow_id']} {r['mechanism']} {r['src']} to {r['dst']}.")
     return out
-
