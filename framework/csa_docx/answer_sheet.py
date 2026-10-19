@@ -209,7 +209,7 @@ def count_mismatch(text: str) -> str | None:
 HARD_CODES = {"CROSS_PROJECT_ONLY", "NOTE_TOO_LONG", "NOTE_NONE_AND_TEXT", "NOTE_NO_FACTS", "CAPTURE_DROPPED", "UNKNOWN_BUNDLED", "BACKGROUND_AS_EVIDENCE", "BACKGROUND_MIXED", "BACKGROUND_NOT_ON_CARD", "BACKGROUND_ALONE", "QUESTION_MISSING", "EMPTY_ANSWER", "FACT_NO_EVIDENCE", "UNKNOWN_EVIDENCE", "RATING_INVALID",
               "COLUMNS", "ROW_WIDTH", "NO_ROWS", "REQUIREMENT_NO_FACTS", "SEMICOLON", "PROCESS_AS_SUBJECT",
               "CITATION_OFF_TOPIC", "NO_TOTALS", "ROLE_TABLE_REPEAT", "FRAME_UNCOVERED", "ATTEMPT_AS_ESTABLISHED",
-              "SLOT_NOT_ANSWERED", "FLOW_NOT_COVERED", "ZONE_CONTRADICTED"}
+              "SLOT_NOT_ANSWERED", "FLOW_NOT_COVERED", "ZONE_CONTRADICTED", "PART_NOT_NAMED", "ISOLATION_WRONG_SIDE"}
 
 # counts and totals of hosts ("9 of 12", "all 12 captured hosts", "nine hosts", "two RevViewer Jump Hosts"): CSA text
 # names the role groups instead. "stratum 5 hosts" and port numbers are not counts.
@@ -257,6 +257,65 @@ def frame_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
     out += flow_coverage(sheet, card)
     out += zone_contradictions(sheet, card)
     out += rating_floor(sheet, card)
+    out += part_checks(sheet, card)
+    return out
+
+
+_LOSS = re.compile(r"\b(?:lose|loses|losing|lost|stops?|is cut|are cut|cut off|no longer)\b", re.I)
+_EVERY_PART = re.compile(r"\b(?:every|all)(?: other)? parts?\b", re.I)
+
+
+def part_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
+    """The system-part checks (card "parts", from csa-work/parts.json):
+    PART_NOT_NAMED (an error when the frame is strict, else a warning): a requirement's Text (or its facts, when it
+    has no Text) names every part the card lists under it, by name, short name or, for a dependency, an address;
+    "every other part" covers the rest. HOST_IN_TEXT (warning): a requirement or narrative Text names a host of the
+    system instead of its part. ISOLATION_WRONG_SIDE (hard): a sentence says a part outside OT loses something when
+    OT is isolated, but names only what it keeps (its flows that never touch OT), none of its paths into OT."""
+    from csa_docx.parts import named
+    pc = card.get("parts") or {}
+    if not pc:
+        return []
+    strict = bool((card.get("frame") or {}).get("strict"))
+    kinds = {q["id"]: q["kind"] for q in card.get("questions", [])}
+    out = []
+    for qid, pids in (pc.get("owed") or {}).items():
+        b = sheet.get(qid)
+        if not b or not pids:
+            continue
+        text = b.get("text") or " ".join(f["text"] for f in b["facts"])
+        if _EVERY_PART.search(text):
+            continue
+        missing = [pc["parts"][p] for p in pids if not named(text, pc["names"].get(p, []))]
+        if missing:
+            out.append(_f("ERROR" if strict else "WARN", "PART_NOT_NAMED", qid,
+                          f"the Text does not name these parts, which this requirement's findings are about: "
+                          f"{', '.join(missing)}. Name each (see System parts on the card), or say \"every other part\""))
+    hosts = pc.get("hosts") or {}
+    for qid, b in sheet.items():
+        if kinds.get(qid) in ("requirement", "narrative") and b.get("text"):
+            hit = [h for h in hosts if re.search(rf"\b{re.escape(h)}\b", b["text"], re.I)]
+            if hit:
+                out.append(_f("WARN", "HOST_IN_TEXT", qid, "name the part, not the host: "
+                              + ", ".join(f"{h} is part of {pc['parts'][hosts[h]]}" for h in hit[:4])))
+    for qid, b in sheet.items():
+        if kinds.get(qid) != "narrative":
+            continue
+        texts = [b.get("text") or ""] + [f["text"] for f in b["facts"]]
+        for s in (s for t in texts for s in re.split(r"(?<=[.!?])\s+", t)):
+            if not _LOSS.search(s):
+                continue
+            low = s.lower()
+            for pid, iso in (pc.get("isolation") or {}).items():
+                if pc["sides"].get(pid) != "outside" or not named(s, pc["names"].get(pid, [])):
+                    continue
+                own = set(re.findall(r"[a-z]{4,}", " ".join(pc["names"].get(pid, [])).lower()))   # the part's own name
+                safe = [w for w in iso.get("safe", []) if w in low and w not in own]
+                if safe and not any(w in low for w in iso.get("loss", []) if w not in own):
+                    out.append(_f("ERROR", "ISOLATION_WRONG_SIDE", qid,
+                                  f"{pc['parts'][pid]} is outside OT: isolating OT does not cut its {', '.join(safe[:3])} "
+                                  f"paths, it {iso['effect'][:160]}: \"{s[:160]}\""))
+                    break
     return out
 
 
