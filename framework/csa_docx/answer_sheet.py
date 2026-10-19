@@ -209,7 +209,7 @@ def count_mismatch(text: str) -> str | None:
 HARD_CODES = {"CROSS_PROJECT_ONLY", "NOTE_TOO_LONG", "NOTE_NONE_AND_TEXT", "NOTE_NO_FACTS", "CAPTURE_DROPPED", "UNKNOWN_BUNDLED", "BACKGROUND_AS_EVIDENCE", "BACKGROUND_MIXED", "BACKGROUND_NOT_ON_CARD", "BACKGROUND_ALONE", "QUESTION_MISSING", "EMPTY_ANSWER", "FACT_NO_EVIDENCE", "UNKNOWN_EVIDENCE", "RATING_INVALID",
               "COLUMNS", "ROW_WIDTH", "NO_ROWS", "REQUIREMENT_NO_FACTS", "SEMICOLON", "PROCESS_AS_SUBJECT",
               "CITATION_OFF_TOPIC", "NO_TOTALS", "ROLE_TABLE_REPEAT", "FRAME_UNCOVERED", "ATTEMPT_AS_ESTABLISHED",
-              "SLOT_NOT_ANSWERED", "FLOW_NOT_COVERED"}
+              "SLOT_NOT_ANSWERED", "FLOW_NOT_COVERED", "ZONE_CONTRADICTED"}
 
 # counts and totals of hosts ("9 of 12", "all 12 captured hosts", "nine hosts", "two RevViewer Jump Hosts"): CSA text
 # names the role groups instead. "stratum 5 hosts" and port numbers are not counts.
@@ -255,6 +255,32 @@ def frame_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
         out.append(_f("ERROR", "FRAME_UNCOVERED", "F1", "; ".join(bad) + ": name the B blocks that answer each slot, "
                       "or write Unknown: <what is not known>"))
     out += flow_coverage(sheet, card)
+    out += zone_contradictions(sheet, card)
+    return out
+
+
+_WRONG_SIDE = {"IT": re.compile(r"\bOT[- ](?:resident|hosted|side)\b|\b(?:in|inside|within) (?:the )?OT\b", re.I),
+               "OT": re.compile(r"\bIT[- ](?:resident|hosted|side)\b|\b(?:in|inside|within) (?:the )?IT\b", re.I)}
+
+
+def zone_contradictions(sheet: dict[str, dict], card: dict) -> list[dict]:
+    """ZONE_CONTRADICTED (hard): a sentence that names a host the zone list puts on one side of the OT boundary (or its
+    role) and places it on the other ("OT-resident", "in OT") although its role name says so. The zone list wins."""
+    out = []
+    for c in (card.get("frame") or {}).get("zone_conflicts", []):
+        rx = _WRONG_SIDE.get(c["side"])
+        if not rx:
+            continue
+        for k, b in sheet.items():
+            if k.startswith("F"):
+                continue
+            texts = [b.get("text") or ""] + [f["text"] for f in b["facts"]] + [" | ".join(r) for r in b["rows"]] + b["bullets"]
+            for s in (s for t in texts for s in re.split(r"(?<=[.!?])\s+", t)):
+                if (c["host"] in s or c["role"] in s) and rx.search(s):
+                    out.append(_f("ERROR", "ZONE_CONTRADICTED", k,
+                                  f"{c['host']} ({c['role']}) is in {c['zone']}, an {c['side']} zone, but this says otherwise: "
+                                  f"\"{s[:180]}\". Write about it as {c['side']}-hosted"))
+                    break
     return out
 
 
