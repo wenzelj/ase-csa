@@ -432,6 +432,31 @@ def filter_keep(keep: list[dict], fr: dict | None) -> tuple[list[dict], list[dic
     return kept, correct
 
 
+ESTABLISHED_PER_QUESTION = 4
+
+
+def filter_established(established: dict, pack: dict, fr: dict | None) -> dict:
+    """Facts other sections validated, kept only where they touch this topic: their evidence is one of the frame's
+    findings, or one of the question's own evidence rows (found by this topic's search, not added as established).
+    At most ESTABLISHED_PER_QUESTION per question. The evidence rows of facts left out leave the pack too.
+    Without a frame, the facts are only capped."""
+    from csa_docx import topic_frames
+    frame_ids = {i.upper() for i in topic_frames.all_ids(fr)} if fr else None
+    out: dict[str, list[dict]] = {}
+    for qid, facts in established.items():
+        rows = (pack.get(qid) or {}).get("rows", [])
+        own = {r["id"].upper() for r in rows if not r.get("established")}
+        touch = own | (frame_ids or set())
+        kept = [f for f in facts if frame_ids is None or {i.upper() for i in f["evidence_ids"]} & touch]
+        kept = kept[:ESTABLISHED_PER_QUESTION]
+        if kept:
+            out[qid] = kept
+        need = {i.upper() for f in kept for i in f["evidence_ids"]}
+        if qid in pack:
+            pack[qid]["rows"] = [r for r in rows if not r.get("established") or r["id"].upper() in need]
+    return out
+
+
 def _foreign_absence(fact: dict, rows: dict, key: str) -> bool:
     """True when the fact rests on a NOT_FOUND row recorded for another subsection: an absence found while
     answering one subsection (no fallback for storage) says nothing about another (DNS)."""
@@ -866,6 +891,7 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
         if fr.get("status") != "OK":
             fr = None
     owed = must_address_by_question(qs, fr)
+    established = filter_established(established, pack, fr) if established else established
     lines = [f"# Card: {node['title']} (key {node['key']}, section {node['number']})", "",
              f"Kind: {node['kind']}", "", "## Questions", ""]
     for q in qs:
