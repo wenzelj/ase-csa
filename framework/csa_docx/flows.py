@@ -498,6 +498,34 @@ if __name__ == "__main__":
     sys.exit(main())
 
 
+def ot_sides(work_dir: Path):
+    """side(end) -> "ot" | "outside" | "unknown": which side of the OT boundary a flow end is on.
+    The zone rule decides when it names a zone (ot, or it/internet/cloud/vendor = outside). An end with no zone
+    recorded is still in OT when the host register puts a host of the system at a site that an OT zone names
+    ("Rockhampton" in "OT Rockhampton"); otherwise it is unknown. A declared end "X via F5/Proxy" is judged by X."""
+    from csa_docx import zones as Z
+    zs = Z.for_project(work_dir)
+    ot_zones = [(r.get("zone") or "").lower() for r in Z.load(work_dir) if r.get("kind") == "ot"]
+    reg: dict[str, dict] = {}
+    f = Path(work_dir) / "hosts" / "hosts.csv"
+    if f.is_file():
+        reg = {r["host"].upper(): r for r in csv.DictReader(f.open(encoding="utf-8"))}
+
+    def side(end: str) -> str:
+        x = re.sub(r"\s+via\s+.+$", "", (end or "").strip(), flags=re.I)
+        kind = zs.of(x).get("kind", "unknown") or "unknown"
+        if kind == "ot":
+            return "ot"
+        if kind != "unknown":
+            return "outside"
+        r = reg.get(x.upper())
+        site = ((r or {}).get("site") or "").strip().lower()
+        if r and (r.get("system") or "").strip() and site and any(site in z for z in ot_zones):
+            return "ot"
+        return "unknown"
+    return side
+
+
 def select(rows: list[dict], flt: dict, register: set[str] | None = None) -> list[dict]:
     """The flows a profile or frame asks for. Keys (all optional, all must hold): data, status, mechanisms,
     exclude_mechanisms, cross_zone, dst_zones (a zone name contains one of these), direction ("inbound": the far

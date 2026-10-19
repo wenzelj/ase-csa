@@ -198,16 +198,10 @@ def view(work_dir, over: dict, prof: dict, p: dict, *, key: str, title: str, sub
     if p.get("ot_crossing_only"):
         # in and out of OT only: one end in OT and the other not (an end whose zone is not recorded may cross).
         # An end is in OT when its zone rule says so, or the host register puts it at one of the OT data centres.
-        dcs = [z["label"].lower() for z in over.get("zones", []) if re.search(r"data cent(re|er)$", z.get("label", ""), re.I)]
-        regf = _Path(work_dir) / "hosts" / "hosts.csv"
-        reg_rows = {r["host"].upper(): r for r in _csv.DictReader(regf.open(encoding="utf-8"))} if regf.is_file() else {}
+        side = F.ot_sides(work_dir)              # the one rule the frames, checks and figures share
 
         def in_ot(x: str) -> bool:
-            if zs.of(x).get("kind") == "ot":
-                return True
-            r = reg_rows.get(x.upper())
-            site = ((r or {}).get("site") or "").strip().lower()
-            return bool(r and (r.get("system") or "").strip() and site and any(d.startswith(site) for d in dcs))
+            return side(x) == "ot"
         not_crossing = sorted({f for e in es if in_ot(e["s"]) == in_ot(e["t"]) for f in e["flows"]})
         es = [e for e in es if in_ot(e["s"]) != in_ot(e["t"])]
     else:
