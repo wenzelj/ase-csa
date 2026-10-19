@@ -100,7 +100,7 @@ def locate(xml: bytes, title: str, level: int, key: str, after_key: str | None =
         first = [i for i in span if f'w:name="_CSAFig_{after_key}"'.encode() in xml[kids[i][0]:kids[i][1]]]
         if not first:
             raise Blocked(f"place the section's first figure ({after_key}) before this one")
-        i = first[0]
+        i = first[-1]                            # the live one: a replaced figure stays before it as a tracked deletion
         block = [i] + [j for j in (i + 1, i + 2) if j < end and _style(xml[kids[j][0]:kids[j][1]]) in ("Caption", "FigureSource")]
         return {"mode": "insert", "kids": kids, "after": block[-1], "after_figure": True}
     for i in figs:
@@ -111,6 +111,19 @@ def locate(xml: bytes, title: str, level: int, key: str, after_key: str | None =
         return {"mode": "slot", "kids": kids, "block": block}
     di = next((i for i in span if kids[i][2] == b"w:p" and _text(xml[kids[i][0]:kids[i][1]]).lower() == "discovery information"), None)
     tbl = next((i for i in range(di + 1, end) if kids[i][2] == b"w:tbl"), None) if di is not None else None
+    if di is not None:                           # after the framework's topic tables and their notes, never among them
+        last, j = None, di + 1
+        while j < end:
+            c = xml[kids[j][0]:kids[j][1]]
+            if kids[j][2] == b"w:tbl" and b'w:tblCaption w:val="csa-topic-table"' in c:
+                last = j
+            elif kids[j][2] == b"w:p" and _style(c) in ("TableNote", "Figure", "Caption", "FigureSource"):
+                last = j
+            else:
+                break
+            j += 1
+        if last is not None:
+            tbl = last
     if tbl is None:
         raise Blocked("the section has no figure slot and no Discovery Information table to put the figure after")
     return {"mode": "insert", "kids": kids, "after": tbl}

@@ -403,9 +403,21 @@ def _blocks(xml: str, start: int, end: int) -> list[tuple[str, int, int, str]]:
             out.append(("tbl", pos, j, xml[pos:j]))
             i = j
         else:
-            out.append(("p", m.start(), m.end(), m.group(0)))
-            i = m.end()
+            # a paragraph can hold others (a figure drawn as Word shapes has text boxes): match to its own </w:p>
+            depth, j = 0, m.end()
+            for t in _PTAG.finditer(xml, pos):
+                if t.group(0).endswith("/>"):
+                    continue
+                depth += -1 if t.group(0) == "</w:p>" else 1
+                if depth == 0:
+                    j = t.end()
+                    break
+            out.append(("p", pos, j, xml[pos:j]))
+            i = j
     return out
+
+
+_PTAG = re.compile(r"<w:p(?=[\s>/])[^>]*>|</w:p>")
 
 
 def _heading_level(p: str) -> int | None:
@@ -535,27 +547,34 @@ def place_xml(xml: str, t, heading: str, styles_xml: str = "") -> tuple[str, str
     blocks = _blocks(xml, ins, fend)
     cut_s = cut_e = ins
     replaced = False
-    if blocks and blocks[0][0] == "tbl" and f'w:tblCaption w:val="{CAPTION}"' in blocks[0][3]:
-        replaced = True
-        for kind, s, e, b in blocks:              # our tables and note lines, up to the Aspect table or next heading
-            if kind == "tbl" and f'w:tblCaption w:val="{CAPTION}"' in b:
-                cut_e = e
-                continue
-            if kind == "p" and 'w:val="TableNote"' in b and not _heading_level(b):
-                cut_e = e
+    keep: list[str] = []                          # figure blocks met among our tables: kept, after the new tables
+    ours_tbl = lambda k, b: k == "tbl" and f'w:tblCaption w:val="{CAPTION}"' in b
+    is_note = lambda k, b: k == "p" and 'w:val="TableNote"' in b and not _heading_level(b)
+    is_fig = lambda k, b: k == "p" and re.search(r'<w:pStyle w:val="(Figure|Caption|FigureSource)"', b) is not None
+    if blocks and (ours_tbl(blocks[0][0], blocks[0][3]) or is_fig(blocks[0][0], blocks[0][3])):
+        run: list[tuple[str, int, int, str]] = []
+        for kind, s, e, b in blocks:              # our tables, note lines and any figure placed among them,
+            if ours_tbl(kind, b) or is_note(kind, b) or is_fig(kind, b):   # up to the Aspect table or next heading
+                run.append((kind, s, e, b))
                 continue
             break
+        if any(ours_tbl(k, b) for k, _s, _e, b in run):
+            replaced = True
+            cut_e = run[-1][2]
+            keep = [b for k, _s, _e, b in run if is_fig(k, b)]
+        else:
+            cut_e = cut_s
     reference = next((b for k, _s, _e, b in blocks if k == "tbl" and f'w:tblCaption w:val="{CAPTION}"' not in b), None)
     if reference is None:
         reference = next((m.group(0) for m in _TBL.finditer(xml) if "CSATable" in m.group(0)), None) or ""
     if not tables:
-        return xml[:cut_s] + xml[cut_e:], "removed" if replaced else "nothing to place"
+        return xml[:cut_s] + "".join(keep) + xml[cut_e:], "removed" if replaced else "nothing to place"
     sid = (re.search(r'<w:tblStyle w:val="([^"]+)"', reference) or [None, ""])[1]
     new = ""
     for x in tables:
         lines = [y for y in [x.get("common", ""), *x.get("markers", [])] if y] or [""]
         new += table_xml(x, reference, band_fill(styles_xml, sid)) + "".join(_note(y) for y in lines)
-    return xml[:cut_s] + new + xml[cut_e:], "replaced" if replaced else "inserted"
+    return xml[:cut_s] + new + "".join(keep) + xml[cut_e:], "replaced" if replaced else "inserted"
 
 
 def place(work_dir: Path, docx: Path, heading: str, key: str = "", backup: bool = True) -> dict:

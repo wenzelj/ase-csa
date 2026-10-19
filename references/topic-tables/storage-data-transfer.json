@@ -13,7 +13,7 @@
   {"label": "Proxy", "attribute": "transfer.proxy", "explains": "whether transfers go through a proxy", "common": "use proxy setting {value}"}
  ],
  "common_values": {"Not set in applied Group Policy": "have no removable storage restriction in applied Group Policy",
-                   "Direct, no WinHTTP proxy": "connect directly, with no WinHTTP proxy",
+                   "Direct, no WinHTTP proxy": "have no WinHTTP proxy configured",
                    "None found": "have no file transfer tools installed",
                    "Default and administrative shares only": "offer only the default and administrative shares"},
  "flows": {"data": true, "status": ["observed", "both", "declared"]}

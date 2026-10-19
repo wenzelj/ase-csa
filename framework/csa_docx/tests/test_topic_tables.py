@@ -141,6 +141,26 @@ def test_place_inserts_above_the_aspect_table_and_replaces_on_rerun(tmp_path):
     assert what3 == "removed" and empty == DOC
 
 
+def test_place_replaces_tables_a_figure_split_and_keeps_the_figure(tmp_path):
+    """A figure placed among the framework tables (a drawing with text boxes, so paragraphs inside a paragraph)
+    must not strand the old tables: every framework table and note before the Aspect table is replaced, and the
+    figure block is kept after the new tables."""
+    t = build(tmp_path)
+    once, _ = tt.place_xml(DOC, t, "Time Synchronisation")
+    first = once.index(f'<w:tbl>', once.index(">Discovery Information<"))
+    end_first = once.index("</w:tbl>", first) + len("</w:tbl>")
+    fig = ('<w:p><w:pPr><w:pStyle w:val="Figure"/></w:pPr><w:r><w:drawing><wps:txbx><w:txbxContent>'
+           '<w:p><w:r><w:t>Box label</w:t></w:r></w:p></w:txbxContent></wps:txbx></w:drawing></w:r></w:p>'
+           '<w:p><w:pPr><w:pStyle w:val="Caption"/></w:pPr><w:r><w:t>Figure 1: old</w:t></w:r></w:p>')
+    split = once[:end_first] + fig + once[end_first:]
+    again, what = tt.place_xml(split, t, "Time Synchronisation")
+    assert what == "replaced"
+    assert again.count(f'w:tblCaption w:val="{tt.CAPTION}"') == once.count(f'w:tblCaption w:val="{tt.CAPTION}"')
+    assert again.count("All hosts in this table") == once.count("All hosts in this table")   # no stranded note
+    assert again.count("Box label") == 1 and again.count("Figure 1: old") == 1
+    assert again.index("All hosts in this table") < again.index("Box label") < again.index(">Aspect<")
+
+
 def test_profile_found_by_heading_text_not_number():
     assert tt.profile_for("3.4.1 Time Synchronisation")["key"] == "TIME"
     assert tt.profile_for("Something Else") is None
