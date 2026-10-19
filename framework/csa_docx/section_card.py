@@ -891,6 +891,10 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
         if fr.get("status") != "OK":
             fr = None
     owed = must_address_by_question(qs, fr)
+    pview = None                 # the system parts (csa-work/parts.json): the names every section writes about
+    if evidence and workspace:
+        from csa_docx import parts as parts_mod
+        pview = parts_mod.card_view(Path(workspace) / "csa-work", fr, qs)
     established = filter_established(established, pack, fr) if established else established
     lines = [f"# Card: {node['title']} (key {node['key']}, section {node['number']})", "",
              f"Kind: {node['kind']}", "", "## Questions", ""]
@@ -899,6 +903,9 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
         if q.get("columns"):
             lines.append(f"  Columns: {' | '.join(q['columns'])}")
         lines += must_address_lines(owed.get(q["id"], []))
+        if pview:
+            from csa_docx.parts import owed_lines
+            lines += owed_lines(pview, q["id"])
     sysname = system_name(workspace)
     if sysname:
         lines += ["", "## System name", "",
@@ -961,12 +968,14 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
                  "coverage": topic_frames.coverage_targets(fr), "must_address": owed,
                  "context_ids": topic_frames.context_ids(fr), "zone_conflicts": fr.get("zone_conflicts", []),
                  "strict": fr.get("strict", False)}
+    if pview:
+        lines += pview["lines"]
     lines += shared_lines
     if pack:
         lines += ["", "## Evidence pack", "",
                   "These rows are worded the way the source records them (\"The system matrix records X as ...\"). "
                   "Never copy that wording: restate each as a fact about the host or application "
-                  "(\"X is a RevViewer jump host ...\") and put the source in the basis braces. "
+                  "(\"X is the <part> that ...\", naming the part as the System parts list does) and put the source in the basis braces. "
                   "A fact whose subject is the matrix, capture, host map or previous assessment is rejected (SOURCE_AS_SUBJECT).", ""]
         shown: dict[str, str] = {}
         for qid, p in pack.items():
@@ -1013,7 +1022,8 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
             "keep": [{k: x[k] for k in ("question", "fact", "evidence_ids", "capture_ids")} for x in keep], "tokens": len(text) // 4,
             "correct": [{k: x[k] for k in ("question", "fact", "evidence_ids", "capture_ids", "contradicts")} for x in correct],
             "ratings": spec.get("ratings") or doc_spec.DEFAULT_RATINGS, "kinds": kinds, "host_register": reg,
-            "role_table": rtable, "role_tables": rtables or [], "frame": frame}
+            "role_table": rtable, "role_tables": rtables or [], "frame": frame,
+            "parts": {k: v for k, v in pview.items() if k != "lines"} if pview else None}
 
 
 def main(argv: list[str] | None = None) -> int:

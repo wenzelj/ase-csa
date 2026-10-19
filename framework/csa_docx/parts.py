@@ -229,6 +229,84 @@ def isolation_tokens(iso: dict) -> dict[str, list[str]]:
     return {"loss": sorted(loss), "safe": sorted(safe)}
 
 
+# The part grid for one section: which of the section's findings are about which part, and which parts each
+# requirement must name. Built from the analysis frame, so it only exists for a section with a frame.
+
+def grid(doc: dict, fr: dict | None) -> dict:
+    """{"by_part": {part id: [{"slot", "text", "ids", "requirements"}]}, "owed": {requirement ID: [part id]}}.
+    A finding is about every part one of its hosts or flow ends belongs to. A requirement owes a part when one of
+    the findings bound to it is about that part."""
+    idx = index(doc)
+    by_part: dict[str, list[dict]] = {}
+    owed: dict[str, list[str]] = {}
+    for s in (fr or {}).get("slots", []):
+        for f in s["findings"]:
+            pids = list(dict.fromkeys(idx[e.upper()]["id"] for h in f.get("hosts", [])
+                                      for e in (end_name(x) for x in h.split(",")) if e.upper() in idx))
+            for pid in pids:
+                by_part.setdefault(pid, []).append({"slot": s["id"], "text": f["text"], "ids": list(f.get("ids", [])),
+                                                    "requirements": list(f.get("requirements", []))})
+                for r in f.get("requirements", []):
+                    if pid not in owed.setdefault(r, []):
+                        owed[r].append(pid)
+    return {"by_part": by_part, "owed": owed}
+
+
+def card_view(work_dir: Path, fr: dict | None, qs: list[dict]) -> dict | None:
+    """What the card shows and the checks need, or None when the project has no parts.json yet:
+    {"reviewed", "names": {id: [names]}, "sides": {id: side}, "hosts": {host: id}, "owed": {question id: [id]},
+    "isolation": {id: {"effect", "loss", "safe"}}, "lines": [card lines]}."""
+    doc = load(work_dir)
+    if not doc.get("parts"):
+        return None
+    g = grid(doc, fr)
+    iso = isolation(work_dir, doc)
+    byq = {q["id"]: g["owed"].get(q.get("req_id", ""), []) for q in qs if q.get("kind") == "requirement"}
+    parts = {p["id"]: p for p in doc["parts"]}
+    touched = [p for p in doc["parts"] if p["id"] in g["by_part"] or p["kind"] == "system"]
+    lines = ["", "## System parts (built by the framework from the host register and the flows)", "",
+             "Write about the system as these parts, by these names (\"also\" gives accepted short names). In Text: lines "
+             "name the part, never a host of the system (HOST_IN_TEXT): the role table and the Discovery rows carry the "
+             "hosts. Start each requirement's Text: with one lead sentence that gives the verdict and the part or parts "
+             "that decide it, then one sentence for each part that differs. Every part listed under a requirement "
+             "question must be named in its Text: (PART_NOT_NAMED), or covered by \"every other part\". In the "
+             "Discovery Information table, give each part its own Aspect row where the topic touches it. The Drawbridge "
+             "Impact says, part by part, what each keeps or loses when OT is isolated, from the \"When OT is isolated\" "
+             "lines below: a part outside OT loses only its paths into OT (ISOLATION_WRONG_SIDE). The findings "
+             "themselves are under Analysis frame: the slot and evidence IDs below say which are about each part.", ""]
+    if not doc.get("reviewed"):
+        lines += ["The parts have not been reviewed yet (csa parts approve): use them, and say nothing that depends on "
+                  "a part's name being final.", ""]
+    for p in touched:
+        al = f" (also: {', '.join(p['aliases'][:3])})" if p.get("aliases") else ""
+        lines.append(f"### {p['name']}{al}")
+        lines.append(f"- {p['kind']} part, {'in OT' if p['side'] == 'ot' else 'outside OT' if p['side'] == 'outside' else 'side of OT not settled (' + p['side'] + ')'}"
+                     f" ({', '.join(p['zones'])}): {', '.join(p['members'][:8])}" + (" and more" if len(p["members"]) > 8 else ""))
+        found: dict[str, list[str]] = {}         # slot -> evidence IDs: the findings themselves are in the frame below
+        for f in g["by_part"].get(p["id"], []):
+            found.setdefault(f["slot"], [])
+            found[f["slot"]] += [i for i in f["ids"] if i not in found[f["slot"]]]
+        lines.append("- Findings about it: " + ("; ".join(f"{k} ({', '.join(v)})" if v else k for k, v in found.items())
+                                                if found else "none in this section's analysis frame"))
+        lines.append(f"- When OT is isolated: {iso[p['id']]['effect'][:300]}")
+        lines.append("")
+    return {"reviewed": bool(doc.get("reviewed")),
+            "names": {p["id"]: names(p) for p in doc["parts"]},
+            "sides": {p["id"]: p["side"] for p in doc["parts"]},
+            "hosts": {m.upper(): p["id"] for p in doc["parts"] if p["kind"] == "system" for m in p["members"]},
+            "owed": byq,
+            "isolation": {pid: {"effect": v["effect"], **isolation_tokens(v)} for pid, v in iso.items()},
+            "lines": lines, "parts": {pid: parts[pid]["name"] for pid in parts}}
+
+
+def owed_lines(view: dict | None, qid: str) -> list[str]:
+    """The line under a requirement question naming the parts its Text: must name."""
+    pids = (view or {}).get("owed", {}).get(qid) or []
+    if not pids:
+        return []
+    return ["  Parts to name in the Text: (PART_NOT_NAMED): " + ", ".join(view["parts"][p] for p in pids)]
+
+
 def show(doc: dict) -> str:
     out = [f"# System parts ({'reviewed ' + doc.get('reviewed_on', '') if doc.get('reviewed') else 'not reviewed yet'})", ""]
     for p in doc.get("parts", []):
