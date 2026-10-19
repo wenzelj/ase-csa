@@ -256,6 +256,29 @@ def frame_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
                       "or write Unknown: <what is not known>"))
     out += flow_coverage(sheet, card)
     out += zone_contradictions(sheet, card)
+    out += rating_floor(sheet, card)
+    return out
+
+
+def rating_floor(sheet: dict[str, dict], card: dict) -> list[dict]:
+    """RATING_ABOVE_FLOOR (warning): "Met" while something the requirement owes is still Unknown, or while the frame
+    found data pulled out of OT or brought into OT for this requirement. The rating reason must then say what
+    controls those flows, or the rating comes down."""
+    out = []
+    for qid, items in ((card.get("frame") or {}).get("must_address") or {}).items():
+        b = sheet.get(qid)
+        if not b or b.get("rating") != "Met":
+            continue
+        why = []
+        cited = block_ids(b)
+        if b.get("unknown") or any(x["ids"] and not ({i.upper() for i in x["ids"]} & cited) for x in items):
+            why.append("part of what it must address is Unknown")
+        moves = [x for x in items if x.get("direction") in ("pull_into_ot", "into_ot")]
+        if moves:
+            why.append(f"the frame found data moved across the OT boundary for it ({moves[0]['text'][:90]})")
+        if why:
+            out.append(_f("WARN", "RATING_ABOVE_FLOOR", qid, "rated Met although " + " and ".join(why)
+                          + ": say in the rating reason what controls this, or lower the rating"))
     return out
 
 
