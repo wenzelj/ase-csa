@@ -307,6 +307,53 @@ def owed_lines(view: dict | None, qid: str) -> list[str]:
     return ["  Parts to name in the Text: (PART_NOT_NAMED): " + ", ".join(view["parts"][p] for p in pids)]
 
 
+# One name per part across the whole document: role-like names that end like a part's name but are none of its
+# names ("Viewer Jump Hosts" where the part is "Operations Jump Host"). Reported, never changed.
+_ROLE_PHRASE = re.compile(r"\b(?:[A-Z][\w/&-]*\s+){1,5}(?:Jump\s+Hosts?|Servers?|Hosts?|Groups?|Nodes?|Controllers?|"
+                          r"Clients?|Workstations?|Managers?)\b")
+
+
+_LEAD = {"the", "a", "an", "one", "two", "three", "four", "both", "each", "all", "ot", "it"}
+
+
+def document_names(docx: Path, doc: dict) -> list[dict]:
+    """[{"phrase", "like": part name, "sections": [heading], "count"}] for every role-like name in the document whose
+    last two words are those of exactly one part's name or short name, but which is not one of that part's names.
+    Leading articles, numbers and OT/IT are dropped first; a bare two-word ending ("Jump Host") is not reported."""
+    import zipfile
+    from csa_docx.figures import place as PL
+    xb = zipfile.ZipFile(docx).read("word/document.xml")
+    owners: dict[str, set[str]] = {}
+    known = []
+    for p in doc.get("parts", []):
+        for n in [p["name"]] + list(p.get("aliases") or []):
+            known.append(_norm(n))
+            w = _norm(n).split()
+            if len(w) >= 2:
+                owners.setdefault(" ".join(w[-2:]), set()).add(p["name"])
+    tails = {k: next(iter(v)) for k, v in owners.items() if len(v) == 1}     # an ending two parts share says nothing
+    hits: dict[tuple, list[str]] = {}
+    section = ""
+    for s, e, t in PL._body_children(xb):
+        chunk = xb[s:e]
+        if t == b"w:p" and PL._heading_level(PL._style(chunk)):
+            section = PL._text(chunk).strip()
+            continue
+        for para in re.findall(rb"<w:p[ >].*?</w:p>", chunk, re.S):
+            for m in _ROLE_PHRASE.finditer(PL._text(para)):
+                words = m.group(0).split()
+                while len(words) > 2 and words[0].lower() in _LEAD:
+                    words.pop(0)
+                ph = _norm(" ".join(words))
+                if len(ph.split()) <= 2 or any(k in ph for k in known):
+                    continue
+                like = tails.get(" ".join(ph.split()[-2:]))
+                if like:
+                    hits.setdefault((" ".join(words), like), []).append(section)
+    return [{"phrase": k[0], "like": k[1], "sections": sorted(set(v)), "count": len(v)}
+            for k, v in sorted(hits.items(), key=lambda kv: -len(kv[1]))]
+
+
 def show(doc: dict) -> str:
     out = [f"# System parts ({'reviewed ' + doc.get('reviewed_on', '') if doc.get('reviewed') else 'not reviewed yet'})", ""]
     for p in doc.get("parts", []):
@@ -320,9 +367,22 @@ def show(doc: dict) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("action", choices=["build", "show", "approve"])
+    ap.add_argument("action", choices=["build", "show", "approve", "check-doc"])
     ap.add_argument("--work-dir", type=Path, required=True)
+    ap.add_argument("--docx", type=Path, help="check-doc: the working DOCX")
     a = ap.parse_args(argv)
+    if a.action == "check-doc":
+        found = document_names(a.docx, load(a.work_dir))
+        lines = ["# Names in the document that are not a part's name", "",
+                 "Each ends like a part's name but is none of its names. Use the part's name in the text, or, if the "
+                 "sources rightly call the part this, add it to that part's aliases in csa-work/parts.json.", ""]
+        lines += [f"- \"{x['phrase']}\" (like {x['like']}): {x['count']} time(s), in {'; '.join(x['sections'][:6])}"
+                  for x in found] or ["- none"]
+        out = Path(a.work_dir) / "draft" / "part-names.md"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        print("\n".join(lines))
+        return 0
     if a.action == "build":
         doc = build(a.work_dir)
         print(show(doc))

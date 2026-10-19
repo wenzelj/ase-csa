@@ -2632,6 +2632,20 @@ def cmd_flows(a):
     return subprocess.call([framework_python(), "-m", "csa_docx.flows", *argv], cwd=str(FRAMEWORK))
 
 
+def cmd_parts(a):
+    """csa parts: the system parts every section writes about (csa-work/parts.json): build, show, approve after review,
+    check-doc lists names in the working document that are not a part's name."""
+    p = project(a.project)
+    work = str(local_path(p["work_dir"]))
+    argv = [a.action, "--work-dir", work]
+    if a.action == "check-doc":
+        docx = working_docx(p)
+        if not docx:
+            die("no working document for this project")
+        argv += ["--docx", str(docx)]
+    return subprocess.call([framework_python(), "-m", "csa_docx.parts", *argv], cwd=str(FRAMEWORK))
+
+
 def cmd_topic_table(a):
     """csa topic-table <section>: build the role table for a subsection from the captures (no model); --place puts it
     into the working document under Discovery Information, above the Aspect table; --settings re-reads the captures."""
@@ -4441,6 +4455,8 @@ def main(argv=None) -> int:
     s = sp("flows", cmd_flows, help="data-flow inventory from the captures and the flow map (build | show [--data] [--cross-zone] [--host H]); zones from csa-work/hosts/zones.csv")
     s.add_argument("action", nargs="?", default="show", choices=["build", "show", "zones-seed", "zones", "isolation"])
     s.add_argument("--data", action="store_true"); s.add_argument("--cross-zone", action="store_true"); s.add_argument("--host")
+    s = sp("parts", cmd_parts, help="system parts every section writes about (build | show | approve | check-doc), csa-work/parts.json")
+    s.add_argument("action", nargs="?", default="show", choices=["build", "show", "approve", "check-doc"])
     s = sp("topic-table", cmd_topic_table, help="role table for a subsection from the captures, rows = role groups (no model); --place writes it into the document")
     s.add_argument("section", help="number, heading or key (3.4, 'Time Synchronisation', TIME)")
     s.add_argument("--place", action="store_true", help="put it under Discovery Information, above the Aspect table")
