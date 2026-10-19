@@ -144,7 +144,8 @@ def settings_findings(work_dir: Path, attr: str, req: str, area: str, section: s
                            "section": section, "page_or_location": "", "confidence": "medium", "evidence_excerpt": "",
                            "inference_reason": "",
                            "gap_or_action": f"confirm the {label.lower()} on {', '.join(ph)} with the system owner (nothing in {fname})"})
-        out.append({"text": text, "hosts": hosts, "roles": roles, "evidence": ev, "hint": "", "tokens": hosts})
+        out.append({"text": text, "hosts": hosts, "roles": roles, "evidence": ev, "hint": "", "tokens": hosts,
+                    "value": value})
     return out
 
 
@@ -263,9 +264,11 @@ def build(workspace: Path, heading: str, key: str = "", evidence: bool = True) -
             found += settings_findings(work, attr, req, area, section)
         if "flows" in src:
             found += flow_findings(work, src["flows"], req, area, section)
+        bind_requirements(s, found)
         slots.append({"id": s["id"], "question": s["question"], "requirements": s.get("requirements", []),
                       "findings": found, "cross_zone": bool(src.get("flows", {}).get("cross_zone"))})
-    res = {"status": "OK", "key": key, "heading": heading, "frame": fr.get("_file", ""), "slots": slots}
+    res = {"status": "OK", "key": key, "heading": heading, "frame": fr.get("_file", ""), "slots": slots,
+           "strict": bool(fr.get("strict"))}
     if evidence:
         _ensure_evidence(workspace, res)
     out = work / "topic-frames"
@@ -315,6 +318,41 @@ def _ensure_evidence(workspace: Path, res: dict) -> None:
     for s in res["slots"]:
         for f in s["findings"]:
             f["ids"] = list(dict.fromkeys(ids[e["claim"]] for e in f["evidence"] if ids.get(e["claim"])))
+
+
+def bind_requirements(slot: dict, findings: list[dict]) -> None:
+    """Give each finding the requirements its answer must address. A flow takes the slot's "bind" entry for its
+    direction (e.g. a pull out of OT binds to the outward-only requirement), else the slot's requirements. A flow
+    with no OT end, and a setting whose value is one of the slot's "baseline_values" (None found, default shares
+    only), binds to none: it is context, shown on the card but owed by no requirement."""
+    base = {v.lower() for v in slot.get("baseline_values", [])}
+    bind = slot.get("bind", {})
+    for f in findings:
+        if f.get("direction") == "not_ot" or (f.get("value") or "").lower() in base:
+            f["requirements"] = []
+        elif f.get("direction"):
+            f["requirements"] = list(bind.get(f["direction"], slot.get("requirements", [])))
+        else:
+            f["requirements"] = list(slot.get("requirements", []))
+
+
+def must_address(res: dict | None) -> dict[str, list[dict]]:
+    """{requirement ID: [{slot, text, ids, direction, tokens, empty}]}: what each requirement's answer must cite, or
+    raise as Unknown. A slot the captures do not answer asks each of its requirements for an Unknown: line (empty)."""
+    out: dict[str, list[dict]] = {}
+    for s in (res or {}).get("slots", []):
+        if not s["findings"]:
+            for r in s.get("requirements", []):
+                out.setdefault(r, []).append({"slot": s["id"], "text": s["question"], "ids": [], "direction": "",
+                                              "tokens": [], "empty": True})
+            continue
+        for f in s["findings"]:
+            for r in f.get("requirements", []):
+                items = out.setdefault(r, [])
+                if not any(x["slot"] == s["id"] and x["text"] == f["text"] for x in items):
+                    items.append({"slot": s["id"], "text": f["text"], "ids": list(f.get("ids", [])),
+                                  "direction": f.get("direction", ""), "tokens": list(f.get("tokens", [])), "empty": False})
+    return out
 
 
 def all_ids(res: dict | None) -> set[str]:
