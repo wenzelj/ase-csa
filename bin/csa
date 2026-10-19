@@ -705,6 +705,11 @@ def cmd_status(a):
             print(f"     {C['d']}+ {len(s['other_change_files'])} other change file(s): "
                   f"{', '.join(Path(x).name for x in s['other_change_files'])}{C['0']}")
     print(f"{C['d']}Only sections with a change file are listed; `csa author <N>` starts another.{C['0']}")
+    failed = _fw_json("csa_docx.draft_lane", "failed-runs", "--work-dir", local_path(p["work_dir"])).get("failed") or []
+    if failed:
+        print(f"\n{C['r']}Draft runs that failed (the document still holds the last applied answer):{C['0']}")
+        for line in failed:
+            print(f"  {line}")
     if spec_mode(p) != "off" and working_docx(p):
         r = spec_call(p, "next")
         if r.returncode == 0 and r.stdout.strip():
@@ -2462,9 +2467,14 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
         timing["reused"] = False
         if answer([]) != 0:
             return 2
-    res2, searched, fixed = check(), False, False
+    res2, searched, fixed, resent = check(), False, False, False
     while res2.get("status") != "OK":
-        if res2.get("status") == "NEEDS_SEARCH" and not searched:
+        no_sheet = any(f.get("code") == "NO_SHEET" for f in res2.get("findings", []))
+        if no_sheet and not resent:
+            resent = True           # the agent wrote nothing: ask once more, without spending the fix round on it
+            print(f"{C['y']}The {verb} agent wrote no {sheet.name}; asking once more.{C['0']}")
+            rc = answer([])
+        elif res2.get("status") == "NEEDS_SEARCH" and not searched:
             searched = True
             asks = [(q, t) for q, ts in res2.get("searches", {}).items() for t in ts]
             print(f"{C['b']}The answer asked for {len(asks)} search(es); adding the results to the card once.{C['0']}")
@@ -2487,6 +2497,11 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
             for f in res2.get("findings", []):
                 print(f"  {f['level']} {f['code']} {f.get('question') or ''}: {f['message']}", file=sys.stderr)
             _record_author_run(p, [number], cards=True, sheet_status=res2.get("status"), search_round=searched, fix_round=fixed, **timing)
+            if draft:
+                codes = sorted({f["code"] for f in res2.get("findings", []) if f.get("level") == "ERROR"})
+                _fw_json("csa_docx.draft_lane", "run", "--work-dir", work, "--key", key, "--number", number,
+                         "--title", res.get("title", ""), "--status", "NO_SHEET" if codes == ["NO_SHEET"] else "FAILED",
+                         "--detail", ", ".join(codes))
             die(f"the answer sheet still fails after the fix round; nothing was applied. Sheet: {sheet}")
         if rc != 0:
             return 2
@@ -2568,6 +2583,8 @@ def _draft_write(p: dict, a, card_json: Path, docx, cf: Path, cf_new: bool, out:
     _fw_json("csa_docx.draft_lane", "log", "--work-dir", work, "--key", c.get("key", ""), "--number", c.get("number", ""),
              "--title", c.get("title", ""), "--records", n, "--open", out.get("open", 0))
     oq = _fw_json("csa_docx.draft_lane", "open-questions", "--work-dir", work)
+    _fw_json("csa_docx.draft_lane", "run", "--work-dir", work, "--key", c.get("key", ""), "--number", c.get("number", ""),
+             "--title", c.get("title", ""), "--status", "OK", "--detail", f"{n} part(s) written")
     _record_author_run(p, [c.get("number", "")], draft=True, applied=n, total_s=round(time.time() - started, 1), **timing)
     metric(p, "draft", c.get("number"), key=c.get("key"), applied=n, open=out.get("open", 0))
     print(f"{C['g']}DRAFT{C['0']} {c.get('number')} {c.get('title')}: {n} part(s) written as plain text, "

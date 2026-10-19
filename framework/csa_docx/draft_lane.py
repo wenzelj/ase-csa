@@ -134,6 +134,40 @@ def open_questions(work: Path) -> dict:
     return {"status": "OK", "file": str(out), "open": total}
 
 
+def record_run(work: Path, key: str, number: str, title: str, status: str, detail: str = "") -> dict:
+    """Keep the outcome of the latest draft-lane run of a subsection in csa-work/draft/runs.json: OK, NO_SHEET (the
+    agent wrote no answer sheet) or FAILED (the sheet still failed its checks). A failed run leaves the document
+    text from the last applied answer, so the date of that answer is kept too."""
+    f = Path(work) / "draft" / "runs.json"
+    try:
+        runs = json.loads(f.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        runs = {}
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    r = runs.setdefault(key, {})
+    r.update({"number": number, "title": title, "status": status, "detail": detail[:300], "at": now})
+    if status == "OK":
+        r["last_ok"] = now
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps(runs, indent=1, ensure_ascii=False), encoding="utf-8")
+    return {"status": "OK", "file": str(f)}
+
+
+def failed_runs(work: Path) -> list[str]:
+    """One line per subsection whose latest draft-lane run failed: the document still holds an older answer."""
+    try:
+        runs = json.loads((Path(work) / "draft" / "runs.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    out = []
+    for key, r in sorted(runs.items(), key=lambda kv: kv[1].get("number", "")):
+        if r.get("status") != "OK":
+            since = f"text is from the run of {r['last_ok']}" if r.get("last_ok") else "no run has been applied yet"
+            out.append(f"{r.get('number', '')} {r.get('title', key)}: last run {r.get('status')} at {r.get('at')} "
+                       f"({since}){': ' + r['detail'] if r.get('detail') else ''}")
+    return out
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -147,6 +181,10 @@ def main(argv: list[str] | None = None) -> int:
         s.add_argument(f"--{k}", default="")
     s.add_argument("--records", type=int, default=0); s.add_argument("--open", type=int, default=0); s.add_argument("--note", default="")
     s = sub.add_parser("open-questions"); s.add_argument("--work-dir", type=Path, required=True)
+    s = sub.add_parser("run"); s.add_argument("--work-dir", type=Path, required=True)
+    for k in ("key", "number", "title", "status", "detail"):
+        s.add_argument(f"--{k}", default="")
+    s = sub.add_parser("failed-runs"); s.add_argument("--work-dir", type=Path, required=True)
     a = ap.parse_args(argv)
     try:
         if a.cmd == "blocker":
@@ -157,6 +195,10 @@ def main(argv: list[str] | None = None) -> int:
             out = apply(a.workspace, a.docx, a.change_file, ids, new_file=a.new_file)
         elif a.cmd == "log":
             out = {"status": "OK", "file": str(log(a.work_dir, a.key, a.number, a.title, a.records, a.open, a.note))}
+        elif a.cmd == "run":
+            out = record_run(a.work_dir, a.key, a.number, a.title, a.status, a.detail)
+        elif a.cmd == "failed-runs":
+            out = {"status": "OK", "failed": failed_runs(a.work_dir)}
         else:
             out = open_questions(a.work_dir)
     except (OSError, RuntimeError, ValueError, KeyError) as e:
