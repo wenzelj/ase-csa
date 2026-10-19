@@ -2959,6 +2959,15 @@ Shared CSA framework for every project in this folder. Agents, skills and framew
   the locks in `registry.yaml`; a fleet worker never starts another fleet. Back up before any DOCX change
   (the framework does this for you).
 - Project facts live in `csa-context/<PROJECT>_PROJECT_CONTEXT.yaml` and the project's evidence, never in shared agent or skill files.
+
+## Context management
+
+- Keep reads and command output targeted. Prefer `rg`, indexed CSA evidence, and the smallest relevant excerpts; exclude generated assets, dependencies, binaries, and logs unless the task needs them.
+- Use the framework's live state first: run `csa projects`, bounded `csa -p <key> status [SECTION]`, and `csa -p <key> next`. Historical chat or a state note does not prove current pipeline or DOCX state.
+- For long-running or interruption-prone work, maintain `.agent-state/<project-key>/STATE.md`; use `.agent-state/framework/STATE.md` for shared-framework changes. Create it only when continuation state is useful, keep it under about 1,500 tokens, and never store secrets.
+- Record only the objective, constraints and decisions, completed work and modified files, validation results, unresolved issues, and the next actionable step. Update after meaningful milestones rather than every command.
+- On continuation, read this file, the applicable state note, and the live CSA status before resuming. Verify the workspace and preserve existing changes; never treat the state note as authority over the framework.
+- When the context becomes inefficient, finish the smallest safe work unit, update the state note, and provide a concise continuation instruction for a fresh session.
 """
 
 
