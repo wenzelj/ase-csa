@@ -209,7 +209,7 @@ def count_mismatch(text: str) -> str | None:
 HARD_CODES = {"CROSS_PROJECT_ONLY", "NOTE_TOO_LONG", "NOTE_NONE_AND_TEXT", "NOTE_NO_FACTS", "CAPTURE_DROPPED", "UNKNOWN_BUNDLED", "BACKGROUND_AS_EVIDENCE", "BACKGROUND_MIXED", "BACKGROUND_NOT_ON_CARD", "BACKGROUND_ALONE", "QUESTION_MISSING", "EMPTY_ANSWER", "FACT_NO_EVIDENCE", "UNKNOWN_EVIDENCE", "RATING_INVALID",
               "COLUMNS", "ROW_WIDTH", "NO_ROWS", "REQUIREMENT_NO_FACTS", "SEMICOLON", "PROCESS_AS_SUBJECT",
               "CITATION_OFF_TOPIC", "NO_TOTALS", "ROLE_TABLE_REPEAT", "FRAME_UNCOVERED", "ATTEMPT_AS_ESTABLISHED",
-              "SLOT_NOT_ANSWERED"}
+              "SLOT_NOT_ANSWERED", "FLOW_NOT_COVERED"}
 
 # counts and totals of hosts ("9 of 12", "all 12 captured hosts", "nine hosts", "two RevViewer Jump Hosts"): CSA text
 # names the role groups instead. "stratum 5 hosts" and port numbers are not counts.
@@ -254,12 +254,36 @@ def frame_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
     if bad:
         out.append(_f("ERROR", "FRAME_UNCOVERED", "F1", "; ".join(bad) + ": name the B blocks that answer each slot, "
                       "or write Unknown: <what is not known>"))
-    text = " ".join(" ".join([b.get("text") or ""] + [f["text"] for f in b["facts"]] + [" | ".join(r) for r in b["rows"]]
-                             + b["bullets"] + b["unknown"] + b.get("dropped", []))
-                    for k, b in sheet.items() if not k.startswith("F"))
+    out += flow_coverage(sheet, card)
+    return out
+
+
+def flow_coverage(sheet: dict[str, dict], card: dict) -> list[dict]:
+    """FLOW_NOT_COVERED (an error when the frame is "strict", else a warning): every flow that crosses the OT boundary (the frame's coverage targets) is cited in a
+    requirement or narrative block (Drawbridge Impact), or named on an Unknown: line there; a table row alone does not
+    cover it. NOT_OT_FLOW_IN_REQUIREMENT (warning): a requirement block cites a flow with no OT end, which is context."""
+    fr = card.get("frame") or {}
+    kinds = {q["id"]: q["kind"] for q in card.get("questions", [])}
+    blocks = [b for k, b in sheet.items() if kinds.get(k) in ("requirement", "narrative")]
+    cited = set().union(*[block_ids(b) for b in blocks]) if blocks else set()
+    unk = " ".join(u for b in blocks for u in b.get("unknown", [])).lower()
+    prose = " ".join(" ".join([b.get("text") or ""] + [f["text"] for f in b["facts"]] + b["unknown"]) for b in blocks)
+    out = []
     for c in fr.get("coverage", []):
-        if not any(t and t in text for t in c.get("tokens", [])):
-            out.append(_f("WARN", "FLOW_NOT_COVERED", None, f"a cross-zone data flow is not addressed in any block: {c['text'][:150]}"))
+        if c.get("ids"):
+            hit = {i.upper() for i in c["ids"]} & cited or any(t and t.lower() in unk for t in c.get("tokens", []))
+        else:                       # a card from before flows carried their evidence IDs: the names are enough
+            hit = any(t and t in prose for t in c.get("tokens", []))
+        if not hit:
+            out.append(_f("ERROR" if fr.get("strict") else "WARN", "FLOW_NOT_COVERED", None, f"a flow across the OT boundary is not addressed in a requirement or "
+                                                             f"the Drawbridge Impact: {c['text'][:150]}"
+                          + (f" ({', '.join(c['ids'][:3])})" if c.get("ids") else "")))
+    ctx = {i.upper() for i in fr.get("context_ids", [])}
+    for k, b in sheet.items():
+        if kinds.get(k) == "requirement" and block_ids(b) & ctx:
+            out.append(_f("WARN", "NOT_OT_FLOW_IN_REQUIREMENT", k,
+                          f"{', '.join(sorted(block_ids(b) & ctx))} is a flow with no OT end (context): it is not an OT push "
+                          "or pull and does not answer an OT requirement"))
     return out
 
 
