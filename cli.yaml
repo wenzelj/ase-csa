@@ -17,8 +17,8 @@ comments: off
 # How to launch each CLI. {prompt} is replaced by the generated prompt (passed as
 # one argument, never through a shell). interactive = you stay in the session;
 # headless = runs to completion and exits (used by --headless and `csa pipeline`).
-codex_interactive: codex {prompt}
-codex_headless: /Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/bin/csa-window codex exec --skip-git-repo-check --output-last-message {last} {prompt}
+codex_interactive: codex -m gpt-5.6-sol -c model_reasoning_effort=medium {prompt}
+codex_headless: /Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/bin/csa-window codex exec -m gpt-5.6-sol -c model_reasoning_effort=medium --skip-git-repo-check --output-last-message {last} {prompt}
 claude_interactive: claude {prompt}
 claude_headless: /Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/bin/csa-window claude -p {prompt}
 # Evo: Codex CLI against the local model (profile evo-x3-qwen). Pick it per run with --cli evo.

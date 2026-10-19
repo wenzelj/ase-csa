@@ -173,22 +173,74 @@ def _new_block(drawing: str, caption: str, source: str, n: int, ids: _Ids, autho
             f'<w:r>{_t(source)}</w:r></w:ins></w:p>')
 
 
+def _iter_runs(chunk: str):
+    """Yield (start, end) for every top-level <w:r>...</w:r> in *chunk*, honouring nesting.
+
+    A run may itself contain a Word shape/text box whose <w:txbxContent> holds its own
+    nested <w:p>/<w:r> pairs; a non-greedy regex stops at the first inner </w:r> and
+    orphans the outer run's real closer, producing a mismatched-tag error when the
+    fragment is wrapped in <w:del>.  A depth-counting scan bounds each run correctly:
+    depth starts at 1 on the opening tag and returns to 0 at the matching close.
+
+    A '<w:r' match must be a real run tag, not <w:rPr> or another longer name."""
+    def _find_run(s: str, i: int) -> int:
+        while True:
+            j = s.find("<w:r", i)
+            if j < 0:
+                return -1
+            nxt = j + 4
+            if nxt >= len(s) or not s[nxt].isalnum():
+                return j
+            i = j + 1
+
+    i, n = 0, len(chunk)
+    while True:
+        j = _find_run(chunk, i)
+        if j < 0:
+            return
+        end = chunk.find(">", j)
+        if end < 0:
+            return
+        if chunk[end - 1] == "/":
+            i = end + 1
+            continue
+        i = end + 1
+        depth = 1
+        while depth:
+            o = _find_run(chunk, i)
+            c = chunk.find("</w:r>", i)
+            if o >= 0 and (c < 0 or o < c):
+                # next real open before any close: nested run
+                close = chunk.find(">", o)
+                if close < 0:
+                    return
+                if chunk[close - 1] != "/":
+                    depth += 1
+                i = close + 1
+            elif c >= 0:
+                # close tag: decrement depth
+                depth -= 1
+                i = c + 6
+            else:
+                return
+        yield (j, i)
+
 def _delete_runs(chunk: str, ids: _Ids, author: str, date: str, only_placeholder: bool) -> tuple[str, int]:
     """Wrap runs in <w:del> (their w:t becoming w:delText). only_placeholder: just runs whose text has '['.
     Returns the new paragraph and the position just after the last deleted run (or -1)."""
     out, last, pos = [], -1, 0
     fields = [(f.start(), f.end()) for f in re.finditer(r"<w:fldSimple\b.*?</w:fldSimple>", chunk, re.S)]
-    for m in re.finditer(r"<w:r(?:\s[^>]*)?>.*?</w:r>", chunk, re.S):
-        run = m.group(0)
-        if only_placeholder and any(a <= m.start() < b for a, b in fields):
+    for m_start, m_end in _iter_runs(chunk):
+        run = chunk[m_start:m_end]
+        if only_placeholder and any(a <= m_start < b for a, b in fields):
             continue                                          # a run inside the template's own SEQ field: keep it
         text = "".join(re.findall(r"<w:t(?:\s[^>]*)?>([^<]*)</w:t>", run))
         if only_placeholder and "[" not in text:
             continue
         gone = run.replace("<w:t>", '<w:delText xml:space="preserve">').replace('<w:t xml:space="preserve">', '<w:delText xml:space="preserve">') \
                   .replace("</w:t>", "</w:delText>").replace("<w:instrText", "<w:delInstrText").replace("</w:instrText>", "</w:delInstrText>")
-        out.append(chunk[pos:m.start()] + f'<w:del {_rev("del", ids, author, date)}>{gone}</w:del>')
-        pos = m.end()
+        out.append(chunk[pos:m_start] + f'<w:del {_rev("del", ids, author, date)}>{gone}</w:del>')
+        pos = m_end
         last = len("".join(out))
     out.append(chunk[pos:])
     return "".join(out), last

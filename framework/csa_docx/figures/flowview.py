@@ -116,12 +116,22 @@ def markers(settings: list[dict]) -> dict[str, dict]:
     return {h: m for h, m in out.items() if m}
 
 
-def common(marks: dict[str, dict]) -> dict[str, str]:
-    """The markers every host shares, with the same value: drawn once, on a legend line, not on each tile."""
-    if not marks:
+def common(marks: dict[str, dict], hosts: set[str] | None = None) -> dict[str, str]:
+    """The markers EVERY represented registered host shares, with the same value - the ones that may be stated
+    once on the legend rather than on each tile. A marker is "common" only if it appears on every host in `hosts`
+    (not just the hosts that happen to carry some marker): five of our hosts have no EDR row, so "all hosts: EDR"
+    would be an overstatement. If fewer than all hosts carry it, it is returned qualified instead (see view())."""
+    hosts = {h.upper() for h in (hosts or marks)}
+    if not hosts:
         return {}
-    keys = set.intersection(*(set(m) for m in marks.values()))
-    return {k: next(iter(marks.values()))[k] for k in sorted(keys) if len({m[k] for m in marks.values()}) == 1}
+    out = {}
+    for k in {key for m in marks.values() for key in m}:
+        holders = {h for h in hosts if marks.get(h, {}).get(k)}
+        if len(holders) == len(hosts):
+            vals = {marks[h][k] for h in holders}
+            if len(vals) == 1:
+                out[k] = vals.pop()
+    return out
 
 
 def controls(edges: list[dict], kinds: dict[str, str] | None = None) -> list[dict]:
@@ -229,9 +239,13 @@ def view(work_dir, over: dict, prof: dict, p: dict, *, key: str, title: str, sub
         nodes["GAP:boundary"] = {"id": "GAP:boundary", "label": "Boundary device", "kind": "gap", "role": "Boundary device",
                                  "gap_text": "Not captured", "zone": "boundary", "band": "boundary"}
     settings = _settings(work_dir)
+    reg = _register(work_dir)
     st, mk = stores(settings), markers(settings)
+    # stores belong to the evidenced host that holds them; a shared tile (same role, several sites) shows its hosts'
+    # stores together, and the legend note says which hosts, so no site is silently merged into a shared store.
+    host_stores: dict[str, list] = {n["id"]: st.get(n["id"], []) for n in nodes.values()}
     for n in nodes.values():
-        n["stores"] = st.get(n["id"], [])
+        n["stores"] = host_stores[n["id"]]
         n["marks"] = mk.get(n["id"], {})
     zones = list(over["zones"])
     if any(n["zone"] == "outside" for n in nodes.values()) and not any(z["id"] == "outside" for z in zones):
@@ -239,9 +253,17 @@ def view(work_dir, over: dict, prof: dict, p: dict, *, key: str, title: str, sub
     boundary = any(n["zone"] == "boundary" for n in nodes.values())
     if boundary and not any(z["id"] == "boundary" for z in zones):
         zones.append({"id": "boundary", "label": "IT / OT boundary"})
+    rep = {n["id"].upper() for n in nodes.values()} & {h.upper() for h in reg}
+    common_mk = common({h: m for h, m in mk.items() if h.upper() in rep}, hosts=rep)
+    # any marker held by only some represented hosts is stated on exactly those hosts, never as "all hosts"
+    partial: dict[str, tuple[str, list[str]]] = {}
+    for k in {key for m in mk.values() for key in m}:
+        holders = sorted(h for h in rep if mk.get(h, {}).get(k))
+        if holders and len(holders) != len(rep):
+            partial[k] = (" · ".join(holders), holders)
     model = {"id": f"figure-{key.lower()}", "title": title, "subtitle": subtitle, "zones": zones, "groups": [],
              "nodes": list(nodes.values()), "edges": medges, "notes": [], "flow": True, "controls": ctl,
-             "common_marks": common({h: m for h, m in mk.items() if h in nodes}), "outside_label": "Zone not recorded"}
+             "common_marks": common_mk, "partial_marks": partial, "outside_label": "Zone not recorded"}
     model = M._layout(model, prof)
     if boundary and "boundary" not in model["layout"]["top"]:   # the screen view puts boundary nodes in its top band
         model["layout"]["top"].append("boundary")

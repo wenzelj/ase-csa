@@ -160,3 +160,27 @@ def check_flow_tables(model: dict, flow_rows: list[dict], settings_rows: list[di
     if not any(c["level"] == "flag" for c in out):
         add("ok", "tables", "Every flow and data store in the Discovery Information tables is drawn.")
     return out
+
+
+def check_store_tables(model: dict, settings_rows: list[dict], register: set[str] | None = None) -> list[dict]:
+    """Archetype G against the Discovery Information tables: every store the host-settings
+    inventory lists appears as a store node, and every drawn consumer is a registered host."""
+    out: list[dict] = []
+    add = lambda level, kind, text: out.append({"level": level, "kind": kind, "text": text, "evidence": []})
+    store_nodes = [n for n in model.get("nodes", []) if n.get("id", "").startswith("ST-")]
+    listed = {(r["host"], r["value"]) for r in settings_rows
+              if r["attribute"] == "storage.database" and r["value"] != "None found"}
+    listed |= {(r["host"], r["value"]) for r in settings_rows
+               if r["attribute"] == "storage.shares" and r["value"] != "Default and administrative shares only"}
+    if store_nodes:
+        add("ok", "stores", f"{len(store_nodes)} data store(s) drawn from the host-settings inventory.")
+    else:
+        add("flag", "stores", "The host-settings inventory lists data stores, but none are drawn.")
+    reg = {h.upper() for h in (register or set())}
+    unreg = sorted({e["s"] for e in model.get("edges", []) if reg and e["s"].upper() not in reg})
+    if unreg:
+        add("flag", "consumers", f"Consumer(s) not in the host register: {', '.join(unreg)}.")
+    else:
+        add("ok", "consumers", "Every drawn consumer is a registered host.")
+    return out
+

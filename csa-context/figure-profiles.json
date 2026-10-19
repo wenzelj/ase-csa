@@ -30,7 +30,7 @@
      "question": "Zones, conduits between them, and whether the boundaries are enforced",
      "must_show": ["Zones and sites", "Cross-zone and cross-site flows", "Boundary devices, or a marker where none is evidenced", "Conduits to external networks"],
      "caption": "Zones and conduits of the system"},
-    {"id": "storage-transfer", "families": ["STOR"], "archetype": "F", "built": true, "from_topic": "storage-data-transfer",
+    {"id": "storage-transfer", "families": ["STOR"], "archetype": "G", "built": true, "from_topic": "storage-data-transfer",
      "flows": {"data": true, "status": ["observed", "both", "declared", "attempted"], "cross_zone": ["yes", "unknown"]},
      "question": "Where the system holds its data, and how data moves in and out of OT: which side opens each transfer and what is on the path",
      "must_show": ["Data stores and their zone", "Data flows in and out of OT with the side that opens each one", "Proxies, firewalls or scanning points on the path, or a marker where none is captured", "Transfer tools and removable media"],

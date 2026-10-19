@@ -96,6 +96,10 @@ def figure(ctx: Ctx, key: str, save: bool = False, png: bool = True, edits: dict
         flt_ = prof_.get("flows") or FV.topic_flows(prof_.get("from_topic"))
         fit["checks"] += F.check_flow_tables(out["model"], FL.load(ctx.work), FV._settings(ctx.work), flt_, set(names))
         fit["counts"] = {lv: sum(1 for c in fit["checks"] if c["level"] == lv) for lv in ("ok", "note", "flag")}
+    if out and row.get("archetype") == "G":            # store-centric: stores drawn and every consumer registered
+        from csa_docx.figures import flowview as FV
+        fit["checks"] += F.check_store_tables(out["model"], FV._settings(ctx.work), set(names))
+        fit["counts"] = {lv: sum(1 for c in fit["checks"] if c["level"] == lv) for lv in ("ok", "note", "flag")}
     if out and out.get("print"):
         F.print_checks(fit, out["print"])
     saved = manifest(ctx.work).get(key)

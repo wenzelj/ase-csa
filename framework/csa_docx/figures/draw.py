@@ -71,6 +71,12 @@ def draw(row: dict, work_dir: Path, project_key: str, net: dict, spec: dict | No
         over = M.overview(net, spec or {}, prof, app)
         sub = f"{p['question']}" + (f" ({ids})" if ids else "") + ". From the flow inventory and host settings."
         m = FV.view(work_dir, over, prof, p, key=row["key"], title=p["caption"], subtitle=sub)
+    elif p["archetype"] == "G":
+        from csa_docx.figures import storeview as SV
+        prof = M.resolve_profile(net, layout)
+        over = M.overview(net, spec or {}, prof, app)
+        sub = f"{p['question']}" + (f" ({ids})" if ids else "") + ". From the flow inventory and host settings."
+        m = SV.view(work_dir, over, prof, p, key=row["key"], title=p["caption"], subtitle=sub)
     else:
         raise NotBuilt(f"archetype {p['archetype']} is not built yet")
     # which band (IT, boundary, OT) a shared service sits in: the project's residency rule, never guessed
@@ -84,6 +90,11 @@ def draw(row: dict, work_dir: Path, project_key: str, net: dict, spec: dict | No
             elif side == "ot":
                 n["band"] = "ot"
     m["print"] = {"conduits": p["archetype"] in ("A", "C"), "per_target": p["archetype"] == "B"}
+    if p["archetype"] == "G":
+        # store-centric: a single purpose-built renderer (store cards + consumer tiles)
+        from csa_docx.techdiagram.store_layout import render_store_svg
+        svg, sinfo = render_store_svg(m)
+        return {"model": m, "svg": svg, "print_svg": svg, "print": sinfo, "hash": _hash(m)}
     # the page view (screen layout) and the figure as printed in the CSA (band layout, readable at 17 cm)
     psvg, pinfo = render_print_svg(m, aggregate=p["archetype"] in ("A", "C"))
     return {"model": m, "svg": render_svg(m), "print_svg": psvg, "print": pinfo, "hash": _hash(m)}

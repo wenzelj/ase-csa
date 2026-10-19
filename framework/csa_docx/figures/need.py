@@ -19,7 +19,7 @@ AGENTS = Path(__file__).resolve().parents[3]
 PROFILES = AGENTS / "csa-context" / "figure-profiles.json"
 LAYOUTS = AGENTS / "csa-context" / "system-diagrams.json"
 ARCHETYPE = {"A": "system overview", "B": "service dependency", "C": "zones and conduits", "D": "access path",
-             "E": "numbered flow", "F": "data flow"}
+             "E": "numbered flow", "F": "data flow", "G": "store-centric data flow"}
 SERVICE_WORD = {"time": "time", "dns": "name resolution"}
 
 
@@ -127,7 +127,7 @@ def assess(spec: dict, work_dir: Path, project_key: str, ev: dict | None = None)
             elif p["archetype"] == "A":
                 row.update(status="needed", reason="The document has a figure slot here for the system overview."
                            if slot else "An overview helps the reader see the whole system.")
-            elif p["archetype"] in ("C", "D", "F"):
+            elif p["archetype"] in ("C", "D", "F", "G"):
                 row.update(status="needed", reason=f"{ask}: {_lc(p['question'])}. {_a(ARCHETYPE[p['archetype']]).capitalize()} "
                                                    "figure answers it, drawn from the captured connections.")
             else:

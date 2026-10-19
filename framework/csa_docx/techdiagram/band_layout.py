@@ -83,18 +83,17 @@ FUNCTIONS = {
     "application": ("#167d8d", "Application and database"),
     "other": ("#6b7785", "Other ports (no service name captured)"),
 }
-# data flow figures (archetype F): the line colour is the mechanism family
-FLOW_FUNCTIONS = {
-    "database": ("#167d8d", "Database and replication"),
-    "file": ("#7b5ea7", "File share and file transfer"),
-    "backup": ("#b7791f", "Backup"),
-    "message": ("#2f6fb0", "Message, API, web and telemetry"),
-    "mail": ("#5a7d2a", "Mail"),
+# data flow figures (archetype F): the mechanism maps onto the five guide functions (rule 6), so the line colour
+# is the function - teal application and database, amber management and monitoring, blue web and Internet,
+# purple directory/name/time, grey other. No alarm red, no purple file lines, no green mail lines.
+MECH_FAMILY = {
+    "database": "application", "database replication": "application",
+    "file share": "application", "file transfer": "application", "mail": "application",
+    "backup agent": "management", "log forwarding": "management", "monitoring": "management",
+    "security agent telemetry": "management", "management": "management",
+    "message/API": "web", "web/API": "web", "web": "web", "api": "web",
+    "directory": "directory", "name service": "directory", "time service": "directory",
 }
-FUNCTIONS.update(FLOW_FUNCTIONS)
-MECH_FAMILY = {"database": "database", "database replication": "database", "file share": "file", "file transfer": "file",
-               "backup agent": "backup", "message/API": "message", "web/API": "message", "security agent telemetry": "message",
-               "log forwarding": "message", "monitoring": "message", "mail": "mail"}
 MARK_LABEL = {"edr": "EDR", "av": "AV", "tools": "tools", "usb": "USB"}
 COMMON_PHRASE = {"edr": "{v} EDR running", "av": "{v} running", "tools": "transfer tools {v}", "usb": "removable storage {v}"}
 DIRECTORY_SVCS = {"DNS", "Time", "NTP", "Kerberos", "LDAP", "LDAPS"}
@@ -147,9 +146,30 @@ def _tw(text: str, size: float, bold: bool = False) -> float:
     return sum(_cw(c, bold) for c in text) * size
 
 
-def _wrap(text: str, units: float, size: float, bold: bool = False, lines: int = 2) -> list[str]:
+def _break_token(tok: str, avail: float, size: float, bold: bool = False) -> list[str]:
+    """Break one long token (a UUID, path or share name) so it fits without dropping any characters."""
     out, cur = [], ""
+    for ch in tok:
+        if cur and _tw(cur + ch, size, bold) > avail:
+            out.append(cur); cur = ch
+        else:
+            cur += ch
+    if cur:
+        out.append(cur)
+    return out or [""]
+
+
+def _wrap(text: str, units: float, size: float, bold: bool = False, lines: int = 2) -> list[str]:
+    """Wrap to the width, breaking long tokens instead of ellipsising, then fold the remainder onto the last line.
+    Nothing is ever dropped: a long store name or UUID renders in full across as many lines as it needs."""
+    words: list[str] = []
     for w in text.split():
+        if _tw(w, size, bold) <= units:
+            words.append(w)
+        else:
+            words.extend(_break_token(w, units, size, bold))
+    out, cur = [], ""
+    for w in words:
         cand = f"{cur} {w}" if cur else w
         if cur and _tw(cand, size, bold) > units:
             out.append(cur); cur = w
@@ -159,12 +179,7 @@ def _wrap(text: str, units: float, size: float, bold: bool = False, lines: int =
         out.append(cur)
     if len(out) > lines:
         out = out[: lines - 1] + [" ".join(out[lines - 1:])]
-    res = []
-    for l in out:
-        while _tw(l, size, bold) > units and len(l) > 4:
-            l = l[:-2].rstrip() + "…"
-        res.append(l)
-    return res
+    return out
 
 
 def short_role(n: dict) -> str:
@@ -297,8 +312,9 @@ def build(model: dict, band_of: dict | None = None, conduits: bool = False) -> d
         s = _sub(n, b, model)
         role = short_role(n)
         gap = n["kind"] == "gap"
-        if not gap and (b, role, n["kind"]) in shared:
-            b, s = b, "shared"
+        # One tile per machine role per site (rule 4): a role repeated across sites stays in each
+        # site's own panel rather than collapsing into a "Shared across sites" panel. The "shared"
+        # *zone* (residency for DNS/time hosts) is routed by _band/_sub and is not affected here.
         key = f"{b}|{s}|{n['kind']}|{role}" if not gap else f"{b}|{s}|gap|{n['id']}"
         t = tiles.setdefault(key, {"id": key, "band": b, "sub": s, "kind": n["kind"], "role": role, "hosts": [],
                                     "labels": [], "gap": gap, "sites": [], "gap_text": n.get("gap_text", "")})
@@ -308,6 +324,7 @@ def build(model: dict, band_of: dict | None = None, conduits: bool = False) -> d
             if s_["what"] not in [x["what"] for x in t.setdefault("stores", [])]:
                 t["stores"].append(s_)
         t.setdefault("marks", set()).update(k for k in (n.get("marks") or {}) if k not in (model.get("common_marks") or {}))
+        # (common marks, if any, are stated once in the note; a marker held by only some hosts stays on its tile)
         if b == "boundary" and n["zone"] in zlabel:
             site = re.sub(r"\s*data centre$", "", zlabel[n["zone"]], flags=re.I)
             if site not in t["sites"]:
@@ -670,8 +687,13 @@ def render_band_svg(model: dict, band_of: dict | None = None, conduits: bool = F
              "×n: hosts in the role."
              if model.get("flow") else "Arrow: the system that receives. ×n: hosts in the role.")
     cm = model.get("common_marks") or {}
-    if cm:
-        note = "All hosts: " + ", ".join(COMMON_PHRASE[k].format(v=v) for k, v in cm.items() if k in COMMON_PHRASE) + ". " + note
+    pm = model.get("partial_marks") or {}
+    for k, (v, hosts) in sorted(pm.items()):                       # held by some represented hosts: name them
+        if k in COMMON_PHRASE:
+            note += COMMON_PHRASE[k].format(v=v) + f" on {', '.join(hosts)}. "
+    for k, v in cm.items():                                        # held by every represented host: state it once
+        if k in COMMON_PHRASE:
+            note += "Every host: " + COMMON_PHRASE[k].format(v=v) + ". "
     note_lines = _wrap(note, W - 140, F_TEXT, False, lines=len(note.split()) + 1)
     # compact legend: group the flows by how they were evidenced, not one row per function/status
     legend_keys = []
@@ -809,11 +831,12 @@ def render_band_svg(model: dict, band_of: dict | None = None, conduits: bool = F
     # legend: line colour = function (with the services on it), line style = evidence, then how to read it
     y = body_h + 14 + 10
     # one row per evidence status: colour = data function, style = how it was evidenced
+    # one row per (function, status) that is actually drawn: colour = the function, dash = the evidence status
     cells = []
     for f, sts in legend_keys:
-        st_ = sts[0]
-        lab = FUNCTIONS[f][1] + ("" if len(sts) == 1 else "  -  " + ", ".join(STATUS_PHRASE.get(s_, s_) for s_ in sts))
-        cells.append((FUNCTIONS[f][0], STATUS_DASH.get(st_, ("", 2.6))[0], lab))
+        for st_ in sts:
+            cells.append((FUNCTIONS[f][0], STATUS_DASH.get(st_, ("", 2.6))[0],
+                          FUNCTIONS[f][1] + " - " + STATUS_PHRASE.get(st_, st_)))
     cells_lines = [((_wrap(lab, W - 160, F_TEXT, False, lines=len(lab.split()) + 1) if lab else [""]), col, dash)
                    for col, dash, lab in cells]
     yy = y + 18
@@ -824,7 +847,7 @@ def render_band_svg(model: dict, band_of: dict | None = None, conduits: bool = F
                      f'<text x="62.0" y="{yy:.1f}" font-size="{F_TEXT}" fill="{MUTED}">{esc(l)}</text>')
             yy += LINE_H
         yy += 4
-    yy = y + sum(max(1, len(labs)) + 4 for labs, _, _ in cells_lines) + 18
+    yy = y + 18 + sum(max(1, len(labs)) * LINE_H for labs, _, _ in cells_lines) + (len(cells_lines) - 1) * 4 + 8
     for j, ln in enumerate(note_lines):
         o.append(f'<text x="8" y="{yy + j * 22:.1f}" font-size="{F_TEXT}" fill="{MUTED}">{esc(ln)}</text>')
     o.append("</svg>")

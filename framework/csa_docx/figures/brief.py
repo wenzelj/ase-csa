@@ -116,7 +116,7 @@ def build(row: dict, node: dict, ev: dict, layout: dict, rel_rows: list[dict] | 
         b = _paths(row, reqs, sentences, ev, model or {})
     elif row.get("archetype") == "A":
         b = _overview(row, reqs, sentences, ev, model or {})
-    elif row.get("archetype") == "F":
+    elif row.get("archetype") in ("F", "G"):
         b = _flows(row, reqs, sentences, ev, model or {})
     else:
         b = {"purpose": f"Shows {_lc(row.get('question') or row['title'])}.", "caption": row.get("caption") or row["title"],
