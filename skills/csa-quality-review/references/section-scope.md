@@ -137,7 +137,7 @@ Requirement IDs and wording come from the OT35 checklist in the CSA template. **
 - **Requirements:** SEP-STOR-01 OT-resident storage for operational data, or a fallback; SEP-STOR-02 IT-to-OT file transfer only through a defined, controlled pattern; SEP-STOR-03 OT pushes data out rather than IT pulling data in.
 - **Must explain:** For each data flow in or out of the system: what data moves, which direction, which side starts the transfer, how it moves (file, share, message stream), where the data is held on each side and for how long, whether anything controls, inspects or scans it on the way, and whether the held data could be used to recover or rebuild after an outage.
 - **Owns:** where operational data lives; file shares used; file transfer mechanisms and direction.
-- **Not here:** backup storage goes to 3.11; storage arrays and SAN hardware go to 3.15.
+- **Not here:** backup storage goes to 3.11 (the backup platform, where backups are kept and for how long); storage arrays and SAN hardware go to 3.15. Connections that copy data out of OT (backup agents, database readers) stay here for SEP-STOR-03.
 - **Legacy headings:** Infrastructure Dependencies
 - **Signal terms:** file share, file shares, smb, unc path, sftp, ftp, ftps, file transfer, data transfer, data diode, local storage, nas, mapped drive, data export, push, pull
 

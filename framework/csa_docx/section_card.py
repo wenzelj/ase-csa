@@ -914,6 +914,9 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
         lines += ["", "## Rules from the template", ""] + [f"- {r}" for r in rl]
     if extra:
         lines += ["", "## Scope", "", f"- Must explain: {extra['must_explain']}", f"- Not here: {extra['not_here']}"]
+        if fr:
+            from csa_docx import topic_frames
+            lines += [f"- {x}" for x in topic_frames.scope_conflicts(fr, extra["not_here"])]
     cur = _current(node)
     if cur:
         lines += ["", "## Current text in the document", ""] + [f"- {c}" for c in cur]

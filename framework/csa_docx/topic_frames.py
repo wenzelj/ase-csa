@@ -381,6 +381,25 @@ def must_address(res: dict | None) -> dict[str, list[dict]]:
     return out
 
 
+def scope_conflicts(res: dict | None, not_here: str) -> list[str]:
+    """Card lines for a scope "Not here" clause that sends elsewhere a mechanism this section's own requirements owe
+    (backup storage goes to 3.11, while the backup agent pulling data out of OT answers SEP-STOR-03 here)."""
+    clauses = [c.strip() for c in re.split(r";|\.(?=\s|$)", (not_here or "").lower()) if re.search(r"\bgo(?:es)? to\b", c)]
+    out, seen = [], set()
+    for s in (res or {}).get("slots", []):
+        for f in s["findings"]:
+            mech = (f.get("mechanism") or "").lower()
+            word = mech.split()[0] if mech else ""
+            if not f.get("requirements") or not word or mech in seen:
+                continue
+            hit = next((c for c in clauses if re.search(rf"\b{re.escape(word)}", c)), None)
+            if hit:
+                seen.add(mech)
+                out.append(f"Scope note: \"{hit}\" does not cover the {mech} flows this section's requirements owe "
+                           f"({', '.join(f['requirements'])}): answer them here.")
+    return out
+
+
 def all_ids(res: dict | None) -> set[str]:
     return {i for s in (res or {}).get("slots", []) for f in s["findings"] for i in f.get("ids", [])}
 
