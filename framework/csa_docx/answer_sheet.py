@@ -97,8 +97,8 @@ def parse(text: str) -> dict[str, dict]:
                     b["none"] = val or "yes"
                 elif field == "answer":
                     b["answer"] = val
-                elif field == "text" and val:
-                    b["text"] = val
+                elif field == "text" and val:     # one Text: line per paragraph adds a paragraph, never replaces
+                    b["text"] = b["text"] + ("\n\n" if b["text"] else "") + val
                 continue
             if field == "text":            # draft lane: the finished prose for the block, any number of lines
                 b["text"] = b["text"] + ("\n\n" if b["text"] else "") + s     # one line = one paragraph

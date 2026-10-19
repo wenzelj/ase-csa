@@ -2577,6 +2577,12 @@ def _draft_write(p: dict, a, card_json: Path, docx, cf: Path, cf_new: bool, out:
     if res.get("status") != "OK":
         die(f"draft lane: the document was not changed past {res.get('applied') or 'the first edit'}: {res.get('message')}")
     n = len(res.get("applied") or [])
+    sheet = card_json.with_name(f"{c.get('key', '')}.answer.md")
+    if sheet.is_file():                  # stale table rows below the new ones, and the comments the answer answered
+        td = _fw_json("csa_docx.draft_lane", "tidy", "--docx", docx, "--card", card_json, "--sheet", sheet)
+        if td.get("rows") or td.get("comments"):
+            print(f"{C['d']}tidied: {td.get('rows', 0)} old table row(s) removed, "
+                  f"{len(td.get('comments') or [])} answered reviewer comment(s) removed{C['0']}")
     tt = _place_topic_table(p, docx, c.get("title", ""), c.get("key", ""))
     if tt:
         print(f"{C['d']}{tt}{C['0']}")

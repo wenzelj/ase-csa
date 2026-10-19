@@ -134,6 +134,90 @@ def open_questions(work: Path) -> dict:
     return {"status": "OK", "file": str(out), "open": total}
 
 
+_TR = re.compile(r"<w:tr[ >].*?</w:tr>", re.S)
+
+
+def _cell_texts(row: str) -> list[str]:
+    from .figures.place import _text
+    return [_text(c.encode("utf-8")).strip() for c in re.findall(r"<w:tc>.*?</w:tc>", row, re.S)]
+
+
+def tidy(docx: Path, card: dict, sheet_text: str) -> dict:
+    """After the answer is written: (1) a table the answer gives fewer rows than the document had loses the rows
+    after the answer's last one (the draft lane rewrites the table, so an old row left below the new ones is
+    stale); (2) the reviewer comments the answer answered (an Answer: line in its C block) are removed. Plain
+    edits, no tracked changes. Returns {"status", "rows": removed rows, "comments": removed comment ids}."""
+    from .answer_sheet import parse
+    from .build_apply import _strip_comments
+    from .figures import place as P
+    sheet = parse(sheet_text)
+    docx = Path(docx)
+    with zipfile.ZipFile(docx) as z:
+        parts = {n: z.read(n) for n in z.namelist()}
+        infos = {i.filename: i for i in z.infolist()}
+    xb = parts["word/document.xml"]
+    kids = P._body_children(xb)
+    title = card.get("title", "")
+    hi = next((i for i, (s, e, t) in enumerate(kids) if t == b"w:p" and P._heading_level(P._style(xb[s:e]))
+               and P._text(xb[s:e]).strip() == title), None)
+    removed = 0
+    if hi is not None:
+        lvl = P._heading_level(P._style(xb[kids[hi][0]:kids[hi][1]]))
+        end = next((i for i in range(hi + 1, len(kids)) if kids[i][2] == b"w:p"
+                    and (P._heading_level(P._style(xb[kids[i][0]:kids[i][1]])) or 99) <= lvl), len(kids))
+        want = {}                                       # table header -> data rows the answer gives
+        for q in card.get("questions", []):
+            b = sheet.get(q["id"])
+            if q.get("kind") in ("observation", "register") and q.get("columns") and b and b["rows"]:
+                want[tuple(c.strip().lower() for c in q["columns"])] = len(b["rows"]) - 1
+        out, last = [], 0
+        for s, e, t in kids[hi:end]:
+            if t != b"w:tbl":
+                continue
+            tbl = xb[s:e].decode("utf-8")
+            if "csa-topic-table" in tbl:
+                continue                                # the framework's own tables are placed whole
+            rows = _TR.findall(tbl)
+            keep = want.get(tuple(c.lower() for c in _cell_texts(rows[0]))) if rows else None
+            if keep is None or len(rows) - 1 <= keep:
+                continue
+            new = tbl
+            for r in rows[1 + keep:]:
+                new = new.replace(r, "", 1)
+                removed += 1
+            out.append((s, e, new.encode("utf-8")))
+        if out:
+            buf, pos = [], 0
+            for s, e, new in out:
+                buf += [xb[pos:s], new]
+                pos = e
+            parts["word/document.xml"] = b"".join(buf) + xb[pos:]
+            tmp = docx.with_name(docx.name + ".tidy")
+            with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
+                for n, data in parts.items():
+                    z.writestr(infos[n], data, compress_type=zipfile.ZIP_DEFLATED)
+            tmp.replace(docx)
+    # reviewer comments the answer answered: matched on author and text, as the card asked them
+    answered = []
+    for q in card.get("questions", []):
+        if q.get("kind") == "comment" and (sheet.get(q["id"]) or {}).get("answer"):
+            m = re.match(r'Reviewer comment \((.*?)\): "(.*)"$', q.get("text", ""), re.S)
+            if m:
+                answered.append((m[1], " ".join(m[2].split())[:120]))
+    ids = set()
+    if answered and "word/comments.xml" in parts:
+        from .figures.place import _text
+        for c in re.finditer(r'<w:comment\b([^>]*)>(.*?)</w:comment>', parts["word/comments.xml"].decode("utf-8"), re.S):
+            cid = re.search(r'w:id="(\d+)"', c[1])
+            who = re.search(r'w:author="([^"]*)"', c[1])
+            text = " ".join(_text(c[2].encode("utf-8")).split())
+            if cid and any((who[1] if who else "") == a and text.startswith(t) for a, t in answered):
+                ids.add(cid[1])
+    if ids:
+        _strip_comments(docx, ids)
+    return {"status": "OK", "rows": removed, "comments": sorted(ids)}
+
+
 def record_run(work: Path, key: str, number: str, title: str, status: str, detail: str = "") -> dict:
     """Keep the outcome of the latest draft-lane run of a subsection in csa-work/draft/runs.json: OK, NO_SHEET (the
     agent wrote no answer sheet) or FAILED (the sheet still failed its checks). A failed run leaves the document
@@ -185,6 +269,8 @@ def main(argv: list[str] | None = None) -> int:
     for k in ("key", "number", "title", "status", "detail"):
         s.add_argument(f"--{k}", default="")
     s = sub.add_parser("failed-runs"); s.add_argument("--work-dir", type=Path, required=True)
+    s = sub.add_parser("tidy"); s.add_argument("--docx", type=Path, required=True)
+    s.add_argument("--card", type=Path, required=True); s.add_argument("--sheet", type=Path, required=True)
     a = ap.parse_args(argv)
     try:
         if a.cmd == "blocker":
@@ -199,6 +285,8 @@ def main(argv: list[str] | None = None) -> int:
             out = record_run(a.work_dir, a.key, a.number, a.title, a.status, a.detail)
         elif a.cmd == "failed-runs":
             out = {"status": "OK", "failed": failed_runs(a.work_dir)}
+        elif a.cmd == "tidy":
+            out = tidy(a.docx, json.loads(a.card.read_text(encoding="utf-8")), a.sheet.read_text(encoding="utf-8"))
         else:
             out = open_questions(a.work_dir)
     except (OSError, RuntimeError, ValueError, KeyError) as e:
