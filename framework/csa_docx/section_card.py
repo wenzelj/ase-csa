@@ -757,6 +757,29 @@ def system_name(workspace: Path | None) -> str:
     return ""
 
 
+def must_address_by_question(qs: list[dict], fr: dict | None) -> dict[str, list[dict]]:
+    """{question id: [must-address item]}: the frame's findings each requirement question owes
+    (topic_frames.must_address), keyed by the question that answers that requirement."""
+    if not fr:
+        return {}
+    from csa_docx import topic_frames
+    by_req = topic_frames.must_address(fr)
+    return {q["id"]: by_req[q["req_id"]] for q in qs if q.get("kind") == "requirement" and by_req.get(q.get("req_id"))}
+
+
+def must_address_lines(items: list[dict]) -> list[str]:
+    """The card lines under one requirement question: what it must cite, or raise as Unknown."""
+    if not items:
+        return []
+    out = ["  Must address (from the analysis frame): cite each finding's evidence in this block, or write an "
+           "Unknown: line that names it (SLOT_NOT_ANSWERED):"]
+    for x in items:
+        ids = f" ({', '.join(x['ids'])})" if x["ids"] else ""
+        out.append(f"  - {x['slot']}: {'Unknown unless the evidence pack answers it: ' if x['empty'] else ''}"
+                   f"{x['text'][:260]}{ids}")
+    return out
+
+
 def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool = True,
          extra_searches: dict | None = None, exclude: tuple[str, ...] = ()) -> dict:
     qs = questions(node, spec)
@@ -799,12 +822,20 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
                     if i.upper() not in have and i.upper() in by_id:
                         p["rows"].append(_row(by_id[i.upper()]))
                         have.add(i.upper())
+    fr = None                    # the analysis frame: built first, so each requirement question can list what it owes
+    if evidence and workspace:
+        from csa_docx import topic_frames
+        fr = topic_frames.build(Path(workspace), node["title"], node.get("key", ""))
+        if fr.get("status") != "OK":
+            fr = None
+    owed = must_address_by_question(qs, fr)
     lines = [f"# Card: {node['title']} (key {node['key']}, section {node['number']})", "",
              f"Kind: {node['kind']}", "", "## Questions", ""]
     for q in qs:
         lines.append(f"- {q['id']} {q['text']}")
         if q.get("columns"):
             lines.append(f"  Columns: {' | '.join(q['columns'])}")
+        lines += must_address_lines(owed.get(q["id"], []))
     sysname = system_name(workspace)
     if sysname:
         lines += ["", "## System name", "",
@@ -849,13 +880,13 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
     if rtables:
         lines += _role_table_lines(rtables)
     frame = None
-    if evidence and workspace:
+    if fr:
         from csa_docx import topic_frames
-        fr = topic_frames.build(Path(workspace), node["title"], node.get("key", ""))
-        if fr.get("status") == "OK":
-            lines += topic_frames.card_lines(fr)
-            frame = {"slots": [s["id"] for s in fr["slots"]], "ids": sorted(topic_frames.all_ids(fr)),
-                     "coverage": topic_frames.coverage_targets(fr)}
+        lines += topic_frames.card_lines(fr)
+        frame = {"slots": [s["id"] for s in fr["slots"]], "ids": sorted(topic_frames.all_ids(fr)),
+                 "coverage": topic_frames.coverage_targets(fr), "must_address": owed,
+                 "context_ids": topic_frames.context_ids(fr), "zone_conflicts": fr.get("zone_conflicts", []),
+                 "strict": fr.get("strict", False)}
     lines += shared_lines
     if pack:
         lines += ["", "## Evidence pack", "",
