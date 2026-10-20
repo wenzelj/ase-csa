@@ -288,14 +288,50 @@ def _rejected(workspace: Path) -> set[str]:
     return {i for i, s in latest.items() if s == "rejected"}
 
 
+MAX_FRAME_TERMS = 6
+FRAME_HITS_PER_TERM = 2
+
+
+def frame_terms(node: dict, qs: list[dict]) -> dict[str, list[str]]:
+    """{question id: [index search terms]} from the topic frame's slots (``"search"``: the words the captures and
+    documents use for what the slot asks, such as a service, a policy key or a tool). A requirement question gets the
+    terms of the slots that name its requirement, every other question the terms of all slots. Empty without a frame."""
+    from csa_docx import topic_frames
+    raw = topic_frames.frame_for(node.get("title", "")) or {}
+    out: dict[str, list[str]] = {}
+    for q in qs:
+        if q["kind"] == "comment":
+            continue
+        terms: list[str] = []
+        for s in raw.get("slots", []):
+            if q["kind"] != "requirement" or q.get("req_id") in s.get("requirements", []):
+                terms += [x for x in s.get("search", []) if x not in terms]
+        if terms:
+            out[q["id"]] = terms[:MAX_FRAME_TERMS]
+    return out
+
+
+def _index_hits(workspace: Path, term: str, exclude: tuple[str, ...], cache: dict) -> list[dict]:
+    """Discovery index hits for one frame search term (cached per card): the term is chosen for its topic, so no
+    word-overlap filter is applied. Each hit is a candidate only, never evidence."""
+    if term not in cache:
+        script = _skills() / "csa-discovery-index" / "scripts" / "discovery_index.py"
+        res = _run([sys.executable, str(script), "--workspace", str(workspace), "search", term,
+                    "--limit", str(FRAME_HITS_PER_TERM), "--per-file", "1"])
+        hits = (res or {}).get("results", []) if (res or {}).get("status") == "OK" else []
+        cache[term] = [h for h in hits if not any(e and e in h.get("rel_path", "") for e in exclude)]
+    return cache[term]
+
+
 def evidence_pack(node: dict, qs: list[dict], workspace: Path | None, extra_searches: dict | None = None,
-                  exclude: tuple[str, ...] = ()) -> dict:
+                  exclude: tuple[str, ...] = (), skip: frozenset = frozenset(), terms: dict | None = None) -> dict:
     """{question id: {"rows", "cut", "candidates", "searched"}}, gathered before the AI starts.
 
     Rows recorded for this section (the matrix `section` or `csa_area` names its topic) come first, ranked by
     status and by the words they share with the question; matrix lookups add rows recorded elsewhere; index
     hits not yet in the matrix are offered as unverified candidates only when they are about the question.
-    Rejected rows are never offered. Capped per question; what is cut is listed by ID."""
+    Rejected rows are never offered. Capped per question; what is cut is listed by ID. Rows in ``skip`` (the ones
+    the analysis frame already cites, with their findings, on the same card) are not repeated, so they take no slot."""
     pack: dict[str, dict] = {}
     if not workspace:
         return pack
@@ -305,8 +341,9 @@ def evidence_pack(node: dict, qs: list[dict], workspace: Path | None, extra_sear
         gap_lookup = None
     rows = _matrix_rows(workspace)
     rejected = _rejected(workspace)
+    cache: dict = {}
     topic = _norm(node["title"])
-    own = [r for r in rows if r["evidence_id"].upper() not in rejected and (
+    own = [r for r in rows if r["evidence_id"].upper() not in rejected and r["evidence_id"].upper() not in skip and (
         topic and (topic in _norm(r.get("section", "")) or _norm(r.get("csa_area", "")) in (topic, topic.replace(" and ", " "))))]
     for q in qs:
         if q["kind"] == "comment":
@@ -322,7 +359,7 @@ def evidence_pack(node: dict, qs: list[dict], workspace: Path | None, extra_sear
         for query in queries:
             searched.append(f"matrix lookup '{query.strip()}'")
             for m in _matrix(workspace, query):
-                if m["evidence_id"].upper() in rejected or m["evidence_id"] in scored:
+                if m["evidence_id"].upper() in rejected or m["evidence_id"] in scored or m["evidence_id"].upper() in skip:
                     continue
                 if m.get("score", 0) < 0.4 and query not in (extra_searches or {}).get(q["id"], []):
                     continue
@@ -331,14 +368,22 @@ def evidence_pack(node: dict, qs: list[dict], workspace: Path | None, extra_sear
         kept = [_row(m) for m in ranked[:MAX_ROWS_PER_QUESTION]]
         cut = [m["evidence_id"] for m in ranked[MAX_ROWS_PER_QUESTION:]]
         cands = []
-        if gap_lookup is not None:
+        for term in (terms or {}).get(q["id"], []):        # the frame's own words for this question's slots
+            searched.append(f"index '{term}'")
+            for h in _index_hits(workspace, term, exclude, cache):
+                cands.append({"source": h.get("source_title", "")[:160], "where": h.get("page_or_location", ""),
+                              "excerpt": " ".join(h.get("evidence_excerpt", "").split())[:EXCERPT]})
+        if gap_lookup is not None and not (terms or {}).get(q["id"]):
             for query in [f"{node['title']} {' '.join(sorted(qwords)[:5])}"] + (extra_searches or {}).get(q["id"], []):
                 hits, ran, _ = gap_lookup._index_stage(workspace, query, exclude)
                 searched += [f"index '{x}'" for x in ran[:2]]
                 for h in hits[:3]:
                     cands.append({"source": h.get("source_title", "")[:160], "where": h.get("page_or_location", ""),
                                   "excerpt": " ".join(h.get("evidence_excerpt", "").split())[:EXCERPT]})
-        pack[q["id"]] = {"rows": kept, "cut": cut, "candidates": cands[:3], "searched": searched}
+        if skip:
+            searched.append(f"{len(skip)} rows the analysis frame cites are on the card with its findings, not repeated here")
+        pack[q["id"]] = {"rows": kept, "cut": cut, "candidates": cands[:4 if (terms or {}).get(q["id"]) else 3],
+                         "searched": searched}
     return pack
 
 
@@ -854,7 +899,15 @@ def must_address_lines(items: list[dict]) -> list[str]:
 def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool = True,
          extra_searches: dict | None = None, exclude: tuple[str, ...] = ()) -> dict:
     qs = questions(node, spec)
-    pack = evidence_pack(node, qs, workspace, extra_searches, exclude) if evidence else {}
+    fr = None                    # the analysis frame: built first, so each requirement question can list what it owes
+    if evidence and workspace:   # and the evidence pack does not repeat the rows the frame already cites
+        from csa_docx import topic_frames
+        fr = topic_frames.build(Path(workspace), node["title"], node.get("key", ""))
+        if fr.get("status") != "OK":
+            fr = None
+    on_frame = frozenset(i.upper() for i in topic_frames.all_ids(fr)) if fr else frozenset()
+    pack = evidence_pack(node, qs, workspace, extra_searches, exclude, skip=on_frame,
+                         terms=frame_terms(node, qs) if fr else None) if evidence else {}
     established = _established(node, qs, pack, workspace) if pack else {}
     if pack:
         from csa_docx import evidence_digest
@@ -893,18 +946,16 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
                     if i.upper() not in have and i.upper() in by_id:
                         p["rows"].append(_row(by_id[i.upper()]))
                         have.add(i.upper())
-    fr = None                    # the analysis frame: built first, so each requirement question can list what it owes
-    if evidence and workspace:
-        from csa_docx import topic_frames
-        fr = topic_frames.build(Path(workspace), node["title"], node.get("key", ""))
-        if fr.get("status") != "OK":
-            fr = None
     owed = must_address_by_question(qs, fr)
     pview = None                 # the system parts (csa-work/parts.json): the names every section writes about
     if evidence and workspace:
         from csa_docx import parts as parts_mod
         pview = parts_mod.card_view(Path(workspace) / "csa-work", fr, qs)
     established = filter_established(established, pack, fr) if established else established
+    practice_view = {}
+    if evidence and workspace:
+        from csa_docx import practice as practice_mod
+        practice_view = practice_mod.card_view(Path(workspace) / "csa-work", node.get("key", ""))
     lines = [f"# Card: {node['title']} (key {node['key']}, section {node['number']})", "",
              f"Kind: {node['kind']}", "", "## Questions", ""]
     for q in qs:
@@ -912,6 +963,9 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
         if q.get("columns"):
             lines.append(f"  Columns: {' | '.join(q['columns'])}")
         lines += must_address_lines(owed.get(q["id"], []))
+        if q.get("req_id") and practice_view:
+            from csa_docx.practice import card_lines as practice_card_lines
+            lines += practice_card_lines(q["req_id"], practice_view)
         if pview:
             from csa_docx.parts import owed_lines
             lines += owed_lines(pview, q["id"])
@@ -1038,7 +1092,8 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
             "correct": [{k: x[k] for k in ("question", "fact", "evidence_ids", "capture_ids", "contradicts")} for x in correct],
             "ratings": spec.get("ratings") or doc_spec.DEFAULT_RATINGS, "kinds": kinds, "host_register": reg,
             "role_table": rtable, "role_tables": rtables or [], "frame": frame,
-            "parts": {k: v for k, v in pview.items() if k != "lines"} if pview else None}
+            "parts": {k: v for k, v in pview.items() if k != "lines"} if pview else None,
+            "practice": practice_view}
 
 
 def main(argv: list[str] | None = None) -> int:

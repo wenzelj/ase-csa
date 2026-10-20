@@ -454,6 +454,52 @@ def record_observation(work_dir: Path | str, question_id: str, kind: str, observ
             "replaces": replaces, "evidence_id": eid}
 
 
+def card_view(work_dir: Path | str, section_key: str) -> dict:
+    """Practice catalogue, open questions, accepted observations and missing strengths for a card."""
+    work = Path(work_dir)
+    frame = load_frame(section_key) or {}
+    catalogue = frame.get("practice") or {}
+    questions = [r for r in _question_rows(work / "practice" / "questions.csv")
+                 if r.get("section_key", "").upper() == section_key.upper()]
+    observations = _observation_rows(work / "practice" / "observations.csv")
+    active = [r for r in observations if r.get("status") == "active" and r.get("evidence_id")]
+    matrix = []
+    matrix_path = work / "evidence-matrix.csv"
+    if matrix_path.is_file():
+        with matrix_path.open(newline="", encoding="utf-8-sig") as fh: matrix = list(csv.DictReader(fh))
+    out = {}
+    for req, entry in catalogue.items():
+        req_questions = [r for r in questions if r.get("requirement_id") == req and r.get("status") != "superseded"]
+        req_obs = [r for r in active if r.get("requirement_id") == req]
+        strengths = {r.get("kind") for r in req_obs}
+        if any(r.get("status") == "VERIFIED" and req in (r.get("question") or "")
+               and not (r.get("gap_or_action") or "").startswith("practice:") for r in matrix):
+            strengths.add("operational")
+        required = list(entry.get("minimum_for_met", []))
+        out[req] = {"needs": list(entry.get("needs", [])), "questions": req_questions,
+                    "observations": req_obs, "strengths": sorted(strengths),
+                    "missing_strengths": [s for s in required if s not in strengths],
+                    "cap_without": entry.get("cap_without", "")}
+    return out
+
+
+def card_lines(requirement_id: str, view: dict) -> list[str]:
+    item = view.get(requirement_id)
+    if not item: return []
+    lines = ["  Practice evidence needed:"]
+    for need in item["needs"]:
+        vals = need.get("roles", []) if need.get("kind") == "owner" else need.get("examples", [])
+        lines.append(f"  - {need.get('kind')}: {', '.join(vals)}")
+    for q in item["questions"]:
+        assigned = f"; assigned to {q['assigned_person']} ({q['assigned_role']})" if q.get("assigned_person") else ""
+        lines.append(f"  - owner question {q['question_id']} [{q['status']}]{assigned}: {q['question']}")
+    for obs in item["observations"]:
+        lines.append(f"  - {obs['kind']} observation {obs['observed_on']} ({obs['evidence_id']}): {obs['observation']}")
+    if item["missing_strengths"]:
+        lines.append(f"  - rating floor: missing {', '.join(item['missing_strengths'])}; highest rating {item['cap_without']}")
+    return lines
+
+
 def main(argv: list[str] | None = None) -> int:
     import argparse
     import sys
