@@ -210,7 +210,8 @@ HARD_CODES = {"CROSS_PROJECT_ONLY", "NOTE_TOO_LONG", "NOTE_NONE_AND_TEXT", "NOTE
               "COLUMNS", "ROW_WIDTH", "NO_ROWS", "REQUIREMENT_NO_FACTS", "SEMICOLON", "PROCESS_AS_SUBJECT",
               "CITATION_OFF_TOPIC", "NO_TOTALS", "ROLE_TABLE_REPEAT", "FRAME_UNCOVERED", "ATTEMPT_AS_ESTABLISHED",
               "SLOT_NOT_ANSWERED", "FLOW_NOT_COVERED", "ZONE_CONTRADICTED", "PART_NOT_NAMED", "ISOLATION_WRONG_SIDE",
-              "PART_MISATTRIBUTED", "CITED_AND_DROPPED", "LABEL_AS_NAME", "PART_NAME_LIST"}
+              "PART_MISATTRIBUTED", "CITED_AND_DROPPED", "LABEL_AS_NAME", "PART_NAME_LIST", "SUBJECT_NOT_THIS_SYSTEM",
+              "PRACTICE_NOT_ADDRESSED", "PRACTICE_ATTRIBUTION_DROPPED"}
 
 # counts and totals of hosts ("9 of 12", "all 12 captured hosts", "nine hosts", "two RevViewer Jump Hosts"): CSA text
 # names the role groups instead. "stratum 5 hosts" and port numbers are not counts.
@@ -266,6 +267,40 @@ _HEDGE = re.compile(r"\b(?:may (?:also )?(?:stop|lose|be lost)|if (?:their|its|t
                     r"might (?:stop|lose))\b", re.I)
 _LOSS = re.compile(r"\b(?:lose|loses|losing|lost|stops?|is cut|are cut|cut off|no longer)\b", re.I)
 _EVERY_PART = re.compile(r"\b(?:every|all)(?: other)? parts?\b", re.I)
+
+
+_THIS_SYSTEM = re.compile(r"\b(?:this|the) system\b", re.I)
+
+
+def subject_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
+    """SUBJECT_NOT_THIS_SYSTEM (hard): a sentence, table row or bullet that names another application (a neighbour
+    or a same-system sibling, card "parts" "foreign": its name or a host of it) but no part or host of this system.
+    Each CSA describes its own application: another application appears only where this system meets it (a flow
+    between a part of this system and that application), never on its own."""
+    from csa_docx.parts import named
+    pc = card.get("parts") or {}
+    foreign = pc.get("foreign") or {}
+    if not foreign:
+        return []
+    hosts = pc.get("hosts") or {}
+    own = list(hosts) + [n for pid in set(hosts.values()) for n in (pc.get("names") or {}).get(pid, [])]
+    kinds = {q["id"]: q["kind"] for q in card.get("questions", [])}
+    out = []
+    for qid, b in sheet.items():
+        if kinds.get(qid) == "comment":
+            continue
+        pieces = [f["text"] for f in b.get("facts", [])] + list(b.get("bullets") or [])
+        pieces += [" | ".join(r) for r in (b.get("rows") or [])[1:]]
+        pieces += [s for t in (b.get("text") or "", b.get("rating_reason") or "") for s in re.split(r"(?<=[.!?])\s+|\n+", t)]
+        for s in (x for x in pieces if x and x.strip()):
+            hit = [v["application"] for v in foreign.values() if named(s, v["names"])]
+            if hit and not named(s, own) and not _THIS_SYSTEM.search(s):
+                out.append(_f("ERROR", "SUBJECT_NOT_THIS_SYSTEM", qid,
+                              f"this is about {', '.join(dict.fromkeys(hit))}, another application with its own CSA: "
+                              f"name it only where it meets a part of this system (which part, what moves), or leave "
+                              f"it out: \"{s[:150]}\""))
+                break
+    return out
 
 
 def part_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
@@ -394,6 +429,35 @@ def rating_floor(sheet: dict[str, dict], card: dict) -> list[dict]:
         if why:
             out.append(_f("WARN", "RATING_ABOVE_FLOOR", qid, "rated Met although " + " and ".join(why)
                           + ": say in the rating reason what controls this, or lower the rating"))
+    return out
+
+
+def practice_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
+    """Require configured practice evidence or an Unknown, retain statement attribution and enforce its rating cap."""
+    out = []
+    view = card.get("practice") or {}
+    strict = bool((card.get("frame") or {}).get("strict"))
+    ratings = card.get("ratings") or ["Met", "Partially Met", "Not Met", "Not Applicable"]
+    by_req = {q.get("req_id"): q["id"] for q in card.get("questions", []) if q.get("req_id")}
+    for req, item in view.items():
+        qid = by_req.get(req)
+        b = sheet.get(qid) if qid else None
+        if not b: continue
+        cited = block_ids(b)
+        accepted = [o for o in item.get("observations", []) if o.get("evidence_id", "").upper() in cited]
+        if item.get("needs") and not accepted and not b.get("unknown"):
+            out.append(_f("ERROR" if strict else "WARN", "PRACTICE_NOT_ADDRESSED", qid,
+                          "practice evidence is neither cited nor retained as an Unknown"))
+        facts = " ".join(f.get("text", "") for f in b.get("facts", []))
+        for obs in accepted:
+            if obs.get("kind") == "stated" and (obs.get("person", "") not in facts or obs.get("observed_on", "") not in facts):
+                out.append(_f("ERROR", "PRACTICE_ATTRIBUTION_DROPPED", qid,
+                              f"{obs['evidence_id']} is an attributed statement: retain {obs.get('person')} and {obs.get('observed_on')}"))
+        missing = item.get("missing_strengths") or []
+        cap = item.get("cap_without", "")
+        if missing and b.get("rating") in ratings and cap in ratings and ratings.index(b["rating"]) < ratings.index(cap):
+            out.append(_f("WARN", "RATING_ABOVE_PRACTICE_FLOOR", qid,
+                          f"rated {b['rating']} although {', '.join(missing)} evidence is missing; cap is {cap}"))
     return out
 
 
@@ -933,6 +997,8 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
         findings += regression(previous, sheet, matrix, card)
     findings += kept_facts(sheet, card, findings)
     findings += frame_checks(sheet, card)
+    findings += practice_checks(sheet, card)
+    findings += subject_checks(sheet, card)
     for qid in sheet:
         if qid not in qs and not qid.startswith("F"):
             findings.append(_f("WARN", "EXTRA_BLOCK", qid, "this question is not on the card"))
@@ -1258,6 +1324,26 @@ def leads_text(leads: list[dict]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def sheet_hash_drift(sheet_path: Path) -> dict | None:
+    """A warning when the manifest beside the sheet records another sheet than the one being validated: the document was
+    last written from the recorded sheet, not this one. None without a manifest or without a recorded hash."""
+    import hashlib
+    path = Path(sheet_path)
+    manifest = path.with_name(path.name[: -len(".answer.md")] + ".manifest.json") if path.name.endswith(".answer.md") else None
+    if not manifest or not manifest.is_file() or not path.is_file():
+        return None
+    try:
+        recorded = json.loads(manifest.read_text(encoding="utf-8")).get("sheet_sha256")
+    except (OSError, ValueError):
+        return None
+    live = hashlib.sha256(path.read_bytes()).hexdigest()
+    if not recorded or recorded == live:
+        return None
+    return _f("WARN", "SHEET_HASH_DRIFT", "",
+              f"manifest records {recorded[:8]} (applied sheet) but the live sheet is {live[:8]}; "
+              "the document was last written from the recorded sheet")
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("action", choices=["validate", "parse", "render", "leads"])
@@ -1285,6 +1371,10 @@ def main(argv: list[str] | None = None) -> int:
         prev = parse(a.previous.read_text(encoding="utf-8")) if a.previous and a.previous.is_file() else None
         res = validate(sheet, card, load_matrix(a.matrix), new_ids={x.strip() for x in a.new_ids.split(",") if x.strip()},
                        draft=a.draft, previous=prev)
+        drift = sheet_hash_drift(a.sheet)
+        if drift:
+            res["findings"].append(drift)
+            res["warnings"] += 1
         print(json.dumps(res, indent=1))
         return 0 if res["status"] == "OK" else 1
     from csa_docx import doc_spec, section_card, spec_cli
