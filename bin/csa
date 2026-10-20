@@ -483,8 +483,12 @@ def final_version_dirs(p: dict) -> list[Path]:
 
 
 def working_docx(p: dict) -> Path | None:
-    """The working DOCX: the newest .docx beside a reviews/ folder of change files, else the project's standard
+    """The working DOCX: the project's `working_docx:` (PROJECTS.yaml) when it names a file that exists, else the
+    newest .docx beside a reviews/ folder of change files, else the project's standard
     "01 Current State AS Built/01 Final Version" folder (a folder with change files but no .docx is skipped)."""
+    pinned = local_path(p["working_docx"]) if p.get("working_docx") else None
+    if pinned and pinned.is_file():
+        return pinned
     standard = local_path(p["project_root"]) / "01 Current State AS Built" / "01 Final Version"
     for d in [*final_version_dirs(p), standard]:
         docs = sorted(x for x in d.glob("*.docx") if not x.name.startswith("~$"))

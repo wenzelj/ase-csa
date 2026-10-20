@@ -209,7 +209,8 @@ def count_mismatch(text: str) -> str | None:
 HARD_CODES = {"CROSS_PROJECT_ONLY", "NOTE_TOO_LONG", "NOTE_NONE_AND_TEXT", "NOTE_NO_FACTS", "CAPTURE_DROPPED", "UNKNOWN_BUNDLED", "BACKGROUND_AS_EVIDENCE", "BACKGROUND_MIXED", "BACKGROUND_NOT_ON_CARD", "BACKGROUND_ALONE", "QUESTION_MISSING", "EMPTY_ANSWER", "FACT_NO_EVIDENCE", "UNKNOWN_EVIDENCE", "RATING_INVALID",
               "COLUMNS", "ROW_WIDTH", "NO_ROWS", "REQUIREMENT_NO_FACTS", "SEMICOLON", "PROCESS_AS_SUBJECT",
               "CITATION_OFF_TOPIC", "NO_TOTALS", "ROLE_TABLE_REPEAT", "FRAME_UNCOVERED", "ATTEMPT_AS_ESTABLISHED",
-              "SLOT_NOT_ANSWERED", "FLOW_NOT_COVERED", "ZONE_CONTRADICTED", "PART_NOT_NAMED", "ISOLATION_WRONG_SIDE"}
+              "SLOT_NOT_ANSWERED", "FLOW_NOT_COVERED", "ZONE_CONTRADICTED", "PART_NOT_NAMED", "ISOLATION_WRONG_SIDE",
+              "PART_MISATTRIBUTED"}
 
 # counts and totals of hosts ("9 of 12", "all 12 captured hosts", "nine hosts", "two RevViewer Jump Hosts"): CSA text
 # names the role groups instead. "stratum 5 hosts" and port numbers are not counts.
@@ -271,8 +272,12 @@ def part_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
     has no Text) names every part the card lists under it, by name, short name or, for a dependency, an address;
     "every other part" covers the rest. HOST_IN_TEXT (warning): a requirement or narrative Text names a host of the
     system instead of its part. ISOLATION_WRONG_SIDE (hard): a sentence says a part outside OT loses something when
-    OT is isolated, but names only what it keeps (its flows that never touch OT), none of its paths into OT."""
-    from csa_docx.parts import named
+    OT is isolated, but names only what it keeps (its flows that never touch OT), none of its paths into OT.
+    PART_MISATTRIBUTED (an error when the frame is strict, else a warning): a requirement or narrative sentence
+    names a system part together with a kind of fact (shares, removable storage, transfer tools, the proxy, SMB or
+    backup-agent connections) that no finding shows on any of that part's machines: naming a part does not make a
+    fact about another part true of it."""
+    from csa_docx.parts import FEATURES, named, parts_in
     pc = card.get("parts") or {}
     if not pc:
         return []
@@ -298,6 +303,24 @@ def part_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
             if hit:
                 out.append(_f("WARN", "HOST_IN_TEXT", qid, "name the part, not the host: "
                               + ", ".join(f"{h} is part of {pc['parts'][hosts[h]]}" for h in hit[:4])))
+    feats = pc.get("features") or {}
+    system = {pid for pid in pc.get("names", {}) if pid in set(hosts.values())}
+    for qid, b in sheet.items():
+        if kinds.get(qid) not in ("requirement", "narrative") or not feats:
+            continue
+        # one clause at a time: "X does A, while Y does B" says A of X and B of Y
+        for s in re.split(r"(?<=[.!?])\s+|\n+|,?\s+(?:while|whereas|but|although)\s+|;\s*",
+                          (b.get("text") or "") + "\n" + (b.get("rating_reason") or "")):
+            said = [k for k, (rx, _, _) in FEATURES.items() if k in feats and re.search(rx, s, re.I)]
+            if not said:
+                continue
+            ok_parts = {pid for k in said for pid in feats[k]}
+            wrong = sorted(pc["parts"][pid] for pid in parts_in(s, {k: v for k, v in pc["names"].items() if k in system})
+                           if pid not in ok_parts)
+            if wrong:
+                out.append(_f("ERROR" if strict else "WARN", "PART_MISATTRIBUTED", qid,
+                              f"no finding shows {', '.join(said)} on {', '.join(wrong)}: say it only of the parts whose "
+                              f"machines the findings name ({', '.join(sorted(pc['parts'][p] for p in ok_parts))}): \"{s[:170]}\""))
     for qid, b in sheet.items():
         if kinds.get(qid) != "narrative":
             continue

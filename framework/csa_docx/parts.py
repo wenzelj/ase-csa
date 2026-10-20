@@ -1,10 +1,12 @@
 """System parts: the pieces of the system every section writes about.
 
-A part is a role group of the system (from the host register) or something the system exchanges data with (the
-backup platform, messaging, a monitoring service, peers nobody has identified, internet services), with its hosts or
-flow ends, its zones and its side of the OT boundary. ``csa-work/parts.json`` holds them. A person reviews it once:
-renames a part, adds the short names the sources use for it (aliases), and moves a flow end to another part with
-"assign". A rebuild keeps those edits. Cards, checks and the document check then all use the same parts and names.
+A part is a role group of the system or something the system exchanges data with (the backup platform, messaging,
+a monitoring service, peers nobody has identified, internet services), with its hosts or flow ends, its zones and its
+side of the OT boundary. A system part is always named by its machines' role in the host register (hosts.csv), and
+the parts are worked out afresh from the register and the flows every time a card is built, so a register change
+(a role, a site) shows at once. ``csa-work/parts.json`` keeps only what the register cannot say: the other names the
+sources use for a part (aliases), the name of a dependency, which part a flow end belongs to ("assign"), notes, and
+whether a person has reviewed the parts.
 
     python3 -m csa_docx.parts build --work-dir <csa-work>
     python3 -m csa_docx.parts show --work-dir <csa-work>
@@ -88,12 +90,24 @@ def dependency_of(end: str, zone: str, hints: dict, register: set[str]) -> tuple
         return zone, "service zone"
     if zone.lower() == "internet" or _public(end):
         return "Internet services", "public address"
-    return "Peers not identified", "no name, role or service zone recorded"
+    return "Unidentified internal peers", "no name, role or service zone recorded"
+
+
+# framework labels that were renamed: a parts.json written under the old label keeps its review
+_RENAMED = {"peers-not-identified": "unidentified-internal-peers"}
 
 
 def build(work_dir: Path) -> dict:
-    """Write csa-work/parts.json from the host register and the flows, keeping a person's names, aliases, notes and
-    assignments from the previous file. ``reviewed`` stays true only while no part gains or loses a member."""
+    """Write csa-work/parts.json (see assemble)."""
+    doc = assemble(work_dir)
+    path(Path(work_dir)).write_text(json.dumps(doc, indent=1, ensure_ascii=False), encoding="utf-8")
+    return doc
+
+
+def assemble(work_dir: Path) -> dict:
+    """The parts from the host register and the flows, with a person's aliases, dependency names, notes and
+    assignments from parts.json. A system part's name is its machines' register role (a name given to it in
+    parts.json is ignored). ``reviewed`` stays true only while no part gains or loses a member."""
     from csa_docx import flows as F, zones as Z
     from csa_docx.topic_tables import register
     work = Path(work_dir)
@@ -126,7 +140,7 @@ def build(work_dir: Path) -> dict:
                 zone = (r.get(f"{col}_zone") or zs.of(e).get("zone", "") or "").strip()
                 name, basis = dependency_of(e, zone, hints, every)
                 add(name, "dependency", e, basis)
-    kept = {p["id"]: p for p in old.get("parts", [])}
+    kept = {_RENAMED.get(p["id"], p["id"]): p for p in old.get("parts", [])}
     out = []
     for p in sorted(parts.values(), key=lambda p: (p["kind"] != "system", p["name"].lower())):
         p["members"].sort()
@@ -135,16 +149,16 @@ def build(work_dir: Path) -> dict:
         sides = {side(m) for m in p["members"]}
         p["side"] = sides.pop() if len(sides) == 1 else "mixed"
         prev = kept.get(p["id"], {})
-        p["name"] = prev.get("name") or p["name"]
+        if p["kind"] != "system":
+            p["name"] = prev.get("name") or p["name"]
         p["aliases"] = list(dict.fromkeys((prev.get("aliases") or []) + [a for a in short_names(p["name"])]))
         if prev.get("note"):
             p["note"] = prev["note"]
         out.append(p)
-    same = {p["id"]: p["members"] for p in out} == {p["id"]: sorted(p.get("members", [])) for p in old.get("parts", [])}
-    doc = {"reviewed": bool(old.get("reviewed")) and same, "reviewed_on": old.get("reviewed_on", "") if same else "",
-           "assign": assign, "parts": out}
-    path(work).write_text(json.dumps(doc, indent=1, ensure_ascii=False), encoding="utf-8")
-    return doc
+    was = {_RENAMED.get(p["id"], p["id"]): sorted(p.get("members", [])) for p in old.get("parts", [])}
+    same = {p["id"]: p["members"] for p in out} == was
+    return {"reviewed": bool(old.get("reviewed")) and same, "reviewed_on": old.get("reviewed_on", "") if same else "",
+            "assign": assign, "parts": out}
 
 
 def index(doc: dict) -> dict[str, dict]:
@@ -161,6 +175,19 @@ def names(p: dict) -> list[str]:
 def _norm(s: str) -> str:
     words = re.findall(r"[a-z0-9./]+", s.lower())
     return " " + " ".join(w[:-1] if len(w) > 3 and w.endswith("s") and not w.endswith("ss") else w for w in words) + " "
+
+
+def parts_in(text: str, names_by_part: dict[str, list[str]]) -> set[str]:
+    """The parts a text names, longest name first, so a name inside a longer one does not count twice
+    ("RevBroadcast System Application Server" names that server, not also the part whose short name is RevBroadcast)."""
+    t = _norm(text)
+    out = set()
+    for n, pid in sorted(((_norm(n), pid) for pid, ns in names_by_part.items() for n in ns if _norm(n).strip()),
+                         key=lambda x: -len(x[0])):
+        if n in t:
+            out.add(pid)
+            t = t.replace(n, " # ")
+    return out
 
 
 def named(text: str, ns: list[str]) -> bool:
@@ -256,7 +283,9 @@ def card_view(work_dir: Path, fr: dict | None, qs: list[dict]) -> dict | None:
     """What the card shows and the checks need, or None when the project has no parts.json yet:
     {"reviewed", "names": {id: [names]}, "sides": {id: side}, "hosts": {host: id}, "owed": {question id: [id]},
     "isolation": {id: {"effect", "loss", "safe"}}, "lines": [card lines]}."""
-    doc = load(work_dir)
+    if not path(Path(work_dir)).is_file():
+        return None
+    doc = assemble(work_dir)
     if not doc.get("parts"):
         return None
     g = grid(doc, fr)
@@ -265,15 +294,20 @@ def card_view(work_dir: Path, fr: dict | None, qs: list[dict]) -> dict | None:
     parts = {p["id"]: p for p in doc["parts"]}
     touched = [p for p in doc["parts"] if p["id"] in g["by_part"] or p["kind"] == "system"]
     lines = ["", "## System parts (built by the framework from the host register and the flows)", "",
-             "Write about the system as these parts, by these names (\"also\" gives accepted short names). In Text: lines "
+             "Write about the system as these parts, by these names (\"also\" gives accepted short names). A system part "
+             "is named by its machines' role in the host register: a role written as two roles (\"A, B\") is one part, "
+             "the same machines, never two. A dependency's name is a label: write it as plain English (\"an unidentified "
+             "internal peer at 10.1.2.3\"), never as a name in a sentence. Say something about a part only where a "
+             "finding listed under that part shows it: a share, a setting or a connection belongs to the part whose "
+             "machines the finding names (PART_MISATTRIBUTED). In Text: lines "
              "name the part, never a host of the system (HOST_IN_TEXT): the role table and the Discovery rows carry the "
              "hosts. Start each requirement's Text: with one lead sentence that gives the verdict and the part or parts "
              "that decide it, then one sentence for each part that differs. Every part listed under a requirement "
-             "question must be named in its Text: (PART_NOT_NAMED), or covered by \"every other part\". In the "
+             "question must be named in its Text: (PART_NOT_NAMED), or covered by a short clause \"and every other part\" that "
+             "adds no claim of its own. In the "
              "Discovery Information table, give each part its own Aspect row where the topic touches it. The Drawbridge "
              "Impact says, part by part, what each keeps or loses when OT is isolated, from the \"When OT is isolated\" "
-             "lines below: a part outside OT loses only its paths into OT (ISOLATION_WRONG_SIDE). The findings "
-             "themselves are under Analysis frame: the slot and evidence IDs below say which are about each part.", ""]
+             "lines below: a part outside OT loses only its paths into OT (ISOLATION_WRONG_SIDE).", ""]
     if not doc.get("reviewed"):
         lines += ["The parts have not been reviewed yet (csa parts approve): use them, and say nothing that depends on "
                   "a part's name being final.", ""]
@@ -282,12 +316,16 @@ def card_view(work_dir: Path, fr: dict | None, qs: list[dict]) -> dict | None:
         lines.append(f"### {p['name']}{al}")
         lines.append(f"- {p['kind']} part, {'in OT' if p['side'] == 'ot' else 'outside OT' if p['side'] == 'outside' else 'side of OT not settled (' + p['side'] + ')'}"
                      f" ({', '.join(p['zones'])}): {', '.join(p['members'][:8])}" + (" and more" if len(p["members"]) > 8 else ""))
-        found: dict[str, list[str]] = {}         # slot -> evidence IDs: the findings themselves are in the frame below
-        for f in g["by_part"].get(p["id"], []):
-            found.setdefault(f["slot"], [])
-            found[f["slot"]] += [i for i in f["ids"] if i not in found[f["slot"]]]
-        lines.append("- Findings about it: " + ("; ".join(f"{k} ({', '.join(v)})" if v else k for k, v in found.items())
-                                                if found else "none in this section's analysis frame"))
+        if p["kind"] == "system" and "," in p["name"]:
+            lines.append(f"- one part: the same machines hold the roles {p['name']}")
+        mine = g["by_part"].get(p["id"], [])
+        if not mine:
+            lines.append("- Findings about it: none in this section's analysis frame")
+        for f in mine[:6]:
+            ids = f" ({', '.join(f['ids'])})" if f["ids"] else ""
+            lines.append(f"- {f['slot']}: {f['text'][:170]}{ids}")
+        if len(mine) > 6:
+            lines.append(f"- {len(mine) - 6} more findings about it under Analysis frame")
         lines.append(f"- When OT is isolated: {iso[p['id']]['effect'][:300]}")
         lines.append("")
     return {"reviewed": bool(doc.get("reviewed")),
@@ -296,7 +334,39 @@ def card_view(work_dir: Path, fr: dict | None, qs: list[dict]) -> dict | None:
             "hosts": {m.upper(): p["id"] for p in doc["parts"] if p["kind"] == "system" for m in p["members"]},
             "owed": byq,
             "isolation": {pid: {"effect": v["effect"], **isolation_tokens(v)} for pid, v in iso.items()},
+            "features": features(doc, fr),
             "lines": lines, "parts": {pid: parts[pid]["name"] for pid in parts}}
+
+
+# What a sentence says about a part must come from a finding about that part's machines: a share, a setting or a
+# kind of connection named in a sentence, and the system parts whose machines the frame has a finding of that kind on.
+FEATURES = {
+    "shares": (r"\bshares\b|\bshare\b(?!\s+transfer)", ("Shares on",), ()),
+    "removable storage": (r"\bremovable (?:storage|media)\b", ("Removable storage policy on",), ()),
+    "transfer tools": (r"\btransfer tools?\b|\bWinSCP\b|\bFileZilla\b|\bTftpd64\b|\bPuTTY\b",
+                       ("File transfer tools installed on",), ()),
+    "proxy": (r"\bWinHTTP\b|\bproxy\b", ("Proxy setting on",), ()),
+    "SMB": (r"\bSMB\b|\bfile[- ]share connections?\b", (), ("file share",)),
+    "backup agent": (r"\bbackup agent\b", (), ("backup agent",)),
+}
+
+
+def features(doc: dict, fr: dict | None) -> dict[str, list[str]]:
+    """{feature: [system part id]}: for each kind of fact in FEATURES, the system parts with at least one machine the
+    analysis frame has a finding of that kind about (any value: a part whose machines were not captured has none)."""
+    idx = index(doc)
+    out: dict[str, list[str]] = {}
+    for s in (fr or {}).get("slots", []):
+        for f in s["findings"]:
+            text, mech = f.get("text", ""), (f.get("mechanism") or "").lower()
+            for name, (_, prefixes, mechs) in FEATURES.items():
+                if any(text.startswith(x) for x in prefixes) or (mech and mech in mechs):
+                    for h in f.get("hosts", []):
+                        for e in (end_name(x) for x in h.split(",")):
+                            p = idx.get(e.upper())
+                            if p and p["kind"] == "system" and p["id"] not in out.setdefault(name, []):
+                                out[name].append(p["id"])
+    return out
 
 
 def owed_lines(view: dict | None, qid: str) -> list[str]:
