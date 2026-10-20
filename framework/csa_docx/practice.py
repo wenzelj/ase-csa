@@ -18,8 +18,12 @@ Requirements without practice metadata behave exactly as they do today.
 
 from __future__ import annotations
 
+import csv
+import hashlib
 import json
+import os
 import re
+from datetime import date
 from pathlib import Path
 
 # Allowed evidence strengths (the document's rating floor vocabulary for practice)
@@ -36,6 +40,12 @@ QUESTION_STATUSES = ("open", "assigned", "answered", "not_applicable", "supersed
 
 # Allowed observation kinds (S395+)
 OBSERVATION_KINDS = ("stated", "documented")
+
+QUESTION_FIELDS = (
+    "question_id", "requirement_id", "section_key", "answer_question_id", "question",
+    "evidence_needed", "suggested_owner_roles", "assigned_person", "assigned_role", "status",
+    "generated_on", "answered_by_observation", "note",
+)
 
 
 def validate_entry(entry: dict, req_id: str) -> list[str]:
@@ -203,6 +213,110 @@ def validate_frames(keys: list[str]) -> dict:
 def has_practice(frame: dict, req_id: str) -> bool:
     """True when the frame carries practice metadata for the requirement."""
     return req_id in (frame.get("practice") or {})
+
+
+def _normalise_question(text: str) -> str:
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", text.lower()).split())
+
+
+def practice_question_id(requirement_id: str, question: str) -> str:
+    """Stable ID for one requirement-bound Unknown."""
+    digest = hashlib.sha256(f"{requirement_id}\n{_normalise_question(question)}".encode()).hexdigest()[:10]
+    return f"PQ-{requirement_id}-{digest}"
+
+
+def _question_rows(path: Path) -> list[dict]:
+    if not path.is_file():
+        return []
+    with path.open(newline="", encoding="utf-8-sig") as fh:
+        return [{k: (v or "") for k, v in row.items()} for row in csv.DictReader(fh)]
+
+
+def _write_question_rows(path: Path, rows: list[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    with tmp.open("w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=QUESTION_FIELDS, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(rows)
+    os.replace(tmp, path)
+
+
+def generate_questions(work_dir: Path | str, section_key: str, *, answer_path: Path | str | None = None,
+                       card_path: Path | str | None = None, generated_on: str | None = None) -> dict:
+    """Generate or reconcile the append-preserving owner-question register for one answered section."""
+    from csa_docx.answer_sheet import parse
+
+    work = Path(work_dir)
+    key = section_key.upper()
+    answer = Path(answer_path) if answer_path else work / "cards" / f"{key}.answer.md"
+    card_file = Path(card_path) if card_path else work / "cards" / f"{key}.json"
+    if not answer.is_file() or not card_file.is_file():
+        return {"status": "ERROR", "message": f"missing validated answer or card for {key}"}
+    try:
+        card = json.loads(card_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return {"status": "ERROR", "message": f"cannot read card for {key}: {exc}"}
+    frame = load_frame(key)
+    if frame is None:
+        return {"status": "ERROR", "message": f"no topic frame for {key}"}
+    valid = validate_catalogue(frame)
+    if valid["status"] != "OK":
+        return valid
+
+    questions = {q["id"]: q for q in card.get("questions", []) if q.get("kind") == "requirement"}
+    sheet = parse(answer.read_text(encoding="utf-8"))
+    path = work / "practice" / "questions.csv"
+    old = _question_rows(path)
+    by_id = {r.get("question_id", ""): r for r in old}
+    today = generated_on or date.today().isoformat()
+    active: set[str] = set()
+    added = 0
+    for answer_qid, block in sheet.items():
+        question = questions.get(answer_qid) or {}
+        req = question.get("req_id", "")
+        entry = (frame.get("practice") or {}).get(req)
+        if not entry:
+            continue
+        needs = []
+        roles = []
+        for need in entry.get("needs", []):
+            kind = need.get("kind", "")
+            details = need.get("roles", []) if kind == "owner" else need.get("examples", [])
+            if kind:
+                needs.append(kind + (f": {', '.join(details)}" if details else ""))
+            if kind == "owner":
+                roles.extend(details)
+        seen: set[str] = set()
+        for unknown in block.get("unknown", []):
+            norm = _normalise_question(unknown)
+            if not norm or norm in seen:
+                continue
+            seen.add(norm)
+            qid = practice_question_id(req, unknown)
+            active.add(qid)
+            row = by_id.get(qid)
+            if row is None:
+                row = {f: "" for f in QUESTION_FIELDS}
+                row.update(question_id=qid, assigned_person="", assigned_role="", status="open",
+                           generated_on=today, answered_by_observation="", note="")
+                old.append(row)
+                by_id[qid] = row
+                added += 1
+            elif row.get("status") == "superseded":
+                row["status"] = "open"
+            row.update(requirement_id=req, section_key=key, answer_question_id=answer_qid,
+                       question=unknown.strip(), evidence_needed="; ".join(needs),
+                       suggested_owner_roles="; ".join(dict.fromkeys(roles)))
+    superseded = 0
+    for row in old:
+        if row.get("section_key", "").upper() == key and row.get("question_id") not in active \
+                and row.get("status") not in ("answered", "not_applicable", "superseded"):
+            row["status"] = "superseded"
+            superseded += 1
+    _write_question_rows(path, old)
+    return {"status": "OK", "path": str(path), "section_key": key, "active": len(active),
+            "added": added, "superseded": superseded, "total": len(old)}
 
 
 def main(argv: list[str] | None = None) -> int:

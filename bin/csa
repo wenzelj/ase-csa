@@ -3671,6 +3671,23 @@ def _fw_module_call(module: str, func: str, *args, **kwargs) -> dict:
         return {"status": "ERROR", "message": proc.stdout[-2000:]}
 
 
+def cmd_practice(a):
+    """Generate the reviewable practice owner-question register. This command never contacts owners."""
+    p = project(a.project)
+    work = local_path(p["work_dir"])
+    if a.practice_cmd != "questions":
+        die("practice requires a subcommand")
+    key = str(a.section).upper()
+    if not (work / "cards" / f"{key}.json").is_file():
+        resolved = resolve_target(p, a.section)
+        if resolved.get("status") != "OK":
+            die(resolved.get("message", f"cannot resolve '{a.section}'"))
+        key = resolved["key"]
+    res = _fw_module_call("practice", "generate_questions", str(work), key,
+                          answer_path=a.answer, card_path=a.card)
+    return _emit(res, a)
+
+
 def _select_section_files(p: dict, spec: str | None) -> list[dict]:
     """Resolve ``--sections`` (file names / order prefixes / 'all') to rows."""
     rows = section_rows(p)
@@ -4521,6 +4538,10 @@ def main(argv=None) -> int:
     s.add_argument("--place", action="store_true", help="put it under Discovery Information, above the Aspect table")
     s.add_argument("--settings", action="store_true", help="re-read the per-host settings from the captures first")
     s.add_argument("--json", action="store_true")
+    s = sp("practice", cmd_practice, help="practice evidence owner questions and observations")
+    ps = s.add_subparsers(dest="practice_cmd", required=True)
+    q = ps.add_parser("questions", help="generate the reviewable owner-question register; sends nothing")
+    q.add_argument("section"); q.add_argument("--answer"); q.add_argument("--card"); q.add_argument("--json", action="store_true")
     s = sp("hosts", cmd_hosts, help="host register, facts per host and host-to-host links (build | list | show HOST | links [HOST] | group --attr ... | roles [--fix])")
     s.add_argument("action", nargs="?", default="list", choices=["build", "list", "show", "links", "group", "graph", "unresolved", "system", "evidence", "roles"])
     s.add_argument("host", nargs="?"); s.add_argument("--attr", action="append"); s.add_argument("--system")
