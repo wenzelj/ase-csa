@@ -102,6 +102,42 @@ def log(work: Path, key: str, number: str, title: str, records: int, open_q: int
     return out
 
 
+_SUBJECT = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b|\b(?=[A-Z0-9]*\d)[A-Z][A-Z0-9]{6,}\b")
+
+
+def _group_unknowns(items: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """One open item per subject: the Unknown: lines of one block that are about the same address or host (its name, its
+    role, its zone) are one question for one owner, so they are listed together."""
+    out: list[tuple[str, str]] = []
+    seen: dict[tuple[str, str], int] = {}
+    for qid, u in items:
+        subj = _SUBJECT.search(u)
+        if not subj:
+            out.append((qid, u))
+            continue
+        k = (qid, subj.group(0).upper())
+        if k in seen:
+            first = out[seen[k]]
+            out[seen[k]] = (qid, first[1] + " Also: " + u)
+        else:
+            seen[k] = len(out)
+            out.append((qid, u))
+    # the same question about different addresses, hosts or sites ("What share is accessed at A?" / "... at B?") is one item
+    shaped: dict[tuple[str, str], int] = {}
+    merged: list[tuple[str, str]] = []
+    for qid, u in out:
+        shape = re.sub(r"\s+", " ", _SUBJECT.sub("#", re.sub(r"\b(?:Mackay|Rockhampton)\b", "#", u))).lower()
+        k = (qid, shape)
+        subj = ", ".join(dict.fromkeys(m.group(0) for m in _SUBJECT.finditer(u)))
+        if "#" in shape and k in shaped:
+            q0, u0 = merged[shaped[k]]
+            merged[shaped[k]] = (q0, u0 + (f" Same question for: {subj}." if subj else " Same question for another site."))
+        else:
+            shaped[k] = len(merged)
+            merged.append((qid, u))
+    return merged
+
+
 def open_questions(work: Path) -> dict:
     """Every Unknown: line of every answered card, one list per card, in csa-work/draft/open-questions.md."""
     from .answer_sheet import parse
@@ -116,8 +152,9 @@ def open_questions(work: Path) -> dict:
             title = f"{c.get('number', '')} {c.get('title', '')} ({c.get('key', title)})".strip()
         items = [(qid, u) for qid, b in parse(sheet.read_text(encoding="utf-8")).items() for u in b["unknown"]]
         if items:
-            lines += [f"## {title}", ""] + [f"- [{qid}] {u}" for qid, u in items] + [""]
-            total += len(items)
+            grouped = _group_unknowns(items)
+            lines += [f"## {title}", ""] + [f"- [{qid}] {u}" for qid, u in grouped] + [""]
+            total += len(grouped)
     from csa_docx.figures.work import load_gaps
     for key, gaps in load_gaps(Path(work)).items():           # what the CSA figures need but the evidence lacks
         if gaps:

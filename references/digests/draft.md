@@ -43,3 +43,5 @@ The card (`CARD=`) is your whole input. Write the answer sheet (`SHEET=`) once a
 QUESTION_MISSING, EMPTY_ANSWER, FACT_NO_EVIDENCE, UNKNOWN_EVIDENCE, RATING_INVALID, COLUMNS, ROW_WIDTH, NO_ROWS, REQUIREMENT_NO_FACTS, CROSS_PROJECT_ONLY, NOTE_TOO_LONG, NOTE_NONE_AND_TEXT, NOTE_NO_FACTS, SEMICOLON, PROCESS_AS_SUBJECT, CITATION_OFF_TOPIC, CAPTURE_DROPPED, UNKNOWN_BUNDLED and the BACKGROUND_ codes. Everything else is reported as a warning. `csa check-change` does not run in the draft lane.
 
 Do not open other rule files. Report in two lines: questions answered, questions unknown.
+- Drawbridge Impact: state each stop plainly and say what it means for operations in the function's own words (from the function map). Where a path's zone is not recorded, say so once in an `Unknown:` line; do not hedge the Text with "if" or "may" (DRAWBRIDGE_HEDGE). Leave out a part outside OT whose only paths are its own outward internet paths unless it loses a path into OT.
+- A card line "Rows disagree:" means a row says there is none of a kind of traffic while the frame found some: state both, and do not cite that row as showing there are none.

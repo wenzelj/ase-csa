@@ -400,6 +400,30 @@ def scope_conflicts(res: dict | None, not_here: str) -> list[str]:
     return out
 
 
+def row_disagreements(res: dict | None, rows: list[dict]) -> list[str]:
+    """Card lines for an evidence row that says there is none of a kind of traffic ("no flow moves operational data
+    by file or share transfer") while the frame found connections of that kind. Both are shown; the answer states
+    the difference and does not cite the row as proof that none exist."""
+    mechs: dict[str, list[str]] = {}
+    for s in (res or {}).get("slots", []):
+        for f in s["findings"]:
+            m = (f.get("mechanism") or "").lower()
+            if m and f.get("requirements") and f.get("ids"):
+                mechs.setdefault(m, []).extend(f["ids"])
+    out, seen = [], set()
+    for r in rows:
+        claim = r.get("claim", "")
+        for m, ids in mechs.items():
+            words = [w for w in re.findall(r"[a-z]{4,}", m) if w not in ("connection", "connections")]
+            if r["id"] in seen or not words:
+                continue
+            if re.search(r"\bno\b[^.;]{0,100}\b(?:" + "|".join(map(re.escape, words)) + r")\b", claim, re.I):
+                seen.add(r["id"])
+                out.append(f"Rows disagree: {r['id']} says \"{claim[:150]}\", yet the frame found {m} connections "
+                           f"({', '.join(sorted(set(ids))[:3])}). State both; do not cite {r['id']} as showing there are none.")
+    return out
+
+
 def all_ids(res: dict | None) -> set[str]:
     return {i for s in (res or {}).get("slots", []) for f in s["findings"] for i in f.get("ids", [])}
 

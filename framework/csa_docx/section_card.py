@@ -403,6 +403,13 @@ def facts_to_keep(node: dict, workspace: Path | None) -> list[dict]:
     return sorted(keep, key=lambda x: (x["question"], x["capture_ids"]))
 
 
+def _value_items_in(value: str, low: str) -> bool:
+    """True when every named item of a finding's value ("CAcom (C:\\), Music (C:\\Users\\x)") is already in the old fact: the
+    fact listed it, so the finding adds nothing that fact denies."""
+    items = [i.strip().lower() for i in re.findall(r"(?:^|,\s*)([^,(]+?)\s*(?:\(|,|$)", value) if i.strip()]
+    return bool(items) and all(i in low for i in items)
+
+
 def filter_keep(keep: list[dict], fr: dict | None) -> tuple[list[dict], list[dict]]:
     """(keep, correct) against the subsection's analysis frame. Keep (enforced by CAPTURE_DROPPED): a fact whose capture
     evidence is one of the frame's findings. Correct: a fact that says a setting has its baseline value ("default and
@@ -424,9 +431,11 @@ def filter_keep(keep: list[dict], fr: dict | None) -> tuple[list[dict], list[dic
     for k in keep:
         low = k["fact"].lower()
         hit = [f for phrase, more in rules if phrase in low for f in more
-               if any(t.lower() in low for t in (f.get("roles") or []) + (f.get("hosts") or []))]
+               if any(t.lower() in low for t in (f.get("roles") or []) + (f.get("hosts") or []))
+               and not _value_items_in(f.get("value") or "", low)]
         if hit:
-            correct.append({**k, "contradicts": [{"text": f["text"], "ids": f.get("ids", [])} for f in hit]})
+            correct.append({**k, "contradicts": [{"text": f["text"], "ids": f.get("ids", [])} for f in hit],
+                            "phrase": next(ph for ph, more in rules if ph in low and any(f in more for f in hit))})
         elif {i.upper() for i in k["capture_ids"]} & ids:
             kept.append(k)
     return kept, correct
@@ -924,6 +933,8 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
         if fr:
             from csa_docx import topic_frames
             lines += [f"- {x}" for x in topic_frames.scope_conflicts(fr, extra["not_here"])]
+            seen_rows = {r["id"]: r for p_ in pack.values() for r in p_.get("rows", [])}
+            lines += [f"- {x}" for x in topic_frames.row_disagreements(fr, list(seen_rows.values()))]
     cur = _current(node)
     if cur:
         lines += ["", "## Current text in the document", ""] + [f"- {c}" for c in cur]
@@ -934,6 +945,10 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
                   "finding instead, citing its evidence, and add `Dropped: E-<n> contradicted by <finding>` to the block.", ""]
         for c in correct:
             lines.append(f"- {c['question']}: {c['fact']} ({', '.join(c['evidence_ids'])})")
+            if c.get("phrase"):
+                lines.append(f"  Only the claim \"{c['phrase']} ...\" is contradicted. If another claim in this fact "
+                             "still stands, cite the row for that claim and leave the Dropped: line out; otherwise drop the row and "
+                             "do not cite it (CITED_AND_DROPPED).")
             lines += [f"  Contradicted by: {x['text'][:220]}" + (f" ({', '.join(x['ids'])})" if x["ids"] else "")
                       for x in c["contradicts"]]
     if keep:

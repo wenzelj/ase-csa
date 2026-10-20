@@ -210,7 +210,7 @@ HARD_CODES = {"CROSS_PROJECT_ONLY", "NOTE_TOO_LONG", "NOTE_NONE_AND_TEXT", "NOTE
               "COLUMNS", "ROW_WIDTH", "NO_ROWS", "REQUIREMENT_NO_FACTS", "SEMICOLON", "PROCESS_AS_SUBJECT",
               "CITATION_OFF_TOPIC", "NO_TOTALS", "ROLE_TABLE_REPEAT", "FRAME_UNCOVERED", "ATTEMPT_AS_ESTABLISHED",
               "SLOT_NOT_ANSWERED", "FLOW_NOT_COVERED", "ZONE_CONTRADICTED", "PART_NOT_NAMED", "ISOLATION_WRONG_SIDE",
-              "PART_MISATTRIBUTED"}
+              "PART_MISATTRIBUTED", "CITED_AND_DROPPED", "LABEL_AS_NAME", "PART_NAME_LIST"}
 
 # counts and totals of hosts ("9 of 12", "all 12 captured hosts", "nine hosts", "two RevViewer Jump Hosts"): CSA text
 # names the role groups instead. "stratum 5 hosts" and port numbers are not counts.
@@ -262,6 +262,8 @@ def frame_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
     return out
 
 
+_HEDGE = re.compile(r"\b(?:may (?:also )?(?:stop|lose|be lost)|if (?:their|its|the) paths?|depends? on unresolved|"
+                    r"might (?:stop|lose))\b", re.I)
 _LOSS = re.compile(r"\b(?:lose|loses|losing|lost|stops?|is cut|are cut|cut off|no longer)\b", re.I)
 _EVERY_PART = re.compile(r"\b(?:every|all)(?: other)? parts?\b", re.I)
 
@@ -303,6 +305,29 @@ def part_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
             if hit:
                 out.append(_f("WARN", "HOST_IN_TEXT", qid, "name the part, not the host: "
                               + ", ".join(f"{h} is part of {pc['parts'][hosts[h]]}" for h in hit[:4])))
+    for qid, b in sheet.items():
+        if kinds.get(qid) not in ("requirement", "narrative") or not b.get("text"):
+            continue
+        for pid, side in (pc.get("sides") or {}).items():
+            if side != "outside":
+                continue
+            full = [n for n in pc["names"].get(pid, []) if re.match(r"(?:OT|IT)\s", n) and "," not in n]
+            hit = next((n for n in full if re.search(rf"\b{re.escape(n)}\b", b["text"])), None)
+            if hit and hit.startswith("OT "):
+                out.append(_f("WARN", "NAME_CONTRADICTS_ZONE", qid,
+                              f"{hit} is outside OT, so its OT-prefixed role name misleads: write \"the IT-hosted "
+                              f"{hit[3:]}\" instead"))
+    for qid, b in sheet.items():
+        prose = [b.get("text") or "", b.get("rating_reason") or ""] + [f["text"] for f in b["facts"]]
+        for pid, nm in pc["parts"].items():
+            if pid in set(hosts.values()) and "," in nm and any(nm in s for s in prose):
+                out.append(_f("ERROR", "PART_NAME_LIST", qid,
+                              f"\"{nm}\" is one part with two roles, and the comma list reads as two things: write "
+                              f"\"{nm.split(',')[0].strip()}\" in a sentence"))
+        for lab in pc.get("labels") or []:
+            if any(re.search(rf"\b{re.escape(lab['label'])}\b", s, re.I) for s in prose):
+                out.append(_f("ERROR", "LABEL_AS_NAME", qid,
+                              f"\"{lab['label']}\" is a label, not a name: write \"{lab['plain']}\" in a sentence"))
     feats = pc.get("features") or {}
     system = {pid for pid in pc.get("names", {}) if pid in set(hosts.values())}
     for qid, b in sheet.items():
@@ -324,8 +349,16 @@ def part_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
     for qid, b in sheet.items():
         if kinds.get(qid) != "narrative":
             continue
+        for s in re.split(r"(?<=[.!?])\s+|\n+", b.get("text") or ""):
+            if _HEDGE.search(s):
+                out.append(_f("WARN", "DRAWBRIDGE_HEDGE", qid,
+                              "say plainly what stops, what keeps working and what it means for operations; where a "
+                              "path's zone is not recorded, say that once in an Unknown: line instead of \"if\" or \"may\" "
+                              f"in the Text: \"{s[:140]}\""))
         texts = [b.get("text") or ""] + [f["text"] for f in b["facts"]]
-        for s in (s for t in texts for s in re.split(r"(?<=[.!?])\s+", t)):
+        # one clause at a time: "its telemetry is not cut, but its paths into OT are lost" says the loss of one thing only
+        for s in (s for t in texts for sent in re.split(r"(?<=[.!?])\s+", t)
+                  for s in re.split(r",?\s+(?:but|while|whereas|although)\s+|;\s*", sent)):
             if not _LOSS.search(s):
                 continue
             low = s.lower()
@@ -826,6 +859,12 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
             if outside:
                 findings.append(_f("ERROR", "SCOPE_OUTSIDE_EVIDENCE", qid,
                                    f"{', '.join(outside)} named but not in the cited evidence ({', '.join(fact['ids'])})"))
+        for d in b.get("dropped", []):
+            for i in {x.upper() for x in _EID.findall(d)[:1]}:
+                if i in {x.upper() for f in b["facts"] for x in f["ids"]} or any(i in " ".join(r).upper() for r in b["rows"]):
+                    findings.append(_f("ERROR", "CITED_AND_DROPPED", qid,
+                                       f"{i} is dropped and cited in the same block: cite it for the claim that still stands "
+                                       f"and remove the Dropped: line, or drop it and stop citing it"))
         if q["kind"] == "requirement" and b["search"] and not b["facts"]:
             pass                                   # waiting for the searched evidence
         elif q["kind"] == "requirement":
@@ -1164,9 +1203,64 @@ def next_edit_number(reviews: Path, section: str) -> int:
     return max(used) + 1
 
 
+_LEAD_STOP = set("""a an and any are as at be been by can could did do does for from has have how in into is it its of on or
+that the their there these this to was were what when where whether which who whose will with would owner owners confirm confirmed
+confirms provide record records team service system systems held each every which""".split())
+
+
+def _lead_words(s: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z]{4,}", s.lower()) if w not in _LEAD_STOP}
+
+
+def unknown_leads(sheet: dict[str, dict], matrix: dict[str, dict], limit: int = 4) -> list[dict]:
+    """Matrix rows that may already answer an Unknown: line: [{question, unknown, rows: [{id, status, claim}]}].
+    A row is a lead when it is not cited in the block and either names the same host or address as the Unknown and
+    shares a content word with it, or shares at least three content words with it. A NOT_FOUND row counts: it is the
+    evidenced "no such record", which is a finding the block can state. Nothing here is inferred; the rows are only
+    shown to the agent, which cites one or keeps the Unknown."""
+    out = []
+    for qid, b in sheet.items():
+        cited = block_ids(b)
+        for u in b.get("unknown", []):
+            ids = {x.upper() for x in _IP.findall(u)} | {x.upper() for x in _HOST.findall(u)}
+            words = _lead_words(u) - {w.lower() for w in ids}
+            scored = []
+            for rid, r in matrix.items():
+                if rid.upper() in cited or _prefix(rid) or r.get("status") not in ("VERIFIED", "NOT_FOUND", "UNCONFIRMED", "CONFLICTING"):
+                    continue                          # another project's rows are context, never this system's answer
+                claim = r.get("claim", "")
+                shared = len(words & _lead_words(claim))
+                named = any(re.search(rf"(?<![\w.]){re.escape(i)}(?![\w]|\.\d)", claim, re.I) for i in ids)
+                vague = claim.lower().startswith("possible answer to")      # a pointer to a question, not a finding
+                if (named and shared >= 1) or (shared >= 4 and not vague):
+                    scored.append((named, shared, r.get("status") == "VERIFIED", rid, r))
+            scored.sort(key=lambda x: (x[0], x[1], x[2]), reverse=True)
+            if scored:
+                out.append({"question": qid, "unknown": u,
+                            "rows": [{"id": s[3], "status": s[4].get("status", ""), "claim": s[4].get("claim", "")[:420]}
+                                     for s in scored[:limit]]})
+    return out
+
+
+def leads_text(leads: list[dict]) -> str:
+    lines = ["Evidence rows that may already answer an Unknown: line. Read each row. If it answers the question, state "
+             "what it shows as a fact, cite its E- ID with its basis, and keep an Unknown: line only for the part it "
+             "does not answer (say what the row states is missing, e.g. a name that was not captured). A NOT_FOUND row "
+             "is an evidenced absence: state it as one. If a row does not answer, leave the Unknown: line as it is. "
+             "When a row says what a source describes the subject as, state that as a documented fact in the source's "
+             "own words (\"described in the earlier assessment as ...\") and keep the Unknown: only for what the row "
+             "says was not captured. "
+             "Do not carry a count or total of hosts from a row (\"twelve hosts\", \"eleven hosts\"): name the role groups or "
+             "the hosts instead (NO_TOTALS). Change nothing else in the sheet.", ""]
+    for l in leads:
+        lines.append(f"- {l['question']} Unknown: {l['unknown']}")
+        lines += [f"  - {r['id']} {r['status']}: {r['claim']}" for r in l["rows"]]
+    return "\n".join(lines) + "\n"
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("action", choices=["validate", "parse", "render"])
+    ap.add_argument("action", choices=["validate", "parse", "render", "leads"])
     ap.add_argument("sheet", type=Path)
     ap.add_argument("--card", type=Path, required=True)
     ap.add_argument("--matrix", type=Path)
@@ -1183,6 +1277,10 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(sheet, indent=1))
         return 0
     card = json.loads(a.card.read_text(encoding="utf-8"))
+    if a.action == "leads":
+        leads = unknown_leads(sheet, load_matrix(a.matrix))
+        print(json.dumps({"leads": leads, "text": leads_text(leads) if leads else ""}, indent=1))
+        return 0
     if a.action == "validate":
         prev = parse(a.previous.read_text(encoding="utf-8")) if a.previous and a.previous.is_file() else None
         res = validate(sheet, card, load_matrix(a.matrix), new_ids={x.strip() for x in a.new_ids.split(",") if x.strip()},

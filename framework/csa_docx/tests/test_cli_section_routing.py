@@ -54,3 +54,24 @@ def test_unknown_visible_number_is_not_guessed(tmp_path):
     result = CSA["resolve_visible_section"](_project(tmp_path), "3.99")
     assert result["stable_path"] is None
     assert result["heading"] is None
+
+
+def test_interactive_answer_and_draft_passes_use_a_worker_window():
+    wrap = CSA["_agent_window_argv"]
+    expected = str(Path(__file__).parents[3] / "bin" / "csa-window")
+    assert wrap(["codex", "prompt"], "interactive", "answer") == [expected, "codex", "prompt"]
+    assert wrap(["codex", "prompt"], "interactive", "draft") == [expected, "codex", "prompt"]
+
+
+def test_agent_window_wrapper_does_not_change_headless_or_other_agents():
+    wrap = CSA["_agent_window_argv"]
+    command = ["codex", "prompt"]
+    assert wrap(command, "headless", "draft") == command
+    assert wrap(command, "interactive", "write") == command
+
+
+def test_agent_window_wrapper_is_not_nested():
+    wrap = CSA["_agent_window_argv"]
+    wrapper = str(Path(__file__).parents[3] / "bin" / "csa-window")
+    command = [wrapper, "codex", "prompt"]
+    assert wrap(command, "interactive", "draft") == command

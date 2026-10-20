@@ -2160,6 +2160,20 @@ def sheet_from_last_message(sheet: Path) -> bool:
     return True
 
 
+def _agent_window_argv(argv: list[str], mode: str, verb: str) -> list[str]:
+    """Keep the answer workflow in its invoking terminal and run each interactive model pass elsewhere.
+
+    ``csa answer`` can launch the draft agent more than once (initial answer, one search retry and one fix
+    retry).  Each call reaches this helper independently, so wrapping here gives every pass a fresh Terminal
+    window while the original ``csa`` process remains the manager.  ``csa-window`` itself honours
+    ``CSA_NO_WINDOW`` and non-macOS hosts by executing the command in place.
+    """
+    wrapper = str(AGENTS_DIR / "bin" / "csa-window")
+    if mode == "interactive" and verb in ("answer", "draft") and (not argv or argv[0] != wrapper):
+        return [wrapper, *argv]
+    return argv
+
+
 def launch(p: dict, r: dict, args: list[str], a) -> int:
     cli = getattr(a, "cli", None) or os.environ.get("CSA_CLI") or task_cli(r.get("verb", "")) or settings().get("default_cli", "codex")
     mode = "headless" if getattr(a, "headless", False) else "interactive"
@@ -2184,6 +2198,7 @@ def launch(p: dict, r: dict, args: list[str], a) -> int:
     if not shutil.which(argv[0]):
         print(prompt)
         die(f"'{argv[0]}' is not on PATH. Prompt printed above; paste it into your CLI.")
+    argv = _agent_window_argv(argv, mode, r.get("verb", ""))
     print(f"{C['d']}launching {cli} ({mode}) as {r['title']} in {ROOT}{C['0']}", file=sys.stderr)
     return subprocess.call(argv, cwd=str(ROOT))
 
@@ -2430,13 +2445,15 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
                   f"{C['0']}", file=sys.stderr)
         return rc
 
+    lead_ids: set[str] = set()          # matrix rows the resolve pass showed the agent: it may cite them
+
     def check() -> dict:
         if not sheet.is_file():
             return {"status": "ERROR", "findings": [{"level": "ERROR", "code": "NO_SHEET", "question": None,
                                                      "message": f"the answer agent wrote no {sheet.name}. Write the whole sheet "
                                                      f"with your file tool to exactly this path: {sheet}"}], "searches": {}}
         return _fw_json("csa_docx.answer_sheet", "validate", sheet, "--card", card_json, "--matrix", matrix,
-                        "--new-ids", ",".join(sorted(_matrix_ids(work) - before)), *(["--draft"] if draft else []),
+                        "--new-ids", ",".join(sorted((_matrix_ids(work) - before) | lead_ids)), *(["--draft"] if draft else []),
                         *(["--previous", sheet.with_suffix(".prev.md")] if sheet.with_suffix(".prev.md").is_file() else []))
 
     timing: dict = {}
@@ -2512,6 +2529,41 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
         res2 = check()
     if errs.is_file():                  # the sheet passes now: an old errors file would only mislead
         errs.unlink(missing_ok=True)
+    if not getattr(a, "no_resolve", False):
+        # an Unknown: line the matrix may already answer: show the agent those rows once and keep the result only if it passes
+        found = _fw_json("csa_docx.answer_sheet", "leads", sheet, "--card", card_json, "--matrix", matrix)
+        if found.get("leads"):
+            leads_md = cards / f"{key}.leads.md"
+            leads_md.write_text(found["text"], encoding="utf-8")
+            lead_ids |= {r["id"] for l in found["leads"] for r in l["rows"]}
+            keep_sheet = sheet.with_suffix(".resolved-from.md")
+            shutil.copyfile(sheet, keep_sheet)
+            print(f"{C['b']}{len(found['leads'])} Unknown: line(s) have evidence rows that may answer them; "
+                  f"asking the {verb} agent to use them (once).{C['0']}")
+            rc_l = answer([f"ERRORS={leads_md}"])
+            res_l = check() if rc_l == 0 else {"status": "ERROR", "findings": []}
+            if rc_l == 0 and res_l.get("status") != "OK":      # the same one fix round the first sheet gets
+                blocking = [f for f in res_l.get("findings", []) if f.get("level") == "ERROR"]
+                errs.write_text("Fix these in the answer sheet and write it again; keep the evidence you added from the "
+                                "leads:\n\n" + "\n".join(f"- ERROR {f['code']} {f.get('question') or ''}: {f['message']}"
+                                                         for f in blocking) + "\n", encoding="utf-8")
+                print(f"{C['y']}The resolve pass has {len(blocking)} problem(s); one fix round.{C['0']}")
+                rc_l = answer([f"ERRORS={errs}"])
+                res_l = check() if rc_l == 0 else {"status": "ERROR", "findings": []}
+                errs.unlink(missing_ok=True) if res_l.get("status") == "OK" else None
+            if res_l.get("status") != "OK":
+                if sheet.is_file():
+                    shutil.copyfile(sheet, sheet.with_suffix(".leads-rejected.md"))
+                for f in [f for f in res_l.get("findings", []) if f.get("level") == "ERROR"][:6]:
+                    print(f"  {f['code']} {f.get('question') or ''}: {f['message'][:200]}", file=sys.stderr)
+            if rc_l == 0 and res_l.get("status") == "OK":
+                res2 = check()
+                n_after = len(_fw_json("csa_docx.answer_sheet", "leads", sheet, "--card", card_json, "--matrix", matrix).get("leads", []))
+                print(f"{C['b']}Unknown: lines with evidence leads: {len(found['leads'])} before, {n_after} after.{C['0']}")
+            else:
+                shutil.copyfile(keep_sheet, sheet)
+                print(f"{C['y']}The resolve pass did not give a valid sheet; the earlier sheet is kept.{C['0']}")
+            keep_sheet.unlink(missing_ok=True)
     warns = [f for f in res2.get("findings", []) if f.get("level") == "WARN"]
     if draft and warns:
         print(f"{C['y']}{len(warns)} warning(s) (not blocking in the draft lane):{C['0']}")
@@ -2539,8 +2591,8 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
                        "--change-file", cf, "--app", _app_name(p, reviews))
         if out.get("status") == "ERROR":
             die(f"render failed: {out.get('message')}")
-        if not out.get("scaffold") or attempt == 2:
-            break
+        if not out.get("scaffold") or attempt == 2 or (draft and getattr(a, "no_apply", False)):
+            break                       # --no-apply: scaffolding rows would change the document
         scaffold = SKILLS / "csa-document-template" / "scripts" / "scaffold_csa.py"
         for s in out["scaffold"]:
             cmd = [framework_python(), str(scaffold), s["kind"], "--docx", str(docx), "--heading", s["heading"],
@@ -2551,10 +2603,13 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
             if subprocess.run(cmd, capture_output=True, text=True).returncode not in (0,):
                 die(f"scaffold refused for {s['heading']}; nothing was applied")
         fw_call("prepareDocument", workspace=_ws(p), force_regenerate=True)
-    if out.get("scaffold"):
+    if out.get("scaffold") and not (draft and getattr(a, "no_apply", False)):
         die("the document still lacks rows for the answer after scaffolding; nothing was applied")
     print(f"{C['b']}{cf.name}: {out['records']} record(s) {out['change_set']}, {out['open']} open question(s).{C['0']}")
     if draft:
+        if getattr(a, "no_apply", False):
+            print(f"{C['d']}--no-apply: the document was not changed; the answer sheet and {cf.name} are ready.{C['0']}")
+            return 0
         return _draft_write(p, a, card_json, docx, cf, cf_new, out, timing, started)
     _autofix_change(p, cf, sec, label)
     _record_author_run(p, [number], cards=True, sheet_status="OK", search_round=searched, fix_round=fixed, **timing)
@@ -4536,6 +4591,8 @@ def main(argv=None) -> int:
                        help="author --cards: ignore a saved answer sheet and always run the answer agent")
         s.add_argument("--check-answers", action="store_true",
                        help="author --cards: an advisory answer check after the sheet passes (shown in the author report)")
+        s.add_argument("--no-resolve", action="store_true",
+                       help="answer/author --cards: skip the pass that shows the agent matrix rows which may already answer an Unknown: line")
 
     argv = list(sys.argv[1:] if argv is None else argv)
     glob_project = None

@@ -166,10 +166,20 @@ def index(doc: dict) -> dict[str, dict]:
     return {m.upper(): p for p in doc.get("parts", []) for m in p["members"]}
 
 
+_LABEL = re.compile(r"\b(?:not identified|unidentified)\b", re.I)
+PLAIN_LABEL = "unidentified internal peers"
+
+
+def is_label(p: dict) -> bool:
+    """A dependency whose name is a label for "we do not know who" ("Peers not identified"), not a name to print."""
+    return p.get("kind") == "dependency" and bool(_LABEL.search(p.get("name", "")))
+
+
 def names(p: dict) -> list[str]:
     """The names that count as naming a part: its name, its aliases and, for a dependency, its members (an
     unidentified peer can only be named by its address)."""
-    return [p["name"]] + list(p.get("aliases") or []) + (list(p["members"]) if p["kind"] == "dependency" else [])
+    return ([p["name"]] + list(p.get("aliases") or []) + (list(p["members"]) if p["kind"] == "dependency" else [])
+            + ([PLAIN_LABEL, "unidentified peers", "unnamed internal peers"] if is_label(p) else []))
 
 
 def _norm(s: str) -> str:
@@ -296,7 +306,8 @@ def card_view(work_dir: Path, fr: dict | None, qs: list[dict]) -> dict | None:
     lines = ["", "## System parts (built by the framework from the host register and the flows)", "",
              "Write about the system as these parts, by these names (\"also\" gives accepted short names). A system part "
              "is named by its machines' role in the host register: a role written as two roles (\"A, B\") is one part, "
-             "the same machines, never two. A dependency's name is a label: write it as plain English (\"an unidentified "
+             "the same machines, never two; in a sentence write one of its roles (its first short name), not the whole \"A, B\" "
+             "list, which reads as two things. A dependency's name is a label: write it as plain English (\"an unidentified "
              "internal peer at 10.1.2.3\"), never as a name in a sentence. Say something about a part only where a "
              "finding listed under that part shows it: a share, a setting or a connection belongs to the part whose "
              "machines the finding names (PART_MISATTRIBUTED). In Text: lines "
@@ -318,6 +329,10 @@ def card_view(work_dir: Path, fr: dict | None, qs: list[dict]) -> dict | None:
                      f" ({', '.join(p['zones'])}): {', '.join(p['members'][:8])}" + (" and more" if len(p["members"]) > 8 else ""))
         if p["kind"] == "system" and "," in p["name"]:
             lines.append(f"- one part: the same machines hold the roles {p['name']}")
+        if p["kind"] == "system" and p["side"] == "outside" and re.match(r"(?:OT|IT)\b", p["name"]):
+            short = re.sub(r"^(?:OT|IT)\s+", "", p["name"].split(",")[0])
+            lines.append(f"- its role name says {p['name'].split()[0]} but its zone puts it outside OT: write \"the IT-hosted "
+                         f"{short}\" in every sentence, never \"{p['name'].split(',')[0]}\" (NAME_CONTRADICTS_ZONE)")
         mine = g["by_part"].get(p["id"], [])
         if not mine:
             lines.append("- Findings about it: none in this section's analysis frame")
@@ -335,7 +350,8 @@ def card_view(work_dir: Path, fr: dict | None, qs: list[dict]) -> dict | None:
             "owed": byq,
             "isolation": {pid: {"effect": v["effect"], **isolation_tokens(v)} for pid, v in iso.items()},
             "features": features(doc, fr),
-            "lines": lines, "parts": {pid: parts[pid]["name"] for pid in parts}}
+            "labels": [{"label": p["name"], "plain": PLAIN_LABEL} for p in doc["parts"] if is_label(p)],
+            "lines": lines, "parts": {pid: (PLAIN_LABEL if is_label(parts[pid]) else parts[pid]["name"]) for pid in parts}}
 
 
 # What a sentence says about a part must come from a finding about that part's machines: a share, a setting or a
