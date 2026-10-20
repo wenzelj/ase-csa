@@ -53,6 +53,12 @@ OBSERVATION_FIELDS = (
     "corroborating_evidence_ids", "status", "evidence_id",
 )
 
+MATRIX_FIELDS = (
+    "evidence_id", "csa_area", "question", "claim", "status", "source_title", "source_version",
+    "section", "page_or_location", "evidence_excerpt", "inference_reason", "confidence",
+    "gap_or_action", "review_state",
+)
+
 
 def validate_entry(entry: dict, req_id: str) -> list[str]:
     """Validate one practice catalogue entry. Returns a list of error strings (empty = valid)."""
@@ -379,6 +385,17 @@ def record_observation(work_dir: Path | str, question_id: str, kind: str, observ
     if errors:
         return {"status": "ERROR", "errors": errors}
 
+    matrix_path = work / "evidence-matrix.csv"
+    matrix_rows = []
+    if matrix_path.is_file():
+        with matrix_path.open(newline="", encoding="utf-8-sig") as fh:
+            matrix_rows = list(csv.DictReader(fh))
+    corroborating = [x.strip().upper() for x in corroborating_evidence_ids.split(",") if x.strip()]
+    known = {r.get("evidence_id", "").upper(): r for r in matrix_rows}
+    missing = [x for x in corroborating if x not in known or known[x].get("review_state") == "disputed"]
+    if missing:
+        return {"status": "ERROR", "errors": ["corroborating evidence is missing or disputed: " + ", ".join(missing)]}
+
     path = work / "practice" / "observations.csv"
     rows = _observation_rows(path)
     if replaces:
@@ -399,10 +416,42 @@ def record_observation(work_dir: Path | str, question_id: str, kind: str, observ
                recorded_on=stamp, document_title=document_title.strip(), document_version=document_version.strip(),
                location=location.strip(), source_path=str(source.resolve()) if source else "",
                corroborating_evidence_ids=corroborating_evidence_ids.strip(), status="active", evidence_id="")
+    nums = [int(m.group(1)) for r in matrix_rows if (m := re.fullmatch(r"E-(\d+)", r.get("evidence_id", "")))]
+    eid = f"E-{max(nums, default=0) + 1:03d}"
+    if kind == "stated":
+        claim = f"On {observed_on}, {person.strip()} ({role.strip()}) stated that {observation.strip()}"
+        source_title = f"Owner statement: {person.strip()} ({role.strip()})"
+        source_version = observed_on
+        page = "recorded statement"
+        status = "UNCONFIRMED"
+    else:
+        claim = f"{document_title.strip()} ({document_version.strip()}), {location.strip()}, states that {observation.strip()}"
+        source_title = str(source.resolve())
+        source_version = document_version.strip()
+        page = location.strip()
+        status = "VERIFIED"
+    matrix_row = {f: "" for f in MATRIX_FIELDS}
+    matrix_row.update(evidence_id=eid, csa_area="practice", question=question["requirement_id"], claim=claim,
+                      status=status, source_title=source_title, source_version=source_version,
+                      section=question.get("section_key", ""), page_or_location=page,
+                      evidence_excerpt=observation.strip(), inference_reason="", confidence="medium",
+                      gap_or_action=f"practice:{oid}:{kind}", review_state="pending")
+    matrix_path.parent.mkdir(parents=True, exist_ok=True)
+    new_matrix = not matrix_path.is_file()
+    with matrix_path.open("a", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=MATRIX_FIELDS, extrasaction="ignore")
+        if new_matrix: writer.writeheader()
+        writer.writerow(matrix_row)
+    row["evidence_id"] = eid
     rows.append(row)
     _write_observation_rows(path, rows)
+    for qrow in questions:
+        if qrow.get("question_id") == question_id:
+            qrow["status"] = "answered"
+            qrow["answered_by_observation"] = oid
+    _write_question_rows(work / "practice" / "questions.csv", questions)
     return {"status": "OK", "path": str(path), "observation_id": oid, "requirement_id": question["requirement_id"],
-            "replaces": replaces}
+            "replaces": replaces, "evidence_id": eid}
 
 
 def main(argv: list[str] | None = None) -> int:
