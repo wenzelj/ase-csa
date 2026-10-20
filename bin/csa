@@ -3675,6 +3675,14 @@ def cmd_practice(a):
     """Generate the reviewable practice owner-question register. This command never contacts owners."""
     p = project(a.project)
     work = local_path(p["work_dir"])
+    if a.practice_cmd == "record":
+        kind = "stated" if a.stated else "documented"
+        res = _fw_module_call("practice", "record_observation", str(work), a.question_id, kind, a.observation,
+                              a.person, a.role, a.observed_on, document_title=a.document_title or "",
+                              document_version=a.document_version or "", location=a.location or "",
+                              source_path=a.source_path, corroborating_evidence_ids=a.corroborating or "",
+                              replaces=a.replaces or "")
+        return _emit(res, a)
     if a.practice_cmd != "questions":
         die("practice requires a subcommand")
     key = str(a.section).upper()
@@ -4542,6 +4550,14 @@ def main(argv=None) -> int:
     ps = s.add_subparsers(dest="practice_cmd", required=True)
     q = ps.add_parser("questions", help="generate the reviewable owner-question register; sends nothing")
     q.add_argument("section"); q.add_argument("--answer"); q.add_argument("--card"); q.add_argument("--json", action="store_true")
+    r = ps.add_parser("record", help="append a stated or documented owner observation")
+    r.add_argument("question_id"); kinds = r.add_mutually_exclusive_group(required=True)
+    kinds.add_argument("--stated", action="store_true"); kinds.add_argument("--documented", action="store_true")
+    r.add_argument("--observation", required=True); r.add_argument("--person", required=True)
+    r.add_argument("--role", required=True); r.add_argument("--observed-on", required=True)
+    r.add_argument("--document-title"); r.add_argument("--document-version"); r.add_argument("--location")
+    r.add_argument("--source-path"); r.add_argument("--corroborating"); r.add_argument("--replaces")
+    r.add_argument("--json", action="store_true")
     s = sp("hosts", cmd_hosts, help="host register, facts per host and host-to-host links (build | list | show HOST | links [HOST] | group --attr ... | roles [--fix])")
     s.add_argument("action", nargs="?", default="list", choices=["build", "list", "show", "links", "group", "graph", "unresolved", "system", "evidence", "roles"])
     s.add_argument("host", nargs="?"); s.add_argument("--attr", action="append"); s.add_argument("--system")

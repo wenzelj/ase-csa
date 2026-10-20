@@ -47,6 +47,12 @@ QUESTION_FIELDS = (
     "generated_on", "answered_by_observation", "note",
 )
 
+OBSERVATION_FIELDS = (
+    "observation_id", "question_id", "requirement_id", "kind", "observation", "person", "role",
+    "observed_on", "recorded_on", "document_title", "document_version", "location", "source_path",
+    "corroborating_evidence_ids", "status", "evidence_id",
+)
+
 
 def validate_entry(entry: dict, req_id: str) -> list[str]:
     """Validate one practice catalogue entry. Returns a list of error strings (empty = valid)."""
@@ -317,6 +323,86 @@ def generate_questions(work_dir: Path | str, section_key: str, *, answer_path: P
     _write_question_rows(path, old)
     return {"status": "OK", "path": str(path), "section_key": key, "active": len(active),
             "added": added, "superseded": superseded, "total": len(old)}
+
+
+def _iso_date(value: str) -> bool:
+    try:
+        date.fromisoformat(value)
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
+def _observation_rows(path: Path) -> list[dict]:
+    if not path.is_file():
+        return []
+    with path.open(newline="", encoding="utf-8-sig") as fh:
+        return [{k: (v or "") for k, v in row.items()} for row in csv.DictReader(fh)]
+
+
+def _write_observation_rows(path: Path, rows: list[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    with tmp.open("w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=OBSERVATION_FIELDS, extrasaction="ignore")
+        writer.writeheader(); writer.writerows(rows)
+    os.replace(tmp, path)
+
+
+def record_observation(work_dir: Path | str, question_id: str, kind: str, observation: str, person: str,
+                       role: str, observed_on: str, *, document_title: str = "", document_version: str = "",
+                       location: str = "", source_path: Path | str | None = None,
+                       corroborating_evidence_ids: str = "", replaces: str = "",
+                       recorded_on: str | None = None) -> dict:
+    """Append one provenance-preserving practice observation; corrections append and supersede."""
+    work = Path(work_dir)
+    errors = []
+    if kind not in OBSERVATION_KINDS:
+        errors.append("kind must be stated or documented")
+    for label, value in (("observation", observation), ("person", person), ("role", role)):
+        if not str(value).strip():
+            errors.append(f"{label} is required")
+    if not _iso_date(observed_on):
+        errors.append("observed_on must be YYYY-MM-DD")
+    source = Path(source_path).expanduser() if source_path else None
+    if kind == "documented":
+        for label, value in (("document_title", document_title), ("document_version", document_version),
+                             ("location", location)):
+            if not str(value).strip():
+                errors.append(f"{label} is required for documented observations")
+        if source is None or not source.is_file():
+            errors.append("an available source_path is required for documented observations")
+    questions = _question_rows(work / "practice" / "questions.csv")
+    question = next((r for r in questions if r.get("question_id") == question_id), None)
+    if question is None:
+        errors.append(f"question {question_id} does not exist")
+    if errors:
+        return {"status": "ERROR", "errors": errors}
+
+    path = work / "practice" / "observations.csv"
+    rows = _observation_rows(path)
+    if replaces:
+        previous = next((r for r in rows if r.get("observation_id") == replaces and r.get("status") == "active"), None)
+        if previous is None:
+            return {"status": "ERROR", "errors": [f"active observation {replaces} does not exist"]}
+        if previous.get("question_id") != question_id:
+            return {"status": "ERROR", "errors": ["replacement must answer the same question"]}
+        previous["status"] = "superseded"
+    stamp = recorded_on or date.today().isoformat()
+    if not _iso_date(stamp):
+        return {"status": "ERROR", "errors": ["recorded_on must be YYYY-MM-DD"]}
+    seed = f"{question_id}\n{kind}\n{observation}\n{person}\n{observed_on}\n{len(rows)}"
+    oid = "PO-" + hashlib.sha256(seed.encode()).hexdigest()[:12]
+    row = {f: "" for f in OBSERVATION_FIELDS}
+    row.update(observation_id=oid, question_id=question_id, requirement_id=question["requirement_id"], kind=kind,
+               observation=observation.strip(), person=person.strip(), role=role.strip(), observed_on=observed_on,
+               recorded_on=stamp, document_title=document_title.strip(), document_version=document_version.strip(),
+               location=location.strip(), source_path=str(source.resolve()) if source else "",
+               corroborating_evidence_ids=corroborating_evidence_ids.strip(), status="active", evidence_id="")
+    rows.append(row)
+    _write_observation_rows(path, rows)
+    return {"status": "OK", "path": str(path), "observation_id": oid, "requirement_id": question["requirement_id"],
+            "replaces": replaces}
 
 
 def main(argv: list[str] | None = None) -> int:
