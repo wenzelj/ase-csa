@@ -21,7 +21,10 @@
     "settings": [
      "agent.remote_support"
     ]
-   }
+   },
+   "search": [
+    "VNC"
+   ]
   },
   {
    "id": "S2",
@@ -33,7 +36,11 @@
     "settings": [
      "identity.local_users"
     ]
-   }
+   },
+   "search": [
+    "Get-LocalUser",
+    "Enabled"
+   ]
   },
   {
    "id": "S3",
@@ -52,7 +59,11 @@
       "declared"
      ]
     }
-   }
+   },
+   "search": [
+    "remote access",
+    "VPN"
+   ]
   },
   {
    "id": "S4",
@@ -60,7 +71,11 @@
    "requirements": [
     "SEP-SUPPLY-01"
    ],
-   "source": {}
+   "source": {},
+   "search": [
+    "vendor support",
+    "remote support"
+   ]
   },
   {
    "id": "S5",
@@ -68,7 +83,43 @@
    "requirements": [
     "SEP-SUPPLY-01"
    ],
-   "source": {}
+   "source": {},
+   "search": [
+    "direct internet",
+    "vendor remote"
+   ]
   }
- ]
+ ],
+ "practice": {
+  "SEP-SUPPLY-01": {
+   "needs": [
+    {
+     "kind": "document",
+     "examples": [
+      "vendor access procedure",
+      "remote support approval process"
+     ]
+    },
+    {
+     "kind": "process",
+     "examples": [
+      "vendor request approval",
+      "session monitoring",
+      "access review"
+     ]
+    },
+    {
+     "kind": "owner",
+     "roles": [
+      "system owner",
+      "security officer"
+     ]
+    }
+   ],
+   "minimum_for_met": [
+    "documented"
+   ],
+   "cap_without": "Partially Met"
+  }
+ }
 }

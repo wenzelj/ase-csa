@@ -20,7 +20,10 @@
      "agent.backup",
      "storage.database"
     ]
-   }
+   },
+   "search": [
+    "Veeam"
+   ]
   },
   {
    "id": "S2",
@@ -39,7 +42,11 @@
       "declared"
      ]
     }
-   }
+   },
+   "search": [
+    "backup server",
+    "agentService"
+   ]
   },
   {
    "id": "S3",
@@ -51,7 +58,11 @@
     "settings": [
      "agent.backup_account"
     ]
-   }
+   },
+   "search": [
+    "backup account",
+    "Log on as a service"
+   ]
   },
   {
    "id": "S4",
@@ -59,7 +70,11 @@
    "requirements": [
     "SEP-BAK-01"
    ],
-   "source": {}
+   "source": {},
+   "search": [
+    "backup job",
+    "retention"
+   ]
   },
   {
    "id": "S5",
@@ -67,7 +82,75 @@
    "requirements": [
     "SEP-BAK-02"
    ],
-   "source": {}
+   "source": {},
+   "search": [
+    "restore test",
+    "offline copy"
+   ]
   }
- ]
+ ],
+ "practice": {
+  "SEP-BAK-01": {
+   "needs": [
+    {
+     "kind": "document",
+     "examples": [
+      "backup procedure",
+      "backup schedule",
+      "retention policy"
+     ]
+    },
+    {
+     "kind": "process",
+     "examples": [
+      "backup job monitoring",
+      "failed-job action",
+      "retention review"
+     ]
+    },
+    {
+     "kind": "owner",
+     "roles": [
+      "application owner",
+      "backup service owner"
+     ]
+    }
+   ],
+   "minimum_for_met": [
+    "documented"
+   ],
+   "cap_without": "Partially Met"
+  },
+  "SEP-BAK-02": {
+   "needs": [
+    {
+     "kind": "document",
+     "examples": [
+      "restore procedure",
+      "test record"
+     ]
+    },
+    {
+     "kind": "process",
+     "examples": [
+      "test cadence",
+      "result review",
+      "failed-test action"
+     ]
+    },
+    {
+     "kind": "owner",
+     "roles": [
+      "application owner",
+      "backup service owner"
+     ]
+    }
+   ],
+   "minimum_for_met": [
+    "documented",
+    "operational"
+   ],
+   "cap_without": "Partially Met"
+  }
+ }
 }
