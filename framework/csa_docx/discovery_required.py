@@ -66,8 +66,8 @@ def _collect(work: Path) -> list[dict]:
         items.setdefault(g["dr_id"], {"dr_id": g["dr_id"], "text": g["text"], "reqs": list(g.get("reqs") or []),
                                       "fact": g.get("fact", ""), "scope": f"figure in {g.get('section', '')}".strip()})
     # hosts a role table could not show from a capture (csa-work/topic-tables/gaps.json, written when it is placed)
-    from csa_docx.topic_tables import all_gaps as topic_gaps
-    for g in topic_gaps(work):
+    from csa_docx.topic_tables import all_gaps as topic_gaps, merge_gaps
+    for g in merge_gaps(topic_gaps(work)):
         items.setdefault(g["dr_id"], {"dr_id": g["dr_id"], "text": g["text"], "reqs": list(g.get("reqs") or []),
                                       "fact": g.get("fact", ""), "scope": f"role table in {g.get('section', '')}".strip()})
     return list(items.values())
@@ -101,8 +101,6 @@ def build(workspace: Path, legacy_docx: Path | None = None) -> dict:
     workspace = Path(workspace)
     work = workspace / "csa-work"
     items = _collect(work)
-    if not items:
-        return {"status": "EMPTY"}
 
     answer_from = {r["req_id"]: r["answer_from"] for r in _read_csv(REQUIREMENT_MAP)}
     exclude = (Path(legacy_docx).name,) if legacy_docx else ()
@@ -119,6 +117,19 @@ def build(workspace: Path, legacy_docx: Path | None = None) -> dict:
                  "To be assigned", how, "Open"]
         rows.append(([_cell(c) for c in cells], _evidence_id(workspace, work, it, look["searched"])))
 
+    # Practice questions are already requirement-bound gaps. They remain until an accepted observation answers them.
+    from csa_docx import practice
+    for q in practice.status(work).get("open_items", []):
+        owner = q.get("assigned_role") or q.get("suggested_owner_roles") or "To be assigned"
+        if q.get("assigned_person"):
+            owner = f"{q['assigned_person']} ({owner})"
+        cells = [q["question_id"], q.get("requirement_id", ""), q.get("question", ""),
+                 f"Practice evidence is required for {q.get('requirement_id', 'the requirement')}",
+                 _rating_impact([q.get("requirement_id") or "requirement"]), owner,
+                 q.get("evidence_needed", "Obtain a precise owner statement or controlled document"),
+                 "Assigned" if q.get("status") == "assigned" else "Open"]
+        rows.append(([_cell(c) for c in cells], ""))
+
     out = work / "sections" / "8-discovery-required.md"
     if not rows and not out.is_file():
         return {"status": "EMPTY", "possibly_answered": possibly_answered}
@@ -128,7 +139,7 @@ def build(workspace: Path, legacy_docx: Path | None = None) -> dict:
             ev = old.get("evidence", {})
             have = {r[0][0] for r in rows}
             for n, cells in enumerate(old.get("tables", {}).get("Items", []), start=1):
-                if cells and cells[0] not in have:
+                if cells and cells[0] not in have and not cells[0].startswith("PQ-"):
                     rows.append((cells, (ev.get(f"Items {n}") or [""])[0]))
         except ValueError:
             pass

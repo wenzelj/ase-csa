@@ -3683,6 +3683,8 @@ def cmd_practice(a):
                               source_path=a.source_path, corroborating_evidence_ids=a.corroborating or "",
                               replaces=a.replaces or "")
         return _emit(res, a)
+    if a.practice_cmd == "status":
+        return _emit(_fw_module_call("practice", "status", str(work), a.section or ""), a)
     if a.practice_cmd != "questions":
         die("practice requires a subcommand")
     key = str(a.section).upper()
@@ -3692,7 +3694,7 @@ def cmd_practice(a):
             die(resolved.get("message", f"cannot resolve '{a.section}'"))
         key = resolved["key"]
     res = _fw_module_call("practice", "generate_questions", str(work), key,
-                          answer_path=a.answer, card_path=a.card)
+                          answer_path=a.answer, card_path=a.card, dry_run=a.dry_run)
     return _emit(res, a)
 
 
@@ -4549,7 +4551,8 @@ def main(argv=None) -> int:
     s = sp("practice", cmd_practice, help="practice evidence owner questions and observations")
     ps = s.add_subparsers(dest="practice_cmd", required=True)
     q = ps.add_parser("questions", help="generate the reviewable owner-question register; sends nothing")
-    q.add_argument("section"); q.add_argument("--answer"); q.add_argument("--card"); q.add_argument("--json", action="store_true")
+    q.add_argument("section"); q.add_argument("--answer"); q.add_argument("--card"); q.add_argument("--dry-run", action="store_true")
+    q.add_argument("--json", action="store_true")
     r = ps.add_parser("record", help="append a stated or documented owner observation")
     r.add_argument("question_id"); kinds = r.add_mutually_exclusive_group(required=True)
     kinds.add_argument("--stated", action="store_true"); kinds.add_argument("--documented", action="store_true")
@@ -4558,6 +4561,8 @@ def main(argv=None) -> int:
     r.add_argument("--document-title"); r.add_argument("--document-version"); r.add_argument("--location")
     r.add_argument("--source-path"); r.add_argument("--corroborating"); r.add_argument("--replaces")
     r.add_argument("--json", action="store_true")
+    st = ps.add_parser("status", help="report practice question and observation lifecycle")
+    st.add_argument("section", nargs="?"); st.add_argument("--json", action="store_true")
     s = sp("hosts", cmd_hosts, help="host register, facts per host and host-to-host links (build | list | show HOST | links [HOST] | group --attr ... | roles [--fix])")
     s.add_argument("action", nargs="?", default="list", choices=["build", "list", "show", "links", "group", "graph", "unresolved", "system", "evidence", "roles"])
     s.add_argument("host", nargs="?"); s.add_argument("--attr", action="append"); s.add_argument("--system")

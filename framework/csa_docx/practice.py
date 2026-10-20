@@ -255,7 +255,8 @@ def _write_question_rows(path: Path, rows: list[dict]) -> None:
 
 
 def generate_questions(work_dir: Path | str, section_key: str, *, answer_path: Path | str | None = None,
-                       card_path: Path | str | None = None, generated_on: str | None = None) -> dict:
+                       card_path: Path | str | None = None, generated_on: str | None = None,
+                       dry_run: bool = False) -> dict:
     """Generate or reconcile the append-preserving owner-question register for one answered section."""
     from csa_docx.answer_sheet import parse
 
@@ -326,9 +327,11 @@ def generate_questions(work_dir: Path | str, section_key: str, *, answer_path: P
                 and row.get("status") not in ("answered", "not_applicable", "superseded"):
             row["status"] = "superseded"
             superseded += 1
-    _write_question_rows(path, old)
+    if not dry_run:
+        _write_question_rows(path, old)
     return {"status": "OK", "path": str(path), "section_key": key, "active": len(active),
-            "added": added, "superseded": superseded, "total": len(old)}
+            "added": added, "superseded": superseded, "total": len(old), "dry_run": dry_run,
+            "questions": [r for r in old if r.get("question_id") in active] if dry_run else []}
 
 
 def _iso_date(value: str) -> bool:
@@ -498,6 +501,26 @@ def card_lines(requirement_id: str, view: dict) -> list[str]:
     if item["missing_strengths"]:
         lines.append(f"  - rating floor: missing {', '.join(item['missing_strengths'])}; highest rating {item['cap_without']}")
     return lines
+
+
+def status(work_dir: Path | str, section_key: str = "") -> dict:
+    """Read-only lifecycle summary; it never assigns owners or records observations."""
+    work = Path(work_dir); key = section_key.upper()
+    questions = _question_rows(work / "practice" / "questions.csv")
+    observations = _observation_rows(work / "practice" / "observations.csv")
+    if key: questions = [r for r in questions if r.get("section_key", "").upper() == key]
+    qids = {r.get("question_id") for r in questions}
+    observations = [r for r in observations if r.get("question_id") in qids]
+    counts = {s: sum(r.get("status") == s for r in questions) for s in QUESTION_STATUSES}
+    kinds = {k: sum(r.get("kind") == k and r.get("status") == "active" for r in observations)
+             for k in OBSERVATION_KINDS}
+    floors = {}
+    for section in sorted({r.get("section_key", "") for r in questions if r.get("section_key")}):
+        for req, item in card_view(work, section).items():
+            if item["missing_strengths"]: floors[req] = item["missing_strengths"]
+    return {"status": "OK", "section_key": key, "questions": counts, "observations": kinds,
+            "rating_floor_gaps": floors,
+            "open_items": [r for r in questions if r.get("status") in ("open", "assigned")]}
 
 
 def main(argv: list[str] | None = None) -> int:
