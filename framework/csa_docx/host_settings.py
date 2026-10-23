@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import ipaddress
 import json
 import re
 import sqlite3
@@ -119,15 +120,25 @@ def from_chunks(records) -> list[dict]:
     out = []
     for (host, fname) in sorted(best):
         _ts, rel, folder = best[(host, fname)]
-        parts = sorted(chunks[rel])
-        start = parts[0][0]
-        text = "\n".join(t for _, t in parts)
+        start, text = _join_chunks(chunks[rel])
         lines = text.splitlines()
         for attr, value, off in time_settings(text):
             out.append({"host": host, "topic": "time", "attribute": attr, "value": value, "capture": folder,
                         "source": f"{folder}/{fname} line {start + off}",
                         "excerpt": lines[off].strip() if 0 <= off < len(lines) else ""})
     return out
+
+
+def _join_chunks(parts) -> tuple[int, str]:
+    """Reassemble indexed chunks by source line, removing their intentional overlap."""
+    by_line = {}
+    for start, text in sorted(parts):
+        for offset, line in enumerate((text or "").splitlines()):
+            by_line.setdefault((start or 0) + offset, line)
+    if not by_line:
+        return 0, ""
+    first = min(by_line)
+    return first, "\n".join(by_line[n] for n in sorted(by_line))
 
 
 def from_services(rows: list[dict]) -> list[dict]:
@@ -168,10 +179,9 @@ def latest_texts(con, like: str, keep_empty: bool = False) -> dict[str, dict]:
             best[host] = (ts, rel, folder)
     out = {}
     for host, (_ts, rel, folder) in best.items():
-        parts = sorted(chunks[rel])
-        text = "\n".join(t for _, t in parts)
+        start, text = _join_chunks(chunks[rel])
         if text.strip() or keep_empty:
-            out[host] = {"folder": folder, "fname": Path(rel).name, "start": parts[0][0], "text": text}
+            out[host] = {"folder": folder, "fname": Path(rel).name, "start": start, "text": text}
     return out
 
 
@@ -687,7 +697,22 @@ _BUILTIN_RULE = re.compile(
     r"Windows Calculator|Windows Camera|Microsoft Store|Start|Narrator|Cloud Experience|Windows Security)", re.I)
 
 
-def net_settings(caps: dict[str, dict[str, dict]], zone_of=None) -> list[dict]:
+def indexed_addresses(con) -> dict[str, set[str]]:
+    """Addresses from structured interface rows, keyed by their owning capture host."""
+    try:
+        rows = con.execute(
+            "SELECT DISTINCT UPPER(e.host), e.norm FROM entities e WHERE e.kind='address' AND e.host<>'' "
+            "AND EXISTS (SELECT 1 FROM rows r WHERE r.file_id=e.file_id AND r.line_no=e.line_no "
+            "AND r.table_name='ip_interface_config')").fetchall()
+    except sqlite3.OperationalError:
+        return {}
+    out = defaultdict(set)
+    for host, address in rows:
+        out[host].add(address)
+    return dict(out)
+
+
+def net_settings(caps: dict[str, dict[str, dict]], zone_of=None, addresses=None) -> list[dict]:
     """net.address (IPv4 with prefix, link-local and loopback left out), net.zone (zones.csv, when given) and
     net.gateway (default route). ``caps``: ipcfg (12_ip_interface_config), routes (11_ip_route)."""
     out = []
@@ -697,8 +722,15 @@ def net_settings(caps: dict[str, dict[str, dict]], zone_of=None) -> list[dict]:
             lines = cap["text"].splitlines()
             addrs = []
             for i, l in enumerate(lines):
-                m = re.match(r"^\s*IPAddress\s*:\s*(\d{1,3}(?:\.\d{1,3}){3})\s*$", l)
-                if not m or m.group(1).startswith(("169.254.", "127.")):
+                m = re.match(r"^\s*IPAddress\s*:\s*(\S+)\s*$", l)
+                value = m.group(1) if m else ""
+                try:
+                    parsed = ipaddress.ip_address(value)
+                except ValueError:
+                    continue
+                if parsed.version != 4 or parsed.is_link_local or parsed.is_loopback:
+                    continue
+                if addresses is not None and value not in addresses.get(h, set()):
                     continue
                 pl = next((re.match(r"^\s*PrefixLength\s*:\s*(\d+)", x) for x in lines[i + 1:i + 3]
                            if re.match(r"^\s*PrefixLength\s*:", x)), None)
@@ -961,7 +993,8 @@ def build(work_dir: Path, con=None, services: list[dict] | None = None) -> dict:
             zone_of = lambda ip: zs.of(ip).get("zone", "")    # noqa: E731
         except Exception:                                      # zones are optional
             zone_of = None
-        rows += net_settings({k: latest_texts(con, like) for k, like in NET_CAPTURES.items()}, zone_of)
+        rows += net_settings({k: latest_texts(con, like) for k, like in NET_CAPTURES.items()}, zone_of,
+                             indexed_addresses(con))
         rows += firewall_settings({k: latest_texts(con, like) for k, like in FIREWALL_CAPTURES.items()})
         rows += cert_settings({k: latest_texts(con, like) for k, like in CERT_CAPTURES.items()})
     finally:
@@ -984,7 +1017,8 @@ def load(work_dir: Path, merge_isolation: bool = True) -> dict[str, dict[str, di
         files.append(Path(work_dir) / "hosts" / "isolation.csv")
     for f in files:
         if f.is_file():
-            for r in csv.DictReader(f.open(encoding="utf-8")):
+            from csa_docx import modelstore
+            for r in modelstore.read_csv(f):
                 out[r["host"].upper()][r["attribute"]] = r
     return dict(out)
 

@@ -22,7 +22,11 @@
      "patch.client",
      "patch.auto"
     ]
-   }
+   },
+   "search": [
+    "WSUS",
+    "WUServer"
+   ]
   },
   {
    "id": "S2",
@@ -41,7 +45,11 @@
       "declared"
      ]
     }
-   }
+   },
+   "search": [
+    "port 8530",
+    "CcmExec"
+   ]
   },
   {
    "id": "S3",
@@ -53,7 +61,11 @@
     "settings": [
      "patch.latest"
     ]
-   }
+   },
+   "search": [
+    "Get-HotFix",
+    "InstalledOn"
+   ]
   },
   {
    "id": "S4",
@@ -66,7 +78,11 @@
      "platform.os",
      "platform.support"
     ]
-   }
+   },
+   "search": [
+    "OSVersion",
+    "end of support"
+   ]
   },
   {
    "id": "S5",
@@ -74,7 +90,11 @@
    "requirements": [
     "SEP-PATCH-02"
    ],
-   "source": {}
+   "source": {},
+   "search": [
+    "patch cadence",
+    "maintenance window"
+   ]
   },
   {
    "id": "S6",
@@ -82,7 +102,10 @@
    "requirements": [
     "SEP-PATCH-01"
    ],
-   "source": {}
+   "source": {},
+   "search": [
+    "patch isolation"
+   ]
   }
  ]
 }

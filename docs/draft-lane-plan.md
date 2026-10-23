@@ -63,11 +63,19 @@ What it keeps:
 - the section card;
 - the answer cache, which reuses an answer while its inputs are unchanged and re-asks only the changed questions (`ONLY=`);
 - one search round, only if the agent asks for it;
-- one fix round, only for hard errors;
+- up to `answer_fix_rounds` (cli.yaml, default 3) fix rounds, only for hard errors; each rewrites only the failing blocks and the framework merges them, and a sheet that still fails is kept (cards/<KEY>.wip.json) so the next run resumes it;
+- an atomic run record in `csa-work/draft/runs.json` for generation, validation, repair and application; `csa status N`
+  shows the newest attempt separately from the last answer written to Word;
+- a heartbeat and hard limit for each model pass (`answer_heartbeat_minutes`, `answer_call_timeout_minutes`);
+- recovery when a focused agent writes `ANSWER=` instead of its patch `SHEET=`: the framework captures the changed
+  blocks, restores the passing base sheet, merges only the requested blocks and validates the result;
+- non-progress detection: one repeated blocking signature switches focused repairs to `answer_repair_cli`; another
+  identical result stops with a recorded failure instead of spending another equivalent model call;
 - row scaffolding;
 - the Word auto-close.
 
-**Hard errors** (the only ones that stop a write): QUESTION_MISSING, EMPTY_ANSWER, FACT_NO_EVIDENCE, UNKNOWN_EVIDENCE, RATING_INVALID, COLUMNS, ROW_WIDTH, NO_ROWS, REQUIREMENT_NO_FACTS. Every other finding is printed as a warning.
+**Hard errors** are defined by `answer_sheet.HARD_CODES`. They include evidence, table-shape, bundled-question,
+host-total, repeated-role-table and analysis-frame failures. Draft warnings are reported but do not stop the write.
 
 **Prompt size:** the draft agent definition is about 1 KB, plus a 3.2 KB rules digest and the card. It no longer loads core rules, the app skill, the writing style or the terminology guide.
 

@@ -1,5 +1,6 @@
 """The evidence matrix approves a VERIFIED row only when its excerpt is found in the source it cites."""
 import importlib.util
+import csv
 import json
 import sqlite3
 import subprocess
@@ -89,6 +90,37 @@ def test_append_approves_a_row_the_source_proves_and_stats_counts_it(tmp_path):
     stats = subprocess.run([sys.executable, str(SCRIPT), "--workspace", str(tmp_path / "workspace"), "stats"],
                            capture_output=True, text=True)
     assert json.loads(stats.stdout)["by_review_state"] == {"reviewed": 1}
+
+
+def test_lookup_prefers_deciding_verified_fact_over_reviewed_conflict_and_candidates(tmp_path):
+    work = tmp_path / "workspace" / "csa-work"
+    work.mkdir(parents=True)
+    matrix = work / "evidence-matrix.csv"
+    rows = [
+        {"evidence_id": "E-001", "csa_area": "gap_lookup", "question": "MOTPRDLOG103 address",
+         "claim": "Possible answer to DR-X-B1: MOTPRDLOG103 address may be blank",
+         "status": "UNCONFIRMED", "review_state": "pending"},
+        {"evidence_id": "E-002", "csa_area": "general_asset_inventory", "question": "MOTPRDLOG103 address",
+         "claim": "Sources disagree on the MOTPRDLOG103 address", "status": "CONFLICTING",
+         "review_state": "pending"},
+        {"evidence_id": "E-003", "csa_area": "general_asset_inventory", "question": "MOTPRDLOG103 address",
+         "claim": "MOTPRDLOG103 has address 10.124.32.207", "status": "VERIFIED",
+         "review_state": "pending"},
+    ]
+    with matrix.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=em.COLUMNS)
+        writer.writeheader(); writer.writerows(rows)
+    (work / "evidence-reviews.jsonl").write_text(
+        json.dumps({"evidence_id": "E-002", "state": "reviewed", "by": "test", "at": "now"}) + "\n",
+        encoding="utf-8",
+    )
+    result = subprocess.run([sys.executable, str(SCRIPT), "--workspace", str(tmp_path / "workspace"),
+                             "lookup", "MOTPRDLOG103 address", "--limit", "8"],
+                            capture_output=True, text=True)
+    out = json.loads(result.stdout)
+    assert result.returncode == 0 and out["verdict"] == "LIKELY_ANSWERED"
+    assert out["matches"][0]["evidence_id"] == "E-003"
+    assert next(r for r in out["matches"] if r["evidence_id"] == "E-002")["review_state"] == "reviewed"
 
 
 def _doc_index(path: Path):

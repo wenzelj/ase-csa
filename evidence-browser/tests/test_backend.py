@@ -90,9 +90,20 @@ def test_application_portrait_explains_claims_and_decisions(tmp_path: Path, monk
                          "question": "Is the secondary peer intentional?", "claim": "A peer may be stale.",
                          "status": "INFERRED", "confidence": "medium",
                          "gap_or_action": "Confirm with the application owner.", "review_state": "pending"})
+        writer.writerow({"evidence_id": "E-003", "csa_area": "network_and_connectivity",
+                         "question": "Does an unrelated search hit answer this?", "claim": "Possible match.",
+                         "status": "UNCONFIRMED", "confidence": "low", "review_state": "pending"})
+        writer.writerow({"evidence_id": "E-004", "csa_area": "gap_lookup",
+                         "question": "DR-NET-B1: Is there a path?",
+                         "claim": "Possible answer to DR-NET-B1: the source reads: sample",
+                         "status": "UNCONFIRMED", "confidence": "low", "review_state": "pending"})
+    (project / "csa-work" / "evidence-reviews.jsonl").write_text(
+        '{"evidence_id":"E-003","state":"rejected","by":"test"}\n', encoding="utf-8")
     result = workspace.application_portrait("iamps")
     assert result["application"]["name"] == "IAMPS"
     assert result["assessment"]["status_counts"]["VERIFIED"] == 1
+    assert result["assessment"]["total"] == 2
+    assert [row["evidence_id"] for row in result["attention"]] == ["E-002"]
     assert result["areas"][0]["label"] == "Network and connectivity"
     assert result["areas"][0]["claims"][0]["claim"] == "HOST01 uses DC01."
     assert result["areas"][0]["decisions"][0]["gap_or_action"] == "Confirm with the application owner."
@@ -199,6 +210,25 @@ def test_evidence_source_choices_are_limited_to_cited_captures(tmp_path: Path, m
     result = workspace.evidence_sources("iamps", "E-001")
     assert result["state"] == "found"
     assert [row["file_id"] for row in result["sources"]] == [first]
+
+
+def test_evidence_source_lookup_is_not_limited_to_first_500_rows(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    project, _ = make_workspace(tmp_path, monkeypatch)
+    fields = ["evidence_id", "csa_area", "question", "claim", "status", "source_title",
+              "source_version", "section", "page_or_location", "evidence_excerpt",
+              "inference_reason", "confidence", "gap_or_action", "review_state"]
+    with (project / "csa-work" / "evidence-matrix.csv").open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        for number in range(1, 502):
+            writer.writerow({"evidence_id": f"E-{number:03d}", "claim": f"Claim {number}",
+                             "status": "VERIFIED", "review_state": "pending"})
+        writer.writerow({"evidence_id": "E-1641", "claim": "Sources disagree.",
+                         "status": "CONFLICTING", "source_title": "missing-source.txt",
+                         "review_state": "pending"})
+    result = workspace.evidence_sources("iamps", "E-1641")
+    assert result["evidence"]["evidence_id"] == "E-1641"
+    assert result["state"] == "unavailable"
 
 
 def test_commit_requires_confirmation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

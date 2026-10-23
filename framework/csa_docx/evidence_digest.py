@@ -88,7 +88,8 @@ def _register(workspace: Path) -> dict:
     p = Path(workspace) / "csa-work" / "hosts" / "hosts.csv"
     if not p.is_file():
         return {}
-    return {r["host"].strip(): r for r in csv.DictReader(p.open(encoding="utf-8-sig"))}
+    from csa_docx import modelstore
+    return {r["host"].strip(): r for r in modelstore.read_csv(p)}
 
 
 def _zone(peer: str, reg: dict) -> str:

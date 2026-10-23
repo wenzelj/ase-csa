@@ -122,7 +122,7 @@ def _use_text(u: dict, c: dict, card_kind: str) -> tuple[str, str, bool]:
     """(who, detail, warn): the user role, then its hosts and what it reaches; warn = zone not recorded."""
     who = u["role"].split(",")[0].strip() if len(u["role"]) > 40 else u["role"]
     hz = u.get("host_zones") or {h: [u["zone_kind"], u["zone"]] for h in u["hosts"]}
-    tag = lambda k, z: "zone not recorded" if k == "unknown" else (z if k != card_kind else "")
+    tag = lambda k, z: "" if k == "unknown" else (z if k != card_kind else "")
     groups: dict[str, list[str]] = {}
     for h in u["hosts"]:
         groups.setdefault(tag(*hz.get(h, [u["zone_kind"], u["zone"]])), []).append(h)
@@ -292,8 +292,8 @@ def render_store_svg(model: dict) -> tuple[str, dict]:
     inner_x, inner_w = x0 + 10, wfull - 20
     HEAD = F_BAND + 18
 
-    # IT, then OT, then zone not recorded
-    for band, title in (("it", "IT"), ("ot", "OT"), ("unknown", "Zone not recorded")):
+    # IT, then OT, then anything else
+    for band, title in (("it", "IT"), ("ot", "OT"), ("unknown", "Other")):
         bc = [c for c in cards if c["band"] == band]
         if not bc:
             continue

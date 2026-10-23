@@ -248,8 +248,8 @@ def evidence_use(units, work_dir: Path):
     out = {}
     m = work_dir / "evidence-matrix.csv"
     if m.is_file():
-        import csv
-        rows = list(csv.DictReader(m.open(encoding="utf-8-sig")))
+        from csa_docx import modelstore
+        rows = modelstore.read_csv(m)
         out["matrix_rows"] = len(rows)
         out["by_status"] = dict(Counter(r.get("status", "") for r in rows))
         out["by_review_state"] = dict(Counter(r.get("review_state", "") for r in rows))
@@ -273,7 +273,7 @@ def document_state(docx: Path):
     try:
         from csa_docx.list_comments import list_comments
         cs = list_comments(docx)
-        change = [c for c in cs if re.search(r"\(Ref S\d+-[EA]\d+", c["text"])]
+        change = [c for c in cs if re.search(r"\(Ref S\d+(?:\.\d+)?-[EA]\d+", c["text"])]
         review = [c for c in cs if c not in change]
         out["change_comments"] = len(change)
         out["reviewer_comments"] = [{"author": c["author"], "text": c["text"][:300], "section": (c["heading_path"] or ["?"])[-1]} for c in review]

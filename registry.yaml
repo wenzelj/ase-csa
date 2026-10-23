@@ -43,7 +43,7 @@ agents:
     group: pipeline
     tier: frontier
     arg: SECTION
-    inputs: SECTION, CARD*, SHEET*, MODE=answer, ERRORS, ANSWER
+    inputs: SECTION, CARD*, SHEET*, MODE=answer, ERRORS, ANSWER, ONLY
     locks: section
     instruction: Answer the section card in CARD and write the answer sheet to SHEET, in the shape of the card's example (MODE=check grades ANSWER against the card; MODE=propose proposes kinds for unclassified sections).
     skill: csa-answer-agent
@@ -147,6 +147,18 @@ agents:
     instruction: Intake mode - read the new and changed files in WORK_DIR/intake/latest.json (written by csa ingest) and record what they state as evidence matrix rows and graph items, following Intake mode (MODE=INTAKE) in the agent file.
     skill: csa-evidence-investigator-agent
     summary: Turn newly ingested documents into evidence rows and graph items (Evidence intake step 2).
+
+  - verb: settle
+    file: csa-evidence-investigator-agent.md
+    title: CSA Evidence Investigator Agent
+    group: analysis
+    tier: frontier
+    arg: GAP_CHECK
+    inputs: GAP_CHECK=latest, MODE=SETTLE
+    locks: none
+    instruction: Settlement mode - read the latest gap-check record, adjudicate each candidate against its cited source, append source-checked evidence that answers the question or record a scoped NOT_FOUND outcome, and settle the candidate review rows.
+    skill: csa-gap-settlement-agent
+    summary: Settle Evidence intake candidates from their cited sources before affected subsections are answered again.
 
   - verb: analyse
     file: csa-technical-analyst-agent.md

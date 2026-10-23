@@ -41,6 +41,7 @@ was rendered.
 """
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -114,9 +115,38 @@ def validate_model(model):
     return issues
 
 
+# --------------------------------------------------------------------------- the graph tables
+def graph_rows(work_dir, project=""):
+    """(nodes, edges) of <work_dir>/graph as dicts, read through the system model store when it is current for the files.
+    A node whose label starts with a host of a system part gains "part" and "application" (names): the figure shows the
+    part the host belongs to, from the same tables the section cards use."""
+    from csa_docx import modelstore
+    work = Path(work_dir)
+    nodes = modelstore.read_csv(work / "graph" / "nodes.csv") if (work / "graph" / "nodes.csv").is_file() else []
+    edges = modelstore.read_csv(work / "graph" / "edges.csv") if (work / "graph" / "edges.csv").is_file() else []
+    hp = modelstore.host_parts(work, project)
+    if hp:
+        for n in nodes:
+            p = hp.get(re.split(r"[\s(]", n.get("label", ""), 1)[0].upper())
+            if p:
+                n["part"], n["application"] = p["part"], "; ".join(p["applications"])
+    return nodes, edges
+
+
+def model_for(work_dir, domain, diagram_type, title="", project=""):
+    """The renderer's model for one domain of a project's graph tables (the rows of that domain, and the edges between them)."""
+    nodes, edges = graph_rows(work_dir, project)
+    keep = [n for n in nodes if n.get("domain") == domain and (not project or n.get("project") in ("", project))]
+    ids = {n["node_id"] for n in keep}
+    return {"project": project, "domain": domain, "diagram_type": diagram_type, "title": title or domain, "nodes": keep,
+            "edges": [e for e in edges if e.get("source_node_id") in ids and e.get("target_node_id") in ids]}
+
+
 # --------------------------------------------------------------------------- shared helpers
 def _node_label(n):
     parts = [n["label"]]
+    if n.get("part") and n["part"].lower() not in n["label"].lower():
+        parts.append(f"part: {n['part']}")
     if n.get("zone"):
         parts.append(f"<{n['zone']}>")
     return "\n".join(parts)

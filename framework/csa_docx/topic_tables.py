@@ -81,16 +81,17 @@ def _site_order(work_dir: Path) -> list[str]:
 
 
 def register(work_dir: Path) -> list[dict]:
-    """In-scope hosts from hosts.csv: [{host, role, site}] (role may be empty)."""
+    """In-scope hosts from hosts.csv: [{host, role, site, capture}] (role may be empty; capture: the host has one)."""
     f = Path(work_dir) / "hosts" / "hosts.csv"
     if not f.is_file():
         return []
+    from csa_docx import modelstore
     out = []
-    for r in csv.DictReader(f.open(encoding="utf-8")):
+    for r in modelstore.read_csv(f):
         if (r.get("in_scope") or "").strip().lower() not in IN_SCOPE:
             continue
         out.append({"host": r["host"].strip().upper(), "role": (r.get("role") or "").strip(),
-                    "site": (r.get("site") or "").strip()})
+                    "site": (r.get("site") or "").strip(), "capture": bool((r.get("capture") or "").strip())})
     return out
 
 
@@ -222,8 +223,15 @@ def build(work_dir: Path, heading: str, key: str = "", profile: dict | None = No
         unc = [h for h in members if h["host"] not in captured]
         if not cap:
             names = [h["host"] for h in unc]
-            gap(f"Capture the {tname} settings of {_join(names)} ({role}): no host of this role was captured.",
-                names, role)
+            held = [h["host"] for h in unc if h.get("capture")]      # captured, but the capture holds no such settings
+            rest = [n for n in names if n not in held]
+            if not held:
+                why = "no host of this role was captured."
+            else:
+                why = (f"the {'captures' if len(held) > 1 else 'capture'} of {_join(held)} "
+                       f"{'hold' if len(held) > 1 else 'holds'} no {tname} settings"
+                       + (f", and {_join(rest)} {'were' if len(rest) > 1 else 'was'} not captured." if rest else "."))
+            gap(f"Capture the {tname} settings of {_join(names)} ({role}): {why}", names, role)
             continue
         variants: dict[tuple, list[dict]] = {}
         for h in cap:
@@ -365,6 +373,30 @@ def load_gaps(work_dir: Path) -> dict:
 
 def all_gaps(work_dir: Path) -> list[dict]:
     return [g for gs in load_gaps(work_dir).values() for g in gs]
+
+
+def merge_gaps(gaps: list[dict]) -> list[dict]:
+    """One Discovery Required item per role group and action, not one per topic: gaps with the same role, hosts and
+    action (capture or confirm) become one item that names every topic it covers. The first topic's DR ID leads and
+    every per-topic DR ID stays in ``fact`` as a reference. A group of one gap is returned unchanged."""
+    groups: dict[tuple, list[dict]] = {}
+    for g in gaps:
+        verb = g["text"].split(" ", 1)[0].lower()
+        groups.setdefault((g.get("role", ""), tuple(sorted(g.get("hosts", []))), verb), []).append(g)
+    out = []
+    for (role, hosts, verb), gs in groups.items():
+        if len(gs) == 1:
+            out.append(gs[0])
+            continue
+        topics = list(dict.fromkeys(g.get("section", "") or g["dr_id"] for g in gs))
+        names = _join(list(hosts))
+        what = (f"Confirm that {names} ({role}) {'use' if len(hosts) > 1 else 'uses'} the same settings as the captured "
+                f"hosts of that role" if verb == "confirm" else f"Capture the settings of {names} ({role})")
+        reqs = list(dict.fromkeys(r for g in gs for r in g.get("reqs", [])))
+        out.append({**gs[0], "text": f"{what}, for {len(topics)} topics: {_join(topics)}.", "reqs": reqs,
+                    "fact": f"{gs[0].get('fact', '')}. Topic items: {', '.join(g['dr_id'] for g in gs)}",
+                    "section": ", ".join(topics)})
+    return out
 
 
 # ---------------------------------------------------------------- into the document

@@ -20,7 +20,11 @@
     "settings": [
      "fw.profiles"
     ]
-   }
+   },
+   "search": [
+    "Get-NetFirewallProfile",
+    "DefaultInboundAction"
+   ]
   },
   {
    "id": "S2",
@@ -32,7 +36,11 @@
     "settings": [
      "fw.custom_inbound"
     ]
-   }
+   },
+   "search": [
+    "Get-NetFirewallRule",
+    "Direction Inbound"
+   ]
   },
   {
    "id": "S3",
@@ -45,7 +53,11 @@
      "fw.exposed",
      "admin.rdp_port"
     ]
-   }
+   },
+   "search": [
+    "Get-NetTCPConnection Listen",
+    "listening port"
+   ]
   },
   {
    "id": "S4",
@@ -61,7 +73,11 @@
       "both"
      ]
     }
-   }
+   },
+   "search": [
+    "RemoteAddress",
+    "inbound connection"
+   ]
   },
   {
    "id": "S5",
@@ -69,7 +85,11 @@
    "requirements": [
     "SEP-PERIM-01"
    ],
-   "source": {}
+   "source": {},
+   "search": [
+    "boundary firewall",
+    "firewall rule"
+   ]
   },
   {
    "id": "S6",
@@ -77,7 +97,11 @@
    "requirements": [
     "SEP-PERIM-03"
    ],
-   "source": {}
+   "source": {},
+   "search": [
+    "firewall administration",
+    "Palo Alto"
+   ]
   }
  ]
 }

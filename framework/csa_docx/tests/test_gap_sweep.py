@@ -115,10 +115,28 @@ def test_sweep_skips_rejected(tmp_path, monkeypatch):
     assert again["affected"] == []
 
 
-def test_csa_has_a_gap_check_command():
+def test_sweep_carries_pending_candidate_by_exact_dr_id(tmp_path, monkeypatch):
+    ws = _workspace(tmp_path)
+    matrix = ws / "csa-work" / "evidence-matrix.csv"
+    matrix.write_text(
+        "evidence_id,csa_area,question,claim,status,review_state\n"
+        'E-700,gap_lookup,q,"Possible answer to DR-BAK-B1: the source reads: backup",UNCONFIRMED,pending\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(gs.gap_lookup, "lookup_gap", lambda *args, **kwargs:
+                        {"verdict": "NOT_FOUND", "evidence_ids": []})
+    result = gs.sweep(ws, "BAK")
+    assert result["questions"][0]["verdict"] == "CANDIDATES"
+    assert result["questions"][0]["evidence_ids"] == ["E-700"]
+    assert result["affected"][0]["candidates"] == 1
+
+
+def test_csa_has_gap_check_and_resolve_commands():
     import subprocess
     import sys
     from pathlib import Path
     csa = Path(__file__).resolve().parents[3] / "bin" / "csa"
     r = subprocess.run([sys.executable, str(csa), "gap-check", "--help"], capture_output=True, text=True)
     assert r.returncode == 0 and "open question" in r.stdout
+    r = subprocess.run([sys.executable, str(csa), "resolve-gaps", "--help"], capture_output=True, text=True)
+    assert r.returncode == 0 and "resolve-gaps" in r.stdout and "section" in r.stdout

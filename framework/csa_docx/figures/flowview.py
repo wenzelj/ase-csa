@@ -49,7 +49,7 @@ def edges(rows: list[dict], flt: dict | None = None, register: set[str] | None =
                 e = acc.setdefault(k, {"s": s, "t": t, "mechanism": r["mechanism"], "status": st, "opens": "s",
                                        "data": _data(r["mechanism"]), "flows": [], "ports": [], "via": "",
                                        "declared_id": "", "cross": r.get("cross_zone", ""),
-                                       "zones": f"{r.get('src_zone') or 'zone not recorded'} to {r.get('dst_zone') or 'zone not recorded'}",
+                                       "zones": f"{r.get('src_zone') or 'other'} to {r.get('dst_zone') or 'other'}",
                                        "evidence": []})
                 e["flows"].append(r["flow_id"])
                 if r.get("port") and r["port"] not in e["ports"]:
@@ -260,7 +260,7 @@ def view(work_dir, over: dict, prof: dict, p: dict, *, key: str, title: str, sub
         n["marks"] = mk.get(n["id"], {})
     zones = list(over["zones"])
     if any(n["zone"] == "outside" for n in nodes.values()) and not any(z["id"] == "outside" for z in zones):
-        zones.append({"id": "outside", "label": "Zone not recorded"})
+        zones.append({"id": "outside", "label": "Other"})
     boundary = any(n["zone"] == "boundary" for n in nodes.values())
     if boundary and not any(z["id"] == "boundary" for z in zones):
         zones.append({"id": "boundary", "label": "IT / OT boundary"})
@@ -274,7 +274,7 @@ def view(work_dir, over: dict, prof: dict, p: dict, *, key: str, title: str, sub
             partial[k] = (" · ".join(holders), holders)
     model = {"id": f"figure-{key.lower()}", "title": title, "subtitle": subtitle, "zones": zones, "groups": [],
              "nodes": list(nodes.values()), "edges": medges, "notes": [], "flow": True, "controls": ctl,
-             "common_marks": common_mk, "partial_marks": partial, "outside_label": "Zone not recorded",
+             "common_marks": common_mk, "partial_marks": partial, "outside_label": "Other",
              "not_crossing": not_crossing, "show_stores": p.get("show_stores", True)}
     model = M._layout(model, prof)
     if boundary and "boundary" not in model["layout"]["top"]:   # the screen view puts boundary nodes in its top band

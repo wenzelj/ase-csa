@@ -9,6 +9,7 @@ fi
 dir=$(mktemp -d "${TMPDIR:-/tmp}/csa-window.XXXXXX") || exit 1
 {
   print -r -- "#!/bin/zsh"
+  print -r -- "print -r -- started > ${(q)dir}/started"
   print -r -- "cd ${(q)PWD}"
   print -r -- "${(@q)@}"
   print -r -- "rc=\$?"
@@ -16,12 +17,28 @@ dir=$(mktemp -d "${TMPDIR:-/tmp}/csa-window.XXXXXX") || exit 1
   print -r -- "print; print -- \"csa-window: finished (exit \$rc). You can close this window.\""
 } > "$dir/run.sh"
 chmod +x "$dir/run.sh"
-osascript >/dev/null <<EOF
+if ! osascript >/dev/null <<EOF
 tell application "Terminal"
   activate
   do script "clear; zsh '$dir/run.sh'"
 end tell
 EOF
+then
+  print -u2 -- "csa-window: Terminal could not be opened; running the command in this window."
+  rm -rf "$dir"
+  exec "$@"
+fi
+# A successful AppleScript reply is not proof that Terminal started the script. Fail visibly instead of waiting
+# forever; the parent CSA loop can then retain and report its work-in-progress state.
+for _ in {1..15}; do
+  [[ -f "$dir/started" || -f "$dir/rc" ]] && break
+  sleep 1
+done
+if [[ ! -f "$dir/started" && ! -f "$dir/rc" ]]; then
+  print -u2 -- "csa-window: Terminal accepted the request but did not start the command within 15 seconds."
+  rm -rf "$dir"
+  exit 125
+fi
 while [[ ! -f "$dir/rc" ]]; do sleep 2; done
 rc=$(<"$dir/rc")
 rm -rf "$dir"

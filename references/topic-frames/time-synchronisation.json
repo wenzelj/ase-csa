@@ -23,7 +23,11 @@
      "time.stratum",
      "time.source_stratum"
     ]
-   }
+   },
+   "search": [
+    "w32tm",
+    "NtpServer"
+   ]
   },
   {
    "id": "S2",
@@ -36,7 +40,11 @@
      "time.fallback",
      "time.poll"
     ]
-   }
+   },
+   "search": [
+    "SpecialPollInterval",
+    "w32tm /query"
+   ]
   },
   {
    "id": "S3",
@@ -55,7 +63,11 @@
       "declared"
      ]
     }
-   }
+   },
+   "search": [
+    "port 123",
+    "NTP"
+   ]
   },
   {
    "id": "S4",
@@ -63,7 +75,11 @@
    "requirements": [
     "SEP-TIME-01"
    ],
-   "source": {}
+   "source": {},
+   "search": [
+    "PDC emulator",
+    "GPS clock"
+   ]
   },
   {
    "id": "S5",
@@ -71,7 +87,11 @@
    "requirements": [
     "SEP-TIME-01"
    ],
-   "source": {}
+   "source": {},
+   "search": [
+    "time zone",
+    "clock drift"
+   ]
   }
  ]
 }

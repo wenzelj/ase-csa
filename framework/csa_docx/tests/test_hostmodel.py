@@ -4,6 +4,7 @@ import json
 import sqlite3
 from pathlib import Path
 
+from csa_docx import host_settings as hs
 from csa_docx import hostmodel as hm
 
 
@@ -114,26 +115,19 @@ def test_graph_quotes_indexed_duplicate_sources_and_listener(tmp_path, monkeypat
     assert "DSTA01:6010" not in excerpt
 
 
-def test_name_addresses_trusted_and_spread(tmp_path):
+def test_alias_addresses_uses_non_ambiguous_index_identity(tmp_path):
     con = sqlite3.connect(tmp_path / "t.sqlite")
     con.executescript("""create table files(file_id integer, rel_path text);
-        create table chunk_map(chunk_id integer, file_id integer, line_start integer);
-        create table chunks_content(id integer, c0 text);""")
-    docs = {"design/NetSeg_design.docx": "SQLSRV001 10.1.1.5",
-            "logs/fw.log": "\n".join(f"FWLOG01 10.9.9.{i} deny" for i in range(1, 5))
-                           + "\nOTHERHOST1 10.1.1.5 allow\nLONEHOST9 10.2.2.2 allow"}
-    for i, (rel, text) in enumerate(docs.items(), 1):
-        con.execute("insert into files values (?,?)", (i, rel))
-        con.execute("insert into chunk_map values (?,?,1)", (i, i))
-        con.execute("insert into chunks_content values (?,?)", (i, text))
-    ips = {"10.1.1.5", "10.2.2.2"} | {f"10.9.9.{i}" for i in range(1, 5)}
-    out = hm.name_addresses(con, ips, {}, ["NetSeg_"])
-    assert out["10.1.1.5"]["name"] == "SQLSRV001"          # trusted source wins over the log line
-    assert "NetSeg_design.docx" in out["10.1.1.5"]["cite"]
-    assert out["10.2.2.2"]["name"] == "LONEHOST9"          # one name on one line elsewhere still counts
-    assert "10.9.9.1" not in out                           # FWLOG01 names 4 addresses: it is the log writer
-    untrusted = hm.name_addresses(con, {"10.1.1.5"}, {}, [])["10.1.1.5"]
-    assert untrusted["name"] is None and untrusted["ambiguous"] == ["OTHERHOST1", "SQLSRV001"]
+        create table aliases(norm text, host text, kind text, basis text, confidence text,
+                             file_id integer, line_no integer, ambiguous integer);""")
+    con.execute("insert into files values (1, 'dns/41_dns_query_tests.txt')")
+    con.executemany("insert into aliases values (?,?,?,?,?,?,?,?)", [
+        ("10.1.1.5", "SQLSRV001", "address", "paired-line", "medium", 1, 9, 0),
+        ("10.2.2.2", "HOSTA", "address", "paired-line", "medium", 1, 10, 1),
+        ("10.2.2.2", "HOSTB", "address", "paired-line", "medium", 1, 10, 1),
+    ])
+    out = hm.alias_addresses(con, {"10.1.1.5", "10.2.2.2"})
+    assert out == {"10.1.1.5": {"name": "SQLSRV001", "cite": "41_dns_query_tests.txt line 9", "conflict": []}}
 
 
 def test_time_source_pairs_reads_address_and_name_from_one_status_block():
@@ -233,6 +227,17 @@ def test_configured_services_takes_only_the_newest_capture_of_a_host():
     assert all(r["capture"] == "TST_discovery_HOSTA01_20260505T011354Z" for r in rows)
 
 
+def test_overlapping_index_chunks_are_reassembled_once():
+    folder = "TST_discovery_HOSTA01_20260505T011354Z"
+    records = [(f"Data/{folder}/14_resolver.txt", 1,
+                "heading\nEthernet 3 2 {10.0.1.10}\nrepeated context"),
+               (f"Data/{folder}/14_resolver.txt", 3,
+                "repeated context\nEthernet 4 2 {10.0.2.10}")]
+    rows = hm.configured_services(records, {})
+    assert [(r["server_ip"], r["preference"]) for r in rows] == [("10.0.1.10", 1), ("10.0.2.10", 2)]
+    assert hs._join_chunks([(1, "a\nb\nc"), (3, "c\nd")]) == (1, "a\nb\nc\nd")
+
+
 def test_configured_services_skips_a_capture_folder_without_a_host_name():
     resolver = "InterfaceAlias AddressFamily ServerAddresses\nEthernet 3 2 {10.0.2.10}\n"
     rows = hm.configured_services([("Data/tg_discovery_20260317T002440Z/14_resolver.txt", 1, resolver)], {})
@@ -246,22 +251,6 @@ def test_configured_services_counts_dns_order_across_two_interfaces_and_skips_re
     rows = hm.configured_services([("Data/TST_discovery_HOSTA01_20260505T011354Z/14_resolver.txt", 0, resolver)], {})
     assert [(r["server_ip"], r["preference"]) for r in rows] == [
         ("10.0.1.10", 1), ("10.0.2.10", 2), ("10.0.3.10", 3)]
-
-def test_name_addresses_ignores_a_prose_line_that_lists_many_addresses(tmp_path):
-    con = sqlite3.connect(tmp_path / "t.sqlite")
-    con.executescript("""create table files(file_id integer, rel_path text);
-        create table chunk_map(chunk_id integer, file_id integer, line_start integer);
-        create table chunks_content(id integer, c0 text);""")
-    prose = ("Resolved addresses: " + "; ".join(f"HOSTAA{i:02d} - 10.5.5.{i}" for i in range(1, 8))
-             + "; mail.example.com.au - 10.6.6.1 and 10.6.6.2.")
-    docs = {"doc.docx": prose, "dns/41_dns_query_tests.txt": "HOSTAA03  10.5.5.3"}
-    for i, (rel, text) in enumerate(docs.items(), 1):
-        con.execute("insert into files values (?,?)", (i, rel))
-        con.execute("insert into chunk_map values (?,?,1)", (i, i))
-        con.execute("insert into chunks_content values (?,?)", (i, text))
-    out = hm.name_addresses(con, {"10.5.5.3"}, {}, [])
-    assert out["10.5.5.3"]["name"] == "HOSTAA03"          # only the one-address line counts; MAIL is not offered
-
 
 def test_attr_match_accepts_a_bare_column_or_a_qualified_attribute():
     assert hm._attr_match("Source", "time_status: Source")

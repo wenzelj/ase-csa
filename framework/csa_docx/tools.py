@@ -27,7 +27,8 @@ import os
 import re
 import zipfile
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime, timezone
+UTC = timezone.utc  # datetime.UTC needs Python 3.11; this works on 3.10 too
 from pathlib import Path
 
 from .change_parser import parse_change_file, select_batch

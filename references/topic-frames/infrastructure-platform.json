@@ -21,7 +21,11 @@
      "platform.hardware",
      "agent.virtualisation_tools"
     ]
-   }
+   },
+   "search": [
+    "VMware",
+    "Hyper-V"
+   ]
   },
   {
    "id": "S2",
@@ -34,7 +38,11 @@
      "platform.os",
      "platform.support"
     ]
-   }
+   },
+   "search": [
+    "OSVersion",
+    "end of support"
+   ]
   },
   {
    "id": "S3",
@@ -42,7 +50,10 @@
    "requirements": [
     "SEP-INFRA-01"
    ],
-   "source": {}
+   "source": {},
+   "search": [
+    "VMware Tools"
+   ]
   },
   {
    "id": "S4",
@@ -50,7 +61,10 @@
    "requirements": [
     "SEP-INFRA-01"
    ],
-   "source": {}
+   "source": {},
+   "search": [
+    "vSphere"
+   ]
   },
   {
    "id": "S5",
@@ -58,7 +72,11 @@
    "requirements": [
     "SEP-INFRA-01"
    ],
-   "source": {}
+   "source": {},
+   "search": [
+    "licence server",
+    "licensing"
+   ]
   }
  ]
 }

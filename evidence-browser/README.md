@@ -38,18 +38,22 @@ changes the working DOCX.
 1. **Bring in new data** runs `csa ingest`. The index build records what came in (`csa-work/intake/latest.json`):
    new, changed and removed files, plus the files the index cannot read (.doc, .pptx, images), listed with a request for
    a text or PDF copy.
-2. **Turn new documents into evidence** runs `csa intake --headless` with Claude, Codex or Evo, in its own Terminal
-   window. The evidence agent (Intake mode in `csa-evidence-investigator-agent.md`) reads the new documents and appends
+2. **Turn new documents into evidence** runs `csa intake --window` with Claude, Codex or Evo, in its own Terminal
+   window. The Evidence Workspace now requests `--window` explicitly, so the selected model and its current work remain
+   visible. The evidence agent (Intake mode in `csa-evidence-investigator-agent.md`) reads the new documents and appends
    source-checked rows through `evidence_matrix.py append` and graph items through `graph_store.py`. Its summary is
    `csa-work/intake/<id>.evidence.md`.
 3. **Check open questions** runs `csa gap-check` (no model): every question in `csa-work/draft/open-questions.md` is
    looked up in the matrix and the index. What the index finds is added as UNCONFIRMED candidate rows.
    Result: `csa-work/intake/gap-check-latest.json`.
-4. **Settle what was found**: each candidate shows its quote and source. *Not an answer* records it as rejected (it is
-   never offered again). *Write the fact* opens the evidence form filled from the candidate. When the new row is added,
-   the candidate is recorded as reviewed ("settled by E-...").
-5. **Use it in the document** lists the subsections with new evidence for an open question and opens them on Draft
-   answers (draft lane) or Assessment (V1).
+4. **Settle what was found**: *Resolve and update answers* runs the evidence investigator over every candidate's
+   original source. It reuses the gap-check record already displayed on the page, opens the selected model in a
+   Terminal window immediately, and streams framework progress into the job panel. Supported findings become
+   source-checked evidence, irrelevant candidates are rejected, and a
+   bounded search that still has no answer becomes a scoped NOT_FOUND row. The individual *Not an answer* and *Write
+   the fact* controls remain available for recovery or manual review.
+5. **Use it in the document**: the resolve operation reruns each affected subsection through Draft answers (draft
+   lane) or tracked authoring (V1). The subsection links remain available for inspection and follow-up.
 
 Routes: `GET /api/systems/{key}/intake` (snapshot) and `POST /api/systems/{key}/evidence/{id}/review`
 (`{"state": "rejected" | "reviewed", "note": "..."}`). Jobs: `ingest`, `intake`, `gap_check`.

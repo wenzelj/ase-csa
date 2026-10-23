@@ -17,6 +17,12 @@ Commands (all output JSON):
   tables  [pattern]                                          structured tables and their columns
   rows    <table> [--where COL~text|COL=text|COL!~text ...] [--host H] [--cols a,b] [--distinct COL]
   search  "<terms>" [--host H] [--path-like PATTERN] [--any] [--all-captures] [--include-archive]
+  entities [--kind K] [--value V] [--host H] [--limit N]     what the text names: address, fqdn, host, port, service,
+          process, account, share (no filter: counts per kind); values match on the normalised form
+  aliases [--host H] [--value V] [--scope S] [--refresh]     host <-> name <-> fqdn <-> address, with scope (system,
+          sibling, neighbour, external), basis and ambiguity; --refresh rebuilds it from the current host register
+  verify-cites [--save F] [--against F]                      does every evidence-matrix row still point into the index?
+          run with --save before a rebuild and --against after; --stage-dir builds publish only if nothing newly fails
   sql     "SELECT ..."                                       read-only query
 
 Always pass --project <key> (from csa-context/PROJECTS.yaml) or --workspace <project_root>.
@@ -37,7 +43,12 @@ import zipfile
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
-SCHEMA_VERSION = 1
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import index_aliases  # noqa: E402
+import index_cites  # noqa: E402
+import index_entities  # noqa: E402
+
+SCHEMA_VERSION = 2   # 2: entities and aliases tables, overlapping chunks
 FRAMEWORK_DIR = Path(__file__).resolve().parents[3]  # .agents
 BASE_DIR = FRAMEWORK_DIR.parent
 INDEX_NAME = "discovery-index.sqlite"
@@ -80,7 +91,9 @@ SPARSE_XML_BYTES = 1024 * 1024      # larger XML: index only the structural (non
 SPARSE_TAG_REPEAT = 200
 LINE_TAG = re.compile(r"^@(\d+)\| ")
 CHUNK_LINES = 30
+CHUNK_OVERLAP = 5      # lines two neighbouring chunks share, so a fact is found with the host line above it
 MAX_ROWS_PER_FILE = 20000
+MAX_ENTITIES_PER_FILE = 5000
 MAX_EXCERPT = 1200
 
 
@@ -356,6 +369,11 @@ CREATE INDEX IF NOT EXISTS rows_table ON rows(table_name);
 CREATE INDEX IF NOT EXISTS rows_file ON rows(file_id);
 CREATE TABLE IF NOT EXISTS chunk_map(chunk_id INTEGER PRIMARY KEY, file_id INTEGER, line_start INTEGER, line_end INTEGER);
 CREATE INDEX IF NOT EXISTS chunk_file ON chunk_map(file_id);
+CREATE TABLE IF NOT EXISTS entities(
+  entity_id INTEGER PRIMARY KEY, kind TEXT, value TEXT, norm TEXT, file_id INTEGER, line_no INTEGER,
+  capture_id INTEGER, host TEXT, source TEXT);
+CREATE INDEX IF NOT EXISTS entities_norm ON entities(kind, norm);
+CREATE INDEX IF NOT EXISTS entities_file ON entities(file_id);
 """
 
 
@@ -376,6 +394,7 @@ def init_db(con):
     else:
         con.execute("CREATE TABLE IF NOT EXISTS chunks(rowid INTEGER PRIMARY KEY, content TEXT)")
         fts = "0"
+    con.executescript(index_aliases.SCHEMA)
     con.execute("INSERT OR REPLACE INTO meta VALUES('fts5', ?)", (fts,))
     con.execute("INSERT OR REPLACE INTO meta VALUES('schema_version', ?)", (str(SCHEMA_VERSION),))
 
@@ -415,14 +434,17 @@ def drop_content(con, file_id):
         con.execute(f"DELETE FROM chunks WHERE rowid IN ({q})", part)
     con.execute("DELETE FROM chunk_map WHERE file_id=?", (file_id,))
     con.execute("DELETE FROM rows WHERE file_id=?", (file_id,))
+    con.execute("DELETE FROM entities WHERE file_id=?", (file_id,))
 
 
 def add_sparse(con, file_id, numbered):
     """numbered: [(line_no, text)] - non-contiguous lines; each stored as '@<n>| text'."""
-    for s in range(0, len(numbered), CHUNK_LINES):
+    for s in range(0, len(numbered), CHUNK_LINES - CHUNK_OVERLAP):
         part = numbered[s:s + CHUNK_LINES]
         cur = con.execute("INSERT INTO chunks(content) VALUES(?)", ("\n".join(f"@{n}| {t}" for n, t in part),))
         con.execute("INSERT INTO chunk_map VALUES(?,?,?,?)", (cur.lastrowid, file_id, part[0][0], part[-1][0]))
+        if s + CHUNK_LINES >= len(numbered):
+            break
 
 
 def sparse_xml(lines):
@@ -435,20 +457,49 @@ def sparse_xml(lines):
             if l.strip() and m and freq[m.group(1)] <= SPARSE_TAG_REPEAT]
 
 
+def add_entities(con, file_id, lines):
+    """Fill ``entities`` from the lines of one file; the owning host is the host of the capture the file sits in."""
+    owner = con.execute("SELECT host, capture_id FROM files WHERE file_id=?", (file_id,)).fetchone() or (None, None)
+    room = MAX_ENTITIES_PER_FILE - con.execute("SELECT COUNT(*) FROM entities WHERE file_id=?", (file_id,)).fetchone()[0]
+    if room <= 0:
+        return
+    con.executemany("INSERT INTO entities(kind, value, norm, file_id, line_no, capture_id, host, source) "
+                    "VALUES(?,?,?,?,?,?,?,'text')",
+                    [(k, v, n, file_id, ln, owner[1], owner[0]) for ln, k, v, n in index_entities.extract_text(lines, room)])
+
+
 def add_text(con, file_id, text):
     lines = text.splitlines()
-    for s in range(0, len(lines), CHUNK_LINES):
+    add_entities(con, file_id, lines)
+    for s in range(0, len(lines), CHUNK_LINES - CHUNK_OVERLAP):
         part = lines[s:s + CHUNK_LINES]
-        if not any(x.strip() for x in part):
-            continue
-        cur = con.execute("INSERT INTO chunks(content) VALUES(?)", ("\n".join(part),))
-        con.execute("INSERT INTO chunk_map VALUES(?,?,?,?)", (cur.lastrowid, file_id, s + 1, s + len(part)))
+        if any(x.strip() for x in part):
+            cur = con.execute("INSERT INTO chunks(content) VALUES(?)", ("\n".join(part),))
+            con.execute("INSERT INTO chunk_map VALUES(?,?,?,?)", (cur.lastrowid, file_id, s + 1, s + len(part)))
+        if s + CHUNK_LINES >= len(lines):
+            break
     return lines
+
+
+def add_row_entities(con, file_id, tname, rows):
+    """Entities named by the cells of structured rows (the column map), not repeated where the text pass found them."""
+    owner = con.execute("SELECT host, capture_id FROM files WHERE file_id=?", (file_id,)).fetchone() or (None, None)
+    have = {(k, n, ln) for k, n, ln in con.execute("SELECT kind, norm, line_no FROM entities WHERE file_id=?", (file_id,))}
+    room = MAX_ENTITIES_PER_FILE - len(have)
+    new = []
+    for line_no, data in rows:
+        for k, v, nm in index_entities.from_row(tname, data):
+            if (k, nm, line_no) not in have and len(new) < room:
+                have.add((k, nm, line_no))
+                new.append((k, v[:200], nm[:200], file_id, line_no, owner[1], owner[0]))
+    con.executemany("INSERT INTO entities(kind, value, norm, file_id, line_no, capture_id, host, source) "
+                    "VALUES(?,?,?,?,?,?,?,'row')", new)
 
 
 def add_rows(con, file_id, tname, blocks):
     n = 0
     for b, (fmt, rows) in enumerate(blocks, start=1):
+        add_row_entities(con, file_id, tname, rows)
         for line_no, data in rows:
             if n >= MAX_ROWS_PER_FILE:
                 return n
@@ -672,6 +723,7 @@ def cmd_build(args, project, root):
         for c in caps:
             if c[0] != latest:
                 con.execute("UPDATE captures SET superseded_by=? WHERE capture_id=?", (latest, c[0]))
+    index_aliases.build_aliases(con, index_aliases.load_register(work_dir))
     con.execute("INSERT OR REPLACE INTO meta VALUES('project', ?)", (project["key"],))
     con.execute("INSERT OR REPLACE INTO meta VALUES('sources', ?)", (json.dumps([str(s) for s in sources]),))
     con.execute("INSERT OR REPLACE INTO meta VALUES('complete', ?)", ("1" if done else "0",))
@@ -682,16 +734,70 @@ def cmd_build(args, project, root):
         con.execute("INSERT INTO chunks(chunks) VALUES('optimize')")
         con.commit()
     con.close()
-    copied = None
+    copied, publish = None, {}
     if args.stage_dir and done:
-        tmp = final_db.with_name(final_db.name + ".new")
-        shutil.copyfile(db_path, tmp)
-        os.replace(tmp, final_db)
-        copied = str(final_db)
+        publish = publish_index(db_path, final_db, work_dir / "evidence-matrix.csv", force=args.force_swap)
+        copied = publish.get("published_to")
     intake = write_intake(work_dir, changes, built_at, matrix_last_id(work_dir)) if done else None
-    emit(dict(status="OK" if done else "INCOMPLETE", message=None if done else "time budget reached - run build again to continue",
-              db=str(db_path), published_to=copied, seconds=round(time.time() - t0, 1), files=stats,
+    emit(dict(status=publish.get("status") if publish.get("status") == "CITES_BROKEN" else "OK" if done else "INCOMPLETE",
+              message=None if done else "time budget reached - run build again to continue",
+              publish=publish or None, db=str(db_path), published_to=copied, seconds=round(time.time() - t0, 1), files=stats,
               intake=str(intake) if intake else None))
+
+
+def _matrix_rows(matrix_csv):
+    matrix_csv = Path(matrix_csv)
+    if not matrix_csv.is_file():
+        return []
+    with open(matrix_csv, encoding="utf-8-sig", newline="") as fh:
+        return [r for r in csv.DictReader(fh) if r.get("evidence_id")]
+
+
+def _cites_of(db, rows):
+    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    try:
+        return index_cites.verify_cites(con, rows)
+    finally:
+        con.close()
+
+
+def publish_index(new_db, final_db, matrix_csv, force=False):
+    """Copy a staged index over the live one only when no evidence-matrix citation newly fails (a file no longer indexed,
+    or text shorter than a cited line). The old index is kept beside it as <name>.bak-<date>. The matrix is only read."""
+    new_db, final_db = Path(new_db), Path(final_db)
+    rows = _matrix_rows(matrix_csv)
+    bad = []
+    if final_db.exists() and rows:
+        bad = index_cites.new_failures(_cites_of(final_db, rows), _cites_of(new_db, rows))
+    if bad and not force:
+        return dict(status="CITES_BROKEN", new_failures=bad, published_to=None,
+                    message=f"{len(bad)} citation(s) would stop resolving; the staged index at {new_db} was not published "
+                            "(--force-swap to publish anyway)")
+    backup = None
+    if final_db.exists():
+        backup = final_db.with_name(f"{final_db.name}.bak-{time.strftime('%Y%m%d-%H%M%S')}")
+        shutil.copyfile(final_db, backup)
+    tmp = final_db.with_name(final_db.name + ".new")
+    shutil.copyfile(new_db, tmp)
+    os.replace(tmp, final_db)
+    return dict(status="OK", published_to=str(final_db), backup=str(backup) if backup else None, new_failures=bad)
+
+
+def cmd_verify_cites(args, project, root):
+    work_dir = remap(project["work_dir"], project)
+    matrix = work_dir / "evidence-matrix.csv"
+    rows = _matrix_rows(matrix)
+    con, _ = open_ro(project)
+    res = index_cites.verify_cites(con, rows)
+    res["matrix_sha256"] = hashlib.sha256(matrix.read_bytes()).hexdigest() if matrix.is_file() else ""
+    if args.against:
+        before = json.loads(Path(args.against).read_text(encoding="utf-8"))
+        res["new_failures"] = index_cites.new_failures(before, res)
+        res["matrix_unchanged"] = before.get("matrix_sha256") == res["matrix_sha256"]
+    if args.save:
+        Path(args.save).write_text(json.dumps(res, indent=1), encoding="utf-8")
+    res["status"] = "CITES_BROKEN" if res.get("new_failures") else "OK"
+    emit(res)
 
 
 def matrix_last_id(work_dir):
@@ -819,11 +925,72 @@ def fts_query(terms, any_mode):
     return (" OR " if any_mode else " AND ").join(quoted), [t.strip('"').lower() for t in toks]
 
 
+def unseen_hits(cited, file_id, hits):
+    """The hits whose line was not cited yet (neighbouring chunks share CHUNK_OVERLAP lines); marks the rest as cited."""
+    fresh = [h for h in hits if (file_id, h[0]) not in cited]
+    cited.update((file_id, h[0]) for h in fresh)
+    return fresh
+
+
+MAX_EXPANSION = 8
+EXPAND_SCOPES = ("system", "sibling", "neighbour")
+
+
+def expand_terms(con, terms):
+    """{term (lower case): [aliases]}: for a term that is a host name, full name or address in the aliases table, the
+    host's other names and addresses (at most MAX_EXPANSION, names first). Ambiguous addresses and hosts outside the
+    system, sibling and neighbour scopes are never used."""
+    if not con.execute("SELECT 1 FROM sqlite_master WHERE name='aliases'").fetchone():
+        return {}
+    out = {}
+    scopes = ",".join("?" * len(EXPAND_SCOPES))
+    for tok in re.findall(r'"[^"]+"|\S+', terms):
+        t = tok.strip('"')
+        if len(t) < 3 or t.lower() in ("and", "or", "not"):
+            continue
+        hosts = {h for (h,) in con.execute(
+            f"SELECT host FROM aliases WHERE (norm=? OR norm=?) AND scope IN ({scopes}) AND ambiguous=0",
+            (t.upper(), t.lower(), *EXPAND_SCOPES))}
+        if not hosts:
+            continue
+        marks = ",".join("?" * len(hosts))
+        rows = con.execute(
+            f"SELECT value, kind, norm FROM aliases WHERE host IN ({marks}) AND scope IN ({scopes}) AND ambiguous=0 "
+            "AND confidence IN ('high','medium') GROUP BY norm ORDER BY CASE kind WHEN 'name' THEN 0 WHEN 'fqdn' THEN 1 ELSE 2 END, norm",
+            (*sorted(hosts), *EXPAND_SCOPES)).fetchall()
+        extra = [r[0] for r in rows if r[2].lower() != t.lower()][:MAX_EXPANSION]
+        if extra:
+            out[t.lower()] = extra
+    return out
+
+
+def fts_expanded(terms, any_mode, expansions):
+    """The FTS query with each expanded term as (term OR alias OR ...); words = the original terms for highlighting."""
+    q, words = fts_query(terms, any_mode)
+    if not expansions:
+        return q, words, words
+    toks = re.findall(r'"[^"]+"|\S+', terms)
+    parts, all_words = [], list(words)
+    for t in toks:
+        base = t.strip('"')
+        alts = [base] + expansions.get(base.lower(), [])
+        all_words += [a.lower() for a in alts[1:]]
+        parts.append("(" + " OR ".join('"' + a.replace('"', '""') + '"' for a in alts) + ")" if len(alts) > 1
+                     else '"' + base.replace('"', '""') + '"')
+    return (" OR " if any_mode else " AND ").join(parts), words, all_words
+
+
 def cmd_search(args, project, root):
     args.limit = _limit(args)
     con, meta = open_ro(project)
+    emit(search_core(con, meta, args))
+
+
+def search_core(con, meta, args):
+    args.limit = _limit(args)
     where, params = scope_sql(args)
-    q, words = fts_query(args.terms, args.any)
+    expansions = {} if getattr(args, "no_expand", False) or meta.get("fts5") != "1" else expand_terms(con, args.terms)
+    q, orig_words, words = fts_expanded(args.terms, args.any, expansions)
     if meta.get("fts5") == "1":
         sql = (f"SELECT m.file_id, m.line_start, chunks.content AS content, bm25(chunks) AS score FROM chunks "
                f"JOIN chunk_map m ON m.chunk_id=chunks.rowid JOIN files f ON f.file_id=m.file_id "
@@ -834,7 +1001,7 @@ def cmd_search(args, project, root):
         sql = (f"SELECT m.file_id, m.line_start, chunks.content AS content, 0 AS score FROM chunks "
                f"JOIN chunk_map m ON m.chunk_id=chunks.rowid JOIN files f ON f.file_id=m.file_id WHERE {like} AND {where} LIMIT ?")
         rows = con.execute(sql, [f"%{w}%" for w in words] + params + [args.limit * 4]).fetchall()
-    out, per_file = [], {}
+    out, per_file, cited = [], {}, set()
     for r in rows:
         if per_file.get(r["file_id"], 0) >= args.per_file:
             continue
@@ -845,21 +1012,23 @@ def cmd_search(args, project, root):
             low = line.lower()
             if any(w in low for w in words):
                 hits.append((n, line.rstrip()))
+        hits = unseen_hits(cited, r["file_id"], hits)     # an overlapped line is cited once
         if not hits:
             continue
+        via = bool(expansions) and not any(w in h[1].lower() for h in hits for w in orig_words)
         per_file[r["file_id"]] = per_file.get(r["file_id"], 0) + 1
         nums = [h[0] for h in hits[:8]]
         excerpt = " | ".join(h[1].strip() for h in hits[:8])
-        out.append(dict(score=round(r["score"], 2), **cite(con, r["file_id"], nums, excerpt)))
+        out.append(dict(score=round(r["score"], 2), **cite(con, r["file_id"], nums, excerpt), **({"via_alias": True} if via else {})))
         if len(out) >= args.limit and not args.brief:
             break
+    extra = {"expanded": expansions} if expansions else {}
     if args.brief:
         shown = out[:args.limit]
-        emit(dict(status="OK", query=args.terms, total=len(out), shown=len(shown), more=len(out) - len(shown),
-                  results=[brief_result(h) for h in shown]))
-        return
-    emit(dict(status="OK", query=args.terms, fts=q, scope=scope_label(args), count=len(out), results=out,
-              note=None if out else "no hits in scope; try --any, fewer terms, --all-captures or --include-archive"))
+        return dict(status="OK", query=args.terms, total=len(out), shown=len(shown), more=len(out) - len(shown),
+                    results=[dict(brief_result(h), **({"via_alias": True} if h.get("via_alias") else {})) for h in shown], **extra)
+    return dict(status="OK", query=args.terms, fts=q, scope=scope_label(args), count=len(out), results=out, **extra,
+                note=None if out else "no hits in scope; try --any, fewer terms, --all-captures or --include-archive")
 
 
 def scope_label(args):
@@ -969,6 +1138,66 @@ def cmd_status(args, project, root):
               files_by_status=by, not_indexed_reasons=reasons, errors=errors))
 
 
+def cmd_entities(args, project, root):
+    con, _ = open_ro(project)
+    if not con.execute("SELECT 1 FROM sqlite_master WHERE name='entities'").fetchone():
+        fail("NO_ENTITIES", "this index was built before entities existed; run: discovery_index.py build --rebuild "
+                            f"--project {project['key']}")
+    if not (args.kind or args.value or args.host):
+        counts = {k: n for k, n in con.execute("SELECT kind, COUNT(*) FROM entities GROUP BY kind ORDER BY 2 DESC")}
+        emit(dict(status="OK", total=sum(counts.values()), kinds=counts))
+        return
+    where, params = ["1=1"], []
+    if args.kind:
+        where.append("e.kind=?"); params.append(args.kind)
+    if args.value:
+        v = args.value.strip()
+        where.append("e.norm=?"); params.append(v.upper() if args.kind == "host" else v.lower())
+    if args.host:
+        where.append("UPPER(e.host)=?"); params.append(args.host.upper())
+    args.limit = args.limit or 50
+    rows = con.execute(f"SELECT e.kind, e.value, e.norm, e.host, f.rel_path, e.line_no FROM entities e JOIN files f "
+                       f"ON f.file_id=e.file_id WHERE {' AND '.join(where)} ORDER BY e.norm, f.rel_path, e.line_no LIMIT ?",
+                       params + [args.limit]).fetchall()
+    emit(dict(status="OK", count=len(rows), results=[
+        dict(kind=r["kind"], value=r["value"], norm=r["norm"], host=r["host"], file=r["rel_path"], line=r["line_no"])
+        for r in rows]))
+
+
+def cmd_aliases(args, project, root):
+    if args.refresh:                      # rebuild from the index's entities and the current host register
+        work_dir = remap(project["work_dir"], project)
+        db = work_dir / INDEX_NAME
+        if not db.is_file():
+            fail("NO_INDEX", f"no index at {db}")
+        con = sqlite3.connect(db)
+        n = index_aliases.build_aliases(con, index_aliases.load_register(work_dir))
+        con.commit()
+        con.close()
+        emit(dict(status="OK", aliases=n))
+        return
+    con, _ = open_ro(project)
+    if not con.execute("SELECT 1 FROM sqlite_master WHERE name='aliases'").fetchone():
+        fail("NO_ALIASES", "this index was built before aliases existed; run: discovery_index.py build --rebuild "
+                           f"--project {project['key']}")
+    where, params = ["1=1"], []
+    if args.host:
+        where.append("UPPER(host)=?"); params.append(args.host.upper())
+    if args.value:
+        where.append("(norm=? OR norm=?)"); params += [args.value.lower(), args.value.upper()]
+    if args.scope:
+        where.append("scope=?"); params.append(args.scope)
+    if not (args.host or args.value or args.scope):
+        emit(dict(status="OK", total=con.execute("SELECT COUNT(*) FROM aliases").fetchone()[0],
+                  by_scope={k: n for k, n in con.execute("SELECT scope, COUNT(*) FROM aliases GROUP BY scope")},
+                  by_basis={k: n for k, n in con.execute("SELECT basis, COUNT(*) FROM aliases GROUP BY basis")},
+                  ambiguous_addresses=con.execute("SELECT COUNT(DISTINCT norm) FROM aliases WHERE ambiguous=1").fetchone()[0]))
+        return
+    rows = con.execute(f"SELECT host, kind, value, scope, basis, confidence, ambiguous FROM aliases WHERE {' AND '.join(where)} "
+                       "ORDER BY host, kind, norm LIMIT ?", params + [args.limit or 50]).fetchall()
+    emit(dict(status="OK", count=len(rows), results=[dict(r) for r in rows]))
+
+
 def cmd_sql(args, project, root):
     con, _ = open_ro(project)
     if not re.match(r"^\s*(SELECT|WITH)\b", args.query, re.I):
@@ -987,7 +1216,9 @@ def main():
     b.add_argument("--rebuild", action="store_true")
     b.add_argument("--source", action="append", help="folder to index (default: parent of default_source_set)")
     b.add_argument("--db", help="override index path")
-    b.add_argument("--stage-dir", help="build in a local folder, then copy into work_dir when complete")
+    b.add_argument("--stage-dir", help="build in a local folder, then copy into work_dir when complete (only if no "
+                                       "evidence-matrix citation newly fails; the old index is kept as .bak-<date>)")
+    b.add_argument("--force-swap", action="store_true", help="publish the staged index even if citations would break")
 
     def scope(sp):
         sp.add_argument("--host")
@@ -1000,15 +1231,25 @@ def main():
     s = sub.add_parser("search"); s.add_argument("terms"); scope(s)
     s.add_argument("--any", action="store_true", help="match any term instead of all")
     s.add_argument("--per-file", type=int, default=2)
+    s.add_argument("--no-expand", action="store_true", help="search the terms alone (default: a host name also searches its addresses and back)")
     r = sub.add_parser("rows"); r.add_argument("table"); scope(r)
     r.add_argument("--where", action="append"); r.add_argument("--cols"); r.add_argument("--distinct")
     t = sub.add_parser("tables"); t.add_argument("pattern", nargs="?")
     sub.add_parser("hosts"); sub.add_parser("status")
+    e = sub.add_parser("entities"); e.add_argument("--kind", choices=index_entities.KINDS)
+    e.add_argument("--value"); e.add_argument("--host"); e.add_argument("--limit", type=int, default=None)
+    al = sub.add_parser("aliases"); al.add_argument("--host"); al.add_argument("--value")
+    al.add_argument("--scope", choices=("system", "sibling", "neighbour", "external"))
+    al.add_argument("--limit", type=int, default=None)
+    al.add_argument("--refresh", action="store_true", help="rebuild the aliases from the entities and the current host register")
+    vc = sub.add_parser("verify-cites")
+    vc.add_argument("--save", help="write the report here (run before a rebuild)")
+    vc.add_argument("--against", help="compare with a report saved earlier: lists new failures, and whether the matrix is unchanged")
     q = sub.add_parser("sql"); q.add_argument("query"); q.add_argument("--limit", type=int, default=200)
     args = p.parse_args()
     project, root = resolve_project(args)
     dict(build=cmd_build, search=cmd_search, rows=cmd_rows, tables=cmd_tables, hosts=cmd_hosts,
-         status=cmd_status, sql=cmd_sql)[args.cmd](args, project, root)
+         status=cmd_status, sql=cmd_sql, entities=cmd_entities, aliases=cmd_aliases, **{"verify-cites": cmd_verify_cites})[args.cmd](args, project, root)
 
 
 if __name__ == "__main__":

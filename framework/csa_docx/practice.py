@@ -391,8 +391,8 @@ def record_observation(work_dir: Path | str, question_id: str, kind: str, observ
     matrix_path = work / "evidence-matrix.csv"
     matrix_rows = []
     if matrix_path.is_file():
-        with matrix_path.open(newline="", encoding="utf-8-sig") as fh:
-            matrix_rows = list(csv.DictReader(fh))
+        from csa_docx import modelstore
+        matrix_rows = modelstore.read_csv(matrix_path)
     corroborating = [x.strip().upper() for x in corroborating_evidence_ids.split(",") if x.strip()]
     known = {r.get("evidence_id", "").upper(): r for r in matrix_rows}
     missing = [x for x in corroborating if x not in known or known[x].get("review_state") == "disputed"]
@@ -469,7 +469,8 @@ def card_view(work_dir: Path | str, section_key: str) -> dict:
     matrix = []
     matrix_path = work / "evidence-matrix.csv"
     if matrix_path.is_file():
-        with matrix_path.open(newline="", encoding="utf-8-sig") as fh: matrix = list(csv.DictReader(fh))
+        from csa_docx import modelstore
+        matrix = modelstore.read_csv(matrix_path)
     out = {}
     for req, entry in catalogue.items():
         req_questions = [r for r in questions if r.get("requirement_id") == req and r.get("status") != "superseded"]

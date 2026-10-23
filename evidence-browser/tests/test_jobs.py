@@ -43,6 +43,22 @@ def test_success_persists_metadata_and_complete_logs(tmp_path: Path, monkeypatch
     assert json.loads((folder / "metadata.json").read_text())["state"] == "succeeded"
 
 
+def test_running_job_streams_output_before_process_finishes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    operation(monkeypatch, "import time; print('starting', flush=True); time.sleep(.35); print('finished', flush=True)")
+    item = project(tmp_path)
+    manager = JobManager(tmp_path / ".agents")
+    created = manager.submit(item, "stub", CommandRequest())
+    deadline = time.monotonic() + 2
+    live = manager.get(item, created.id)
+    while "starting" not in live.stdout_tail and time.monotonic() < deadline:
+        time.sleep(.01)
+        live = manager.get(item, created.id)
+    assert live.state == "running" and "starting" in live.stdout_tail and "finished" not in live.stdout_tail
+    folder = Path(item["work_dir"]) / "ui-jobs" / created.id
+    assert "starting" in (folder / "stdout.log").read_text()
+    assert manager.wait(item, created.id).state == "succeeded"
+
+
 def test_read_only_jobs_run_concurrently(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     operation(monkeypatch, "import time; time.sleep(.25)")
     item = project(tmp_path)

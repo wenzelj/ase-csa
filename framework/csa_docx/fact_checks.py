@@ -46,8 +46,8 @@ def load_matrix(path: Path | None) -> dict[str, dict]:
     A sibling's row may support a fact; an estate member's row is context only (answer_sheet CROSS_PROJECT_ONLY)."""
     if not path or not Path(path).is_file():
         return {}
-    with open(path, newline="", encoding="utf-8-sig") as fh:
-        out = {r["evidence_id"].strip(): r for r in csv.DictReader(fh) if r.get("evidence_id")}
+    from csa_docx import modelstore
+    out = {r["evidence_id"].strip(): r for r in modelstore.read_csv(Path(path)) if r.get("evidence_id")}
     try:
         from csa_docx.estate import peer_rows
     except ImportError:

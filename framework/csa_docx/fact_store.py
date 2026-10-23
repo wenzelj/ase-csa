@@ -47,8 +47,8 @@ def _matrix_ids(work_dir: Path) -> set[str]:
     path = Path(work_dir) / "evidence-matrix.csv"
     if not path.is_file():
         return set()
-    with path.open(newline="", encoding="utf-8-sig") as fh:
-        return {r.get("evidence_id", "").upper() for r in csv.DictReader(fh)}
+    from csa_docx import modelstore
+    return {r.get("evidence_id", "").upper() for r in modelstore.read_csv(path)}
 
 
 def _hosts(fact: dict) -> list[str]:
@@ -92,6 +92,8 @@ def add_from_sheet(work_dir: Path, sheet: Path, card_json: Path) -> int:
                         "section": card.get("key", ""), "question": qid, "kind": "row", "basis": "",
                         "sheet_sha": sha, "added": now})
     if new:
+        from csa_docx import modelstore
+        modelstore.record_facts(work_dir, new)
         path = store_path(work_dir)
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as fh:

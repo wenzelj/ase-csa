@@ -197,7 +197,28 @@ class JobManager:
                 job.state = "running"
                 job.started_at = _now()
                 self._persist(project, job)
-            stdout, stderr = process.communicate()
+            chunks: dict[str, list[str]] = {"stdout": [], "stderr": []}
+
+            def drain(name: str, stream) -> None:
+                if stream is None:
+                    return
+                for text in iter(stream.readline, ""):
+                    with self._condition:
+                        chunks[name].append(text)
+                        current = self._jobs[job_id]
+                        current.stdout_tail = _tail("".join(chunks["stdout"]))
+                        current.stderr_tail = _tail("".join(chunks["stderr"]))
+                        self._persist(project, current, "".join(chunks["stdout"]), "".join(chunks["stderr"]))
+                stream.close()
+
+            readers = [threading.Thread(target=drain, args=("stdout", process.stdout), daemon=True),
+                       threading.Thread(target=drain, args=("stderr", process.stderr), daemon=True)]
+            for reader in readers:
+                reader.start()
+            process.wait()
+            for reader in readers:
+                reader.join()
+            stdout, stderr = "".join(chunks["stdout"]), "".join(chunks["stderr"])
             exit_code = process.returncode
             with self._condition:
                 cancelled = job_id in self._cancel_requested

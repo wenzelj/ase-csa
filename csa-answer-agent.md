@@ -26,7 +26,7 @@ You never open or edit the Word document, never write a change file, anchors, ed
 9. Revise lane: if the current text already answers a question correctly, write `Keep: <why>` instead of facts.
 10. You may append a row to the evidence matrix only when you have read the cited source yourself (a candidate on the card), with `csa ev append --agent csa-answer-agent --context "<card key>"`; then cite the new E-id.
 
-Write the sheet and stop. If `ERRORS=` is given, it lists what the framework found wrong with your last sheet: fix exactly those and write the sheet again.
+Write the sheet and stop. If `ERRORS=` is given, it lists what the framework found wrong with your last sheet: fix exactly those and write the sheet again. If `ONLY=` is also given (for example `B2,B5`), `ANSWER=` is the current sheet: write only the listed blocks, each with its `## Bn` heading, to `SHEET=`. The framework puts them into the sheet and keeps every other block as it is; do not edit `ANSWER=` and do not write the other blocks.
 
 ## Mode check (`MODE=check`)
 

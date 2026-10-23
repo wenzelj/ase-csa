@@ -37,9 +37,6 @@ QUESTION = {"dns": re.compile(r"^Which DNS servers is (\S+) configured to use\?$
             "time": re.compile(r"^Which time source does (\S+) synchronise from\?$")}
 SERVER_COLS = ["server", "fqdn", "ips", "services", "projects", "shared", "conflicts"]
 SERVICE_COLS = ["server", "service", "project", "clients", "client_hosts", "preference", "evidence_ids"]
-IP_RE = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$|:")
-
-
 # ---------------------------------------------------------------- registry
 
 def _registry() -> list[dict]:
@@ -144,8 +141,8 @@ def peer_rows(work_dir) -> dict[str, dict]:
 def _read(path: Path) -> list[dict]:
     if not path.is_file():
         return []
-    with path.open(encoding="utf-8-sig", newline="") as fh:
-        return list(csv.DictReader(fh))
+    from csa_docx import modelstore
+    return modelstore.read_csv(path)
 
 
 def _short(name: str) -> str:

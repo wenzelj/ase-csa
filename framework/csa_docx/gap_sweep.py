@@ -11,6 +11,7 @@ csa-work/intake/gap-check-<UTC>.json and gap-check-latest.json for the Evidence 
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import re
 import sys
@@ -22,6 +23,37 @@ from csa_docx import gap_lookup
 _SECTION = re.compile(r"^##\s+(\d+(?:\.\d+)*)\s+(.*?)\s+\(([A-Z0-9_]+)\)\s*$")
 _FIGURE = re.compile(r"^##\s+Figure for\s+(\d+(?:\.\d+)*)\s+(.*?)\s*$")
 _BULLET = re.compile(r"^\s*-\s+\[([A-Za-z0-9_.-]+)\]\s+(.+?)\s*$")
+_CANDIDATE = re.compile(r"^Possible answer to (DR-[A-Za-z0-9_.-]+):")
+
+
+def pending_candidates(workspace: Path) -> dict[str, list[str]]:
+    """Pending gap-lookup rows by exact DR id.
+
+    A later fuzzy lookup may not rank an earlier candidate highly enough to return it.  The exact
+    DR id embedded when the row was created remains authoritative until the row is reviewed.
+    """
+    work = Path(workspace) / "csa-work"
+    latest: dict[str, str] = {}
+    reviews = work / "evidence-reviews.jsonl"
+    if reviews.is_file():
+        for line in reviews.read_text(encoding="utf-8").splitlines():
+            try:
+                record = json.loads(line)
+            except ValueError:
+                continue
+            latest[str(record.get("evidence_id", "")).upper()] = str(record.get("state", ""))
+    out: dict[str, list[str]] = {}
+    matrix = work / "evidence-matrix.csv"
+    if not matrix.is_file():
+        return out
+    from csa_docx import modelstore
+    for row in modelstore.read_csv(matrix):             # the store when it is current, else the file (S421)
+        evidence_id = str(row.get("evidence_id", "")).upper()
+        state = (latest.get(evidence_id) or row.get("review_state") or "pending").lower()
+        match = _CANDIDATE.match(row.get("claim", ""))
+        if row.get("status") == "UNCONFIRMED" and state == "pending" and match:
+            out.setdefault(match.group(1), []).append(evidence_id)
+    return out
 
 
 def parse_open_questions(text: str) -> list[dict]:
@@ -67,9 +99,14 @@ def sweep(workspace: Path, section_key: str | None = None) -> dict:
     qs = parse_open_questions(source.read_text(encoding="utf-8")) if source.is_file() else []
     if section_key:
         qs = [q for q in qs if q["key"] == section_key]
+    carried = pending_candidates(workspace)
     results = []
     for q in qs:
         res = gap_lookup.lookup_gap(workspace, q["dr_id"], q["text"])
+        pending = carried.get(q["dr_id"], [])
+        if pending:
+            res["verdict"] = "CANDIDATES"
+            res["evidence_ids"] = list(dict.fromkeys([*res.get("evidence_ids", []), *pending]))
         results.append({**q, "verdict": res["verdict"], "evidence_ids": res.get("evidence_ids", [])})
     affected: dict[str, dict] = {}
     for r in results:

@@ -11,7 +11,8 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
+UTC = timezone.utc  # datetime.UTC needs Python 3.11; this works on 3.10 too
 from itertools import pairwise
 from xml.etree import ElementTree as ET
 

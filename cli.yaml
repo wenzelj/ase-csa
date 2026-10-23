@@ -2,7 +2,7 @@
 # CSA_CLI, CSA_PYTHON, CSA_PROJECT.
 
 # Default agent CLI for `csa <verb>`: codex | claude | evo | hermes. Override per call with --cli (claude, codex or evo).
-default_cli: codex
+default_cli: evo
 
 # Interpreter for the csa_docx framework and skill scripts (needs Python >= 3.11).
 # First one that exists wins.
@@ -18,12 +18,13 @@ comments: off
 # one argument, never through a shell). interactive = you stay in the session;
 # headless = runs to completion and exits (used by --headless and `csa pipeline`).
 codex_interactive: codex -m gpt-5.6-sol -c model_reasoning_effort=medium {prompt}
-codex_headless: /Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/bin/csa-window codex exec -m gpt-5.6-sol -c model_reasoning_effort=medium --skip-git-repo-check --output-last-message {last} {prompt}
+codex_headless: codex exec -m gpt-5.6-sol -c model_reasoning_effort=medium --skip-git-repo-check --output-last-message {last} {prompt}
 claude_interactive: claude {prompt}
-claude_headless: /Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/bin/csa-window claude -p {prompt}
-# Evo: Codex CLI against the local model (profile evo-x3-qwen). Pick it per run with --cli evo.
+claude_headless: claude -p {prompt}
+# Evo: the dedicated Codex profile against the local model. Pick it per run with --cli evo.
+# Both modes stay in the invoking window; use `csa ... --window` only when a separate Terminal is wanted.
 evo_interactive: codex --profile evo-x3-qwen {prompt}
-evo_headless: /Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/bin/csa-window codex exec --profile evo-x3-qwen --skip-git-repo-check --output-last-message {last} {prompt}
+evo_headless: codex exec --profile evo-x3-qwen --skip-git-repo-check --output-last-message {last} {prompt}
 # Hermes has no "start interactive with a prompt" flag; both run the prompt as one query.
 hermes_interactive: hermes chat -q {prompt}
 hermes_headless: hermes chat -q {prompt}
@@ -54,3 +55,12 @@ disabled_slots: local-qwen
 codex_fleet: codex exec --profile {profile} --skip-git-repo-check --output-last-message {last} {prompt}
 claude_fleet: claude -p {prompt}
 hermes_fleet: hermes chat -q {prompt}
+
+# csa answer: fix rounds after the first answer. Each rewrites only the blocks that fail; the framework merges them.
+answer_fix_rounds: 3
+# Each answer/draft model pass reports a heartbeat and is stopped before a dead session can consume hours. A sheet
+# written before a timeout is still validated and can continue through the repair loop.
+answer_heartbeat_minutes: 10
+answer_call_timeout_minutes: 45
+# If a focused repair returns the same blocking signature, use this already-configured CLI for subsequent repairs.
+answer_repair_cli: evo

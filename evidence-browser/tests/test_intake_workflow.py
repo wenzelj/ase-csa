@@ -38,13 +38,16 @@ def _record(work: Path, **kw) -> dict:
 
 def test_gap_check_and_intake_argv():
     op, argv = commands.build_argv(AGENTS, "tetra-reveloc", "intake", CommandRequest(options={"cli": "evo"}))
-    assert argv[3:] == ["intake", "--headless", "--cli", "evo"] and op.mutation_class == "workspace_write"
+    assert argv[3:] == ["intake", "--window", "--cli", "evo"] and op.mutation_class == "workspace_write"
     with pytest.raises(HTTPException):
         commands.build_argv(AGENTS, "tetra-reveloc", "intake", CommandRequest(options={"cli": "gpt"}))
     op, argv = commands.build_argv(AGENTS, "tetra-reveloc", "gap_check", CommandRequest(target="3.11"))
     assert argv[3:] == ["gap-check", "3.11"]
     _, argv = commands.build_argv(AGENTS, "tetra-reveloc", "gap_check", CommandRequest())
     assert argv[3:] == ["gap-check"]
+    op, argv = commands.build_argv(AGENTS, "tetra-reveloc", "resolve_gaps", CommandRequest(options={"cli": "evo"}))
+    assert argv[3:] == ["resolve-gaps", "--window", "--latest", "--cli", "evo"]
+    assert op.mutation_class == "document_write" and op.lock == "docx" and op.closes_word is True
 
 
 def _audit(work: Path, *entries: tuple[str, list[str]]) -> None:

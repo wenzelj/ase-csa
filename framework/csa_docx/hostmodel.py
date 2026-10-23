@@ -45,6 +45,8 @@ from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 from pathlib import Path
 
+from csa_docx import modelstore
+
 DNS_TABLES = ("dns_resolution_validation", "dns_query_tests", "utc_integration_validation", "iccp_target_resolution")
 NAME_COLUMNS = ("ComputerName", "DeviceName", "Name", "Host", "MachineName", "Computer", "Hostname")
 CAPTURE_FACT_TABLES = {
@@ -110,6 +112,9 @@ def _roles(work_dir: Path) -> list[dict]:
 
     system_project match = key of another project in PROJECTS.yaml whose application belongs to the
                same system: its hosts name this project's links (in_scope "system: <key>").
+    neighbour_project match = key of another project in PROJECTS.yaml whose application is in another
+               system: identity only (host name, addresses, role), marked a peer with the source
+               "neighbour:<key>"; never its evidence, settings or site.
     inventory  match = index table name of the project's computer inventory (e.g.
                tcs_computers/tcs_computers); role = its host-name column (default ComputerName).
                Optional columns name that table's other columns: fqdn_col (default FQDN), ip_col (default
@@ -201,11 +206,12 @@ def _project_work_dir(key: str) -> Path | None:
     return None
 
 
-IP_RE = re.compile(r"(?<![\d.])(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})(?![\d.])")
-FQDN_RE = re.compile(r"\b([A-Za-z][A-Za-z0-9-]{2,30})\.(?:[A-Za-z0-9-]+\.){1,5}[A-Za-z]{2,}\b")
-HOSTTOK_RE = re.compile(r"\b([A-Z][A-Z0-9-]*\d[A-Z0-9-]*)\b")
-# a line that pairs an address with a name holds one address (a table row) or two (a connection's ends)
-MAX_PAIRING_ADDRESSES = 3
+def _is_address(value: str) -> bool:
+    try:
+        ipaddress.ip_address(value)
+        return True
+    except ValueError:
+        return False
 
 
 TIME_REF_RE = re.compile(r"(?:ReferenceId|Source Id):.*?\(source IP:\s*(\d{1,3}(?:\.\d{1,3}){3})\)")
@@ -276,7 +282,13 @@ def configured_services(records, names: dict) -> list[dict]:
     out = []
     for (host, fname) in sorted(best):
         _ts, rel, folder = best[(host, fname)]
+        by_line = {}
         for start, text in sorted(chunks[rel]):
+            for offset, line in enumerate((text or "").splitlines()):
+                by_line.setdefault((start or 0) + offset, line)
+        if by_line:
+            start = min(by_line)
+            text = "\n".join(by_line[n] for n in sorted(by_line))
             out += _services_from(host, fname, folder, start, text, names)
     return out
 
@@ -328,7 +340,7 @@ def time_source_pairs(text: str) -> list[tuple[str, str, int]]:
             continue
         for j in range(i + 1, min(i + 4, len(lines))):
             src = TIME_SOURCE_RE.match(lines[j])
-            if src and NAME_OK.match(src[1]) and not IP_RE.fullmatch(src[1]):
+            if src and NAME_OK.match(src[1]) and not _is_address(src[1]):
                 out.append((ref[1], src[1].upper(), j))
                 break
     return out
@@ -388,49 +400,23 @@ def domain_controllers(con) -> dict:
             for h, sites in found.items() if len(sites) == 1}
 
 
-def name_addresses(con, ips: set, known: dict, trusted: list | None = None) -> dict:
-    """Names for unknown addresses, taken only where the source puts them side by side:
-    a text line holding the address and exactly one host name (an FQDN, or an upper-case
-    token with a digit) once the line's other addresses' own hosts are set aside.
-    Lines from a reviewed name_source file (roles.csv) are taken as they stand and win over
-    other sources; elsewhere a name offered for 3+ addresses is treated as the log's writer.
-    Returns {ip: {"name", "cite", "conflict"}}. Nothing is guessed from subnets."""
-    trusted = [re.compile(t, re.I) for t in (trusted or [])]
-    tfound = defaultdict(lambda: defaultdict(set))
-    found = defaultdict(lambda: defaultdict(set))
-    for ip in ips:
-        q = ("select f.rel_path, m.line_start, cc.c0 from chunks_content cc join chunk_map m on m.chunk_id = cc.id "
-             "join files f on f.file_id = m.file_id where cc.c0 like ?")
-        for rel, start, text in con.execute(q, (f"%{ip}%",)):
-            for n, line in enumerate(text.splitlines()):
-                line_ips = set(IP_RE.findall(line))
-                if ip not in line_ips or len(line_ips) > MAX_PAIRING_ADDRESSES:
-                    continue                  # a line listing many addresses is a list, not a pairing
-                others = {known.get(x) for x in line_ips if x != ip}
-                names = {m.upper() for m in FQDN_RE.findall(line)}
-                if not names:
-                    names = {m for m in HOSTTOK_RE.findall(line) if len(m) >= 6 and not re.fullmatch(r"[A-F0-9-]+", m)}
-                names -= {o for o in others if o}
-                names = {x for x in names if NAME_OK.match(x)}
-                if len(names) == 1:
-                    name, cite = names.pop(), f"{Path(rel).name} line {(start or 0) + n}"
-                    (tfound if any(t.search(rel) for t in trusted) else found)[ip][name].add(cite)
-    # a name offered for 3+ different addresses is a log or report source (e.g. the firewall
-    # that wrote the line), not the address's host
-    spread = Counter(n for cands in found.values() for n in cands)
+def alias_addresses(con, ips: set) -> dict:
+    """Resolve addresses through the index's evidence-derived, non-ambiguous aliases."""
+    if not ips or not con.execute("SELECT 1 FROM sqlite_master WHERE name='aliases'").fetchone():
+        return {}
+    marks = ",".join("?" * len(ips))
+    rows = con.execute(
+        "SELECT a.norm, a.host, a.basis, a.file_id, a.line_no, f.rel_path FROM aliases a "
+        "LEFT JOIN files f ON f.file_id=a.file_id WHERE a.kind='address' AND a.norm IN (" + marks + ") "
+        "AND a.ambiguous=0 AND a.confidence IN ('high','medium') "
+        "ORDER BY CASE a.basis WHEN 'own-capture' THEN 0 WHEN 'register' THEN 1 "
+        "WHEN 'paired-row' THEN 2 ELSE 3 END", tuple(sorted(ips))).fetchall()
     out = {}
-    for ip, cands in tfound.items():
-        name = max(cands, key=lambda k: len(cands[k]))
-        out[ip] = {"name": name, "cite": sorted(cands[name])[0], "conflict": sorted(k for k in cands if k != name)}
-    for ip, cands in found.items():
+    for ip, host, basis, _fid, line, rel in rows:
         if ip in out:
             continue
-        keep = {n: c for n, c in cands.items() if spread[n] < 3 and not n.startswith("IDX-")}
-        if len(keep) == 1:
-            name, cites = next(iter(keep.items()))
-            out[ip] = {"name": name, "cite": sorted(cites)[0], "conflict": []}
-        elif keep:
-            out[ip] = {"name": None, "ambiguous": sorted(keep)}
+        cite = f"{Path(rel).name} line {line}" if rel and line else basis
+        out[ip] = {"name": host.upper(), "cite": cite, "conflict": []}
     return out
 
 
@@ -464,7 +450,9 @@ def build(work_dir: Path) -> dict:
             ips = d.get(ipc) if ipc else (d.get("IP Addresses") or d.get("IPAddress"))
             e["ips"].update(x.strip().strip("{}") for x in re.split(r"[,;\s]+", str(ips or "")) if x.strip().strip("{}"))
             e["ou"] = e["ou"] or (d.get(ouc) or "")
-            e["in_scope"] = e["in_scope"] or (d.get("In Scope") or "")
+            # "In Scope", or the CSA scope column of an inventory that tracks several scopes ("In Scope of CSA")
+            scope = d.get("In Scope") or d.get("In Scope of CSA") or d.get("In Scope (CSA)") or ""
+            e["in_scope"] = e["in_scope"] or scope
             e["sources"].add(Path(rel).name)
     # 2. captures
     for host, cap in con.execute("select host, folder from captures where superseded_by is null and archived = 0"):
@@ -488,19 +476,18 @@ def build(work_dir: Path) -> dict:
     if mpath.is_file():
         pair = re.compile(r"\b([A-Z][A-Z0-9-]{4,30})\s*(?:\(|at\s+|on\s+|=\s*)(\d+\.\d+\.\d+\.\d+)\b"
                           r"|\b(\d+\.\d+\.\d+\.\d+)\s*(?:\(|\bas\s+)([A-Za-z][A-Za-z0-9-]{4,30})\b")
-        with mpath.open(encoding="utf-8-sig", newline="") as fh:
-            for r in csv.DictReader(fh):
-                if (r.get("review_state") or "") == "rejected" or r.get("status") not in ("VERIFIED",):
-                    continue
-                for m in pair.finditer(r.get("claim") or ""):
-                    name, ip = (m[1], m[2]) if m[1] else (m[4], m[3])
-                    if not re.search(r"\d", name) or ip.startswith(("127.", "0.", "169.254.")):
-                        continue       # host names here carry a number; skips words like "SCADA (10.x)"
-                    e = entry(name)
-                    if not e["capture"] and not e["in_scope"]:
-                        e["in_scope"] = "peer"
-                    e["ips"].add(ip)
-                    e["sources"].add(r["evidence_id"])
+        for r in modelstore.read_csv(mpath):
+            if (r.get("review_state") or "") == "rejected" or r.get("status") not in ("VERIFIED",):
+                continue
+            for m in pair.finditer(r.get("claim") or ""):
+                name, ip = (m[1], m[2]) if m[1] else (m[4], m[3])
+                if not re.search(r"\d", name) or ip.startswith(("127.", "0.", "169.254.")):
+                    continue       # host names here carry a number; skips words like "SCADA (10.x)"
+                e = entry(name)
+                if not e["capture"] and not e["in_scope"]:
+                    e["in_scope"] = "peer"
+                e["ips"].add(ip)
+                e["sources"].add(r["evidence_id"])
     # 2d. hosts of the other applications in the same system (roles.csv kind=system_project,
     #     match = project key in PROJECTS.yaml): read from that project's hosts/hosts.csv
     #     (captured or inventory hosts only, not its peers). Their in_scope is kept as-is for
@@ -511,27 +498,37 @@ def build(work_dir: Path) -> dict:
         p2 = other / "hosts" / "hosts.csv" if other else None
         if not p2 or not p2.is_file():
             continue
-        with p2.open(encoding="utf-8", newline="") as fh:
-            for r in csv.DictReader(fh):
-                scope = (r.get("in_scope") or "").lower()
-                if scope.startswith("system:") or (r["host"] in reg and reg[r["host"]]["capture"]):
-                    continue
-                if scope == "peer":
-                    e = entry(r["host"])
-                    e["in_scope"] = e["in_scope"] or "peer"
-                    e["ips"].update(x for x in r["ips"].split(";") if x)
-                    e["sources"].add(f"project {sp['match']} (peer)")
-                    continue
+        for r in modelstore.read_csv(p2):
+            scope = (r.get("in_scope") or "").lower()
+            if scope.startswith("system:") or (r["host"] in reg and reg[r["host"]]["capture"]):
+                continue
+            if scope == "peer":
                 e = entry(r["host"])
-                e["in_scope"] = e["in_scope"] or f"system: {sp['match']}"
+                e["in_scope"] = e["in_scope"] or "peer"
                 e["ips"].update(x for x in r["ips"].split(";") if x)
-                e["listening"].update(x for x in (r.get("listening") or "").split(";") if x)
-                if r.get("capture") and not r.get("captured_in"):
-                    e["captured_in"] = sp["match"]       # captured in the sibling project
-                for k in ("system", "role", "site"):
-                    if r.get(k) and not e[k]:
-                        e[k], e[f"{k}_source"] = r[k], f"project {sp['match']}: {r.get(k + '_source', '')}"
-                e["sources"].add(f"project {sp['match']}")
+                e["sources"].add(f"project {sp['match']} (peer)")
+                continue
+            e = entry(r["host"])
+            e["in_scope"] = e["in_scope"] or f"system: {sp['match']}"
+            e["ips"].update(x for x in r["ips"].split(";") if x)
+            e["listening"].update(x for x in (r.get("listening") or "").split(";") if x)
+            if r.get("capture") and not r.get("captured_in"):
+                e["captured_in"] = sp["match"]       # captured in the sibling project
+            for k in ("system", "role", "site"):
+                if r.get(k) and not e[k]:
+                    e[k], e[f"{k}_source"] = r[k], f"project {sp['match']}: {r.get(k + '_source', '')}"
+            e["sources"].add(f"project {sp['match']}")
+    # 2e. hosts of neighbouring applications in other systems (roles.csv kind=neighbour_project, match = project
+    #     key in PROJECTS.yaml): identity only, so this project's flows name them. See neighbour_hosts().
+    for nb in neighbour_hosts(rules):
+        if nb["host"] in reg and (reg[nb["host"]]["capture"] or reg[nb["host"]]["system"]):
+            continue                                   # this project's own host: never relabelled
+        e = entry(nb["host"])
+        e["in_scope"] = e["in_scope"] or "peer"
+        e["ips"].update(nb["ips"])
+        if nb["role"] and not e["role"]:
+            e["role"], e["role_source"] = nb["role"], f"neighbour {nb['project']}"
+        e["sources"].add(f"neighbour:{nb['project']}")
     # 2b. peers: names the captures resolved in DNS tests (not captured, not in the inventory)
     for t in DNS_TABLES:
         for rel, host, _t, _l, d in _rows(con, "r.table_name = ? and f.host is not null", (t,)):
@@ -587,14 +584,13 @@ def build(work_dir: Path) -> dict:
     unknown = set()
     for rel, host, t, line, d in _rows(con, "r.table_name = 'established_connections_raw' and f.host is not null"):
         ra = str(d.get("RemoteAddress") or "").strip()
-        if IP_RE.fullmatch(ra) and ra not in ip2host and not ra.startswith(("127.", "0.", "169.254.")):
+        if _is_address(ra) and ra not in ip2host and not ra.startswith(("127.", "0.", "169.254.")):
             unknown.add(ra)
     ambiguous = {}
     # time sources are named by the captures' own time status output (address and name in one block);
     # the general search still sees them, so its "one name beside 3+ addresses" test is unchanged
     time_hits = {ip: h for ip, h in time_source_addresses(con).items() if ip not in ip2host}
-    for ip, hit in name_addresses(con, unknown, ip2host,
-            [r["match"] for r in _roles(work_dir) if r["kind"] == "name_source" and r["reviewed"].lower() == "yes"]).items():
+    for ip, hit in alias_addresses(con, unknown).items():
         if ip in time_hits:
             continue
         if not hit.get("name"):
@@ -756,7 +752,7 @@ def build(work_dir: Path) -> dict:
             e["conflicts"].append("role: process list captured but no known module running")
 
     # 7. configured DNS and time servers per host (resolver and time-status captures, newest capture)
-    names = {ip: h for h, e in reg.items() for ip in e["ips"] if IP_RE.fullmatch(ip)}
+    names = {ip: h for h, e in reg.items() for ip in e["ips"] if _is_address(ip)}
     names.update({ip: v["name"] for ip, v in time_source_addresses(con).items() if ip not in names})
     try:
         # a file whose content another file already has is stored once (status 'duplicate', dup_of the
@@ -943,8 +939,8 @@ def _read(work_dir: Path, name: str) -> list[dict]:
     p = work_dir / "hosts" / name
     if not p.is_file():
         raise SystemExit(f"{p} missing; run `csa hosts build` first")
-    with p.open(encoding="utf-8", newline="") as fh:
-        return list(csv.DictReader(fh))
+    from csa_docx import modelstore
+    return modelstore.read_csv(p)
 
 
 def show(work_dir: Path, host: str) -> dict:
@@ -973,6 +969,31 @@ def _attr_match(want: str, attribute: str) -> bool:
         return want.strip().lower() == attribute.strip().lower()
     col = attribute.split(": ", 1)[-1]
     return want.strip().lower() == col.strip().lower()
+
+
+def neighbour_hosts(rules: list[dict]) -> list[dict]:
+    """Hosts of neighbouring applications (roles.csv kind=neighbour_project, match = the other project's key):
+    [{host, ips, role, project}] from that project's own hosts (its captured or inventory hosts, never its peers,
+    its same-system siblings or its own neighbours). Identity only: a neighbour host is named so this project's
+    flows say which application an address belongs to. Nothing else is read from the other project (no capture,
+    listeners, site, system or evidence), and the host is marked a peer here, never one of this project's hosts."""
+    out, seen = [], set()
+    for nb in (r for r in rules if r["kind"] == "neighbour_project"):
+        other = _project_work_dir(nb["match"])
+        p2 = other / "hosts" / "hosts.csv" if other else None
+        if not p2 or not p2.is_file():
+            continue
+        for r in modelstore.read_csv(p2):
+            host = (r.get("host") or "").strip().upper()
+            scope = (r.get("in_scope") or "").strip().lower()
+            srcs = (r.get("sources") or "").lower()
+            if not host or scope in ("peer", "no") or scope.startswith("system:") or "neighbour:" in srcs \
+                    or host in seen:
+                continue
+            seen.add(host)
+            out.append({"host": host, "ips": [x for x in (r.get("ips") or "").split(";") if x],
+                        "role": (r.get("role") or "").strip(), "project": nb["match"]})
+    return out
 
 
 def _in_scope(r: dict) -> bool:
@@ -1049,11 +1070,10 @@ def to_graph(work_dir: Path, workspace: Path, domain: str = "3.6 Network / Segme
     matrix = work_dir / "evidence-matrix.csv"
     claims = defaultdict(list)            # src -> [(evidence_id, claim)]
     qpat = re.compile(r"^Which captured hosts does (\S+) hold established sessions to\?")
-    with matrix.open(encoding="utf-8-sig", newline="") as fh:
-        for r in csv.DictReader(fh):
-            m = qpat.match(r.get("question") or "")
-            if m and (r.get("review_state") or "") != "rejected":
-                claims[m[1]].append((r["evidence_id"], r.get("claim") or ""))
+    for r in modelstore.read_csv(matrix):
+        m = qpat.match(r.get("question") or "")
+        if m and (r.get("review_state") or "") != "rejected":
+            claims[m[1]].append((r["evidence_id"], r.get("claim") or ""))
     def cover(src, dst):
         return next((e for e, c in claims[src] if re.search(rf"\b{re.escape(dst)}\b on TCP/", c)), None)
     rows = []
@@ -1177,7 +1197,7 @@ def to_graph(work_dir: Path, workspace: Path, domain: str = "3.6 Network / Segme
     ev_of = {src: [e for e, _ in claims[src]] for src in claims}
     # 2. nodes
     gdir = work_dir / "graph"
-    nodes = list(csv.DictReader((gdir / "nodes.csv").open(encoding="utf-8-sig"))) if (gdir / "nodes.csv").is_file() else []
+    nodes = modelstore.read_csv(gdir / "nodes.csv") if (gdir / "nodes.csv").is_file() else []
     gstate = {}
     if (gdir / "graph-reviews.jsonl").is_file():
         for ln in (gdir / "graph-reviews.jsonl").read_text(encoding="utf-8").splitlines():
@@ -1205,7 +1225,7 @@ def to_graph(work_dir: Path, workspace: Path, domain: str = "3.6 Network / Segme
         for n, w in zip(new_nodes, out.get("written") or out.get("appended") or []):
             node_of[re.split(r"[\s(]", n["label"], 1)[0]] = w["node_id"]
     # 3. edges
-    edges = [e for e in (list(csv.DictReader((gdir / "edges.csv").open(encoding="utf-8-sig"))) if (gdir / "edges.csv").is_file() else [])
+    edges = [e for e in (modelstore.read_csv(gdir / "edges.csv") if (gdir / "edges.csv").is_file() else [])
              if gstate.get(e["edge_id"]) != "rejected" and e["source_node_id"] not in gone and e["target_node_id"] not in gone]
     have_e = {(e["source_node_id"], e["target_node_id"], e["relationship_type"]) for e in edges}
     pairs = defaultdict(set)

@@ -52,7 +52,7 @@ def remove_edit_ids(path: Path, edit_ids) -> None:
             line = f"{m[1]}: {', '.join(kept) or 'None'}"
         elif re.match(r"^- Next edit ID: (.*)$", line) and line.split(":", 1)[1].strip() in drop:
             line = "- Next edit ID: None"
-        elif (r := re.match(r"^- (S\d+-[EA]\d+): ", line)) and r[1] in drop:
+        elif (r := re.match(r"^- (S\d+(?:\.\d+)?-[EA]\d+): ", line)) and r[1] in drop:
             continue
         lines.append(line)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")

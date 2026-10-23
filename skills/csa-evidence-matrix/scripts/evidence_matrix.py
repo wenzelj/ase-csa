@@ -228,7 +228,12 @@ def brief_row(r):
 def cmd_lookup(args):
     workspace, matrix = resolve_paths(args)
     header, body, *_ = load(matrix)
-    rows = [as_dict(header, r) for r in body]
+    rows_total = len(body)
+    reviews = latest_reviews(matrix)
+    rows = [with_review(as_dict(header, r), reviews) for r in body]
+    # Rejected rows remain in the append-only ledger as provenance, but must not
+    # influence a current lookup verdict or hide a later deciding fact.
+    rows = [r for r in rows if r.get("review_state", "").lower() != "rejected"]
     n = len(rows)
     field_toks = [{f: toks(r[f]) for f in FIELD_WEIGHT} for r in rows]
     df = {}
@@ -266,14 +271,15 @@ def cmd_lookup(args):
             score = min(1.0, score + 0.1)
         if score >= args.min_score:
             scored.append((score, len(matched) / len(q), r, sorted(matched)))
-    scored.sort(key=lambda x: (-x[0], -x[1], x[2]["evidence_id"]))
+    status_rank = {"VERIFIED": 0, "INFERRED": 1, "CONFLICTING": 2,
+                   "UNCONFIRMED": 3, "NOT_FOUND": 4}
+    scored.sort(key=lambda x: (-x[0], -x[1], status_rank.get(x[2]["status"], 9), x[2]["evidence_id"]))
     top = scored[: args.limit if args.limit is not None else 5]
 
     best = scored[0] if scored else None
     best_status = best[2]["status"] if best else None
-    answered = bool(best) and best_status in ANSWER_STATUSES and best[0] >= 0.6 and best[1] >= 0.75
-    if not answered and best and best_status not in ("NOT_FOUND", "CONFLICTING", "UNCONFIRMED"):
-        answered = any(r["status"] in ANSWER_STATUSES and s >= 0.6 and c >= 0.75 for s, c, r, _ in scored[:3])
+    answered = any(r["status"] in ANSWER_STATUSES and s >= 0.6 and c >= 0.75
+                   for s, c, r, _ in scored)
     if answered:
         verdict = "LIKELY_ANSWERED"
         nxt = ("Read each match's claim, excerpt, host and capture date and confirm it answers "
@@ -285,7 +291,8 @@ def cmd_lookup(args):
         nxt = ("An earlier search recorded NOT_FOUND. Read its source_title (searched scope). "
                "Search only sources OUTSIDE that scope, or captures newer than it, then append "
                "the result (a new VERIFIED/INFERRED row, or a new NOT_FOUND with the wider scope).")
-    elif best and best_status in ("CONFLICTING", "UNCONFIRMED") and best[0] >= 0.45:
+    elif best and best_status in ("CONFLICTING", "UNCONFIRMED") and best[0] >= 0.45 \
+            and best[2].get("review_state", "pending").lower() == "pending":
         verdict = "OPEN_ON_RECORD"
         nxt = ("The matrix already holds a CONFLICTING/UNCONFIRMED entry. Do not present it as "
                "settled. Search Discovery Data for the deciding evidence; append the outcome as a "
@@ -300,10 +307,8 @@ def cmd_lookup(args):
                "(and a NOT_FOUND with the searched scope if nothing is found).")
 
     if getattr(args, "brief", False):
-        reviews = latest_reviews(matrix)
-        kept = [with_review(r, reviews) for _, _, r, _ in scored]
-        hidden = sum(1 for r in kept if r.get("review_state", "").lower() == "rejected")
-        kept = [r for r in kept if r.get("review_state", "").lower() != "rejected"]
+        kept = [r for _, _, r, _ in scored]
+        hidden = rows_total - len(rows)
         limit = args.limit if args.limit is not None else 5
         emit({"status": "OK", "query": args.query, "verdict": verdict,
               "matches": [brief_row(r) for r in kept[:limit]],
@@ -313,7 +318,7 @@ def cmd_lookup(args):
     emit({
         "status": "OK",
         "matrix": str(matrix),
-        "rows_total": n,
+        "rows_total": rows_total,
         "query": args.query,
         "verdict": verdict,
         "next_step": nxt,
@@ -640,6 +645,9 @@ def cmd_check_sources(args):
         if want is not None and eid not in want:
             continue
         if want is None and eid in reviews and reviews[eid]["state"] in ("reviewed", "accepted") and not args.all:
+            continue
+        # A rejected row stays rejected: the automated check never approves it again (only a named id re-checks it).
+        if want is None and eid in reviews and reviews[eid]["state"] == "rejected":
             continue
         res = {"evidence_id": eid, "status": row["status"], **source_check(row, con)}
         results.append(res)

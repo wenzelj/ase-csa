@@ -49,7 +49,7 @@ A requirement asks whether the organisation does something (keeps an inventory, 
 
 1. **The applicable practice or control.** Name what the application does and the function involved. If implementation was not demonstrated, say that it was not identified in the defined evidence scope; do not state a bare absence.
 2. **What exists instead, if anything.** A partial or informal substitute, in a few words ("A point-in-time list was compiled prior to discovery").
-3. **Scope exclusions that touch the requirement** ("KVM is excluded from this CSA and will be assessed separately").
+3. **Scope exclusions that touch the requirement** ("<system> is excluded from this CSA and will be assessed separately"), only where the project context or supplied documents record that exclusion.
 
 The assessment's own discovery output (the hosts the captures found, their roles and counts) is not the organisation's inventory or dependency map, and never counts as the practice being in place. Host lists, counts and roles go in the Discovery Information and Hosts tables, not the Current State cell. Rate only after applying the applicability and evidence decision rules in `csa-section-writer/references/current-state-reasoning.md`; failure to identify a maintained tool or process is not by itself proof of Not Met.
 

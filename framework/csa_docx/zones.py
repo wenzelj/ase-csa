@@ -83,7 +83,8 @@ def for_project(work_dir: Path) -> Zones:
     reg = Path(work_dir) / "hosts" / "hosts.csv"
     ips = {}
     if reg.is_file():
-        for r in csv.DictReader(reg.open(encoding="utf-8")):
+        from csa_docx import modelstore
+        for r in modelstore.read_csv(reg):
             ips[r["host"]] = [x for x in (r.get("ips") or "").split(";") if x]
     return Zones(load(work_dir), ips)
 

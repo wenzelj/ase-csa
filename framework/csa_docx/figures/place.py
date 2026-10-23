@@ -189,8 +189,8 @@ def _new_block(drawing: str, caption: str, source: str, n: int, ids: _Ids, autho
             f'<w:ins {_rev("ins", ids, author, date)}><w:r>{drawing}</w:r></w:ins><w:bookmarkEnd w:id="{bm}"/></w:p>'
             f'<w:p><w:pPr><w:pStyle w:val="Caption"/>{mark()}</w:pPr><w:ins {_rev("ins", ids, author, date)}>'
             f'<w:r>{_t("Figure ")}</w:r>{_seq_runs(n)}<w:r>{_t(": " + caption)}</w:r></w:ins></w:p>'
-            f'<w:p><w:pPr><w:pStyle w:val="FigureSource"/>{mark()}</w:pPr><w:ins {_rev("ins", ids, author, date)}>'
-            f'<w:r>{_t(source)}</w:r></w:ins></w:p>')
+            + (f'<w:p><w:pPr><w:pStyle w:val="FigureSource"/>{mark()}</w:pPr><w:ins {_rev("ins", ids, author, date)}>'
+               f'<w:r>{_t(source)}</w:r></w:ins></w:p>' if source else ""))
 
 
 def _iter_runs(chunk: str):

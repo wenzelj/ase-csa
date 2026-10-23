@@ -185,7 +185,7 @@ def rules(node: dict, spec: dict | None = None) -> list[str]:
     own = list(node.get("guidance", []))
     if spec:
         nodes = spec["nodes"]
-        parent = next((n for n in nodes if n["path"] == node.get("parent")), None)
+        parent = next((n for n in nodes if n.get("path") == node.get("parent")), None)
         if parent:
             own += [g for g in parent.get("guidance", []) if not g.get("facet")]
         first = next((n for n in nodes if n.get("parent") == node.get("parent") and n["kind"] == node["kind"]), None)
@@ -265,13 +265,23 @@ def _words(s: str) -> set[str]:
     return {w for w in _norm(s).split() if len(w) > 3 and w not in _STOP}
 
 
-def _matrix_rows(workspace: Path) -> list[dict]:
+def _file_rows(work: Path, rel: str, encoding: str = "utf-8") -> list[dict]:
+    """The rows of csa-work/<rel> as dicts: from the system model store when it is current for that file (modelstore.rows),
+    else from the file itself. [] when the file is missing."""
     import csv
-    path = Path(workspace) / "csa-work" / "evidence-matrix.csv"
-    if not path.is_file():
+    from csa_docx import modelstore
+    got = modelstore.rows(work, rel)
+    if got is not None:
+        return got
+    f = Path(work) / rel
+    if not f.is_file():
         return []
-    with path.open(newline="", encoding="utf-8-sig") as fh:
+    with f.open(newline="", encoding=encoding) as fh:
         return list(csv.DictReader(fh))
+
+
+def _matrix_rows(workspace: Path) -> list[dict]:
+    return _file_rows(Path(workspace) / "csa-work", "evidence-matrix.csv", "utf-8-sig")
 
 
 def _rejected(workspace: Path) -> set[str]:
@@ -568,7 +578,7 @@ def host_register(workspace: Path | None) -> dict | None:
     hf = d / "hosts.csv"
     if not hf.is_file():
         return None
-    rows = list(csv.DictReader(hf.open(encoding="utf-8")))
+    rows = _file_rows(d.parent, "hosts/hosts.csv")
     fill: dict[str, str] = {}
     rf = d / "roles.csv"
     if rf.is_file():
@@ -603,9 +613,7 @@ def host_register(workspace: Path | None) -> dict | None:
         g["hosts"].sort()
         g["zones"] = list(dict.fromkeys(zs.of(h).get("zone", "") or "zone not recorded" for h in g["hosts"]))
     unnamed = []
-    af = d / "addresses.csv"
-    if af.is_file():
-        unnamed = list(csv.DictReader(af.open(encoding="utf-8")))
+    unnamed = _file_rows(d.parent, "hosts/addresses.csv")
     return {"groups": gl, "total": sum(len(g["hosts"]) for g in gl), "uncaptured": uncaptured, "unnamed": unnamed,
             "zone_conflicts": topic_frames.zone_conflicts(d.parent)}
 
@@ -671,11 +679,11 @@ def note_candidates(node: dict, workspace: Path | None, reg: dict | None, rows: 
                and v in ((r.get("claim") or "") + " " + (r.get("evidence_excerpt") or "")).lower()]
         return hit[:1]
 
-    hf = Path(workspace) / "csa-work" / "hosts" / "host_facts.csv"
+    fact_rows = _file_rows(Path(workspace) / "csa-work", "hosts/host_facts.csv")
     role_of = {h: g["role"] for g in (reg or {}).get("groups", []) for h in g["hosts"]}
-    if hf.is_file() and role_of:
+    if fact_rows and role_of:
         by_attr: dict[str, dict[str, str]] = {}
-        for r in csv.DictReader(hf.open(encoding="utf-8")):
+        for r in fact_rows:
             if r.get("host") in role_of and (r.get("value") or "").strip():
                 by_attr.setdefault(r["attribute"], {}).setdefault(r["host"], r["value"].strip())
         for attr, vals in sorted(by_attr.items()):
@@ -774,18 +782,15 @@ def shared_services(node: dict, workspace: Path | None, reg: dict | None) -> tup
 
 def _primaries(work_dir: Path) -> dict[str, tuple[str, str]]:
     """{host: (site, primary DNS server)} for a project's captured hosts (hosts.csv + host_services.csv)."""
-    import csv
     hosts = Path(work_dir) / "hosts"
     if not (hosts / "host_services.csv").is_file() or not (hosts / "hosts.csv").is_file():
         return {}
-    with (hosts / "hosts.csv").open(encoding="utf-8-sig", newline="") as fh:
-        site = {r["host"]: (r.get("site") or "").strip() for r in csv.DictReader(fh)
-                if (r.get("capture") or "").strip() and (r.get("in_scope") or "") != "peer"}
+    site = {r["host"]: (r.get("site") or "").strip() for r in _file_rows(Path(work_dir), "hosts/hosts.csv", "utf-8-sig")
+            if (r.get("capture") or "").strip() and (r.get("in_scope") or "") != "peer"}
     out = {}
-    with (hosts / "host_services.csv").open(encoding="utf-8-sig", newline="") as fh:
-        for r in csv.DictReader(fh):
-            if r.get("service") == "dns" and str(r.get("preference")) == "1" and site.get(r.get("client_host")):
-                out[r["client_host"]] = (site[r["client_host"]], r.get("server_host") or r.get("server_ip"))
+    for r in _file_rows(Path(work_dir), "hosts/host_services.csv", "utf-8-sig"):
+        if r.get("service") == "dns" and str(r.get("preference")) == "1" and site.get(r.get("client_host")):
+            out[r["client_host"]] = (site[r["client_host"]], r.get("server_host") or r.get("server_ip"))
     return out
 
 
@@ -896,6 +901,96 @@ def must_address_lines(items: list[dict]) -> list[str]:
     return out
 
 
+# What a requirement call is told about the prose, in place of the whole-section rules digest (about 800 tokens)
+REQUIREMENT_RULES = [
+    "Write one to three sentences about this requirement only. The first gives the verdict and the part or parts that decide it.",
+    "Test every condition the requirement states (for example independent of a share outside OT, or a documented fallback). Say which the findings settle, and raise as Unknown each one they leave open.",
+    "When the rating is not Met, the sentence after the verdict says what keeps it from Met.",
+    "Then one sentence for each part that differs. Name a part by the name listed under Parts, never by a host.",
+    "Say something about a part only where a finding listed under that part shows it.",
+    "Judge every finding listed: supports or contradicts (it becomes a Fact), or gap with the question to ask in note. None may be left without a verdict and none may be set aside, except a kept fact, which may be not relevant with a reason in note.",
+    "One part with two roles is one thing: use the single name given for it, never the list.",
+    "Another application's name (IAMPS) appears only where it meets a part of this system.",
+    "A finding marked declared only, attempted or not found is not an observed fact: say so, or raise it as Unknown.",
+    "State the rating from the choices given and give one sentence of reason. Not Applicable needs a justification.",
+    "Name every part listed under Parts in the Text, or cover the rest with \"and every other part\" when the same is true of all of them. Name at most three parts in one sentence and say what parts share once, rather than listing them again.",
+    "Keep each sentence under 45 words and use a part's name once in a sentence. No semicolons, no totals, no IP addresses.",
+    "Write what is, in plain Australian English. Do not copy the wording of an evidence row.",
+]
+
+
+def kept_rows(keep: list[dict], qid: str, covered: set[str]) -> list[dict]:
+    """Facts to keep of question ``qid`` that no finding carries (their evidence IDs are not among ``covered``), as rows the
+    model can judge like findings: K1, K2, ... The framework restates them with their own evidence IDs, or drops them
+    with the model's reason."""
+    out = []
+    for n, k in enumerate([k for k in keep if k.get("question") == qid and not {i.upper() for i in k["evidence_ids"]} <= covered], 1):
+        out.append({"key": f"K{n}", "part": "(kept from the earlier answer)", "part_id": "", "part_ids": [], "side": "", "slot": "kept",
+                    "text": k["fact"], "ids": list(k["evidence_ids"]), "basis": "observed", "direction": "", "keep": [k["fact"]],
+                    "kept": True})
+    return out
+
+
+def requirement_view(card: dict, qid: str) -> dict | None:
+    """The small input for one requirement question, or None when ``qid`` is not a requirement question of the card:
+    {"qid", "req_id", "text", "ratings", "parts": [name], "findings": [part findings, see parts.requirement_findings, each
+    with "keep": the Facts to keep it carries], "unanswered": [slot question the captures leave empty], "isolation":
+    {part name: effect} (only where the requirement is about isolation), "rows": [evidence row], "digest": [block],
+    "disagree": [line], "rules": [line], "markdown", "tokens"}. It holds this requirement's findings and rows only: not the
+    other questions, the host register, the role table, the background or the applications block."""
+    from csa_docx import parts as parts_mod
+    q = next((x for x in card.get("questions", []) if x["id"] == qid and x.get("kind") == "requirement"), None)
+    if not q:
+        return None
+    req = q.get("req_id", "")
+    pv = card.get("parts") or {}
+    found = parts_mod.requirement_findings(pv, req)
+    keep = card.get("keep") or []
+    for f in found:
+        f["keep"] = [k["fact"] for k in keep if set(i.upper() for i in k["evidence_ids"]) & set(i.upper() for i in f["ids"])]
+    found += kept_rows(keep, qid, {i.upper() for f in found for i in f["ids"]})
+    names = [pv["parts"][pid] for pid in (pv.get("owed") or {}).get(qid, []) if pid in pv.get("parts", {})]
+    write_as = {n: re.split(r",\s*", n)[0] for n in names if "," in n}
+    owed = ((card.get("frame") or {}).get("must_address") or {}).get(qid, [])
+    unanswered = [x["text"] for x in owed if x.get("empty")]
+    isolating = bool(re.search(r"isolat", q["text"], re.I))
+    iso = {pv["parts"][pid]: pv["isolation"][pid]["effect"][:300] for pid in (pv.get("owed") or {}).get(qid, [])
+           if isolating and pid in pv.get("isolation", {}) and pid in pv.get("parts", {})}
+    pack = (card.get("evidence") or {}).get(qid) or {}
+    rows = [r for r in pack.get("rows", []) if not r.get("established")]
+    ids = {r["id"].upper() for r in rows}
+    disagree = [d for d in card.get("disagree", []) if (m := re.match(r"Rows disagree: (\S+) ", d)) and m.group(1).upper() in ids]
+    lines = [f"# Requirement {qid}", "", q["text"], "", "## Parts", ""] + [f"- {n}" + (f" (one part: write \"{write_as[n]}\" in a sentence, never the whole list)" if n in write_as else "") for n in names or ["(none owed)"]]
+    lines += ["", "## Findings (give each a verdict)", ""]
+    for f in found:
+        ids_ = f" ({', '.join(f['ids'])})" if f["ids"] else ""
+        kept = " [fact to keep]" if f["keep"] else ""
+        where = "in OT" if f["side"] == "ot" else "outside OT" if f["side"] == "outside" else "OT and outside OT" if f["side"] == "mixed" else ""
+        lines.append(f"- {f['key']} | {f['part']} [{f['slot']}, {f['basis']}{', ' + where if where else ''}]: {f['text'][:260]}{ids_}{kept}")
+    lines += [f"- Unknown unless the evidence below answers it: {t}" for t in unanswered]
+    if not found and not unanswered:
+        lines.append("- none bound to this requirement")
+    if iso:
+        lines += ["", "## When OT is isolated", ""] + [f"- {n}: {e}" for n, e in iso.items()]
+    lines += ["", "## Evidence", ""]
+    for block in pack.get("digest", []):
+        lines += block + [""]
+    lines += [f"- {r['id']} {r['status']}: {r['claim']}" + (f" [{r['note']}]" if r.get("note") else "") for r in rows] or ["- nothing on record"]
+    lines += [f"- {d}" for d in disagree]
+    lines += ["", "## Rules", ""] + [f"- {r}" for r in REQUIREMENT_RULES]
+    ratings = card.get("ratings") or doc_spec.DEFAULT_RATINGS
+    lines += ["", f"Ratings: {' / '.join(ratings)}"]
+    md = "\n".join(lines) + "\n"
+    return {"qid": qid, "req_id": req, "text": q["text"], "ratings": list(ratings), "parts": names, "findings": found,
+            "unanswered": unanswered, "isolation": iso, "rows": rows, "digest": pack.get("digest", []), "disagree": disagree,
+            "rules": list(REQUIREMENT_RULES), "markdown": md, "tokens": len(md) // 4}
+
+
+def requirement_tokens(card: dict) -> dict[str, int]:
+    """{question id: tokens of its requirement_view}, for the per-requirement budget."""
+    return {q["id"]: v["tokens"] for q in card.get("questions", []) if (v := requirement_view(card, q["id"]))}
+
+
 def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool = True,
          extra_searches: dict | None = None, exclude: tuple[str, ...] = ()) -> dict:
     qs = questions(node, spec)
@@ -947,6 +1042,8 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
                         p["rows"].append(_row(by_id[i.upper()]))
                         have.add(i.upper())
     owed = must_address_by_question(qs, fr)
+    seen_rows = {r["id"]: r for p_ in pack.values() for r in p_.get("rows", [])}
+    disagree = topic_frames.row_disagreements(fr, list(seen_rows.values())) if fr else []
     pview = None                 # the system parts (csa-work/parts.json): the names every section writes about
     if evidence and workspace:
         from csa_docx import parts as parts_mod
@@ -987,8 +1084,7 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
         if fr:
             from csa_docx import topic_frames
             lines += [f"- {x}" for x in topic_frames.scope_conflicts(fr, extra["not_here"])]
-            seen_rows = {r["id"]: r for p_ in pack.values() for r in p_.get("rows", [])}
-            lines += [f"- {x}" for x in topic_frames.row_disagreements(fr, list(seen_rows.values()))]
+            lines += [f"- {x}" for x in disagree]
     cur = _current(node)
     if cur:
         lines += ["", "## Current text in the document", ""] + [f"- {c}" for c in cur]
@@ -1084,14 +1180,17 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
     for k in kinds:
         ex = _example(k)
         if ex:
-            lines += ["", f"## Example answer ({k})", "", ex]
+            lines += ["", f"## Example answer ({k}): format only, not evidence", "",
+                      "> Invented to show the shape of an answer. Its hosts, facts and evidence IDs (E-0nnn) describe no "
+                      "real system. Never copy a line from it: the answer check rejects one (EXAMPLE_COPIED).", "", ex,
+                      "", f"(end of example answer ({k}))"]
     text = "\n".join(lines) + "\n"
     return {"status": "OK", "key": node["key"], "number": node["number"], "title": node["title"], "text": text,
             "questions": qs, "evidence": pack, "established": established, "background_ids": bg_ids,
             "keep": [{k: x[k] for k in ("question", "fact", "evidence_ids", "capture_ids")} for x in keep], "tokens": len(text) // 4,
             "correct": [{k: x[k] for k in ("question", "fact", "evidence_ids", "capture_ids", "contradicts")} for x in correct],
             "ratings": spec.get("ratings") or doc_spec.DEFAULT_RATINGS, "kinds": kinds, "host_register": reg,
-            "role_table": rtable, "role_tables": rtables or [], "frame": frame,
+            "role_table": rtable, "role_tables": rtables or [], "frame": frame, "disagree": disagree,
             "parts": {k: v for k, v in pview.items() if k != "lines"} if pview else None,
             "practice": practice_view}
 

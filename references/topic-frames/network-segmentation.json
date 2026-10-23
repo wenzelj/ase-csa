@@ -22,7 +22,10 @@
      "net.address",
      "net.gateway"
     ]
-   }
+   },
+   "search": [
+    "Get-NetIPConfiguration"
+   ]
   },
   {
    "id": "S2",
@@ -42,7 +45,11 @@
       "attempted"
      ]
     }
-   }
+   },
+   "search": [
+    "Get-NetTCPConnection",
+    "flow map"
+   ]
   },
   {
    "id": "S3",
@@ -61,7 +68,11 @@
       "both"
      ]
     }
-   }
+   },
+   "search": [
+    "unknown zone",
+    "subnet"
+   ]
   },
   {
    "id": "S4",
@@ -85,7 +96,11 @@
       "both"
      ]
     }
-   }
+   },
+   "search": [
+    "CcmExec",
+    "HealthService"
+   ]
   },
   {
    "id": "S5",
@@ -93,7 +108,10 @@
    "requirements": [
     "SEP-NET-01"
    ],
-   "source": {}
+   "source": {},
+   "search": [
+    "VLAN"
+   ]
   }
  ]
 }

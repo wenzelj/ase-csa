@@ -269,14 +269,14 @@ def _comment_ids(docx: Path) -> set[str]:
         return set(re.findall(r'<w:comment\b[^>]*?\bw:id="(\d+)"', z.read("word/comments.xml").decode("utf-8")))
 
 
-_ID_LIST_RE = re.compile(r"^((?:[A-Za-z ]+: )?)(S\d+-[EA]\d+(?:, S\d+-[EA]\d+)*)$")
+_ID_LIST_RE = re.compile(r"^((?:[A-Za-z ]+: )?)(S\d+(?:\.\d+)?-[EA]\d+(?:, S\d+(?:\.\d+)?-[EA]\d+)*)$")
 
 
 def _without_ids(line: str, drop: set[str]) -> str | None:
     """``line`` without ``drop`` in it when it is a comma-separated list of edit IDs (optionally
     after a ``Label: `` prefix, ``None`` standing for an empty list); ``None`` for the result line
     of a dropped edit. Other lines are returned as is."""
-    r = re.match(r"^- (S\d+-[EA]\d+): ", line)
+    r = re.match(r"^- (S\d+(?:\.\d+)?-[EA]\d+): ", line)
     if r:
         return None if r[1] in drop else line
     m = _ID_LIST_RE.match(line)
@@ -400,7 +400,7 @@ def apply_build_records(workspace, sections, *, app: str, track_changes: bool, b
         for section, change_file in plain_files.items():
             _drop_plain_records(change_file, docx, section, list((new_edits or {}).get(section) or []))
             if (str(change_file) in {str(f) for f in (new_files or [])} and change_file.is_file()
-                    and not re.search(r"^#{2,4}\s+(?:REJECTED\s+)?S\d+-E\d+\b", change_file.read_text(encoding="utf-8"), re.M)):
+                    and not re.search(r"^#{2,4}\s+(?:REJECTED\s+)?S\d+(?:\.\d+)?-E\d+\b", change_file.read_text(encoding="utf-8"), re.M)):
                 change_file.unlink()
                 (change_file.parent / (change_file.stem + ".approval.json")).unlink(missing_ok=True)
     elif not track_changes:

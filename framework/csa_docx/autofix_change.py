@@ -23,13 +23,13 @@ import re
 import sys
 from pathlib import Path
 
-HEADING_RE = re.compile(r"^###\s+(?!REJECTED\b)(?P<id>S\d+-[EA]\d+)(?P<rest>\s+-\s+.*)$", re.M)
+HEADING_RE = re.compile(r"^###\s+(?!REJECTED\b)(?P<id>S\d+(?:\.\d+)?-[EA]\d+)(?P<rest>\s+-\s+.*)$", re.M)
 LABEL_RE = re.compile(r"^\*\*(Where|Do|Facts|Text|Why|Note):\*\*", re.M)
 FILENAME_RE = re.compile(r"^ChangesCSA_.+?_Section(?P<section>\d+)(?:_[^.]+)?\.md$")
 EID = re.compile(r"\bE-\d{2,}\b")
 STABLE = re.compile(r"@H[0-9][\w.\-]*")
 EID_GROUP = re.compile(r"\s*[\[(]\s*E-\d{2,}(?:\s*[,;]\s*E-\d{2,})*\s*[\])]")
-SET_RE = re.compile(r"(\*\*Suggested change set:\*\*\s*)(S\d+-E\d+)\s+to\s+(S\d+-E\d+)")
+SET_RE = re.compile(r"(\*\*Suggested change set:\*\*\s*)(S\d+(?:\.\d+)?-E\d+)\s+to\s+(S\d+(?:\.\d+)?-E\d+)")
 
 
 def _fix(code: str, edit_id: str | None, message: str) -> dict:
@@ -197,7 +197,7 @@ def autofix(path: Path, workspace: str | None = None, write: bool = False) -> di
     parts = [(e, _fix_currently(_fix_text(b, e, fixes), e, workspace, fixes) if e else b) for e, b in parts]
     text = "".join(b for _, b in parts)
     if any(f["code"] == "DUPLICATE_ID" for f in fixes):
-        sec_ids = [e for e, _ in parts if e and re.fullmatch(r"S\d+-E\d+", e)]
+        sec_ids = [e for e, _ in parts if e and re.fullmatch(r"S\d+(?:\.\d+)?-E\d+", e)]
         if sec_ids:
             lo = min(sec_ids, key=lambda s: int(s.split("-E")[1]))
             hi = max(sec_ids, key=lambda s: int(s.split("-E")[1]))

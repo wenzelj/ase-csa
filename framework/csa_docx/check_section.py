@@ -140,12 +140,8 @@ def _matrix_eids(workspace: str | None) -> set[str] | None:
     path = Path(workspace) / "csa-work" / "evidence-matrix.csv"
     if not path.is_file():
         return None
-    eids: set[str] = set()
-    with open(path, newline="", encoding="utf-8-sig") as fh:
-        for row in csv.reader(fh):
-            if row and row[0].strip():
-                eids.add(row[0].strip())
-    return eids
+    from csa_docx import modelstore
+    return {r["evidence_id"].strip() for r in modelstore.read_csv(path) if (r.get("evidence_id") or "").strip()}
 
 
 def check(path: Path, workspace: str | None = None, lint: bool = True) -> dict:

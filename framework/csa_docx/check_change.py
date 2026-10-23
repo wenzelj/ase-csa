@@ -41,7 +41,7 @@ def structure_findings(path: Path, text: str, records) -> list[dict]:
         out.append(finding("ERROR", "FILENAME", f"{path.name} is not ChangesCSA_<App>_Section<N>.md or ..._Section<N>_<label>.md"))
     if not STATUS_RE.search(text):
         out.append(finding("ERROR", "NO_STATUS", "no **Status:** line"))
-    valid = re.compile(rf"^S{section}-[EA]\d+$") if section else re.compile(r"^S\d+-[EA]\d+$")
+    valid = re.compile(rf"^S{section}-[EA]\d+$") if section else re.compile(r"^S\d+(?:\.\d+)?-[EA]\d+$")
     seen = set()
     for h in ANY_ID_HEADING_RE.finditer(text):
         eid = h["id"]

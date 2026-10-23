@@ -27,8 +27,8 @@ _SUBSECTIONS = ("5.2", "5.3", "5.4", "5.5", "5.6")
 def _read_csv(path: Path) -> list[dict]:
     if not path.is_file():
         return []
-    with path.open(newline="", encoding="utf-8-sig") as fh:
-        return list(csv.DictReader(fh))
+    from csa_docx import modelstore
+    return modelstore.read_csv(path)
 
 
 def _facts(work: Path) -> list[dict]:

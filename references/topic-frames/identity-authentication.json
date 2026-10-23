@@ -20,7 +20,10 @@
      "identity.domain",
      "identity.kdc"
     ]
-   }
+   },
+   "search": [
+    "PartOfDomain"
+   ]
   },
   {
    "id": "S2",
@@ -44,7 +47,10 @@
       "declared"
      ]
     }
-   }
+   },
+   "search": [
+    "nltest"
+   ]
   },
   {
    "id": "S3",
@@ -56,7 +62,11 @@
     "settings": [
      "identity.service_accounts"
     ]
-   }
+   },
+   "search": [
+    "StartName",
+    "LocalSystem"
+   ]
   },
   {
    "id": "S4",
@@ -68,7 +78,11 @@
     "settings": [
      "identity.local_users"
     ]
-   }
+   },
+   "search": [
+    "Get-LocalUser",
+    "Administrator"
+   ]
   },
   {
    "id": "S5",
@@ -76,7 +90,11 @@
    "requirements": [
     "SEP-ID-02"
    ],
-   "source": {}
+   "source": {},
+   "search": [
+    "SQL login",
+    "application login"
+   ]
   },
   {
    "id": "S6",
@@ -85,7 +103,11 @@
     "SEP-ID-01",
     "SEP-ID-02"
    ],
-   "source": {}
+   "source": {},
+   "search": [
+    "cached logon",
+    "Kerberos"
+   ]
   }
  ]
 }

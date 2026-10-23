@@ -17,7 +17,7 @@ def test_catalogue_exposes_read_only_operations_and_one_docx_locked_apply() -> N
         "status", "next", "report", "sections", "spec_status", "comments",
         "check_change", "check_section", "apply", "review", "cleanup", "author",
         "build_preview", "build", "audit", "ingest", "stale", "answer", "refresh_draft", "freeze",
-        "figure_wording", "figure_place", "figure_design", "intake", "gap_check",
+        "figure_wording", "figure_place", "figure_design", "intake", "gap_check", "resolve_gaps",
     }
     for key in ("intake", "gap_check"):
         op = next(row for row in rows if row["key"] == key)
@@ -30,12 +30,14 @@ def test_catalogue_exposes_read_only_operations_and_one_docx_locked_apply() -> N
     assert review["mutating"] is True and review["lock"] == "docx"
     cleanup = next(row for row in rows if row["key"] == "cleanup")
     assert cleanup["mutating"] is True and cleanup["lock"] == "docx"
+    resolve = next(row for row in rows if row["key"] == "resolve_gaps")
+    assert resolve["mutating"] is True and resolve["mutation_class"] == "document_write" and resolve["lock"] == "docx"
     author = next(row for row in rows if row["key"] == "author")
     assert author["mutating"] is True and author["mutation_class"] == "workspace_write" and author["lock"] == "section"
     assert {"legacy", "fresh", "check_answers", "writer", "no_writer"} <= set(author["options"])
     assert all(row["mutating"] is False and row["lock"] == "none" for row in rows if row["key"] not in ("apply", "review", "cleanup", "build", "author",
                                                                                   "ingest", "stale", "answer", "refresh_draft", "freeze",
-                                                                                  "figure_wording", "figure_place", "figure_design", "intake", "gap_check"))
+                                                                                  "figure_wording", "figure_place", "figure_design", "intake", "gap_check", "resolve_gaps"))
 
 
 def test_build_argv_uses_fixed_executable_and_typed_arguments(tmp_path: Path) -> None:

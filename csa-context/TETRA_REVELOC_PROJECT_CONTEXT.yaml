@@ -46,19 +46,21 @@ project:
     - "No IP address changes for application servers"
   authoritative_sources:
     # Paths relative to this project's root ("TETRA/06 REVELOC TETRA"); data is read in place.
-    - path: "../05 Revloc Tetra/01 Current State AS Built"
-      role: "evidence data (RevLoc discovery script results, system matrix, flow workbooks, design documents)"
-      confirmed_by: "project owner instruction, 2026-09-30"
+    - path: "01 Current State AS Built/revloc-tetra"
+      role: "evidence data, the one canonical folder (RevLoc discovery script results, asset inventory, system matrix, flow workbook, design documents, Confluence exports, owner-confirmed host identities)"
+      confirmed_by: "project owner instruction, 2026-09-30; folder moved and de-duplicated 2026-10-22"
     - path: "../../Requirements/Radlink Scope of Work - OT Infrastructure Migration Support.docx"
       role: "scope"
       confirmed_by: "project owner instruction, 2026-09-30"
-    - path: "../05 Revloc Tetra/02 Current State Assessment/NetSeg_Current_State_Assessment_REVELOC_TETRA.docx"
-      role: "evidence: previous CSA (pre-template), indexed via index_extra_sources; cite it by section heading"
-      confirmed_by: "project owner instruction, 2026-09-30"
+    - path: "02 Current State Assessment/NetSeg_Current_State_Assessment_REVELOC_TETRA.docx"
+      role: "previous CSA (pre-template). Retired as evidence 2026-10-22 (project owner): not indexed, never cited; current state comes from the discovery data and workbooks"
+      confirmed_by: "project owner instruction, 2026-10-22"
   terminology: {}
   known_constraints:
     - "New CSA on template v1.5, version 0.1 built with the build lane (`csa place` / `csa build`). Evidence matrix and discovery index start empty in this project's csa-work."
-    - "The previous CSA counts as evidence (project owner, 2026-09-30); where it conflicts with the discovery script results, the discovery data is newer and wins unless the project owner says otherwise."
+    - "The previous CSA is no longer evidence (project owner, 2026-10-22). It was counted as evidence from 2026-09-30; all evidence rows citing it were retired in the 2026-10-22 cleanup."
+    - "TETRA Reveloc Asset Inventory.xlsx replaces OU_Computer_Inventory.xlsx (project owner, 2026-10-22). Rows citing the old inventory are retired."
+    - "Newer evidence wins: owner confirmation, then the latest discovery capture per host, then the replacement workbook, then older workbooks."
     - "Content from the previous CSA is carried into the template by distilling it into each domain, not by copying; the template has no Recommendations subsection."
     - "The previous CSA is marked [SEC=PROTECTED]; confirm the classification marking for the new document."
     - "RevLoc discovery results are .zip files; they are indexed only once extracted alongside (discovery index skips .zip)."

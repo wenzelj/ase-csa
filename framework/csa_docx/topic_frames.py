@@ -92,7 +92,8 @@ def _join(xs: list[str]) -> str:
 
 def _register(work_dir: Path) -> dict[str, dict]:
     f = Path(work_dir) / "hosts" / "hosts.csv"
-    return {r["host"].upper(): r for r in csv.DictReader(f.open(encoding="utf-8"))} if f.is_file() else {}
+    from csa_docx import modelstore
+    return {r["host"].upper(): r for r in modelstore.read_csv(f)} if f.is_file() else {}
 
 
 def _src_title(cites: list[str]) -> str:

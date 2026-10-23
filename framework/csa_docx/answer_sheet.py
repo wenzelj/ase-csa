@@ -45,6 +45,9 @@ _EID = re.compile(r"(?<![\w:-])" + _PFX + r"E-\d+\b")
 _XID = re.compile(r"^([a-z0-9][a-z0-9-]*):E-\d+$", re.I)   # a prefixed (other project's) ID
 _KID = re.compile(r"\bK-[0-9A-F]{6}\b")           # background knowledge passages, never evidence (knowledge.py)
 _QWORD = re.compile(r"\b(whether|which|what|how|where|who|when)\b", re.I)   # question clauses in an Unknown line
+# not separate questions: ", which the network owner could confirm" (who can answer) and "to which servers" (a relative)
+_QRELATIVE = re.compile(r",\s*(?:which|who)\b[^,]*?\b(?:could|can|would|will|should|may|must)\s+(?:confirm|answer|say|tell|"
+                        r"provide|check|verify)\b[^,]*$|\b(?:to|of|in|from|on|at|by|for|with|through|under|behind)\s+which\b", re.I)
 _ANYID = re.compile(r"(?<![\w:-])" + _ID + r"\b")
 _HOST = re.compile(r"\b(?=[A-Z0-9]*\d)[A-Z][A-Z0-9]{6,}\b")
 _IP = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}(?:/\d{1,2})?\b")
@@ -135,8 +138,8 @@ def load_matrix(path: Path | None) -> dict[str, dict]:
     and system siblings, csa_docx.estate.citable_projects). Keys are upper case."""
     if not path or not Path(path).is_file():
         return {}
-    with Path(path).open(newline="", encoding="utf-8-sig") as fh:
-        out = {r["evidence_id"].upper(): r for r in csv.DictReader(fh)}
+    from csa_docx import modelstore
+    out = {r["evidence_id"].upper(): r for r in modelstore.read_csv(Path(path))}
     try:
         from csa_docx.estate import peer_rows
     except ImportError:
@@ -211,13 +214,14 @@ HARD_CODES = {"CROSS_PROJECT_ONLY", "NOTE_TOO_LONG", "NOTE_NONE_AND_TEXT", "NOTE
               "CITATION_OFF_TOPIC", "NO_TOTALS", "ROLE_TABLE_REPEAT", "FRAME_UNCOVERED", "ATTEMPT_AS_ESTABLISHED",
               "SLOT_NOT_ANSWERED", "FLOW_NOT_COVERED", "ZONE_CONTRADICTED", "PART_NOT_NAMED", "ISOLATION_WRONG_SIDE",
               "PART_MISATTRIBUTED", "CITED_AND_DROPPED", "LABEL_AS_NAME", "PART_NAME_LIST", "SUBJECT_NOT_THIS_SYSTEM",
-              "PRACTICE_NOT_ADDRESSED", "PRACTICE_ATTRIBUTION_DROPPED"}
+              "PRACTICE_NOT_ADDRESSED", "PRACTICE_ATTRIBUTION_DROPPED", "APPLICATION_ZONE_CLAIM",
+              "EXAMPLE_COPIED"}
 
 # counts and totals of hosts ("9 of 12", "all 12 captured hosts", "nine hosts", "two RevViewer Jump Hosts"): CSA text
 # names the role groups instead. "stratum 5 hosts" and port numbers are not counts.
 _NUMWORD = r"(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|twenty)"
 _TOTALS = re.compile(r"\b\d+\s+of\s+(?:the\s+)?\d+\b|(?<!stratum )(?<!port )(?<!ports )\b" + _NUMWORD +
-                     r"\s+(?:[A-Za-z/-]+\s+){0,3}?(?:hosts?|servers?|nodes?|machines?)\b", re.I)
+                     r"\s+(?:[A-Za-z/-]+\s+){0,3}?(?:hosts?|servers?|nodes?|machines?)\b(?!-)", re.I)
 
 
 def totals_in(text: str) -> str | None:
@@ -260,6 +264,8 @@ def frame_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
     out += zone_contradictions(sheet, card)
     out += rating_floor(sheet, card)
     out += part_checks(sheet, card)
+    out += application_checks(sheet, card)
+    out += chain_checks(sheet, card)
     return out
 
 
@@ -410,6 +416,128 @@ def part_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
     return out
 
 
+_CLAIM_ZONE = re.compile(r"\b(?:in|within|inside|hosted in|sits in|sit in)\s+(?:the\s+)?(OT|IT)\b(?!\s+(?:isolation|isolated|is isolated))")
+
+
+READ_WORDS = 45
+
+
+def read_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
+    """The reading checks on a requirement or narrative Text (both warn, never block):
+    READ_LONG: a sentence over 45 words (the S408 sentence that read badly was 49).
+    READ_REPEAT: a part or application name used twice in one sentence (\"the RevBroadcast application server opens
+    sessions to the RevBroadcast availability group\" says RevBroadcast twice)."""
+    pc = card.get("parts") or {}
+    names = sorted({n for ns in (pc.get("names") or {}).values() for n in ns} |
+                   {n for a in pc.get("applications") or [] for n in a.get("names", [])}, key=len, reverse=True)
+    names = [n for n in names if len(n) > 3]
+    out = []
+    for q in card.get("questions", []):
+        b = sheet.get(q["id"])
+        if not b or q["kind"] not in ("requirement", "narrative") or not b.get("text"):
+            continue
+        for sent in re.split(r"(?<=[.!?])\s+|\n+", b["text"]):
+            words = len(sent.split())
+            if words > READ_WORDS:
+                out.append(_f("WARN", "READ_LONG", q["id"], f"a sentence of {words} words (over {READ_WORDS}): split it in two: \"{sent[:70]}...\""))
+            rest = sent.lower()
+            for n in names:
+                k = len(re.findall(r"(?<!\w)" + re.escape(n.lower()) + r"(?!\w)", rest))
+                if k >= 2:
+                    out.append(_f("WARN", "READ_REPEAT", q["id"], f"\"{n}\" is used {k} times in one sentence: say it once and "
+                                  f"refer back with 'it' or 'the same part': \"{sent[:70]}...\""))
+                rest = re.sub(r"(?<!\w)" + re.escape(n.lower()) + r"(?!\w)", " ", rest)
+    return out
+
+
+def application_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
+    """The application checks (card "parts" applications, from csa-work/parts.json):
+    APPLICATION_NOT_NAMED (warning): a requirement the card ties to an application (through a part that only that
+    application uses) has a Text that names none of the applications behind it, only parts.
+    APPLICATION_ZONE_CLAIM (hard): a clause puts a part or an application "in OT" when its register zone puts it outside
+    OT, or "in IT" when its parts are in OT, and names nothing on the other side of the line: the role name of the
+    part never decides which side of OT it is on (an OT-prefixed name for a server in IT is the mistake)."""
+    from csa_docx.parts import named
+    pc = card.get("parts") or {}
+    apps = pc.get("applications") or []
+    if not apps:
+        return []
+    kinds = {q["id"]: q["kind"] for q in card.get("questions", [])}
+    byid = {a["id"]: a for a in apps}
+    out = []
+    for qid, ids in (pc.get("owed_applications") or {}).items():
+        b = sheet.get(qid)
+        if not b or kinds.get(qid) != "requirement":
+            continue
+        text = b.get("text") or " ".join(f["text"] for f in b["facts"])
+        if text and not any(named(text, byid[i]["names"]) for i in ids if i in byid):
+            out.append(_f("WARN", "APPLICATION_NOT_NAMED", qid,
+                          f"the Text names parts but not the application they serve: "
+                          f"{', '.join(byid[i]['name'] for i in ids if i in byid)} (see Applications on the card)"))
+    ends = {"OT": "outside", "IT": "ot"}          # the zone a claim contradicts, as a part's side
+    things = [(pid, nm, pc["sides"].get(pid)) for pid, nm in (pc.get("names") or {}).items() for nm in nm
+              if pc["sides"].get(pid) in ("ot", "outside") and pid in set((pc.get("hosts") or {}).values())]
+    things += [(a["id"], nm, a["side"]) for a in apps for nm in a["names"] if a["side"] in ("ot", "outside")]
+    for qid, b in sheet.items():
+        if kinds.get(qid) not in ("requirement", "narrative") or not b.get("text"):
+            continue
+        for clause in re.split(r"(?<=[.!?])\s+|\n+|,?\s+(?:but|while|whereas|although)\s+|;\s*", b["text"]):
+            claim = _CLAIM_ZONE.search(clause)
+            if not claim:
+                continue
+            sides = {side for _, nm, side in things if re.search(rf"\b{re.escape(nm)}\b", clause, re.I)}
+            if sides == {ends[claim[1]]}:
+                who = sorted({nm for _, nm, side in things if re.search(rf"\b{re.escape(nm)}\b", clause, re.I)}, key=len)[-1]
+                out.append(_f("ERROR", "APPLICATION_ZONE_CLAIM", qid,
+                              f"{who} is {'outside OT' if sides == {'outside'} else 'in OT'} in the register, not in "
+                              f"{claim[1]}: say where it is from its zone, never from its role name: \"{clause[:160]}\""))
+    return out
+
+
+_LINK_VERB = re.compile(r"\b(?:connects?|connected|connecting|communicates?|talks?|sends?|reads?|writes?|queries|queried|"
+                        r"replicates?|replicated|reaches|reached|feeds?|forwards?|pulls?|pushes?)\b", re.I)
+_OWNS = re.compile(r"\b(?:belongs? to|is part of|are part of|is dedicated to|dedicated to|serves only|used only by|owned by)\b|[\w)]'s\b", re.I)
+
+
+def chain_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
+    """Two warnings on how a clause joins parts and applications (card "parts" links and applications):
+    CHAIN_STEP_UNSUPPORTED: a clause names two or more parts and a verb that links them (sends, reads, replicates,
+    connects), but no flow joins any two of the parts it names.
+    SHARED_PART_CLAIMED: a clause names a part several applications share, with exactly one of them, in words that
+    make it that application's own (belongs to, is part of, dedicated to, the application's ...)."""
+    from csa_docx.parts import parts_in
+    pc = card.get("parts") or {}
+    apps = pc.get("applications") or []
+    if not apps:
+        return []
+    kinds = {q["id"]: q["kind"] for q in card.get("questions", [])}
+    links = {tuple(x) for x in pc.get("links") or []}
+    names = {pid: pc["names"][pid] for pid in pc.get("names", {}) if pid in pc.get("parts", {})}
+    users: dict[str, list[dict]] = {}
+    for a in apps:
+        for pid in a["shared"]:
+            users.setdefault(pid, []).append(a)
+    out = []
+    for qid, b in sheet.items():
+        if kinds.get(qid) not in ("requirement", "narrative") or not b.get("text"):
+            continue
+        for clause in re.split(r"(?<=[.!?])\s+|\n+|,?\s+(?:but|while|whereas|although)\s+|;\s*", b["text"]):
+            ps = sorted(parts_in(clause, names))
+            if len(ps) >= 2 and _LINK_VERB.search(clause) and not _EVERY_PART.search(clause) \
+                    and not any(tuple(sorted((x, y))) in links for x in ps for y in ps if x < y):
+                out.append(_f("WARN", "CHAIN_STEP_UNSUPPORTED", qid,
+                              f"no flow joins {' and '.join(pc['parts'][p] for p in ps[:3])}: say the link only where a "
+                              f"flow or a chain step on the card shows it: \"{clause[:160]}\""))
+            if _OWNS.search(clause):
+                for pid, served in users.items():
+                    hit = [a for a in served if any(re.search(rf"\b{re.escape(n)}\b", clause, re.I) for n in a["names"])]
+                    if pid in parts_in(clause, names) and len(hit) == 1 and len(served) > 1:
+                        out.append(_f("WARN", "SHARED_PART_CLAIMED", qid,
+                                      f"{pc['parts'][pid]} is shared by {', '.join(a['name'] for a in served)}, so it does not "
+                                      f"belong to {hit[0]['name']} alone: \"{clause[:160]}\""))
+    return out
+
+
 def rating_floor(sheet: dict[str, dict], card: dict) -> list[dict]:
     """RATING_ABOVE_FLOOR (warning): "Met" while something the requirement owes is still Unknown, or while the frame
     found data pulled out of OT or brought into OT for this requirement. The rating reason must then say what
@@ -527,7 +655,7 @@ def slot_answers(sheet: dict[str, dict], fr: dict, fb: dict | None = None) -> li
         if b is None:
             continue                                  # QUESTION_MISSING reports it
         cited = block_ids(b)
-        unk = " ".join(b.get("unknown", [])).lower()
+        unk = " ".join(b.get("unknown", []) + b.get("dropped", [])).lower()      # a Dropped: line names the finding and says why
         miss = []
         for x in items:
             if x["ids"] and {i.upper() for i in x["ids"]} & cited:
@@ -771,6 +899,62 @@ def _note_checks(qid: str, q: dict, b: dict, sheet: dict[str, dict], qs: dict[st
     return out
 
 
+#: the worked examples section_card.py appends to every card ("## Example answer (<kind>)"). Their hosts, facts
+#: and evidence IDs (E-0nnn, a form the matrix never issues) are invented: a line copied from one into a real
+#: answer is format mistaken for evidence, so EXAMPLE_COPIED stops it.
+EXAMPLES = Path(__file__).resolve().parents[2] / "references" / "answer-examples"
+_EXAMPLE_MIN_WORDS = 6
+_example_cache: set[str] | None = None
+
+
+def _norm(s: str) -> str:
+    """Lower-case words only, evidence and knowledge IDs removed, for comparing a sentence across sheets."""
+    s = re.sub(r"\b(?:[\w-]+:)?(?:E-\d+|K-[0-9A-F]{6})\b", " ", s or "")
+    return " ".join(re.findall(r"[a-z0-9]+", s.lower()))
+
+
+def _sheet_sentences(b: dict) -> list[tuple[str, str]]:
+    """(where, text) for every line of a parsed block that can carry a claim into the document."""
+    out = [("fact", f["text"]) for f in b["facts"]] + [("bullet", x) for x in b["bullets"]]
+    out += [("row", " ".join(c)) for c in b["rows"][1:]]
+    for para in (b.get("text") or "").split("\n\n"):
+        out += [("Text", s) for s in re.split(r"(?<=[.!?])\s+", para) if s.strip()]
+    return out
+
+
+def example_sentences(folder: Path | None = None) -> set[str]:
+    """Normalised fact, bullet, Text and table-row sentences of the worked examples (long enough to be a claim)."""
+    global _example_cache
+    if folder is None and _example_cache is not None:
+        return _example_cache
+    found: set[str] = set()
+    d = folder or EXAMPLES
+    for f in sorted(d.glob("*.md")) if d.is_dir() else []:
+        for b in parse(f.read_text(encoding="utf-8")).values():
+            for _, s in _sheet_sentences(b):
+                n = _norm(s)
+                if len(n.split()) >= _EXAMPLE_MIN_WORDS:
+                    found.add(n)
+    if folder is None:
+        _example_cache = found
+    return found
+
+
+def example_checks(sheet: dict[str, dict], examples: set[str] | None = None) -> list[dict]:
+    """EXAMPLE_COPIED: a sentence of the answer repeats one from the card's worked example."""
+    examples = example_sentences() if examples is None else examples
+    findings: list[dict] = []
+    if not examples:
+        return findings
+    for qid, b in sheet.items():
+        for where, s in _sheet_sentences(b):
+            if _norm(s) in examples:
+                findings.append(_f("ERROR", "EXAMPLE_COPIED", qid,
+                                   f"this {where} is copied from the worked example on the card, which is invented to show "
+                                   f"the format and says nothing about this system: answer from this section's evidence: {s[:80]}"))
+    return findings
+
+
 def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None = None,
              ratings: list[str] | None = None, new_ids: set[str] | None = None, draft: bool = False,
              previous: dict[str, dict] | None = None) -> dict:
@@ -849,7 +1033,7 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
                 findings.append(_f("WARN", "IP_IN_PROSE", qid, f"address in a prose fact: name the host if it has a name; an address alone is right only where no host name is known: {fact['text'][:80]}"))
         findings += _background_checks(qid, q, b, background)
         for u in b["unknown"]:
-            n = len(_QWORD.findall(u))
+            n = len(_QWORD.findall(_QRELATIVE.sub(" ", u)))
             if n >= 3:
                 findings.append(_f("ERROR", "UNKNOWN_BUNDLED", qid, f"one Unknown: line holds {n} questions: write one "
                                    f"Unknown: line per question, so each becomes its own Discovery Required item: {u[:90]}"))
@@ -997,8 +1181,10 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
         findings += regression(previous, sheet, matrix, card)
     findings += kept_facts(sheet, card, findings)
     findings += frame_checks(sheet, card)
+    findings += read_checks(sheet, card)
     findings += practice_checks(sheet, card)
     findings += subject_checks(sheet, card)
+    findings += example_checks({k: v for k, v in sheet.items() if not k.startswith("F")})
     for qid in sheet:
         if qid not in qs and not qid.startswith("F"):
             findings.append(_f("WARN", "EXTRA_BLOCK", qid, "this question is not on the card"))
@@ -1232,7 +1418,7 @@ def merge(existing: str, r: dict, brief: str, change_set: str) -> str:
 
 
 _TARGET = re.compile(r"\*\*Where:\*\*\s*`(@H[\w.\-]+)")
-_RECORD = re.compile(r"(?ms)^### (S\d+-E\d+)\b.*?(?=^### |^## |\Z)")
+_RECORD = re.compile(r"(?ms)^### (S\d+(?:\.\d+)?-E\d+)\b.*?(?=^### |^## |\Z)")
 
 
 def supersede(text: str, new_records: list[str]) -> str:

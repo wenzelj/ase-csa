@@ -24,7 +24,11 @@
      "time.source",
      "dns.primary"
     ]
-   }
+   },
+   "search": [
+    "domain controller",
+    "NtpServer"
+   ]
   },
   {
    "id": "S2",
@@ -49,7 +53,11 @@
       "both"
      ]
     }
-   }
+   },
+   "search": [
+    "WSUS",
+    "monitoring agent"
+   ]
   },
   {
    "id": "S3",
@@ -61,7 +69,10 @@
     "settings": [
      "cert.machine"
     ]
-   }
+   },
+   "search": [
+    "NotAfter"
+   ]
   },
   {
    "id": "S4",
@@ -69,7 +80,11 @@
    "requirements": [
     "SEP-ISO-01"
    ],
-   "source": {}
+   "source": {},
+   "search": [
+    "isolation",
+    "standalone"
+   ]
   },
   {
    "id": "S5",
@@ -77,7 +92,11 @@
    "requirements": [
     "SEP-ISO-02"
    ],
-   "source": {}
+   "source": {},
+   "search": [
+    "manual process",
+    "threshold"
+   ]
   },
   {
    "id": "S6",
@@ -85,7 +104,10 @@
    "requirements": [
     "SEP-ISO-01"
    ],
-   "source": {}
+   "source": {},
+   "search": [
+    "DR test"
+   ]
   }
  ]
 }

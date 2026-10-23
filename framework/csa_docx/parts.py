@@ -11,6 +11,8 @@ whether a person has reviewed the parts.
     python3 -m csa_docx.parts build --work-dir <csa-work>
     python3 -m csa_docx.parts show --work-dir <csa-work>
     python3 -m csa_docx.parts approve --work-dir <csa-work>
+    python3 -m csa_docx.parts applications --work-dir <csa-work>      propose (when none) and show the applications
+    python3 -m csa_docx.parts chains --work-dir <csa-work>            propose (when none) and show the function chains
 """
 from __future__ import annotations
 
@@ -23,7 +25,6 @@ import sys
 from datetime import date
 from pathlib import Path
 
-_IP = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$")
 # words at the end of a role name that say what kind of machine it is, not which part: dropped for the short name
 _TAIL = {"always", "on", "availability", "group", "groups", "server", "servers", "cluster"}
 
@@ -79,18 +80,63 @@ def _public(end: str) -> bool:
         return False
 
 
+def _address(end: str) -> bool:
+    try:
+        ipaddress.ip_address(end)
+        return True
+    except ValueError:
+        return False
+
+
 def dependency_of(end: str, zone: str, hints: dict, register: set[str]) -> tuple[str, str]:
     """(part name, basis) for a flow end that is not a host of the system."""
     h = hints.get(end) or hints.get(end.upper()) or {}
     if h.get("role"):
         return re.sub(r"\s+server$", "", h["role"].strip(), flags=re.I), "what the peer runs (flow signature)"
-    if not _IP.match(end) and end.upper() not in register:
+    if not _address(end) and end.upper() not in register:
         return re.split(r"\s+/\s+", end)[0].strip(), "named in the flow map"
     if "(" in zone:                                   # a service zone: Monitoring (SCOM), SIEM (Splunk)
         return zone, "service zone"
     if zone.lower() == "internet" or _public(end):
         return "Internet services", "public address"
     return "Unidentified internal peers", "no name, role or service zone recorded"
+
+
+OTHER_APPLICATION = "{} (other application)"
+
+
+def owners(work_dir: Path) -> dict[str, tuple[str, str]]:
+    """{HOST: (project key, application name)} for the hosts of other applications in this register: same-system
+    siblings (in_scope "system: <key>") and neighbours (source "neighbour:<key>"). The application name is the
+    host's system for a sibling, the neighbour_project rule's system column for a neighbour, else the project's
+    label without its bracketed note ("IAMPS (template v1.3)" -> "IAMPS")."""
+    from csa_docx import estate
+    work = Path(work_dir)
+    named = {}
+    rf = work / "hosts" / "roles.csv"
+    if rf.is_file():
+        for r in csv.DictReader(rf.open(encoding="utf-8-sig")):
+            if (r.get("kind") or "").strip().lower() == "neighbour_project" and (r.get("system") or "").strip():
+                named[(r.get("match") or "").strip()] = r["system"].strip()
+
+    def app(key: str, system: str = "") -> str:
+        return system or named.get(key) or re.sub(r"\s*\([^)]*\)\s*$", "", estate.label_of(key)).strip() or key
+
+    out = {}
+    f = work / "hosts" / "hosts.csv"
+    if not f.is_file():
+        return out
+    from csa_docx import modelstore
+    for r in modelstore.read_csv(f):
+        host = (r.get("host") or "").strip().upper()
+        scope = (r.get("in_scope") or "").strip()
+        m = re.search(r"\bneighbour:([\w.-]+)", r.get("sources") or "")
+        if scope.lower().startswith("system:"):
+            key = scope.split(":", 1)[1].strip()
+            out[host] = (key, app(key, (r.get("system") or "").strip()))
+        elif m:
+            out[host] = (m[1], app(m[1]))
+    return out
 
 
 # framework labels that were renamed: a parts.json written under the old label keeps its review
@@ -129,13 +175,21 @@ def assemble(work_dir: Path) -> dict:
     every = set()
     f = work / "hosts" / "hosts.csv"
     if f.is_file():
-        every = {r["host"].strip().upper() for r in csv.DictReader(f.open(encoding="utf-8"))}
+        from csa_docx import modelstore
+        every = {r["host"].strip().upper() for r in modelstore.read_csv(f)}
     rows = F.load(work)
     hints = F.peer_hints(rows)
+    other = owners(work)
     for r in rows:
         for col in ("src", "dst"):
             for e in (end_name(x) for x in (r.get(col) or "").split(",")):
                 if not e or e.upper() in mine:
+                    continue
+                if e.upper() in other:                 # a host of another application: one part per application
+                    key, app = other[e.upper()]
+                    name = OTHER_APPLICATION.format(app)
+                    add(name, "dependency", e, f"host of another application (project {key})")
+                    parts[slug(assign.get(e, assign.get(e.upper(), name)))].update(owner=key, application=app)
                     continue
                 zone = (r.get(f"{col}_zone") or zs.of(e).get("zone", "") or "").strip()
                 name, basis = dependency_of(e, zone, hints, every)
@@ -157,8 +211,27 @@ def assemble(work_dir: Path) -> dict:
         out.append(p)
     was = {_RENAMED.get(p["id"], p["id"]): sorted(p.get("members", [])) for p in old.get("parts", [])}
     same = {p["id"]: p["members"] for p in out} == was
-    return {"reviewed": bool(old.get("reviewed")) and same, "reviewed_on": old.get("reviewed_on", "") if same else "",
-            "assign": assign, "parts": out}
+    doc = {"reviewed": bool(old.get("reviewed")) and same, "reviewed_on": old.get("reviewed_on", "") if same else "",
+           "assign": assign, "parts": out}
+    doc.update(_keep_applications(old, {p["id"]: p["members"] for p in out}, was))
+    return doc
+
+
+def _keep_applications(old: dict, now: dict[str, list[str]], was: dict[str, list[str]]) -> dict:
+    """The applications and chains a person wrote in parts.json, kept through a rebuild. One whose part has gone, or
+    gained or lost a member since the last build, goes back to reviewed false; nothing else about it changes."""
+    keep: dict = {}
+    for key, refs in (("applications", lambda a: a.get("parts") or []),
+                      ("chains", lambda a: [s[e] for s in a.get("steps") or [] for e in ("from", "to") if s.get(e)])):
+        if key not in old:
+            continue
+        keep[key] = []
+        for a in old[key]:
+            a = dict(a)
+            if any(r not in now or now[r] != was.get(r) for r in refs(a)):
+                a["reviewed"] = False
+            keep[key].append(a)
+    return keep
 
 
 def index(doc: dict) -> dict[str, dict]:
@@ -183,7 +256,7 @@ def names(p: dict) -> list[str]:
 
 
 def _norm(s: str) -> str:
-    words = re.findall(r"[a-z0-9./]+", s.lower())
+    words = re.findall(r"[a-z0-9]+(?:[./][a-z0-9]+)*", s.lower())     # a full stop ending a sentence is not part of the word
     return " " + " ".join(w[:-1] if len(w) > 3 and w.endswith("s") and not w.endswith("ss") else w for w in words) + " "
 
 
@@ -192,10 +265,18 @@ def parts_in(text: str, names_by_part: dict[str, list[str]]) -> set[str]:
     ("RevBroadcast System Application Server" names that server, not also the part whose short name is RevBroadcast)."""
     t = _norm(text)
     out = set()
-    for n, pid in sorted(((_norm(n), pid) for pid, ns in names_by_part.items() for n in ns if _norm(n).strip()),
-                         key=lambda x: -len(x[0])):
+    owners: dict[str, set[str]] = {}
+    for pid, ns in names_by_part.items():
+        for n in ns:
+            if _norm(n).strip():
+                owners.setdefault(_norm(n), set()).add(pid)
+    for n in sorted(owners, key=lambda x: -len(x)):
         if n in t:
-            out.add(pid)
+            pids = owners[n]
+            if len(pids) > 1:               # one part's alias is another's own name: the part that owns the name takes it
+                own = {p for p in pids if names_by_part[p] and _norm(names_by_part[p][0]) == n}
+                pids = own or pids
+            out |= pids
             t = t.replace(n, " # ")
     return out
 
@@ -269,8 +350,21 @@ def isolation_tokens(iso: dict) -> dict[str, list[str]]:
 # The part grid for one section: which of the section's findings are about which part, and which parts each
 # requirement must name. Built from the analysis frame, so it only exists for a section with a frame.
 
+def finding_basis(f: dict) -> str:
+    """How a frame finding is known: observed in a capture, declared only (a flow map entry nobody saw), attempted
+    (a connection that never got a reply) or not found (the capture was searched and holds nothing)."""
+    st = f.get("status", "")
+    if st == "declared":
+        return "declared only"
+    if st == "attempted":
+        return "attempted, no reply seen"
+    if any(e.get("status") == "NOT_FOUND" for e in f.get("evidence", [])):
+        return "not found in the capture"
+    return "observed"
+
+
 def grid(doc: dict, fr: dict | None) -> dict:
-    """{"by_part": {part id: [{"slot", "text", "ids", "requirements"}]}, "owed": {requirement ID: [part id]}}.
+    """{"by_part": {part id: [{"slot", "text", "ids", "requirements", "basis", "direction"}]}, "owed": {requirement ID: [part id]}}.
     A finding is about every part one of its hosts or flow ends belongs to. A requirement owes a part when one of
     the findings bound to it is about that part."""
     idx = index(doc)
@@ -282,7 +376,8 @@ def grid(doc: dict, fr: dict | None) -> dict:
                                       for e in (end_name(x) for x in h.split(",")) if e.upper() in idx))
             for pid in pids:
                 by_part.setdefault(pid, []).append({"slot": s["id"], "text": f["text"], "ids": list(f.get("ids", [])),
-                                                    "requirements": list(f.get("requirements", []))})
+                                                    "requirements": list(f.get("requirements", [])),
+                                                    "basis": finding_basis(f), "direction": f.get("direction", "")})
                 for r in f.get("requirements", []):
                     if pid not in owed.setdefault(r, []):
                         owed[r].append(pid)
@@ -343,15 +438,89 @@ def card_view(work_dir: Path, fr: dict | None, qs: list[dict]) -> dict | None:
             lines.append(f"- {len(mine) - 6} more findings about it under Analysis frame")
         lines.append(f"- When OT is isolated: {iso[p['id']]['effect'][:300]}")
         lines.append("")
+    appview = application_view(work_dir, doc, byq)
+    if appview:
+        lines += appview["lines"]
     return {"reviewed": bool(doc.get("reviewed")),
+            "applications": appview["apps"] if appview else [], "owed_applications": appview["owed"] if appview else {},
+            "links": appview["links"] if appview else [],
             "names": {p["id"]: names(p) for p in doc["parts"]},
             "sides": {p["id"]: p["side"] for p in doc["parts"]},
             "hosts": {m.upper(): p["id"] for p in doc["parts"] if p["kind"] == "system" for m in p["members"]},
-            "owed": byq,
+            "owed": byq, "findings": g["by_part"],
             "isolation": {pid: {"effect": v["effect"], **isolation_tokens(v)} for pid, v in iso.items()},
             "features": features(doc, fr),
             "labels": [{"label": p["name"], "plain": PLAIN_LABEL} for p in doc["parts"] if is_label(p)],
+            "foreign": {p["id"]: {"application": p.get("application") or p["name"], "project": p["owner"],
+                                  "names": list(dict.fromkeys([p.get("application") or p["name"]] + names(p)))}
+                        for p in doc["parts"] if p.get("owner")},
             "lines": lines, "parts": {pid: (PLAIN_LABEL if is_label(parts[pid]) else parts[pid]["name"]) for pid in parts}}
+
+
+APPLICATION_BLOCK_CHARS = 2400      # about 600 tokens: the Applications block never grows the card by more than this
+
+
+def part_links(work_dir: Path, doc: dict) -> list[list[str]]:
+    """Every pair of parts (ids, sorted) that some flow in flows.csv joins, whatever its status. Used to tell a link
+    between two parts that the flows show from one nothing shows."""
+    from csa_docx import flows as F
+    where = index(doc)
+    pairs = set()
+    for r in F.load(work_dir):
+        a = {where[end_name(x).upper()]["id"] for x in (r.get("src") or "").split(",") if end_name(x).upper() in where}
+        b = {where[end_name(x).upper()]["id"] for x in (r.get("dst") or "").split(",") if end_name(x).upper() in where}
+        pairs |= {tuple(sorted((x, y))) for x in a for y in b if x != y}
+    return sorted([list(p) for p in pairs])
+
+
+def application_view(work_dir: Path, doc: dict, byq: dict[str, list[str]]) -> dict | None:
+    """The reviewed applications for the card: {"apps": [{id, name, names, parts, shared}], "owed": {question id:
+    [application ids]}, "lines": [card lines]}. An application the person has not reviewed, and a model with problems
+    (model_problems), give None: nothing about applications reaches the card until it is sound."""
+    apps = [a for a in doc.get("applications") or [] if a.get("reviewed")]
+    if not apps or model_problems(doc):
+        return None
+    pname = {p["id"]: p for p in doc.get("parts", [])}
+    chains = [c for c in doc.get("chains") or [] if c.get("reviewed")]
+    lines = ["", "## Applications (reviewed in csa-work/parts.json)", "",
+             "An application is the set of parts that does one job for its users. Name the application where a requirement "
+             "is about what the job needs (\"for Reveloc\"), and the parts under it by their names. A part marked shared "
+             "serves more than one application: never say it belongs to one. A dependency is only the end of a chain, and "
+             "another application is never described beyond its name. Say a step between parts only where it is listed "
+             "below.", ""]
+    view = []
+    for a in apps:
+        shared = {pid for pid, v in (a.get("role_in") or {}).items() if v == "shared"}
+        mine = [pid for pid in a.get("parts") or [] if pid in pname]
+        alias = [a["name"]] + list(a.get("aliases") or [])
+        sides = {pname[pid]["side"] for pid in mine if pid not in shared}
+        view.append({"id": a["id"], "name": a["name"], "names": alias, "parts": mine, "shared": sorted(shared),
+                     "side": sides.pop() if len(sides) == 1 else "mixed"})
+        lines.append(f"### {a['name']}" + (f" (also: {', '.join(a['aliases'][:3])})" if a.get("aliases") else ""))
+        src = a.get("purpose_source")
+        lines.append(f"- purpose{f' (background from {src}, not evidence of this installation)' if src and a.get('purpose') else ''}: "
+                     f"{(a.get('purpose') or 'not recorded')[:160]}")
+        lines.append("- parts: " + ", ".join(pname[pid]["name"] + (" (shared)" if pid in shared else "") for pid in mine))
+        for c in (c for c in chains if c.get("application") == a["id"]):
+            for st in chain_view(work_dir, doc, c)[:8]:
+                lines.append(f"- {c.get('function') or 'chain'}: {pname[st['from']]['name']} -> {pname[st['to']]['name']} "
+                             f"({', '.join(st.get('flows') or []) or 'no flow'}, {st['status']})")
+        lines.append("")
+    owed = {qid: [v["id"] for v in view if (set(v["parts"]) - set(v["shared"])) & set(pids)] for qid, pids in byq.items()}
+    owed = {qid: ids for qid, ids in owed.items() if ids}
+    if owed:
+        lines += ["Applications behind each requirement: " + "; ".join(f"{qid}: {', '.join(ids)}" for qid, ids in owed.items()), ""]
+    text = "\n".join(lines)
+    if len(text) > APPLICATION_BLOCK_CHARS:
+        keep, size = [], 0
+        for ln in lines:
+            size += len(ln) + 1
+            if size > APPLICATION_BLOCK_CHARS - 40:
+                keep.append("- more steps are listed in csa-work/parts.json")
+                break
+            keep.append(ln)
+        lines = keep
+    return {"apps": view, "owed": owed, "lines": lines, "links": part_links(work_dir, doc)}
 
 
 # What a sentence says about a part must come from a finding about that part's machines: a share, a setting or a
@@ -382,6 +551,35 @@ def features(doc: dict, fr: dict | None) -> dict[str, list[str]]:
                             p = idx.get(e.upper())
                             if p and p["kind"] == "system" and p["id"] not in out.setdefault(name, []):
                                 out[name].append(p["id"])
+    return out
+
+
+def requirement_findings(view: dict | None, req_id: str) -> list[dict]:
+    """The findings one requirement owes, one row per finding and part: [{"key" (unique, the verdict handle), "part", "part_id", "side", "slot", "text",
+    "ids", "basis", "direction"}], in part order. A finding is owed when the frame bound it to ``req_id``."""
+    out, used, by = [], set(), {}
+    for pid, fs in ((view or {}).get("findings") or {}).items():
+        for f in fs:
+            if req_id not in f["requirements"]:
+                continue
+            row = by.get((f["slot"], f["text"]))
+            if row:                                     # the same finding about another part: one row, both parts
+                if view["parts"].get(pid, pid) not in row["part"].split(", "):
+                    row["part"] += ", " + view["parts"].get(pid, pid)
+                    row["part_ids"].append(pid)
+                    if view["sides"].get(pid, "") != row["side"]:
+                        row["side"] = "mixed"
+                continue
+            key = f"{f['slot']}-{f['ids'][0] if f['ids'] else 'n'}"
+            n = 1
+            while key in used:
+                n += 1
+                key = f"{f['slot']}-{f['ids'][0] if f['ids'] else 'n'}-{n}"
+            used.add(key)
+            row = {"key": key, "part": view["parts"].get(pid, pid), "part_id": pid, "part_ids": [pid], "side": view["sides"].get(pid, ""),
+                   **{k: f[k] for k in ("slot", "text", "ids", "basis", "direction")}}
+            by[(f["slot"], f["text"])] = row
+            out.append(row)
     return out
 
 
@@ -440,6 +638,235 @@ def document_names(docx: Path, doc: dict) -> list[dict]:
             for k, v in sorted(hits.items(), key=lambda kv: -len(kv[1]))]
 
 
+_APP_KIND = r"(?:application|system|solution|service|platform|software)"
+
+
+def document_application_names(docx: Path, doc: dict) -> list[dict]:
+    """[{"phrase", "like": application name, "sections", "count"}] for every phrase in the document that starts with an
+    application's product word and ends in application, system, solution, service, platform or software (RevBroadcast
+    solution), but is not one of that application's names or aliases, nor a part's name (or the start of one). Applications nobody has
+    reviewed are skipped, as are applications whose name has no product-like first word (a word under four letters)."""
+    import zipfile
+    from csa_docx.figures import place as PL
+    apps = [a for a in doc.get("applications") or [] if a.get("reviewed")]
+    if not apps:
+        return []
+    known = [_norm(n) for a in apps for n in [a["name"]] + list(a.get("aliases") or [])]
+    known += [_norm(n) for p in doc.get("parts", []) for n in [p["name"]] + list(p.get("aliases") or [])]
+    xb = zipfile.ZipFile(docx).read("word/document.xml")
+    hits: dict[tuple, list[str]] = {}
+    section = ""
+    for s, e, t in PL._body_children(xb):
+        chunk = xb[s:e]
+        if t == b"w:p" and PL._heading_level(PL._style(chunk)):
+            section = PL._text(chunk).strip()
+            continue
+        for para in re.findall(rb"<w:p[ >].*?</w:p>", chunk, re.S):
+            text = PL._text(para)
+            for a in apps:
+                first = a["name"].split()[0]
+                if len(first) < 4:
+                    continue
+                for m in re.finditer(rf"\b{re.escape(first)}(?:\s+[A-Za-z/]+){{0,2}}?\s+{_APP_KIND}\b", text):
+                    ph = _norm(m.group(0))
+                    if not any(ph.strip() and ph.strip() in k for k in known):          # a known name, or part of a longer one
+                        hits.setdefault((m.group(0), a["name"]), []).append(section)
+    return [{"phrase": k[0], "like": k[1], "sections": sorted(set(v)), "count": len(v)}
+            for k, v in sorted(hits.items(), key=lambda kv: -len(kv[1]))]
+
+
+def _declared_steps(work_dir: Path, doc: dict) -> list[dict]:
+    """One {"from": part id, "to": part id, "flow": declared id, "rows": [flow ids]} per declared flow and pair of parts
+    its ends fall in (a flow with several hosts at an end gives one pair per part, once). Ends in no part are skipped."""
+    from csa_docx import flows as F
+    where = index(doc)
+    out: dict[tuple, dict] = {}
+    for r in F.load(work_dir):
+        did = (r.get("declared_id") or "").strip()
+        if not did:
+            continue
+        ends = {col: {where[end_name(x).upper()]["id"] for x in (r.get(col) or "").split(",") if end_name(x).upper() in where}
+                for col in ("src", "dst")}
+        for a in sorted(ends["src"]):
+            for b in sorted(ends["dst"] - {a}):
+                step = out.setdefault((a, b, did), {"from": a, "to": b, "flow": did, "rows": []})
+                step["rows"].append(r["flow_id"])
+    return list(out.values())
+
+
+def propose_applications(work_dir: Path, doc: dict) -> list[dict]:
+    """Applications proposed from the register's process and service rules (roles.csv) and the declared flows.
+    A system part with a process or service rule is an application's core, named as its register role is, without the
+    machine-kind words ("Reveloc application / TGOIP server" -> "Reveloc application / TGOIP"); a core that is only ever the destination of declared flows is a data or
+    log service, not an application. The system parts the declared flows join to a core are its parts, and one joined
+    to more than one core is marked shared in each. Dependency parts are never inside an application: they are chain
+    ends. Every proposal is reviewed false with an empty purpose, for a person to confirm; nothing here is a model's."""
+    work = Path(work_dir)
+    rf = work / "hosts" / "roles.csv"
+    by_name = {p["name"]: p for p in doc.get("parts", []) if p["kind"] == "system"}
+    pname = {p["id"]: p for p in doc.get("parts", [])}
+    kind_of = {p["id"]: p["kind"] for p in doc.get("parts", [])}
+    cores: dict[str, tuple[str, str]] = {}
+    if rf.is_file():
+        for r in csv.DictReader(rf.open(encoding="utf-8-sig")):
+            k = (r.get("kind") or "").strip().lower()
+            part = by_name.get(role_name((r.get("role") or "").strip()))
+            if k in ("process", "service") and part:
+                label = re.sub(r"\.exe$", "", (r.get("match") or "").strip(), flags=re.I)
+                if part["id"] not in cores or (k == "process" and cores[part["id"]][1] == "service"):
+                    cores[part["id"]] = (label, k)
+    steps = _declared_steps(work, doc)
+    src = {s["from"] for s in steps}
+    dst = {s["to"] for s in steps}
+    cores = {pid: v for pid, v in cores.items() if pid in src or pid not in dst}
+    reach: dict[str, set[str]] = {pid: set() for pid in cores}
+    for s in steps:
+        for core in cores:
+            for a, b in ((s["from"], s["to"]), (s["to"], s["from"])):
+                if a == core and b not in cores and kind_of.get(b) == "system":
+                    reach[core].add(b)
+    users: dict[str, int] = {}
+    for parts_ in reach.values():
+        for pid in parts_:
+            users[pid] = users.get(pid, 0) + 1
+    out = []
+    for core, (label, how) in cores.items():
+        parts_ = [core] + sorted(reach[core])
+        name = (short_names(pname[core]["name"]) or [pname[core]["name"]])[0]
+        app = {"id": slug(name), "name": name, "purpose": "", "parts": parts_,
+               "aliases": [], "basis": f"{how} rule {label} in roles.csv, declared flows "
+               + (", ".join(sorted({s["flow"] for s in steps if core in (s["from"], s["to"])})) or "none"),
+               "reviewed": False}
+        shared = {pid: "shared" for pid in reach[core] if users[pid] > 1}
+        if shared:
+            app["role_in"] = shared
+        out.append(app)
+    return sorted(out, key=lambda a: a["name"].lower())
+
+
+def propose_chains(work_dir: Path, doc: dict) -> list[dict]:
+    """One chain per application from the declared flows: the steps between its parts, ordered from the source end to
+    the data end (by distance from the parts nothing in the chain feeds, then by flow id). A step between two parts
+    the application only shares with others belongs to no single application and is left out. function is empty for a
+    person to write; reviewed false."""
+    work = Path(work_dir)
+    steps = _declared_steps(work, doc)
+    out = []
+    for app in doc.get("applications") or []:
+        mine = set(app.get("parts") or [])
+        shared = {pid for pid, v in (app.get("role_in") or {}).items() if v == "shared"}
+        kinds = {p["id"]: p["kind"] for p in doc.get("parts", [])}
+
+        def inside(pid: str, other: str) -> bool:
+            """In the application, or a dependency (a chain end) beside one of its parts that it does not share."""
+            return pid in mine or (kinds.get(pid) == "dependency" and other in mine and other not in shared)
+
+        own = [s for s in steps if inside(s["from"], s["to"]) and inside(s["to"], s["from"])
+               and not (s["from"] in shared and s["to"] in shared)
+               and not (kinds.get(s["from"]) == "dependency" and kinds.get(s["to"]) == "dependency")]
+        merged: dict[tuple, dict] = {}
+        for s in own:
+            m = merged.setdefault((s["from"], s["to"]), {"from": s["from"], "to": s["to"], "flows": []})
+            if s["flow"] not in m["flows"]:
+                m["flows"].append(s["flow"])
+        if not merged:
+            continue
+        every = {x for k in merged for x in k}
+        depth = {pid: 0 for pid in every if not any(k[1] == pid for k in merged)}
+        for _ in range(len(every)):
+            for (a, b) in merged:
+                if a in depth and depth.get(b, -1) < depth[a] + 1 and depth[a] + 1 < len(every):
+                    depth[b] = depth[a] + 1
+        ordered = sorted(merged.values(), key=lambda m: (depth.get(m["from"], 0), depth.get(m["to"], 0), m["flows"][0]))
+        out.append({"id": f"{app['id']}-declared", "application": app["id"], "function": "", "steps": ordered,
+                    "reviewed": False})
+    return out
+
+
+def unassigned_steps(work_dir: Path, doc: dict) -> list[dict]:
+    """Declared steps that join a dependency (a neighbour application, say) to a part that several applications share:
+    which application they belong to is for a person to say, so no proposed chain takes them (until a person puts one in a chain)."""
+    kinds = {p["id"]: p["kind"] for p in doc.get("parts", [])}
+    shared = {pid for a in doc.get("applications") or [] for pid, v in (a.get("role_in") or {}).items() if v == "shared"}
+    placed = {(st["from"], st["to"]) for c in doc.get("chains") or [] for st in c.get("steps") or []}
+    return [s for s in _declared_steps(work_dir, doc) if (s["from"], s["to"]) not in placed
+            and ((kinds.get(s["from"]) == "dependency" and s["to"] in shared)
+                 or (kinds.get(s["to"]) == "dependency" and s["from"] in shared))]
+
+
+def model_problems(doc: dict) -> list[str]:
+    """What is wrong with the applications and chains in parts.json: a dependency part (a neighbour application
+    included) inside an application, or a neighbour in the middle of a chain instead of at an end of it."""
+    kinds = {p["id"]: p for p in doc.get("parts", [])}
+    out = []
+    for a in doc.get("applications") or []:
+        out += [f"application {a['id']} lists {pid}, a dependency: a dependency is only ever the end of a chain"
+                for pid in a.get("parts") or [] if kinds.get(pid, {}).get("kind") == "dependency"]
+    for c in doc.get("chains") or []:
+        st = c.get("steps") or []
+        for pid in {x for s in st for x in (s["from"], s["to"])}:
+            p = kinds.get(pid, {})
+            if not p.get("owner"):
+                continue
+            fed = any(s["to"] == pid for s in st)
+            feeds = any(s["from"] == pid for s in st)
+            if fed and feeds:
+                out.append(f"chain {c['id']} runs through {p['name']}, another application: it can only be a chain's first or last end")
+    return out
+
+
+def chain_view(work_dir: Path, doc: dict, chain: dict) -> list[dict]:
+    """Each step of a chain with what the flows say about it: ``status`` is "observed" (a captured connection joins the
+    two parts), "attempted only" (connections were tried and never completed), "declared only" (only the flow map
+    says so) or "unevidenced" (the step lists no flow), and ``support`` the flow ids behind it. A step's own flows are
+    declared ids or flow ids from flows.csv."""
+    from csa_docx import flows as F
+    where = index(doc)
+    rows = F.load(work_dir)
+
+    def ends(r: dict, col: str) -> set[str]:
+        return {where[end_name(x).upper()]["id"] for x in (r.get(col) or "").split(",") if end_name(x).upper() in where}
+
+    out = []
+    for st in chain.get("steps") or []:
+        listed = set(st.get("flows") or [])
+        between = [r for r in rows if st["from"] in ends(r, "src") and st["to"] in ends(r, "dst")]
+        seen = [r["flow_id"] for r in between if r.get("status") in ("observed", "both")]
+        tried = [r["flow_id"] for r in between if r.get("status") == "attempted"]
+        named = [r["flow_id"] for r in rows if listed & {r.get("declared_id"), r.get("flow_id")}]
+        status = ("observed" if seen else "attempted only" if tried else "declared only" if named else "unevidenced")
+        out.append(dict(st, status=status, support=seen or tried or named))
+    return out
+
+
+def show_chains(work_dir: Path, doc: dict) -> str:
+    names = {p["id"]: p["name"] for p in doc.get("parts", [])}
+    out = ["# Function chains", ""]
+    for c in doc.get("chains") or []:
+        out.append(f"- **{c['id']}** ({c.get('application')}, {'reviewed' if c.get('reviewed') else 'not reviewed'}): "
+                   f"{c.get('function') or 'no function yet'}")
+        out += [f"  - {names.get(s['from'], s['from'])} -> {names.get(s['to'], s['to'])} "
+                f"[{', '.join(s.get('flows') or []) or 'no flow'}; {s['status']}]" for s in chain_view(work_dir, doc, c)]
+    loose = unassigned_steps(work_dir, doc)
+    if loose:
+        out += ["", "Steps that join a dependency to a shared part (no chain takes them; say which application):"]
+        out += [f"- {names.get(s['from'], s['from'])} -> {names.get(s['to'], s['to'])} [{s['flow']}]" for s in loose]
+    out += ["", *[f"PROBLEM: {x}" for x in model_problems(doc)]]
+    return "\n".join(out + ([] if doc.get("chains") else ["- none"]))
+
+
+def show_applications(doc: dict) -> str:
+    apps = doc.get("applications") or []
+    names = {p["id"]: p["name"] for p in doc.get("parts", [])}
+    out = ["# Applications", ""]
+    for a in apps:
+        out.append(f"- **{a['name']}** ({'reviewed' if a.get('reviewed') else 'not reviewed'}): {a.get('purpose') or 'no purpose yet'}")
+        out += [f"  - {names.get(pid, pid)}{' (shared)' if (a.get('role_in') or {}).get(pid) == 'shared' else ''}"
+                for pid in a.get("parts", [])]
+    return "\n".join(out + ([] if apps else ["- none"]) + ["", "Edit csa-work/parts.json to correct the name, write the purpose "
+            "(one plain sentence) and the parts, then approve."])
+
+
 def show(doc: dict) -> str:
     out = [f"# System parts ({'reviewed ' + doc.get('reviewed_on', '') if doc.get('reviewed') else 'not reviewed yet'})", ""]
     for p in doc.get("parts", []):
@@ -453,7 +880,7 @@ def show(doc: dict) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("action", choices=["build", "show", "approve", "check-doc"])
+    ap.add_argument("action", choices=["build", "show", "approve", "check-doc", "applications", "chains"])
     ap.add_argument("--work-dir", type=Path, required=True)
     ap.add_argument("--docx", type=Path, help="check-doc: the working DOCX")
     a = ap.parse_args(argv)
@@ -464,10 +891,37 @@ def main(argv: list[str] | None = None) -> int:
                  "sources rightly call the part this, add it to that part's aliases in csa-work/parts.json.", ""]
         lines += [f"- \"{x['phrase']}\" (like {x['like']}): {x['count']} time(s), in {'; '.join(x['sections'][:6])}"
                   for x in found] or ["- none"]
+        apps = document_application_names(a.docx, load(a.work_dir))
+        if apps:
+            lines += ["", "# Names in the document that are not an application's name", "",
+                      "Each starts with an application's name but is none of its names. Use the application's name, or add "
+                      "it to that application's aliases in csa-work/parts.json.", ""]
+            lines += [f"- \"{x['phrase']}\" (like {x['like']}): {x['count']} time(s), in {'; '.join(x['sections'][:6])}"
+                      for x in apps]
         out = Path(a.work_dir) / "draft" / "part-names.md"
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text("\n".join(lines) + "\n", encoding="utf-8")
         print("\n".join(lines))
+        return 0
+    if a.action == "applications":
+        doc = load(a.work_dir)
+        if not doc.get("parts"):
+            print("no parts yet: build them first")
+            return 1
+        if not doc.get("applications"):
+            doc["applications"] = propose_applications(a.work_dir, doc)
+            path(a.work_dir).write_text(json.dumps(doc, indent=1, ensure_ascii=False), encoding="utf-8")
+        print(show_applications(doc))
+        return 0
+    if a.action == "chains":
+        doc = load(a.work_dir)
+        if not doc.get("applications"):
+            print("no applications yet: run `applications` first")
+            return 1
+        if not doc.get("chains"):
+            doc["chains"] = propose_chains(a.work_dir, doc)
+            path(a.work_dir).write_text(json.dumps(doc, indent=1, ensure_ascii=False), encoding="utf-8")
+        print(show_chains(a.work_dir, doc))
         return 0
     if a.action == "build":
         doc = build(a.work_dir)
@@ -480,6 +934,9 @@ def main(argv: list[str] | None = None) -> int:
             print("no parts yet: build them first")
             return 1
         doc["reviewed"], doc["reviewed_on"] = True, date.today().isoformat()
+        for key in ("applications", "chains"):
+            for item in doc.get(key) or []:
+                item["reviewed"] = True
         path(a.work_dir).write_text(json.dumps(doc, indent=1, ensure_ascii=False), encoding="utf-8")
         print(f"parts approved ({len(doc['parts'])} parts)")
     return 0

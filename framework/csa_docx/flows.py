@@ -61,9 +61,6 @@ DATA_MECHANISMS = {"file share", "file transfer", "database", "database replicat
 DB_ENGINES = re.compile(r"^(sqlservr|mysqld|mariadbd|postgres|oracle|tnslsnr|mongod)(?:\.exe)?$", re.I)
 _MAP = re.compile(r"^\s*(\S+?):(\d+)\s*->\s*(\S+?):(\d+)\s+PID=(\d+)\s+PROC=(\S+)")
 _LISTEN = re.compile(r"^\s*(\S+)\s+(\d+)\s+(\d+)\s*$")
-_HOST = re.compile(r"\b[A-Z][A-Z0-9]{5,}\d{2,3}\b")
-
-
 def _skip(ip: str) -> bool:
     ip = ip.split("%")[0]
     return ip.startswith(("127.", "::1", "fe80", "169.254.", "0.0.0.0")) or ip in ("::", "[::]")
@@ -193,7 +190,11 @@ def sampled(samples: dict[str, dict], tasks: dict[str, dict], have: set[tuple]) 
     return out
 
 
-def declared(text: str) -> list[dict]:
+def _named_hosts(text: str, known_hosts: set[str]) -> set[str]:
+    return set(re.split(r"[^A-Z0-9-]+", (text or "").upper())) & known_hosts
+
+
+def declared(text: str, known_hosts: set[str] | None = None) -> list[dict]:
     """CSID blocks of an expected flow map: {id, source, destination, flow, ports, risk, src_hosts, dst_hosts}."""
     out, cur = [], None
     for l in text.splitlines():
@@ -206,9 +207,12 @@ def declared(text: str) -> list[dict]:
             out.append(cur)
         elif cur is not None:
             cur[{"Source": "source", "Destination": "destination", "Flow": "flow", "Ports": "ports", "OT35Risk": "risk"}[k]] = v
+    if known_hosts is None:  # fixture/standalone parser; live builds always pass the alias-backed host set
+        tokens = set(re.split(r"[^A-Z0-9-]+", text.upper()))
+        known_hosts = {t for t in tokens if len(t) >= 6 and t[:1].isalpha() and any(c.isdigit() for c in t)}
     for d in out:
-        d["src_hosts"] = set(_HOST.findall(d["source"]))
-        d["dst_hosts"] = set(_HOST.findall(d["destination"]))
+        d["src_hosts"] = _named_hosts(d["source"], known_hosts)
+        d["dst_hosts"] = _named_hosts(d["destination"], known_hosts)
         d["port_list"] = set(re.findall(r"\b\d{2,5}\b", d["ports"]))
         if re.search(r"\bSMB\b", d["ports"], re.I):
             d["port_list"].add("445")
@@ -217,6 +221,22 @@ def declared(text: str) -> list[dict]:
         if re.search(r"\bSQL\b", d["ports"], re.I):
             d["port_list"].add("1433")
     return out
+
+
+def indexed_aliases(con) -> tuple[dict[str, str], set[str]]:
+    """Non-ambiguous address-to-host identity and the names accepted in declared flows."""
+    try:
+        rows = con.execute(
+            "SELECT kind, norm, UPPER(host) FROM aliases WHERE ambiguous=0 "
+            "AND confidence IN ('high','medium')").fetchall()
+    except sqlite3.OperationalError:
+        return {}, set()
+    addresses, hosts = {}, set()
+    for kind, norm, host in rows:
+        hosts.add(host)
+        if kind == "address":
+            addresses.setdefault(norm, host)
+    return addresses, hosts
 
 
 def build(work_dir: Path, con=None) -> dict:
@@ -233,19 +253,20 @@ def build(work_dir: Path, con=None) -> dict:
         maps = host_settings.latest_texts(con, "%expected_flow_map%")
         samples = host_settings.latest_texts(con, "%25_netstat_tcp_samples%")
         tasks = host_settings.latest_texts(con, "%24_tasklist_services%")
+        ip2host, alias_hosts = indexed_aliases(con)
     finally:
         if own:
             con.close()
     reg = {}
+    from csa_docx import modelstore
     hf = work_dir / "hosts" / "hosts.csv"
     if hf.is_file():
-        for r in csv.DictReader(hf.open(encoding="utf-8")):
+        for r in modelstore.read_csv(hf):
             reg[r["host"].upper()] = r
-    ip2host = {ip: h for h, r in reg.items() for ip in (r.get("ips") or "").split(";") if ip}
     dcs = set()
     ff = work_dir / "hosts" / "host_facts.csv"
     if ff.is_file():
-        dcs = {r["host"].upper() for r in csv.DictReader(ff.open(encoding="utf-8"))
+        dcs = {r["host"].upper() for r in modelstore.read_csv(ff)
                if r.get("attribute", "").startswith("domain_controllers")}
     z = zones_mod.for_project(work_dir)
     sigs = signatures()
@@ -253,13 +274,13 @@ def build(work_dir: Path, con=None) -> dict:
     rdp_ports = set()
     sf = work_dir / "hosts" / "host_settings.csv"
     if sf.is_file():
-        for r in csv.DictReader(sf.open(encoding="utf-8")):
+        for r in modelstore.read_csv(sf):
             if r.get("attribute") == "admin.rdp_port":
                 rdp_ports |= {x.strip() for x in r["value"].split(",") if x.strip().isdigit()}
     rows = observed(mapping, listen, ip2host)
     rows += sampled(samples, tasks, {(r["src"], r["dst"], r["port"]) for r in rows})
     decl_text = max(maps.values(), key=lambda c: c["folder"])["text"] if maps else ""
-    decl = declared(decl_text)
+    decl = declared(decl_text, alias_hosts | set(reg))
     matched: set[str] = set()
     out = []
     for r in rows:
@@ -397,7 +418,8 @@ def _group(rs: list[dict]) -> dict:
 
 def load(work_dir: Path) -> list[dict]:
     f = Path(work_dir) / "hosts" / "flows.csv"
-    return list(csv.DictReader(f.open(encoding="utf-8"))) if f.is_file() else []
+    from csa_docx import modelstore
+    return modelstore.read_csv(f) if f.is_file() else []
 
 
 def peer_hints(rows: list[dict], sigs: list[dict] | None = None) -> dict[str, dict]:
@@ -509,7 +531,8 @@ def ot_sides(work_dir: Path):
     reg: dict[str, dict] = {}
     f = Path(work_dir) / "hosts" / "hosts.csv"
     if f.is_file():
-        reg = {r["host"].upper(): r for r in csv.DictReader(f.open(encoding="utf-8"))}
+        from csa_docx import modelstore
+        reg = {r["host"].upper(): r for r in modelstore.read_csv(f)}
 
     def side(end: str) -> str:
         x = re.sub(r"\s+via\s+.+$", "", (end or "").strip(), flags=re.I)

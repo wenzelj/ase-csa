@@ -63,11 +63,39 @@ Stop after reporting the rows per requirement and the Discovery Required items.
 1. Read the record. It also lists files from earlier intakes no agent has read yet (`carried_from`). Work only on `added` and `changed` files whose `status` is `indexed`. Skip host captures (`source_class` `capture`): graph sync already profiles them. List every file in `unreadable` in your summary with the format to ask for (for example "supply REVELOC.doc as .docx or PDF"). Never write rows from a file you could not read.
 2. Read each file's indexed text (`csa -p <key> index search "<terms>" --path-like "<file name>"`, or the raw file when it is a document). Before adding anything, check what the matrix already holds (`python3 .agents/skills/csa-evidence-matrix/scripts/evidence_matrix.py --workspace WORKSPACE lookup "<claim>"`) so you add only what is new.
 3. Write one atomic claim per row in plain Australian English, with no semicolons. A host is named exactly as the source writes it. `status` is `VERIFIED` with an exact quote in `evidence_excerpt` (join separate quoted lines with ` | `), `source_title` is the file's path under its source folder (for example `revloc-tetra/IS-REVELOC-111026-234101.pdf`) and `page_or_location` says where in the file. The subject of the claim is the system, never the document ("ROTPRDREV101 is the physical REVELOC server at Rockhampton", not "The page lists...").
-4. When a reading depends on a table's layout (a wrapped host name, a merged cell), set `confidence` to `medium` and say why in `inference_reason`. When a document disagrees with a capture, the OU inventory or another document, write a `CONFLICTING` row that names every source in `source_title` and states in `gap_or_action` which one is authoritative (a live capture wins over a document).
+4. When a reading depends on a table's layout (a wrapped host name, a merged cell), set `confidence` to `medium` and say why in `inference_reason`. Use `CONFLICTING` only when two credible sources state incompatible values. A blank or omitted value is absence of observation, not disagreement with a populated value. When a newer replacement inventory or live capture supplies the missing value and no source states a different value, record the populated value as `VERIFIED` and preserve the earlier blank only as scope/provenance. When sources do state different values, write a `CONFLICTING` row that names every source in `source_title` and states in `gap_or_action` which one is authoritative (a live capture wins over a document).
 5. Use existing `csa_area` names (`evidence_matrix.py stats`). Use `--allow-new-area` only for an area name another project already uses (`operations_and_support`, `availability_and_resilience`, `integrations_and_dependencies`, `infrastructure_and_hosting`, `security_posture`).
 6. Write the rows to a JSON file and run `python3 .agents/skills/csa-evidence-matrix/scripts/evidence_matrix.py --workspace WORKSPACE append --agent csa-evidence-investigator --context "intake <record id>" --rows-file <file> --dry-run`. Fix every rejected row (the source check proves each quote is in the cited file), then run it again without `--dry-run`.
 7. Graph: for each new host, service, firewall or external system the new rows name, add a node with `python3 .agents/skills/csa-evidence-matrix/scripts/graph_store.py --workspace WORKSPACE append-node`, and add an edge with `append-edge` only for a relationship a row states (for example a SIP trunk, a database hosted on cluster nodes, traffic passing a firewall). Every node and edge cites the new evidence IDs. Check `get-node`/`list` first so you do not add a node the graph already has. Finish with `graph_store.py verify`.
 8. Write `WORK_DIR/intake/<record id>.evidence.md` (the record's `id`): the rows added (ID, one line each), the conflicts, the graph items added, the unreadable files to request, and any file you read that added nothing new. Do not change the working DOCX. Stop there: the person checks the open questions next (`csa gap-check`).
+
+## Settlement mode (MODE=SETTLE)
+
+`csa resolve-gaps` runs this mode after `csa gap-check`, with `GAP_CHECK` naming
+`WORK_DIR/intake/gap-check-latest.json`. Your job is to settle every `CANDIDATES` result from its original source. A
+search hit is only a lead: never promote it merely because its words overlap the question.
+
+1. Read `GAP_CHECK`, `WORK_DIR/draft/open-questions.md`, the candidate rows named in each result, and their cited
+   source passages. Work only on the questions in this gap-check record.
+2. For each question, check the existing VERIFIED and INFERRED matrix rows first. If one already answers the precise
+   question for the correct host, scope and date, retain it and settle any redundant candidate rows as `reviewed`,
+   noting `settled by <existing E-id>`.
+3. Read each UNCONFIRMED candidate in its original indexed source, including enough surrounding context to establish
+   its subject and scope. Use `csa index search` with `--path-like` or open the indexed source. Do not rely on the
+   candidate's truncated excerpt alone.
+4. When a source directly answers the question, append one or more atomic VERIFIED rows through
+   `evidence_matrix.py append`. Use `gap_or_action: Answers <DR-id>`. The automated source check must approve every
+   VERIFIED row. Then review the corresponding candidate row as `reviewed` with note `settled by <new E-id>`.
+5. When deciding evidence requires reasoning from verified facts, append an INFERRED row with the reasoning and leave
+   it pending for human review. It may inform the next answer but must not be described as directly observed.
+6. Reject each candidate that does not answer its question with note `read for <DR-id>: does not answer the question`.
+   If no retained or newly written row answers the question after all candidates have been read, run
+   `python3 -m csa_docx.gap_lookup confirm` with every considered candidate ID. This records the searched scope and the
+   still-open request as NOT_FOUND.
+7. Do not rerun `csa gap-check` and do not edit an answer sheet, change record or DOCX. The calling framework verifies
+   the questions again and reruns affected subsection answers after settlement.
+8. Write `WORK_DIR/intake/gap-settlement-<UTC>.md` listing each DR id, the candidate IDs considered, the resulting
+   evidence ID or NOT_FOUND ID, and any unresolved conflict. Keep it concise and do not copy source passages into it.
 
 ## Output
 

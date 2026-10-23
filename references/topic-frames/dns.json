@@ -22,7 +22,11 @@
      "dns.primary",
      "dns.secondary"
     ]
-   }
+   },
+   "search": [
+    "DnsClientServerAddress",
+    "Get-DnsClientServerAddress"
+   ]
   },
   {
    "id": "S2",
@@ -41,7 +45,11 @@
       "declared"
      ]
     }
-   }
+   },
+   "search": [
+    "port 53",
+    "DNS query"
+   ]
   },
   {
    "id": "S3",
@@ -49,7 +57,10 @@
    "requirements": [
     "SEP-DNS-01"
    ],
-   "source": {}
+   "source": {},
+   "search": [
+    "DNS zone"
+   ]
   },
   {
    "id": "S4",
@@ -57,7 +68,11 @@
    "requirements": [
     "SEP-DNS-01"
    ],
-   "source": {}
+   "source": {},
+   "search": [
+    "hosts file",
+    "FQDN"
+   ]
   },
   {
    "id": "S5",
@@ -65,7 +80,11 @@
    "requirements": [
     "SEP-DNS-01"
    ],
-   "source": {}
+   "source": {},
+   "search": [
+    "etc\\hosts",
+    "DNS fallback"
+   ]
   }
  ]
 }

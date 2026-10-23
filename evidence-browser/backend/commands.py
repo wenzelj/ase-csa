@@ -67,7 +67,7 @@ OPERATIONS: dict[str, Operation] = {
     ),
     "review": Operation(
         "review", "Review section", "Run the framework review agent: verify applied edits, comments and DOCX integrity.",
-        ("review",), "required", "section",
+        ("review", "--window"), "required", "section",
         {}, timeout=900, mutating=True, mutation_class="document_write", lock="docx",
     ),
     "apply": Operation(
@@ -77,12 +77,12 @@ OPERATIONS: dict[str, Operation] = {
     ),
     "cleanup": Operation(
         "cleanup", "Cleanup section", "Finalise a reviewed section: accept signed-off changes and remove framework scaffolding.",
-        ("cleanup",), "required", "section",
+        ("cleanup", "--window"), "required", "section",
         {}, timeout=900, mutating=True, mutation_class="document_write", lock="docx",
     ),
     "author": Operation(
         "author", "Author proposal", "Draft an evidence-grounded proposal for one section (no-apply; routed to validation, never applied).",
-        ("author",), "required", "section",
+        ("author", "--window"), "required", "section",
         {"cards": "boolean", "legacy": "boolean", "fresh": "boolean", "check_answers": "boolean",
          "writer": "boolean", "no_writer": "boolean", "no_apply": "boolean"},
         timeout=1800, mutation_class="workspace_write", lock="section",
@@ -107,11 +107,16 @@ OPERATIONS: dict[str, Operation] = {
     # Evidence intake: new documents -> evidence (agent, own window), open questions -> candidates (no model).
     "intake": Operation(
         "intake", "Turn new documents into evidence", "The evidence agent reads the new and changed files from the last ingest and records what they state in the evidence matrix and graph. It runs in its own window.",
-        ("intake", "--headless"), options={"cli": "identifier"}, timeout=3600, mutation_class="workspace_write", lock="evidence",
+        ("intake", "--window"), options={"cli": "identifier"}, timeout=3600, mutation_class="workspace_write", lock="evidence",
     ),
     "gap_check": Operation(
         "gap_check", "Check open questions", "Look up every open question in the evidence matrix and the index; what is found is added as candidate rows to settle (no model).",
         ("gap-check",), "optional", "section", timeout=1800, mutation_class="workspace_write", lock="evidence",
+    ),
+    "resolve_gaps": Operation(
+        "resolve_gaps", "Resolve evidence and update answers", "The evidence agent reads every candidate in its source, records supported facts or scoped gaps, then reruns the affected subsection answers.",
+        ("resolve-gaps", "--window", "--latest"), options={"cli": "identifier"}, timeout=7200,
+        mutating=True, mutation_class="document_write", lock="docx", closes_word=True,
     ),
     "stale": Operation(
         "stale", "Check for stale answers", "Rebuild each answered card (no model) and compare it with the saved answer.",
@@ -119,22 +124,22 @@ OPERATIONS: dict[str, Operation] = {
     ),
     "answer": Operation(
         "answer", "Answer subsection", "Draft lane: card, one agent call, written into the working DOCX as plain text.",
-        ("answer", "--headless"), "required", "section", {"cli": "identifier", "fresh": "boolean"},
+        ("answer", "--window"), "required", "section", {"cli": "identifier", "fresh": "boolean"},
         timeout=3600, mutating=True, mutation_class="document_write", lock="docx", closes_word=True,
     ),
     "refresh_draft": Operation(
         "refresh_draft", "Refresh stale answers", "Draft lane: answer again every subsection whose evidence changed.",
-        ("refresh-draft", "--headless"), options={"cli": "identifier"},
+        ("refresh-draft", "--window"), options={"cli": "identifier"},
         timeout=7200, mutating=True, mutation_class="document_write", lock="docx", closes_word=True,
     ),
     # CSA figures: the agent rewords one figure's purpose and caption; placing puts a saved figure in the document.
     "figure_wording": Operation(
         "figure_wording", "Reword figure caption", "The wording agent rewords one figure's purpose and caption; the framework checks it against the evidence.",
-        ("figure", "--agent"), "required", "section", {"cli": "identifier"}, timeout=900, mutation_class="workspace_write",
+        ("figure", "--agent", "--window"), "required", "section", {"cli": "identifier"}, timeout=900, mutation_class="workspace_write",
     ),
     "figure_design": Operation(
         "figure_design", "Figure design agent", "The CSA Figure Design Agent designs a figure for the section (design.md), builds it after you approve the design, or reviews a figure (review.md). It runs in its own window.",
-        ("figure", "--design"), "required", "section", {"mode": "identifier", "cli": "identifier"}, timeout=3600,
+        ("figure", "--design", "--window"), "required", "section", {"mode": "identifier", "cli": "identifier"}, timeout=3600,
         mutation_class="workspace_write", lock="section",
     ),
     "figure_place": Operation(
@@ -213,13 +218,13 @@ def build_argv(agents_dir: Path, project_key: str, operation_key: str, request: 
         raise HTTPException(422, "layout must be print or screen")
     if operation.key == "figure_design" and request.options.get("mode") not in (None, "design", "build", "review"):
         raise HTTPException(422, "mode must be design, build or review")
-    if operation.key in ("answer", "refresh_draft", "figure_wording", "figure_design", "intake"):
+    if operation.key in ("answer", "refresh_draft", "figure_wording", "figure_design", "intake", "resolve_gaps"):
         if request.options.get("cli") not in (None, *DRAFT_CLIS):
             raise HTTPException(422, "cli must be claude, codex or evo")
     if operation.key == "freeze" and request.target != "v1":
         raise HTTPException(422, "freeze takes the target v1")
     if operation.key not in {"author", "review", "cleanup", "build_preview", "build", "audit",
-                             "ingest", "stale", "answer", "refresh_draft", "freeze", "intake", "gap_check"}:
+                             "ingest", "stale", "answer", "refresh_draft", "freeze", "intake", "gap_check", "resolve_gaps"}:
         argv.append("--json")
     return operation, argv
 

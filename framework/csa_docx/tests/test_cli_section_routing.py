@@ -56,18 +56,39 @@ def test_unknown_visible_number_is_not_guessed(tmp_path):
     assert result["heading"] is None
 
 
-def test_interactive_answer_and_draft_passes_use_a_worker_window():
+def test_interactive_answer_and_draft_passes_stay_in_the_invoking_window():
     wrap = CSA["_agent_window_argv"]
-    expected = str(Path(__file__).parents[3] / "bin" / "csa-window")
-    assert wrap(["codex", "prompt"], "interactive", "answer") == [expected, "codex", "prompt"]
-    assert wrap(["codex", "prompt"], "interactive", "draft") == [expected, "codex", "prompt"]
+    command = ["codex", "--profile", "evo-x3-qwen", "prompt"]
+    assert wrap(command, "interactive", "answer") == command
+    assert wrap(command, "interactive", "draft") == command
 
 
-def test_agent_window_wrapper_does_not_change_headless_or_other_agents():
+def test_local_prompt_names_the_supported_codex_cli_shell_tool(tmp_path):
+    project = {
+        "key": "test",
+        "label": "Test",
+        "project_context": str(tmp_path / "context.yaml"),
+        "work_dir": str(tmp_path / "work"),
+        "project_root": str(tmp_path),
+    }
+    route = {"file": "agent.md", "title": "Test Agent", "verb": "test", "instruction": "Do the task."}
+    prompt = CSA["build_prompt"](project, route, [], local=True)
+    assert "use `exec_command` for shell commands" in prompt
+    assert "Never call `exec`" in prompt
+
+
+def test_agent_window_wrapper_does_not_change_headless_or_unforced_other_agents():
     wrap = CSA["_agent_window_argv"]
     command = ["codex", "prompt"]
     assert wrap(command, "headless", "draft") == command
     assert wrap(command, "interactive", "write") == command
+
+
+def test_agent_window_wrapper_forces_any_interactive_agent_into_a_window():
+    wrap = CSA["_agent_window_argv"]
+    command = ["codex", "prompt"]
+    wrapper = str(Path(__file__).parents[3] / "bin" / "csa-window")
+    assert wrap(command, "interactive", "settle", force=True) == [wrapper, *command]
 
 
 def test_agent_window_wrapper_is_not_nested():
@@ -75,3 +96,31 @@ def test_agent_window_wrapper_is_not_nested():
     wrapper = str(Path(__file__).parents[3] / "bin" / "csa-window")
     command = [wrapper, "codex", "prompt"]
     assert wrap(command, "interactive", "draft") == command
+
+
+def test_focused_answer_written_to_base_is_recovered_before_exit_handling(tmp_path):
+    sheet = tmp_path / "DNS.answer.md"
+    patch = tmp_path / "DNS.patch.md"
+    original = b"## B1 DNS\nFacts:\n- old.\n"
+    changed = b"## B1 DNS\nFacts:\n- repaired.\n"
+    sheet.write_bytes(original)
+    sheet.write_bytes(changed)  # the agent ignored SHEET=patch and edited ANSWER=sheet
+    assert CSA["capture_focused_answer"](patch, sheet, original)
+    assert patch.read_bytes() == changed
+    assert sheet.read_bytes() == original
+
+
+def test_latest_draft_attempt_is_read_independently_of_change_file_state(tmp_path):
+    draft = tmp_path / "csa-work" / "draft"
+    draft.mkdir(parents=True)
+    state = {"DNS": {"number": "3.5", "status": "FAILED", "detail": "NO_TOTALS", "last_ok": "earlier"}}
+    (draft / "runs.json").write_text(json.dumps(state), encoding="utf-8")
+    assert CSA["draft_run_state"]({"work_dir": str(tmp_path / "csa-work")}, "3.5") == state["DNS"]
+
+
+def test_repeated_repair_switches_model_once_then_stops():
+    decide = CSA["repeated_repair_action"]
+    signature = (("NO_TOTALS", "B1", "same sentence"),)
+    assert decide(signature, None, "evo", "codex", False) == (None, False)
+    assert decide(signature, signature, "evo", "codex", False) == ("codex", False)
+    assert decide(signature, signature, "codex", "codex", True) == (None, True)

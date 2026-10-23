@@ -92,10 +92,10 @@ def _acknowledged(workspace: Path, dr_id: str) -> set[str]:
     path = workspace / "csa-work" / "evidence-matrix.csv"
     out: set[str] = set()
     if path.is_file():
-        with path.open(newline="", encoding="utf-8-sig") as fh:
-            for r in csv.DictReader(fh):
-                if r.get("status") == "NOT_FOUND" and dr_id in (r.get("gap_or_action") or ""):
-                    out.update(re.findall(r"E-\d+", r.get("inference_reason") or ""))
+        from csa_docx import modelstore
+        for r in modelstore.read_csv(path):
+            if r.get("status") == "NOT_FOUND" and dr_id in (r.get("gap_or_action") or ""):
+                out.update(re.findall(r"E-\d+", r.get("inference_reason") or ""))
     return out
 
 
@@ -212,9 +212,9 @@ def confirm_gap(workspace: Path, dr_id: str, text: str, considered: list[str], *
     workspace = Path(workspace)
     look = lookup_gap(workspace, dr_id, text, exclude=exclude)
     ids = sorted({i.upper() for i in considered} | {i.upper() for i in look["evidence_ids"]})
-    with (workspace / "csa-work" / "evidence-matrix.csv").open(newline="", encoding="utf-8-sig") as fh:
-        candidates = {r["evidence_id"].upper() for r in csv.DictReader(fh)
-                      if r["status"] == "UNCONFIRMED" and r["claim"].startswith(f"Possible answer to {dr_id}")}
+    from csa_docx import modelstore
+    candidates = {r["evidence_id"].upper() for r in modelstore.read_csv(workspace / "csa-work" / "evidence-matrix.csv")
+                  if r["status"] == "UNCONFIRMED" and r["claim"].startswith(f"Possible answer to {dr_id}")}
     to_reject = [i for i in ids if i in candidates]
     if to_reject:
         subprocess.run([sys.executable, str(MATRIX_SCRIPT), "--workspace", str(workspace), "review", *to_reject,

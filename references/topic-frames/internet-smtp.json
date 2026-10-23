@@ -21,7 +21,11 @@
     "settings": [
      "transfer.proxy"
     ]
-   }
+   },
+   "search": [
+    "ProxyServer",
+    "WinHTTP"
+   ]
   },
   {
    "id": "S2",
@@ -41,7 +45,11 @@
       "attempted"
      ]
     }
-   }
+   },
+   "search": [
+    "internet access",
+    "443"
+   ]
   },
   {
    "id": "S3",
@@ -60,7 +68,11 @@
       "declared"
      ]
     }
-   }
+   },
+   "search": [
+    "SMTP",
+    "relay"
+   ]
   },
   {
    "id": "S4",
@@ -69,7 +81,11 @@
     "SEP-INET-01",
     "SEP-INET-02"
    ],
-   "source": {}
+   "source": {},
+   "search": [
+    "mail relay",
+    "smtp port 25"
+   ]
   }
  ]
 }

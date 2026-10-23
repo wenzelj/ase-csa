@@ -20,7 +20,11 @@
     "settings": [
      "admin.local_admins"
     ]
-   }
+   },
+   "search": [
+    "Get-LocalGroupMember",
+    "Administrators"
+   ]
   },
   {
    "id": "S2",
@@ -32,7 +36,11 @@
     "settings": [
      "admin.rdp_users"
     ]
-   }
+   },
+   "search": [
+    "Remote Desktop Users",
+    "RDP"
+   ]
   },
   {
    "id": "S3",
@@ -45,7 +53,10 @@
      "admin.listeners",
      "agent.remote_support"
     ]
-   }
+   },
+   "search": [
+    "TermService"
+   ]
   },
   {
    "id": "S4",
@@ -64,7 +75,11 @@
       "declared"
      ]
     }
-   }
+   },
+   "search": [
+    "port 3389",
+    "WinRM"
+   ]
   },
   {
    "id": "S5",
@@ -72,7 +87,10 @@
    "requirements": [
     "SEP-MGT-01"
    ],
-   "source": {}
+   "source": {},
+   "search": [
+    "jump host"
+   ]
   }
  ]
 }

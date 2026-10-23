@@ -840,7 +840,13 @@ def application_portrait(system_key: str) -> dict[str, Any]:
     """Translate indexed material into the questions an assessor must resolve."""
     project = system_project(system_key)
     config = SYSTEMS[system_key]
-    rows = matrix_rows(project)
+    ledger_rows = matrix_rows(project)
+    # Rejected rows remain in the append-only evidence ledger for provenance, but they are
+    # retired decisions rather than live claims or questions.  Do not put them back into the
+    # assessor's queue on every portrait refresh.
+    rows = [row for row in ledger_rows
+            if (row.get("review_state") or "pending").lower() != "rejected"
+            and (row.get("csa_area") or "").lower() != "gap_lookup"]
     con = open_index(project)
     scope, params = scope_clause(False, False)
     files = con.execute(
@@ -902,8 +908,10 @@ def application_portrait(system_key: str) -> dict[str, Any]:
         "breadth": len(counts),
     } for host, counts in sorted(host_families.items())]
 
-    attention = [row for row in rows if (row.get("status") or "").upper() in
-                 {"CONFLICTING", "NOT_FOUND", "UNCONFIRMED", "INFERRED"}]
+    attention = [row for row in rows
+                 if (row.get("review_state") or "pending").lower() == "pending"
+                 and (row.get("status") or "").upper() in
+                 {"CONFLICTING", "UNCONFIRMED", "INFERRED"}]
     attention.sort(key=lambda row: (
         {"CONFLICTING": 0, "NOT_FOUND": 1, "UNCONFIRMED": 2, "INFERRED": 3}.get(
             (row.get("status") or "").upper(), 4),
@@ -1053,8 +1061,10 @@ def preview(system_key: str, file_id: int, anchor: str | None = None, mode: str 
 @app.get("/api/systems/{system_key}/evidence/{evidence_id}/sources")
 def evidence_sources(system_key: str, evidence_id: str) -> dict[str, Any]:
     project = system_project(system_key)
-    data = evidence(system_key, q="", limit=500)
-    target = next((row for row in data["rows"] if row["evidence_id"].upper() == evidence_id.upper()), None)
+    # Source lookup is by stable evidence ID, not by the paginated ledger view.  Large
+    # projects routinely have more than the API page limit (TETRA has over 2,000 rows).
+    target = next((row for row in matrix_rows(project)
+                   if row["evidence_id"].upper() == evidence_id.upper()), None)
     if not target:
         raise HTTPException(404, "Evidence row was not found")
     names = re.findall(r"[\w.\-]+\.(?:txt|csv|xlsx|docx|doc|pdf|md|log|json|xml|ps1|pptx)\b",

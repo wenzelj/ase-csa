@@ -23,7 +23,11 @@
      "agent.monitoring",
      "agent.security_telemetry"
     ]
-   }
+   },
+   "search": [
+    "HealthService",
+    "splunkd"
+   ]
   },
   {
    "id": "S2",
@@ -44,7 +48,11 @@
       "declared"
      ]
     }
-   }
+   },
+   "search": [
+    "syslog",
+    "forwarder"
+   ]
   },
   {
    "id": "S3",
@@ -52,7 +60,11 @@
    "requirements": [
     "SEP-MON-03"
    ],
-   "source": {}
+   "source": {},
+   "search": [
+    "event log",
+    "call record"
+   ]
   },
   {
    "id": "S4",
@@ -65,7 +77,11 @@
     "settings": [
      "agent.patch_management"
     ]
-   }
+   },
+   "search": [
+    "log retention",
+    "audit policy"
+   ]
   },
   {
    "id": "S5",
@@ -89,7 +105,11 @@
       "both"
      ]
     }
-   }
+   },
+   "search": [
+    "monitoring",
+    "SCOM"
+   ]
   }
  ]
 }

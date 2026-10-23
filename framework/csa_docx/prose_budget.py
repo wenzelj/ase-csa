@@ -38,15 +38,14 @@ def system_size(work_dir: Path | None) -> dict | None:
     hosts_csv = work_dir / "hosts" / "hosts.csv"
     if not hosts_csv.is_file():
         return None
-    with hosts_csv.open(encoding="utf-8", newline="") as fh:
-        rows = [r for r in csv.DictReader(fh) if (r.get("host") or "").strip()]
+    from csa_docx import modelstore
+    rows = [r for r in modelstore.read_csv(hosts_csv) if (r.get("host") or "").strip()]
     in_scope = [r for r in rows if not (r.get("in_scope") or "").strip()]  # empty in_scope = in scope (peers are marked)
     roles = {(r.get("role") or "").strip().lower() for r in in_scope} - {""}
     links = 0
     links_csv = work_dir / "hosts" / "host_links.csv"
     if links_csv.is_file():
-        with links_csv.open(encoding="utf-8", newline="") as fh:
-            links = sum(1 for _ in csv.DictReader(fh))
+        links = len(modelstore.read_csv(links_csv))
     return {"hosts": len(in_scope), "roles": len(roles), "links": links}
 
 

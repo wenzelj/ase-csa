@@ -1,0 +1,136 @@
+{
+ "_about": "Which columns of the discovery index's structured tables name an entity (S385). 'table' is a regular expression matched in full against the lower-case table name; 'columns' maps a column name (any case) to an entity kind, or to {kind, proto, split}. Generic collector output only: no host names, addresses or project names.",
+ "rules": [
+  {
+   "table": "services_inventory|.*_services_processes",
+   "columns": {
+    "Name": "service",
+    "StartName": "account",
+    "ProcessName": "process"
+   }
+  },
+  {
+   "table": ".*_sql_cluster_evidence",
+   "columns": {
+    "Name": "service"
+   }
+  },
+  {
+   "table": "listening_ports",
+   "columns": {
+    "LocalAddress": "address",
+    "LocalPort": "port"
+   }
+  },
+  {
+   "table": "established_connections_raw|.*established_connection.*",
+   "columns": {
+    "LocalAddress": "address",
+    "RemoteAddress": "address",
+    "LocalPort": {
+     "kind": "port",
+     "proto": "tcp"
+    },
+    "RemotePort": {
+     "kind": "port",
+     "proto": "tcp"
+    }
+   }
+  },
+  {
+   "table": "local_shares",
+   "columns": {
+    "Name": "share"
+   }
+  },
+  {
+   "table": "local_users|local_groups|local_admins_membership|remote_desktop_users_membership",
+   "columns": {
+    "Name": "account"
+   }
+  },
+  {
+   "table": "resolver",
+   "columns": {
+    "ServerAddresses": {
+     "kind": "address",
+     "split": true
+    }
+   }
+  },
+  {
+   "table": "ip_interface_config",
+   "columns": {
+    "IPAddress": {
+     "kind": "address",
+     "split": true
+    }
+   }
+  },
+  {
+   "table": "ip_route",
+   "columns": {
+    "IPv4Address": "address",
+    "IPv4DefaultGateway": "address",
+    "DNSServer": {
+     "kind": "address",
+     "split": true
+    }
+   }
+  },
+  {
+   "table": "dns_query_tests|dns_resolution_validation|role_aware_connectivity_tests",
+   "columns": {
+    "Name": "name",
+    "IPAddress": {
+     "kind": "address",
+     "split": true
+    }
+   }
+  },
+  {
+   "table": ".*known_host_ip_map",
+   "columns": {
+    "Hostname": "name",
+    "IPAddress": {
+     "kind": "address",
+     "split": true
+    }
+   }
+  },
+  {
+   "table": ".*target_host_map",
+   "columns": {
+    "Host": "name"
+   }
+  },
+  {
+   "table": "dcom_application_settings",
+   "columns": {
+    "RunAsUser": "account",
+    "LocalService": "service"
+   }
+  },
+  {
+   "table": "firewall_service_filters",
+   "columns": {
+    "Service": "service"
+   }
+  },
+  {
+   "table": ".*asset inventory.*|.*computer_inventory.*|host identities.*",
+   "columns": {
+    "Name": "name",
+    "FQDN": "fqdn",
+    "IP Address": {
+     "kind": "address",
+     "split": true
+    },
+    "IP Address(es)": {
+     "kind": "address",
+     "split": true
+    }
+   }
+  }
+ ]
+}

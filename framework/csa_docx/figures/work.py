@@ -260,7 +260,7 @@ def place(ctx: Ctx, key: str, author: str, close_word: bool = True, drawing: str
     node = ctx.node(key)
     word = {"model": cur["model"], "aggregate": cur["row"].get("archetype") in ("A", "C")} if drawing == "word" else None
     res = P.place(ctx.docx, node["title"], node["level"], key, png, cur["brief"]["caption"]["text"],
-                  cur["brief"]["source"]["text"], author, close_word=close_word, word=word,
+                  "", author,                     # no Source line under a figure (the brief still keeps its source text) close_word=close_word, word=word,
                   after_key=cur["row"].get("node_key") if cur["row"].get("part") else None)
     if res["status"] == "OK":
         import time

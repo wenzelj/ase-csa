@@ -1,6 +1,6 @@
 ## B4 Discovery Information note
 Facts:
-- Two SQL Server cluster nodes in the same group take their time from different servers, with HOSTCLU03 on TIMESRV224 and HOSTCLU01 on TIMESRV122. (E-210, E-214) {observed; HOSTCLU01, HOSTCLU03}
+- Two SQL Server cluster nodes in the same group take their time from different servers, with HOSTCLU03 on TIMESRV224 and HOSTCLU01 on TIMESRV122. (E-0210, E-0214) {observed; HOSTCLU01, HOSTCLU03}
 Text:
 The SQL Server cluster nodes do not share one time source, as HOSTCLU03 follows TIMESRV224 while the other nodes follow TIMESRV122.
 

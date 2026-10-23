@@ -42,7 +42,7 @@ def test_cleanup_operation_registered():
     assert operation.mutating
     assert operation.lock == "docx"
     assert operation.target == "required"
-    assert operation.argv == ("cleanup",)
+    assert operation.argv == ("cleanup", "--window")
 
 
 def test_preflight_requires_ready_document(tmp_path, monkeypatch):

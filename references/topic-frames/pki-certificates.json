@@ -21,7 +21,11 @@
      "cert.machine",
      "cert.other"
     ]
-   }
+   },
+   "search": [
+    "Cert:\\LocalMachine\\My",
+    "Issuer"
+   ]
   },
   {
    "id": "S2",
@@ -33,7 +37,11 @@
     "settings": [
      "cert.private_roots"
     ]
-   }
+   },
+   "search": [
+    "Cert:\\LocalMachine\\Root",
+    "Trusted Root"
+   ]
   },
   {
    "id": "S3",
@@ -45,7 +53,10 @@
     "settings": [
      "cert.machine"
     ]
-   }
+   },
+   "search": [
+    "NotAfter"
+   ]
   },
   {
    "id": "S4",
@@ -53,7 +64,11 @@
    "requirements": [
     "SEP-PKI-01"
    ],
-   "source": {}
+   "source": {},
+   "search": [
+    "TLS",
+    "SQL encryption"
+   ]
   },
   {
    "id": "S5",
@@ -61,7 +76,11 @@
    "requirements": [
     "SEP-PKI-02"
    ],
-   "source": {}
+   "source": {},
+   "search": [
+    "CRL distribution",
+    "OCSP"
+   ]
   }
  ]
 }

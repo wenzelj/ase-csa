@@ -5,7 +5,7 @@ import { deriveIntakeSteps, resumableJob, type StepKey } from "./intakeSteps";
 
 const TERMINAL = ["succeeded", "failed", "cancelled", "interrupted"];
 const CLIS = [{ id: "claude", label: "Claude" }, { id: "codex", label: "Codex" }, { id: "evo", label: "Evo (local)" }];
-const OP_LABEL: Record<string, string> = { ingest: "Ingest new data", intake: "Evidence agent", gap_check: "Check open questions" };
+const OP_LABEL: Record<string, string> = { ingest: "Ingest new data", intake: "Evidence agent", gap_check: "Check open questions", resolve_gaps: "Resolve evidence and update answers" };
 const VERDICT: Record<string, string> = { ANSWERED: "Answered", CANDIDATES: "Possible answer found", NOT_FOUND: "Not found" };
 
 function remembered(): string { try { return localStorage.getItem("csa-draft-cli") || "claude"; } catch { return "claude"; } }
@@ -71,11 +71,11 @@ export function EvidenceIntake({ system, draftStage, refreshKey, openEvidence, w
     ingest: <button onClick={() => void run("ingest")} disabled={busy}>Ingest new data</button>,
     documents: <span className="intake-action"><select value={cli} onChange={e => setCli(e.target.value)} disabled={busy} aria-label="Model for the evidence agent">{CLIS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}</select><button onClick={() => void run("intake", { cli })} disabled={busy || !rec}>Run the evidence agent</button></span>,
     gaps: <button onClick={() => void run("gap_check")} disabled={busy}>Check open questions</button>,
-    settle: null, use: null,
+    settle: <span className="intake-action"><select value={cli} onChange={e => setCli(e.target.value)} disabled={busy} aria-label="Model for evidence settlement">{CLIS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}</select><button onClick={() => void run("resolve_gaps", { cli })} disabled={busy || !snap.candidates.length}>Resolve and update answers</button></span>, use: null,
   })[key];
 
   return <section className="page draft-page intake-page">
-    <header className="page-heading"><div><span>Evidence intake</span><h1>Bring new data in and use it</h1><p>New files go into the index first. The evidence agent then turns what new documents state into evidence, the open questions are checked against it, and you settle what was found. Nothing here changes the working document.</p></div></header>
+    <header className="page-heading"><div><span>Evidence intake</span><h1>Bring new data in and use it</h1><p>New files go into the index first. The evidence agent records what the sources state, checks open questions against the matrix and index, settles each finding from its source, and updates the affected answers. The final step can change the working document through the normal framework pipeline.</p></div></header>
 
     <ol className="intake-steps">{steps.map((s, i) => <li key={s.key} className={`intake-step intake-${s.status}${s.key === next ? " intake-next" : ""}`}>
       <span className="intake-num">{i + 1}</span><div><b>{s.title}</b><small>{s.detail || " "}</small></div>{action(s.key)}
@@ -107,7 +107,7 @@ export function EvidenceIntake({ system, draftStage, refreshKey, openEvidence, w
       {questions.length ? <table className="draft-table"><thead><tr><th>Section</th><th>Question</th><th>Result</th><th>Evidence</th></tr></thead><tbody>{questions.map(q => <tr key={q.dr_id}><td><b>{q.number}</b><small>{q.dr_id}</small></td><td>{q.text}</td><td><span className={`draft-pill intake-${q.verdict.toLowerCase()}`}>{VERDICT[q.verdict] || q.verdict}</span></td><td>{q.evidence_ids.join(", ") || "—"}</td></tr>)}</tbody></table> : <p className="draft-none">{snap.gap_check ? "Nothing found for the open questions." : "Run Check open questions."}</p>}
     </section>
 
-    <section className="decision-desk"><header><div><h2>4 · Settle what was found</h2><p>Each candidate quotes a source that may answer an open question. Read it, then reject it or write the fact it supports.</p></div></header>
+    <section className="decision-desk"><header><div><h2>4 · Settle what was found</h2><p>The framework can read every candidate in its original source, record supported facts or scoped gaps, and rerun the affected answers. The individual controls remain available for recovery or manual review.</p></div></header>
       {snap.candidates.length ? <div className="intake-cards">{snap.candidates.map(c => <article key={c.evidence_id} className="intake-card">
         <header><b>{c.dr_id}</b><span>{c.evidence_id}</span></header>
         <p className="intake-question">{(c.question || "").replace(/^DR-[^:]+:\s*/, "")}</p>

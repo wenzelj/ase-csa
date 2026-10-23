@@ -16,6 +16,7 @@ every answered card is collected in ``csa-work/draft/open-questions.md``.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -55,7 +56,7 @@ def blocker(docx: Path, heading: str) -> str | None:
 
 def expand(change_set: str) -> list[str]:
     """'S3-E10 to S3-E12' -> [S3-E10, S3-E11, S3-E12]; 'none' -> []."""
-    m = re.fullmatch(r"\s*S(\d+)-E(\d+)\s+to\s+S\1-E(\d+)\s*", change_set or "")
+    m = re.fullmatch(r"\s*S(\d+(?:\.\d+)?)-E(\d+)\s+to\s+S\1-E(\d+)\s*", change_set or "")
     if not m:
         return []
     return [f"S{m[1]}-E{n}" for n in range(int(m[2]), int(m[3]) + 1)]
@@ -65,7 +66,7 @@ def apply(workspace: Path, docx: Path, change_file: Path, ids: list[str], new_fi
     """Apply only ``ids`` from ``change_file`` as plain text, then remove their records, comments and bookmarks."""
     if not ids:
         return {"status": "OK", "applied": [], "docx": str(docx)}
-    section = re.match(r"S(\d+)-E", ids[0])[1]
+    section = re.match(r"S(\d+(?:\.\d+)?)-E", ids[0])[1]
     before = _comment_ids(docx)
     applied: list[str] = []
     while True:
@@ -84,7 +85,7 @@ def apply(workspace: Path, docx: Path, change_file: Path, ids: list[str], new_fi
     _strip_edit_bookmarks(docx, ids)
     _drop_plain_records(Path(change_file), docx, state_key(section, change_file), ids)
     cf = Path(change_file)
-    if new_file and cf.is_file() and not re.search(r"^#{2,4}\s+(?:REJECTED\s+)?S\d+-E\d+\b", cf.read_text(encoding="utf-8"), re.M):
+    if new_file and cf.is_file() and not re.search(r"^#{2,4}\s+(?:REJECTED\s+)?S\d+(?:\.\d+)?-E\d+\b", cf.read_text(encoding="utf-8"), re.M):
         cf.unlink()                      # made by this run and empty again: leave nothing for csa status to show
         (cf.parent / (cf.stem + ".approval.json")).unlink(missing_ok=True)
     return {"status": "OK", "applied": applied, "docx": str(docx)}
@@ -255,10 +256,14 @@ def tidy(docx: Path, card: dict, sheet_text: str) -> dict:
     return {"status": "OK", "rows": removed, "comments": sorted(ids)}
 
 
-def record_run(work: Path, key: str, number: str, title: str, status: str, detail: str = "") -> dict:
-    """Keep the outcome of the latest draft-lane run of a subsection in csa-work/draft/runs.json: OK, NO_SHEET (the
-    agent wrote no answer sheet) or FAILED (the sheet still failed its checks). A failed run leaves the document
-    text from the last applied answer, so the date of that answer is kept too."""
+def record_run(work: Path, key: str, number: str, title: str, status: str, detail: str = "", phase: str = "",
+               blocks: str = "", elapsed_s: float | None = None, model: str = "", sheet_hash: str = "") -> dict:
+    """Keep the latest draft-lane attempt in ``runs.json``.
+
+    RUNNING/READY describe an in-flight or deliberately unapplied answer. OK is the only state that means the
+    current sheet reached the document. FAILED, NO_SHEET, INTERRUPTED and TIMED_OUT are terminal failures and keep
+    ``last_ok`` so status can distinguish the latest attempt from the text still present in Word.
+    """
     f = Path(work) / "draft" / "runs.json"
     try:
         runs = json.loads(f.read_text(encoding="utf-8"))
@@ -266,11 +271,22 @@ def record_run(work: Path, key: str, number: str, title: str, status: str, detai
         runs = {}
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     r = runs.setdefault(key, {})
-    r.update({"number": number, "title": title, "status": status, "detail": detail[:300], "at": now})
+    terminal = status in {"OK", "READY", "FAILED", "NO_SHEET", "INTERRUPTED", "TIMED_OUT"}
+    if terminal:
+        model = model or str(r.get("model", ""))
+        blocks = blocks or str(r.get("blocks", ""))
+    r.update({"number": number, "title": title, "status": status, "detail": detail[:500], "at": now})
+    r.update({"phase": phase, "blocks": blocks, "model": model, "candidate_sha256": sheet_hash})
+    if elapsed_s is not None:
+        r["elapsed_s"] = round(float(elapsed_s), 1)
     if status == "OK":
         r["last_ok"] = now
+        sheet = Path(work) / "cards" / f"{key}.answer.md"      # bind the run to the sheet that passed
+        r["sheet_sha256"] = hashlib.sha256(sheet.read_bytes()).hexdigest()[:16] if sheet.is_file() else ""
     f.parent.mkdir(parents=True, exist_ok=True)
-    f.write_text(json.dumps(runs, indent=1, ensure_ascii=False), encoding="utf-8")
+    tmp = f.with_name(f.name + ".tmp")
+    tmp.write_text(json.dumps(runs, indent=1, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(f)
     return {"status": "OK", "file": str(f)}
 
 
@@ -282,10 +298,13 @@ def failed_runs(work: Path) -> list[str]:
         return []
     out = []
     for key, r in sorted(runs.items(), key=lambda kv: kv[1].get("number", "")):
-        if r.get("status") != "OK":
+        if r.get("status") in ("FAILED", "NO_SHEET", "INTERRUPTED", "TIMED_OUT"):
             since = f"text is from the run of {r['last_ok']}" if r.get("last_ok") else "no run has been applied yet"
-            out.append(f"{r.get('number', '')} {r.get('title', key)}: last run {r.get('status')} at {r.get('at')} "
-                       f"({since}){': ' + r['detail'] if r.get('detail') else ''}")
+            elapsed = f", {r['elapsed_s'] / 60:.1f} min" if r.get("elapsed_s") is not None else ""
+            phase = f", phase {r['phase']}" if r.get("phase") else ""
+            blocks = f", blocks {r['blocks']}" if r.get("blocks") else ""
+            out.append(f"{r.get('number', '')} {r.get('title', key)}: last run {r.get('status')} at {r.get('at')}"
+                       f"{elapsed}{phase}{blocks} ({since}){': ' + r['detail'] if r.get('detail') else ''}")
     return out
 
 
@@ -303,8 +322,9 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--records", type=int, default=0); s.add_argument("--open", type=int, default=0); s.add_argument("--note", default="")
     s = sub.add_parser("open-questions"); s.add_argument("--work-dir", type=Path, required=True)
     s = sub.add_parser("run"); s.add_argument("--work-dir", type=Path, required=True)
-    for k in ("key", "number", "title", "status", "detail"):
+    for k in ("key", "number", "title", "status", "detail", "phase", "blocks", "model", "sheet-hash"):
         s.add_argument(f"--{k}", default="")
+    s.add_argument("--elapsed-s", type=float)
     s = sub.add_parser("failed-runs"); s.add_argument("--work-dir", type=Path, required=True)
     s = sub.add_parser("tidy"); s.add_argument("--docx", type=Path, required=True)
     s.add_argument("--card", type=Path, required=True); s.add_argument("--sheet", type=Path, required=True)
@@ -319,7 +339,8 @@ def main(argv: list[str] | None = None) -> int:
         elif a.cmd == "log":
             out = {"status": "OK", "file": str(log(a.work_dir, a.key, a.number, a.title, a.records, a.open, a.note))}
         elif a.cmd == "run":
-            out = record_run(a.work_dir, a.key, a.number, a.title, a.status, a.detail)
+            out = record_run(a.work_dir, a.key, a.number, a.title, a.status, a.detail, a.phase, a.blocks,
+                             a.elapsed_s, a.model, a.sheet_hash)
         elif a.cmd == "failed-runs":
             out = {"status": "OK", "failed": failed_runs(a.work_dir)}
         elif a.cmd == "tidy":
