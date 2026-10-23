@@ -2525,7 +2525,8 @@ def _answer_by_requirement(p: dict, a) -> int:
             return
         t0 = time.time()
         r = requirement_answer.answer(view, lambda pr: _model_reply(p, pr, a),
-                                      retries=2, extra=lambda blk: requirement_answer.text_errors(card, qid, blk))
+                                      retries=2, extra=lambda blk: requirement_answer.text_errors(card, qid, blk)
+                                      + requirement_answer.obligation_errors(card, qid, blk))
         print(f"  {r['status']} in {time.time() - t0:.0f}s, {r['attempts']} call(s)")
         if r["status"] == "OK":
             (cards / f"{key}.req-{qid}.md").write_text(r["block"], encoding="utf-8")

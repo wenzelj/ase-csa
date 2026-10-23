@@ -6,6 +6,8 @@ writes the Facts of the answer-sheet block from the findings the model marked.
     check_reply(view, reply)     [error]: every finding has one verdict, a kept fact is not dropped without a reason,
                                  a Text, a rating from the choices and a reason are present
     block(view, reply)           the answer-sheet block ("## B1 SEP-X-01 ...") for the requirement
+    obligation_errors(card, qid, block)   what the block still owes (must-address, owned crossing flows, Facts to keep),
+                                 checked on the block alone so the same call is asked to fix it
     answer(view, ask)            prompt -> reply -> check, with one retry that quotes the errors; {"status", "block",
                                  "errors", "reply"}
     compose_view(card, qid, results)   the input for the Discovery table (observation) or the Drawbridge Impact
@@ -109,6 +111,17 @@ def check_reply(view: dict, reply: dict | None) -> list[str]:
         if not isinstance(rows, list) or (not rows and not unknown):
             return errs + ["NO_ROWS: rows must be a list of rows, or give an unknown"]
         allowed = {i.upper() for i in view["ids"]}
+        kept_ids = {i.upper() for k in view.get("kept") or [] for i in k["evidence_ids"]}
+        dropped = reply.get("dropped", [])
+        if not isinstance(dropped, list):
+            errs.append('DROPPED_BAD: dropped must be a list of {"ids": [...], "why": "..."}')
+            dropped = []
+        for d in dropped:
+            ids = {str(i).upper() for i in (d.get("ids") if isinstance(d, dict) else None) or []}
+            if not ids or ids - kept_ids:
+                errs.append(f"DROPPED_BAD: each dropped entry names the evidence IDs of a row to keep, and only those: {d!r}"[:200])
+            elif not str(d.get("why") or "").strip():
+                errs.append(f"DROPPED_NO_REASON: say why {', '.join(sorted(ids))} no longer applies")
         for r in rows:
             if not isinstance(r, list) or len(r) != len(view["columns"]):
                 errs.append(f"ROW_COLUMNS: each row needs exactly {len(view['columns'])} cells ({' | '.join(view['columns'])})")
@@ -151,6 +164,18 @@ def _fact_text(text: str) -> str:
     return re.sub(r";\s*(\w)", lambda m: ". " + m.group(1).upper(), t)
 
 
+def covers(view: dict, reply: dict) -> list[str]:
+    """The evidence IDs of the findings the reply answers with an Unknown line (a gap, or a gap that shares another
+    finding's question with "see <key>"), for the block's Covers: line: the checks then know which owed finding each
+    Unknown raises, without evidence IDs in the question text."""
+    verdict = {j.get("finding"): j for j in reply.get("judgements") or [] if isinstance(j, dict)}
+    out: list[str] = []
+    for f in view.get("findings", []):
+        if verdict.get(f["key"], {}).get("verdict") == "gap":
+            out += [i for i in f["ids"] if i not in out]
+    return out
+
+
 def _facts(view: dict, reply: dict) -> tuple[list[str], list[str]]:
     verdict = {j["finding"]: j for j in reply.get("judgements") or []}
     facts, drops, gaps = [], [], []
@@ -177,7 +202,9 @@ def block(view: dict, reply: dict) -> str:
         cols = view["columns"]
         rows = ["| " + " | ".join(cols) + " |", "| " + " | ".join("---" for _ in cols) + " |"]
         rows += ["| " + " | ".join(_one_line(c).replace("|", "/") for c in r) + " |" for r in reply.get("rows") or []]
-        return "\n".join([f"## {view['qid']} {view['label']}", "Rows:", *rows, *unknown]) + "\n"
+        drops = [f"Dropped: {', '.join(d['ids'])} {_one_line(d.get('why'))}" for d in reply.get("dropped") or []
+                 if isinstance(d, dict) and d.get("ids")]
+        return "\n".join([f"## {view['qid']} {view['label']}", "Rows:", *rows, *drops, *unknown]) + "\n"
     facts, drops = _facts(view, reply)
     head = f"## {view['qid']} {view['req_id'] if kind == 'requirement' else view['label']}"
     lines = [head] + (["Facts:", *facts] if facts else [])
@@ -188,6 +215,9 @@ def block(view: dict, reply: dict) -> str:
         if q not in seen:
             seen.add(q)
             lines.append(u)
+    cov = covers(view, reply)
+    if cov:
+        lines.append(f"Covers: {', '.join(cov)}")
     if kind == "requirement":
         lines += [f"Rating: {reply['rating']}", f"Rating reason: {_one_line(reply['reason'])}"]
     return "\n".join(lines) + "\n"
@@ -204,6 +234,30 @@ def text_errors(card: dict, qid: str, blk: str) -> list[str]:
     if ";" in text:
         out.append("SEMICOLON: the Text has a semicolon: write two sentences, or join the parts with a comma and 'and' or 'but'")
     return out
+
+
+_OBLIGATION_CODES = ("SLOT_NOT_ANSWERED", "FLOW_NOT_COVERED", "CAPTURE_DROPPED")
+_OBLIGATION_HINT = {"requirement": " In your reply: mark the finding with that evidence supports or contradicts, or gap with its question.",
+                    "narrative": " In your reply: mark the finding with that evidence supports or contradicts, or gap with its question.",
+                    "observation": " In your reply: restate the row with its evidence IDs, or list it under dropped with why."}
+
+
+def obligation_errors(card: dict, qid: str, blk: str) -> list[str]:
+    """What the block still owes (csa_docx.obligations: its must-address findings, the crossing flows it owns, its Facts to
+    keep), checked with the sheet's own SLOT_NOT_ANSWERED, FLOW_NOT_COVERED and CAPTURE_DROPPED on this block alone, so the
+    call that wrote it is asked to fix it before the section is merged. Only errors (a frame that is not strict warns)."""
+    from csa_docx import answer_sheet as A, obligations as O
+    ob = O.obligations(card, qid)
+    if not ob:
+        return []
+    sheet = A.parse(blk)
+    if qid not in sheet:
+        return [f"QUESTION_MISSING: the block for {qid} is missing"]
+    fr = dict(card.get("frame") or {}, must_address={qid: ob["must"]} if ob["must"] else {}, coverage=ob["flows"])
+    sub = dict(card, frame=fr, keep=ob["kept"])
+    found = A.slot_answers(sheet, fr) + A.flow_coverage(sheet, sub) + A.kept_facts(sheet, sub)
+    hint = _OBLIGATION_HINT.get(ob["kind"], "")
+    return [f"{f['code']}: {f['message']}{hint}" for f in found if f["code"] in _OBLIGATION_CODES and f["level"] == "ERROR"]
 
 
 def answer(view: dict, ask, retries: int = 1, extra=None) -> dict:
@@ -272,15 +326,17 @@ def compose_view(card: dict, qid: str, results: dict) -> dict | None:
         lines += [f"- {f['part']} [{f['slot']}, {f['basis']}]: {f['text'][:200]}" + (f" ({', '.join(f['ids'])})" if f["ids"] else "")
                   for f in unused] or ["- none"]
         if keep:
-            lines += ["", "## Rows to keep (restate them, or leave them out only if they no longer apply)", ""]
+            lines += ["", "## Rows to keep (restate each with its evidence IDs, or list it under \"dropped\" with the reason)", ""]
             lines += [f"- {k['fact']} ({', '.join(k['evidence_ids'])})" for k in keep]
         lines += ["", "## Reply", "",
                   'Reply with one JSON object and nothing else: {"rows": [[' + ", ".join(f'"{c}"' for c in q["columns"]) + ']], '
-                  '"unknown": []}. One row per aspect, a part per row where the topic touches it; the last cell cites the '
-                  "evidence IDs above, and only those. No semicolons, no totals.", ""]
+                  '"dropped": [{"ids": ["E-..."], "why": "one sentence"}], "unknown": []}. One row per aspect, a part per row '
+                  "where the topic touches it; the last cell cites the evidence IDs above, and only those. A row to keep that no "
+                  "longer applies goes under dropped with its evidence IDs and why; every other row to keep is restated. "
+                  "No semicolons, no totals.", ""]
         md = "\n".join(lines)
         return {"qid": qid, "kind": "observation", "label": _label(q), "columns": list(q["columns"]), "findings": [],
-                "ids": ids, "markdown": md, "tokens": len(md) // 4}
+                "ids": ids, "kept": keep, "markdown": md, "tokens": len(md) // 4}
     cross = []
     for f in _all_findings(card):
         if f.get("direction") in CROSSING and f["ids"] and f["text"] not in {c["text"] for c in cross}:

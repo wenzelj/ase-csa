@@ -37,7 +37,7 @@ import sys
 from pathlib import Path
 
 _BLOCK = re.compile(r"^##\s+([BCF]\d+)\b[^\n]*$", re.M)
-_FIELD = re.compile(r"^(Facts|Text|Unknown|Rating reason|Rating|Rows|Bullets|Search|Keep|Answer|Dropped|None):\s*(.*)$", re.I)
+_FIELD = re.compile(r"^(Facts|Text|Unknown|Rating reason|Rating|Rows|Bullets|Search|Keep|Answer|Dropped|Covers|None):\s*(.*)$", re.I)
 _PFX = r"(?:[a-z0-9][a-z0-9-]*:)?"                # another project's row: utcdtc:E-041 (estate member or system sibling)
 _ID = r"(?:" + _PFX + r"E-\d+|K-[0-9A-F]{6})"
 _FACT = re.compile(r"^[-*]\s+(?P<text>.+?)\s*(?:\((?P<ids>" + _ID + r"(?:\s*,\s*" + _ID + r")*)\))?\s*(?:\{(?P<meta>[^}]*)\})?\s*$")
@@ -63,7 +63,7 @@ def parse(text: str) -> dict[str, dict]:
     for i, m in enumerate(marks):
         body = text[m.end(): marks[i + 1].start() if i + 1 < len(marks) else len(text)]
         b = {"facts": [], "unknown": [], "rating": "", "rating_reason": "", "rows": [], "bullets": [],
-             "search": [], "keep": "", "answer": "", "text": "", "dropped": [], "none": "", "raw": body.strip()}
+             "search": [], "keep": "", "answer": "", "text": "", "dropped": [], "none": "", "covers": [], "raw": body.strip()}
         if m.group(1).startswith("F"):          # the analysis frame: one line per slot, blocks or Unknown:
             b["frame"] = {}
             for line in body.splitlines():
@@ -88,6 +88,8 @@ def parse(text: str) -> dict[str, dict]:
                     b["unknown"].append(val)
                 elif field == "dropped" and val:
                     b["dropped"].append(val)
+                elif field == "covers":            # the evidence of findings this block raises as Unknown (framework-written)
+                    b["covers"] += [i.upper() for i in _EID.findall(val)]
                 elif field == "rating":
                     b["rating"] = val
                 elif field == "rating reason":
@@ -621,7 +623,7 @@ def flow_coverage(sheet: dict[str, dict], card: dict) -> list[dict]:
     fr = card.get("frame") or {}
     kinds = {q["id"]: q["kind"] for q in card.get("questions", [])}
     blocks = [b for k, b in sheet.items() if kinds.get(k) in ("requirement", "narrative")]
-    cited = set().union(*[block_ids(b) for b in blocks]) if blocks else set()
+    cited = set().union(*[block_ids(b) | {i.upper() for i in b.get("covers", [])} for b in blocks]) if blocks else set()
     unk = " ".join(u for b in blocks for u in b.get("unknown", [])).lower()
     prose = " ".join(" ".join([b.get("text") or ""] + [f["text"] for f in b["facts"]] + b["unknown"]) for b in blocks)
     out = []
@@ -654,7 +656,7 @@ def slot_answers(sheet: dict[str, dict], fr: dict, fb: dict | None = None) -> li
         b = sheet.get(qid)
         if b is None:
             continue                                  # QUESTION_MISSING reports it
-        cited = block_ids(b)
+        cited = block_ids(b) | {i.upper() for i in b.get("covers", [])}       # Covers: a finding raised as Unknown
         unk = " ".join(b.get("unknown", []) + b.get("dropped", [])).lower()      # a Dropped: line names the finding and says why
         miss = []
         for x in items:
