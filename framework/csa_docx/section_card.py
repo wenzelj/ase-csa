@@ -860,6 +860,70 @@ def _dns_order_candidates(workspace: Path, rows: list[dict]) -> list[dict]:
     return out
 
 
+def drawbridge_function_lines(node: dict, qs: list[dict], workspace: Path | None) -> dict[str, list[str]]:
+    """{question id: lines} for the Drawbridge Impact question: the system model's functions that this
+    section's parts view covers, one line per function with what delivers it and its isolation effect.
+    The effect comes from the parts view (``isolation``): ``lost`` when any of the function's parts loses
+    a path, ``may be lost`` when one only may, else ``keeps working``. {} without a system model. A function
+    names a part when it shares a proper-name word with the part's name or an accepted short name (a machine-kind
+    word like "server" or "database" is not a name, so it is not matched on)."""
+    if not workspace:
+        return {}
+    from csa_docx import knowledge, parts as parts_mod
+    from csa_docx.parts import is_label
+    model = knowledge.system_model(workspace)
+    if not (model.get("functions") or []):
+        return {}
+    try:
+        doc = parts_mod.assemble(Path(workspace) / "csa-work")
+    except (OSError, ValueError, KeyError):
+        return {}
+    if not doc.get("parts"):
+        return {}
+    iso = parts_mod.isolation(Path(workspace) / "csa-work", doc)
+    GENERIC = {"server", "servers", "host", "group", "availability", "cluster", "application",
+               "applications", "general", "purpose", "management", "system", "node", "controller",
+               "services", "service", "data", "other", "internal", "peers", "not", "identified",
+               "unidentified", "enterprise", "directory", "time", "sql", "tgoip", "license",
+               "licence", "manager", "radio"}
+    def words(s: str) -> set[str]:
+        return {w for w in re.findall(r"[a-z0-9]+(?:[./][a-z0-9]+)*", (s or "").lower())
+                if len(w) >= 4 and not w.isdigit() and w not in GENERIC}
+    cand: dict[str, set[str]] = {}
+    for p in doc["parts"]:
+        if p["id"] not in iso:
+            continue
+        names = {p["name"]} | set(p.get("aliases") or []) | set(parts_mod.short_names(p["name"]))
+        if is_label(p):
+            names |= set(parts_mod.names(p))
+        cand[p["id"]] = {w for n in names for w in words(n)}
+    out: dict[str, list[str]] = {}
+    for q in qs:
+        if q.get("kind") != "narrative" or "drawbridge" not in (q.get("text") or "").lower():
+            continue
+        lines: list[str] = []
+        for fn in model.get("functions", []):
+            text = " ".join(str(fn.get(k) or "") for k in ("function", "delivered_by", "depends_on", "it_dependencies"))
+            toks = words(text)
+            pids = {pid for pid, ns in cand.items() if toks & ns}
+            if not pids:
+                continue
+            if any(iso[pid]["cut"] for pid in pids):
+                effect = "lost"
+            elif any(iso[pid]["may_cut"] for pid in pids):
+                effect = "may be lost"
+            else:
+                effect = "keeps working"
+            lines.append(f"  Functions to write about (from the system model): {fn['function']}: "
+                         f"delivered by {fn['delivered_by']}; isolation effect: {effect}")
+        if lines:
+            lines.append("  Write: one sentence on what keeps working, by function; one sentence for each function lost "
+                         "or at risk, saying what stops; one sentence on any fallback and what is unknown. Name "
+                         "functions, not lists of parts.")
+            out[q["id"]] = lines
+    return out
+
+
 def system_name(workspace: Path | None) -> str:
     """The system's name as the working document writes it (its "System Name:" line), or "" when the
     document has none. The framework holds no system name of its own: the document is the one place."""
@@ -1078,11 +1142,13 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
         practice_view = practice_mod.card_view(Path(workspace) / "csa-work", node.get("key", ""))
     lines = [f"# Card: {node['title']} (key {node['key']}, section {node['number']})", "",
              f"Kind: {node['kind']}", "", "## Questions", ""]
+    db_lines = drawbridge_function_lines(node, qs, workspace)
     for q in qs:
         lines.append(f"- {q['id']} {q['text']}")
         if q.get("columns"):
             lines.append(f"  Columns: {' | '.join(q['columns'])}")
         lines += must_address_lines(owed.get(q["id"], []))
+        lines += db_lines.get(q["id"], [])
         if q.get("kind") == "requirement" and q.get("req_id"):
             rtext = ""
             for p in node.get("parts", []):
