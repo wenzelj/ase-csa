@@ -883,6 +883,21 @@ def system_name(workspace: Path | None) -> str:
     return ""
 
 
+def condition_lines(req_id: str, req_text: str = "") -> list[str]:
+    """The card lines under one requirement question that say what decides its rating: the conditions
+    split from its text (conditions.load), the logic that joins them, and the note when the split has
+    not been reviewed."""
+    from csa_docx import conditions
+    c = conditions.load(req_id, req_text)
+    out = ["  What decides this rating (conditions):"]
+    out += [f"  - {x['id']}: {x['text']}" for x in c["conditions"]]
+    if len(c["conditions"]) > 1:
+        out.append(f"  - Logic: {c['logic']}   (Met only when the logic holds; an unknown condition caps the rating at Partially Met)")
+    if not c["reviewed"]:
+        out.append("  (conditions not reviewed yet: use them, and say nothing that depends on their wording)")
+    return out
+
+
 def must_address_by_question(qs: list[dict], fr: dict | None) -> dict[str, list[dict]]:
     """{question id: [must-address item]}: the frame's findings each requirement question owes
     (topic_frames.must_address), keyed by the question that answers that requirement."""
@@ -1068,6 +1083,14 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
         if q.get("columns"):
             lines.append(f"  Columns: {' | '.join(q['columns'])}")
         lines += must_address_lines(owed.get(q["id"], []))
+        if q.get("kind") == "requirement" and q.get("req_id"):
+            rtext = ""
+            for p in node.get("parts", []):
+                if p.get("kind") == "requirement":
+                    for r in p.get("requirements", []):
+                        if r.get("id") == q["req_id"]:
+                            rtext = r.get("text", "")
+            lines += condition_lines(q["req_id"], rtext)
         if q.get("req_id") and practice_view:
             from csa_docx.practice import card_lines as practice_card_lines
             lines += practice_card_lines(q["req_id"], practice_view)
