@@ -333,7 +333,7 @@ def _flows(row, reqs, sentences, ev, model) -> dict:
                                             + " is not recorded", "requirements": reqs,
                      "why": f"Needed to show whether these flows in the {row['number']} figure cross the IT/OT boundary."})
     for n in model.get("nodes", []):
-        if "(likely, confirm)" in (n.get("role") or ""):
+        if "(likely, confirm)" in (n.get("role") or "") or "(to confirm)" in (n.get("role") or ""):
             g += 1
             gaps.append({"id": f"G{g}", "what": f"The role of {n['id']} is not recorded ({n['role']})", "requirements": reqs,
                          "why": f"Needed to name the system at that end of the {row['number']} figure's flows."})

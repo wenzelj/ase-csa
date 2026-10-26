@@ -209,6 +209,8 @@ def view(work_dir, over: dict, prof: dict, p: dict, *, key: str, title: str, sub
     hints = F.peer_hints(rows)
     known = {n["id"]: n for n in over["nodes"]}
     nodes: dict[str, dict] = {}
+    from csa_docx import endpoints
+    ends = endpoints.load(work_dir)
 
     def node(x: str) -> str:
         if x not in nodes:
@@ -217,7 +219,10 @@ def view(work_dir, over: dict, prof: dict, p: dict, *, key: str, title: str, sub
             else:
                 zk = zs.of(x).get("kind", "unknown")
                 named = not re.fullmatch(r"[\d.:a-fA-F%]+", x)     # a declared end named in the flow map, not an address
-                if x in hints:
+                elabel = endpoints.label(ends.get(x.upper()) or {})
+                if elabel:
+                    role, kind = elabel, "unknown"
+                elif x in hints:
                     role, kind = f"{hints[x]['role']} (likely, confirm)", "unknown"
                 elif zk == "internet":
                     role, kind = "Internet", "internet"

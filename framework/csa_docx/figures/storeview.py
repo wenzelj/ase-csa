@@ -107,6 +107,8 @@ def view(work_dir, over: dict, prof: dict, p: dict, *, key: str, title: str, sub
         reg_rows = {r["host"].upper(): r for r in csv.DictReader(regf.open(encoding="utf-8"))}
     zs = Z.for_project(work_dir)
     settings = FV._settings(work_dir)
+    from csa_docx import endpoints as _endpoints
+    ends = _endpoints.load(work_dir)
     stores, left_out = store_rows(settings, p.get("store_exclude"))
 
     # site columns in page order: the overview's data-centre zones (Rockhampton left, Mackay right)
@@ -134,7 +136,14 @@ def view(work_dir, over: dict, prof: dict, p: dict, *, key: str, title: str, sub
         r = reg_rows.get(x.upper())
         if r is not None:
             role = _short_role((r.get("role") or "").strip())
-            return role or "Role not recorded", True
+            if role:
+                return role, True
+            erow = ends.get(x.upper())
+            elabel = _endpoints.label(erow) if erow else ""
+            return elabel or "Role not recorded", True
+        elabel = _endpoints.label(ends.get(x.upper()) or {})
+        if elabel:
+            return elabel, False
         if declared and not _IP.match(x):
             return x, False
         return "Role not recorded", False
