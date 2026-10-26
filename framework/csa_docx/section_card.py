@@ -61,7 +61,8 @@ def questions(node: dict, spec: dict | None = None) -> list[dict]:
             for r in p["requirements"]:
                 out.append({"kind": "requirement", "part": i, "req_id": r["id"], "row": r["row"],
                             "text": f"{r['id']}: \"{r['text']}\" What is the current state of the system against this "
-                                    f"requirement, and how does it rate ({ratings}; Not Applicable needs a justification)?"})
+                                    f"requirement, what evidence-backed story explains that state, and how does it rate "
+                                    f"({ratings}; Not Applicable needs a justification)?"})
         elif k == "observation":
             cols = p.get("columns") or []
             prof = _topic_profile(node)
@@ -144,10 +145,14 @@ def role_table(node: dict, workspace: Path | None) -> dict | None:
 def _role_table_lines(ts) -> list[str]:
     ts = ts if isinstance(ts, list) else [ts]
     t = ts[0]
-    out = ["", "## Role table (built by the framework from the captures)", "",
-           "The framework puts this table under Discovery Information, above the Aspect table, every time this subsection "
-           "is written. It is the per-host description of the system for this topic. Do not repeat its settings in the "
-           "Aspect rows (ROLE_TABLE_REPEAT), and write about hosts by these role groups, never by a number of hosts "
+    split = any(x.get("requirement") for x in ts)
+    title = "Requirement evidence tables" if split else "Role table"
+    placement = ("The framework puts each table directly after its matching SEP story under Discovery Information. "
+                 if split else
+                 "The framework puts this table under Discovery Information, above the Aspect table, every time this subsection is written. ")
+    out = ["", f"## {title} (built by the framework from the captures)", "",
+           placement + "It is the detailed discovery evidence for this topic. Keep the SEP story as the synthesis and "
+           "do not recreate these tables in an Aspect block (ROLE_TABLE_REPEAT). Write about hosts by these role groups, never by a number of hosts "
            "(NO_TOTALS). Use it in the Current State and Drawbridge Impact text, citing the evidence rows for the same facts.",
            "", topic_markdown(ts)]
     if t.get("gaps"):
@@ -994,6 +999,9 @@ def requirement_tokens(card: dict) -> dict[str, int]:
 def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool = True,
          extra_searches: dict | None = None, exclude: tuple[str, ...] = ()) -> dict:
     qs = questions(node, spec)
+    requirement_stories = (any(q["kind"] == "requirement" for q in qs)
+                           and any(k.strip().lower() == "discovery information"
+                                   for k in (node.get("facets") or {})))
     fr = None                    # the analysis frame: built first, so each requirement question can list what it owes
     if evidence and workspace:   # and the evidence pack does not repeat the rows the frame already cites
         from csa_docx import topic_frames
@@ -1066,6 +1074,13 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
         if pview:
             from csa_docx.parts import owed_lines
             lines += owed_lines(pview, q["id"])
+    if requirement_stories:
+        lines += ["", "## Requirement summaries and stories", "",
+                  "For every requirement block write both `Summary:` and `Story:`. Summary is the Current State table "
+                  "cell: one to three sentences, no more than 80 words, stating the control or practice and its main "
+                  "qualification. Story is the fuller evidence-backed operational narrative placed under Discovery "
+                  "Information. Do not put the SEP label in either field; the framework adds it to the story. Keep exact "
+                  "hosts, ports and inventories in the discovery tables unless a detail is necessary to explain the rating."]
     sysname = system_name(workspace)
     if sysname:
         lines += ["", "## System name", "",
@@ -1193,7 +1208,7 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
             "ratings": spec.get("ratings") or doc_spec.DEFAULT_RATINGS, "kinds": kinds, "host_register": reg,
             "role_table": rtable, "role_tables": rtables or [], "frame": frame, "disagree": disagree,
             "parts": {k: v for k, v in pview.items() if k != "lines"} if pview else None,
-            "practice": practice_view}
+            "practice": practice_view, "requirement_stories": requirement_stories}
 
 
 def main(argv: list[str] | None = None) -> int:

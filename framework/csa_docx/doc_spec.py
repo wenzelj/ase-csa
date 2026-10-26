@@ -45,6 +45,7 @@ SKIP_STYLES = {"Figure", "Caption", "FigureSource", "TOCHeading", "Title", "Subt
 FIGURE_STYLES = {"Figure": "slot", "Caption": "caption", "FigureSource": "source"}
 _HEADING = re.compile(r"^Heading\s?([1-9])$")
 _REQ_ID = re.compile(r"^SEP-([A-Z]+)-\d+$")
+_REQ_STORY = re.compile(r"^(SEP-[A-Z]+-\d+)\s*(?:—|–|:|-)\s*(.+)$", re.S)
 _BRACKET = re.compile(r"^\[.*\]$", re.S)
 REQ_HEADERS = ("req id", "requirement", "current state", "rating")
 DEFAULT_RATINGS = ["Met", "Partially Met", "Not Met", "Not Applicable"]
@@ -308,7 +309,7 @@ def read(path: Path | str) -> dict:
                 node = {"title": text, "level": level, "number": visible, "path": hpath, "hid": f"@H{hpath}",
                         "stamp": stamps[0] if stamps else None, "stamps": stamps,
                         "parent": h1["path"] if (level == 2 and h1) else None,
-                        "parts": [], "guidance": [], "comments": [], "children": [], "figures": []}
+                        "parts": [], "guidance": [], "comments": [], "children": [], "figures": [], "facets": {}}
                 nodes.append(node)
                 if level == 1:
                     h1 = node
@@ -320,6 +321,7 @@ def read(path: Path | str) -> dict:
             else:
                 facet = text
                 if topic is not None:
+                    topic["facets"][text] = {"title": text, "hid": f"@H{hpath}"}
                     _attach(topic, notes, facet)
             continue
         p_ord += 1
@@ -362,8 +364,14 @@ def read(path: Path | str) -> dict:
             topic["parts"].append({"kind": kind, "facet": facet, "label": None, "question": text.strip("[] "),
                                    "answered": False, "pid": pid, "current": text})
         else:
-            topic["parts"].append({"kind": "text", "facet": facet, "label": None, "text": text[:300], "pid": pid,
-                                   "current": text})
+            story = _REQ_STORY.match(text) if (facet or "").strip().lower() == "discovery information" else None
+            if story:
+                topic["parts"].append({"kind": "requirement-story", "facet": facet, "label": None,
+                                       "req_id": story.group(1), "text": story.group(2)[:300], "pid": pid,
+                                       "current": text})
+            else:
+                topic["parts"].append({"kind": "text", "facet": facet, "label": None, "text": text[:300], "pid": pid,
+                                       "current": text})
     flush_bullets()
 
     _assign_keys(nodes)

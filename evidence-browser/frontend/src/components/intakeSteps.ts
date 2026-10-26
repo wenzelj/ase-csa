@@ -36,10 +36,12 @@ export function deriveIntakeSteps(snap: IntakeSnapshot, job: ReviewJob | null): 
   };
   const detail: Record<StepKey, string> = {
     ingest: !rec ? "Nothing ingested yet"
-      : snap.nothing_new_since ? `Nothing new since ${when(snap.nothing_new_since)}`
-      : `${rec.added.length} new · ${rec.changed.length} changed · ${rec.removed.length} removed` + (rec.unreadable.length ? ` · ${rec.unreadable.length} not readable` : ""),
-    documents: !rec ? "" : readable.length === 0 ? "Nothing readable came in"
-      : added ? `${plural(added, "evidence row")} added` : `${plural(readable.length, "document")} to read`,
+      : snap.nothing_new_since ? `Complete · Nothing new since ${when(snap.nothing_new_since)}`
+      : evidenceDone ? "Complete · Indexed changes processed"
+      : `Complete · Last intake with changes: ${rec.added.length} new · ${rec.changed.length} changed · ${rec.removed.length} removed` + (rec.unreadable.length ? ` · ${rec.unreadable.length} not readable` : ""),
+    documents: !rec ? "" : readable.length === 0 ? "Complete · Nothing readable came in"
+      : evidenceDone ? "Complete · Documents processed"
+      : `${plural(readable.length, "document")} to read`,
     gaps: snap.gap_check ? `Checked ${when(snap.gap_check.checked_at)} · ${plural(snap.gap_check.questions.length, "question")}` : "Not checked yet",
     settle: snap.candidates.length ? `${snap.candidates.length} to settle` : checkCurrent ? "Nothing to settle" : "",
     use: affected ? `${affected} subsection${affected === 1 ? "" : "s"} can be answered again` : checkCurrent ? "Nothing new to answer" : "",

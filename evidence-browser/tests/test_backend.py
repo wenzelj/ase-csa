@@ -212,6 +212,49 @@ def test_evidence_source_choices_are_limited_to_cited_captures(tmp_path: Path, m
     assert [row["file_id"] for row in result["sources"]] == [first]
 
 
+def test_evidence_source_lookup_matches_full_cited_path_with_spaces(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    project, _ = make_workspace(tmp_path, monkeypatch)
+    file_id = add_file(project, "source/Tetra network diagram data.xlsx")
+    fields = ["evidence_id", "csa_area", "question", "claim", "status", "source_title",
+              "source_version", "section", "page_or_location", "evidence_excerpt",
+              "inference_reason", "confidence", "gap_or_action", "review_state"]
+    with (project / "csa-work" / "evidence-matrix.csv").open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        writer.writerow({"evidence_id": "E-2243", "claim": "The diagram names the active host.",
+                         "status": "VERIFIED",
+                         "source_title": "source/Tetra network diagram data.xlsx",
+                         "page_or_location": "Components sheet, C-004", "review_state": "pending"})
+
+    result = workspace.evidence_sources("iamps", "E-2243")
+
+    assert result["state"] == "found"
+    assert [row["file_id"] for row in result["sources"]] == [file_id]
+
+
+def test_xlsx_preview_resolves_human_readable_sheet_anchor(tmp_path: Path) -> None:
+    from openpyxl import Workbook
+
+    path = tmp_path / "Tetra network diagram data.xlsx"
+    workbook = Workbook()
+    overview = workbook.active
+    overview.title = "Overview"
+    overview.append(["Summary"])
+    components = workbook.create_sheet("Components")
+    components.append(["ID", "Name"])
+    components.append(["C-003", "Gateway"])
+    components.append(["C-004", "ROTPRDREV101"])
+    network_data = workbook.create_sheet("Network data")
+    network_data.append(["Diagram note", "NOTE 12"])
+    workbook.save(path)
+
+    result = workspace.xlsx_preview(path, "Components sheet, C-004; Network data sheet, NOTE 12")
+
+    assert result["sheet"] == "Components"
+    assert result["highlight_row"] == 3
+    assert result["rows"][2] == ["C-004", "ROTPRDREV101"]
+
+
 def test_evidence_source_lookup_is_not_limited_to_first_500_rows(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     project, _ = make_workspace(tmp_path, monkeypatch)
     fields = ["evidence_id", "csa_area", "question", "claim", "status", "source_title",

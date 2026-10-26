@@ -67,7 +67,7 @@ OPERATIONS: dict[str, Operation] = {
     ),
     "review": Operation(
         "review", "Review section", "Run the framework review agent: verify applied edits, comments and DOCX integrity.",
-        ("review", "--window"), "required", "section",
+        ("review",), "required", "section",
         {}, timeout=900, mutating=True, mutation_class="document_write", lock="docx",
     ),
     "apply": Operation(
@@ -77,12 +77,12 @@ OPERATIONS: dict[str, Operation] = {
     ),
     "cleanup": Operation(
         "cleanup", "Cleanup section", "Finalise a reviewed section: accept signed-off changes and remove framework scaffolding.",
-        ("cleanup", "--window"), "required", "section",
+        ("cleanup",), "required", "section",
         {}, timeout=900, mutating=True, mutation_class="document_write", lock="docx",
     ),
     "author": Operation(
         "author", "Author proposal", "Draft an evidence-grounded proposal for one section (no-apply; routed to validation, never applied).",
-        ("author", "--window"), "required", "section",
+        ("author",), "required", "section",
         {"cards": "boolean", "legacy": "boolean", "fresh": "boolean", "check_answers": "boolean",
          "writer": "boolean", "no_writer": "boolean", "no_apply": "boolean"},
         timeout=1800, mutation_class="workspace_write", lock="section",
@@ -104,10 +104,10 @@ OPERATIONS: dict[str, Operation] = {
         "ingest", "Ingest new data", "Index new or changed files, sync the evidence matrix, host register and graph, then list stale subsections.",
         ("ingest",), options={"rebuild": "boolean"}, timeout=3600, mutation_class="workspace_write", lock="evidence",
     ),
-    # Evidence intake: new documents -> evidence (agent, own window), open questions -> candidates (no model).
+    # Evidence intake: new documents -> evidence (agent), open questions -> candidates (no model).
     "intake": Operation(
-        "intake", "Turn new documents into evidence", "The evidence agent reads the new and changed files from the last ingest and records what they state in the evidence matrix and graph. It runs in its own window.",
-        ("intake", "--window"), options={"cli": "identifier"}, timeout=3600, mutation_class="workspace_write", lock="evidence",
+        "intake", "Turn new documents into evidence", "The evidence agent reads the new and changed files from the last ingest and records what they state in the evidence matrix and graph.",
+        ("intake",), options={"cli": "identifier"}, timeout=3600, mutation_class="workspace_write", lock="evidence",
     ),
     "gap_check": Operation(
         "gap_check", "Check open questions", "Look up every open question in the evidence matrix and the index; what is found is added as candidate rows to settle (no model).",
@@ -115,7 +115,7 @@ OPERATIONS: dict[str, Operation] = {
     ),
     "resolve_gaps": Operation(
         "resolve_gaps", "Resolve evidence and update answers", "The evidence agent reads every candidate in its source, records supported facts or scoped gaps, then reruns the affected subsection answers.",
-        ("resolve-gaps", "--window", "--latest"), options={"cli": "identifier"}, timeout=7200,
+        ("resolve-gaps", "--latest"), options={"cli": "identifier"}, timeout=7200,
         mutating=True, mutation_class="document_write", lock="docx", closes_word=True,
     ),
     "stale": Operation(
@@ -124,22 +124,22 @@ OPERATIONS: dict[str, Operation] = {
     ),
     "answer": Operation(
         "answer", "Answer subsection", "Draft lane: card, one agent call, written into the working DOCX as plain text.",
-        ("answer", "--headless", "--window"), "required", "section", {"cli": "identifier", "fresh": "boolean"},
+        ("answer", "--headless"), "required", "section", {"cli": "identifier", "fresh": "boolean"},
         timeout=14400, mutating=True, mutation_class="document_write", lock="docx", closes_word=True,
     ),
     "refresh_draft": Operation(
         "refresh_draft", "Refresh stale answers", "Draft lane: answer again every subsection whose evidence changed.",
-        ("refresh-draft", "--headless", "--window"), options={"cli": "identifier"},
+        ("refresh-draft", "--headless"), options={"cli": "identifier"},
         timeout=14400, mutating=True, mutation_class="document_write", lock="docx", closes_word=True,
     ),
     # CSA figures: the agent rewords one figure's purpose and caption; placing puts a saved figure in the document.
     "figure_wording": Operation(
         "figure_wording", "Reword figure caption", "The wording agent rewords one figure's purpose and caption; the framework checks it against the evidence.",
-        ("figure", "--agent", "--window"), "required", "section", {"cli": "identifier"}, timeout=900, mutation_class="workspace_write",
+        ("figure", "--agent"), "required", "section", {"cli": "identifier"}, timeout=900, mutation_class="workspace_write",
     ),
     "figure_design": Operation(
-        "figure_design", "Figure design agent", "The CSA Figure Design Agent designs a figure for the section (design.md), builds it after you approve the design, or reviews a figure (review.md). It runs in its own window.",
-        ("figure", "--design", "--window"), "required", "section", {"mode": "identifier", "cli": "identifier"}, timeout=3600,
+        "figure_design", "Figure design agent", "The CSA Figure Design Agent designs a figure for the section (design.md), builds it after you approve the design, or reviews a figure (review.md).",
+        ("figure", "--design"), "required", "section", {"mode": "identifier", "cli": "identifier"}, timeout=3600,
         mutation_class="workspace_write", lock="section",
     ),
     "figure_place": Operation(

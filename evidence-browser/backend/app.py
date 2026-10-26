@@ -358,17 +358,40 @@ def xlsx_preview(path: Path, anchor: str | None) -> dict[str, Any]:
 
     workbook = load_workbook(path, read_only=True, data_only=True)
     sheet_name, target_row = workbook.sheetnames[0], 1
+    marker: str | None = None
     if anchor:
         match = re.search(r"(?:sheet!row\s+)?([^!]+)!(\d+)", anchor, re.I)
         if match and match.group(1) in workbook.sheetnames:
             sheet_name, target_row = match.group(1), int(match.group(2))
+        else:
+            # Evidence locations also use human-readable anchors such as
+            # "Components sheet, C-004; Network data sheet, NOTE 12".  Prefer
+            # the first named sheet and locate its cited row identifier.
+            named_sheets: list[tuple[int, str, str | None]] = []
+            for candidate in sorted(workbook.sheetnames, key=len, reverse=True):
+                named = re.search(rf"\b{re.escape(candidate)}\s+sheet\b(?:\s*,\s*([^;]+))?",
+                                  anchor, re.I)
+                if named:
+                    named_sheets.append((named.start(), candidate, (named.group(1) or "").strip() or None))
+            if named_sheets:
+                _, sheet_name, marker = min(named_sheets, key=lambda item: item[0])
     sheet = workbook[sheet_name]
+    if sheet.max_row is None or sheet.max_column is None:
+        # Some valid workbooks omit worksheet dimension metadata.  Openpyxl's
+        # read-only mode then reports None until dimensions are calculated.
+        sheet.calculate_dimension(force=True)
+    if marker:
+        wanted = marker.casefold()
+        for row_number, row in enumerate(sheet.iter_rows(values_only=True), start=1):
+            if any(str(value).strip().casefold() == wanted for value in row if value is not None):
+                target_row = row_number
+                break
+    total_rows = sheet.max_row or 0
     first = max(1, target_row - 30)
-    last = min(sheet.max_row, target_row + 70)
+    last = min(total_rows, target_row + 70)
     sheet_names = list(workbook.sheetnames)
-    total_rows = sheet.max_row
     rows = [["" if cell.value is None else str(cell.value) for cell in row[:40]]
-            for row in sheet.iter_rows(min_row=first, max_row=last)]
+            for row in sheet.iter_rows(min_row=first, max_row=last)] if last >= first else []
     workbook.close()
     return {"kind": "grid", "name": path.name, "sheets": sheet_names,
             "sheet": sheet_name, "row_start": first, "rows": rows,
@@ -1067,11 +1090,22 @@ def evidence_sources(system_key: str, evidence_id: str) -> dict[str, Any]:
                    if row["evidence_id"].upper() == evidence_id.upper()), None)
     if not target:
         raise HTTPException(404, "Evidence row was not found")
+    source_title = target.get("source_title", "")
     names = re.findall(r"[\w.\-]+\.(?:txt|csv|xlsx|docx|doc|pdf|md|log|json|xml|ps1|pptx)\b",
-                       target.get("source_title", ""), re.I)
+                       source_title, re.I)
     con = open_index(project)
     matches: list[dict[str, Any]] = []
     current_scope, scope_params = scope_clause(False, False)
+    # Intake rows commonly cite the full project-relative path.  Match that path
+    # before falling back to filename extraction: filenames containing spaces are
+    # otherwise truncated (for example, "Tetra network diagram data.xlsx" became
+    # only "data.xlsx") and a present source was reported as unavailable.
+    cited_path = source_title.strip().replace("\\", "/").removeprefix("./")
+    if cited_path:
+        rows = con.execute("SELECT f.file_id,f.rel_path,f.host,f.status FROM files f "
+                           f"WHERE lower(replace(f.rel_path, '\\', '/'))=lower(?) AND {current_scope}",
+                           [cited_path, *scope_params]).fetchall()
+        matches.extend(dict(row) for row in rows)
     for name in sorted(set(names)):
         rows = con.execute("SELECT f.file_id,f.rel_path,f.host,f.status FROM files f "
                            f"WHERE f.rel_path LIKE ? AND {current_scope}",

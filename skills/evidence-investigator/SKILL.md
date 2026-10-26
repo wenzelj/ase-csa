@@ -23,7 +23,7 @@ Build a defensible evidence set before analysis or writing.
    - `NOT_FOUND`: absent after a proportionate search of the stated source set.
 6. Compare duplicate claims across sources and preserve disagreements.
 
-Never upgrade an inference because it is technically plausible. Do not use prior knowledge to complete hostnames, addresses, versions, ownership, topology, control status, or dates. A diagram may establish relationships but not undocumented implementation details.
+Never upgrade an inference because it is technically plausible. Do not use prior knowledge to complete hostnames, addresses, versions, ownership, topology, control status, or dates. A diagram may establish relationships but not undocumented implementation details. When a diagram's concrete value (address, hostname, port, version, role) disagrees with a live capture, connection log, resolver/DNS or asset/inventory record, the log/inventory value is authoritative and the diagram is out of date: record the log/inventory value as `VERIFIED` and reject the diagram row as superseded (do not carry it as `CONFLICTING`). See the Evidence section of `.agents/csa-core-rules.md`.
 
 ## Host-outward method (every captured host gets a full picture)
 

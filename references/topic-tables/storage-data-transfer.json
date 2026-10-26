@@ -12,6 +12,14 @@
    "common": "have removable storage policy {value}", "common_none": "have no removable storage policy"},
   {"label": "Proxy", "attribute": "transfer.proxy", "explains": "whether transfers go through a proxy", "common": "use proxy setting {value}"}
  ],
+ "evidence_tables": [
+  {"requirement": "SEP-STOR-01", "kind": "roles", "title": "Storage discovery evidence",
+   "attributes": ["storage.database", "storage.shares"]},
+  {"requirement": "SEP-STOR-02", "kind": "roles", "title": "Transfer-control discovery evidence",
+   "attributes": ["storage.shares", "transfer.tools", "transfer.removable", "transfer.proxy"]},
+  {"requirement": "SEP-STOR-03", "kind": "flows", "title": "Data-direction discovery evidence"}
+ ],
+ "replace_observation_table": true,
  "common_values": {"Not set in applied Group Policy": "have no removable storage restriction in applied Group Policy",
                    "Direct, no WinHTTP proxy": "have no WinHTTP proxy configured",
                    "None found": "have no file transfer tools installed",

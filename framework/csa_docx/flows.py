@@ -297,9 +297,11 @@ def build(work_dir: Path, con=None) -> dict:
             mech, sig = "directory (RPC)", {"means": "a domain member calling a domain controller on a dynamic RPC port",
                                             "confirm": ""}
         hint = r.pop("status_hint", "observed")
-        d = next((d for d in decl if _matches(d, r)), None) if hint == "observed" else None
+        d = next((d for d in decl if _matches(d, r, mech)), None) if hint == "observed" else None
         if d:
             matched.add(d["id"])
+            if mech == "other":     # a vendor protocol the flow map declares as a data flow (e.g. a radio API)
+                mech = "message/API"
         zs, zd = z.of(r["src"]), z.of(r["dst"])
         out.append({**r, "status": "both" if d else hint, "mechanism": mech, "data": "yes" if mech in DATA_MECHANISMS else "no",
                     "src_role": (reg.get(r["src"]) or {}).get("role", ""), "dst_role": (reg.get(r["dst"]) or {}).get("role", ""),
@@ -344,9 +346,21 @@ def build(work_dir: Path, con=None) -> dict:
             "out": str(f)}
 
 
-def _matches(d: dict, r: dict) -> bool:
+DB_PORTS = {p for p, c in PORT_CLASS.items() if c == "database"}
+_HEDGED = re.compile(r"\b(candidates?|confirm)\b", re.I)
+
+
+def _matches(d: dict, r: dict, mech: str = "") -> bool:
     """An observed flow matches a declared one: both named ends match, and where a declaration names an end
-    only by description ("Internet / Azure", "IT SOE Workstation") the port must match."""
+    only by description ("Internet / Azure", "IT SOE Workstation") the port must match.
+
+    When both ends are named hosts, two port differences still match, because flow maps record the default
+    port rather than the one a deployment uses:
+    * a declared database flow (a database port, e.g. "1433 expected") matches an observed database flow on
+      any port (a named SQL Server instance listens on its own static or dynamic port);
+    * a declaration whose ports are only candidates ("80/443/8080/8443 candidates, confirm") matches an
+      observed flow on a vendor port the port table does not classify (mechanism "other").
+    The observed row keeps its real port, so the text reports what the capture shows."""
     if not d["src_hosts"] and not d["dst_hosts"]:
         return False
     src_ok = r["src"] in d["src_hosts"] if d["src_hosts"] else True
@@ -354,8 +368,14 @@ def _matches(d: dict, r: dict) -> bool:
     if not (src_ok and dst_ok):
         return False
     if d["src_hosts"] and d["dst_hosts"]:
-        return r["port"] in d["port_list"] or not d["port_list"]
-    return r["port"] in d["port_list"]
+        if r["port"] in d["port_list"] or not d["port_list"]:
+            return True
+        if mech == "database" and d["port_list"] & DB_PORTS:
+            return True
+        return mech == "other" and bool(_HEDGED.search(d.get("ports", "")))
+    # an end named only by description is matched on the port: the flow must also carry data (patch or
+    # management traffic on 443 is not the declared data flow)
+    return r["port"] in d["port_list"] and (not mech or mech in DATA_MECHANISMS)
 
 
 def _zone_of_list(z, hosts: set) -> dict:
@@ -374,7 +394,7 @@ def _cross(a: str, b: str) -> str:
 
 
 def groups(rows: list[dict]) -> list[dict]:
-    """Flows grouped for reading: flows of one mechanism and port to the same far end merge their sources
+    """Flows grouped for reading: flows of one mechanism, port and flow-map entry to the same far end merge their sources
     ("ROTPRDCLU101, ROTPRDCLU102 -> 10.40.254.6"); a source talking to many ends of one mechanism and port merges
     its destinations ("IPTPRDAPP137 -> 34.120.2.104, 34.132.184.13 ..."). Declared-only flows stay one per CSID.
     Each group: {mechanism, port, status, srcs, dsts, src_zones, dst_zones, cross_zone, flows, signature, confirm,
@@ -389,14 +409,14 @@ def groups(rows: list[dict]) -> list[dict]:
         if r["status"] == "attempted":                 # unanswered requests: one row per mechanism and port
             attempted.setdefault((r["mechanism"], r["port"]), []).append(r)
             continue
-        by_dst.setdefault((r["mechanism"], r["port"], r["dst"], r["status"]), []).append(r)
+        by_dst.setdefault((r["mechanism"], r["port"], r["dst"], r["status"], r.get("declared_id", "")), []).append(r)
     singles: dict[tuple, list[dict]] = {}
     for k, rs in by_dst.items():
         if len(rs) > 1:
             out.append(_group(rs))
         else:
             r = rs[0]
-            singles.setdefault((r["mechanism"], r["port"], r["src"], r["status"]), []).append(r)
+            singles.setdefault((r["mechanism"], r["port"], r["src"], r["status"], r.get("declared_id", "")), []).append(r)
     out += [_group(rs) for rs in singles.values()]
     out += [_group(rs) for rs in attempted.values()]
     order = {"yes": 0, "unknown": 1, "no": 2}

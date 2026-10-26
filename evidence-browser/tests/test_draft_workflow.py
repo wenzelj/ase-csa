@@ -9,15 +9,15 @@ from backend.models import CommandRequest
 AGENTS = Path(__file__).resolve().parents[2]
 
 
-def test_answer_runs_in_a_visible_window_with_the_chosen_model():
+def test_answer_runs_as_one_headless_job_with_the_chosen_model():
     op, argv = commands.build_argv(AGENTS, "tetra-reveloc", "answer", CommandRequest(target="3.4", options={"cli": "evo", "fresh": True}))
-    assert argv[3:] == ["answer", "--headless", "--window", "3.4", "--cli", "evo", "--fresh"]
+    assert argv[3:] == ["answer", "--headless", "3.4", "--cli", "evo", "--fresh"]
     assert op.lock == "docx" and op.closes_word
 
 
 def test_refresh_runs_as_a_visible_one_shot_job():
     _op, argv = commands.build_argv(AGENTS, "tetra-reveloc", "refresh_draft", CommandRequest(options={"cli": "evo"}))
-    assert argv[3:] == ["refresh-draft", "--headless", "--window", "--cli", "evo"]
+    assert argv[3:] == ["refresh-draft", "--headless", "--cli", "evo"]
 
 
 def test_answer_refuses_an_unknown_model_and_freeze_only_takes_v1():

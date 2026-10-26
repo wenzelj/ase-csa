@@ -10,8 +10,11 @@ cd "$ROOT"
 command -v uv  >/dev/null || { echo "uv not found (brew install uv)"; exit 1; }
 command -v npm >/dev/null || { echo "npm not found (brew install node)"; exit 1; }
 
-# Install deps on first run
-[ -d .venv ] || uv sync
+# Build/synchronise the backend environment before starting the frontend.
+echo "Building backend..."
+uv sync
+
+# Install frontend deps on first run
 [ -d frontend/node_modules ] || (cd frontend && npm install)
 
 echo "Building frontend..."

@@ -46,6 +46,24 @@ def test_declared_flows_are_read_and_matched():
     assert not flows._matches(d["RB2"], {"src": "BRDSRV001", "dst": "10.86.160.4", "port": "80"})
 
 
+def test_declared_flows_match_named_instance_and_candidate_vendor_ports():
+    text = ("CSID        : R1\nSource      : APPSRV001\nDestination : OTDBSRV001\nFlow        : App to SQL\n"
+            "Ports       : 1433 expected, confirm\n\nCSID        : R2\nSource      : APPSRV001\nDestination : LOGSRV001\n"
+            "Flow        : App to log API\nPorts       : 80/443/8080/8443 candidates, confirm\n\n"
+            "CSID        : R3\nSource      : Other app\nDestination : OTDBSRV001\nFlow        : x\nPorts       : 1433 expected\n")
+    d = {x["id"]: x for x in flows.declared(text)}
+    db = {"src": "APPSRV001", "dst": "OTDBSRV001", "port": "56420"}
+    assert flows._matches(d["R1"], db, "database")                        # named SQL instance port
+    assert not flows._matches(d["R1"], db, "database replication")
+    assert not flows._matches(d["R1"], {**db, "port": "445"}, "file share")
+    api = {"src": "APPSRV001", "dst": "LOGSRV001", "port": "42380"}
+    assert flows._matches(d["R2"], api, "other")                          # vendor port, declared ports only candidates
+    assert not flows._matches(d["R2"], {**api, "port": "445"}, "file share")
+    assert not flows._matches(d["R3"], {"src": "X", "dst": "OTDBSRV001", "port": "56420"}, "database")  # unnamed end: port must match
+    assert flows._matches(d["R3"], {"src": "X", "dst": "OTDBSRV001", "port": "1433"}, "database")
+    assert not flows._matches(d["R3"], {"src": "X", "dst": "OTDBSRV001", "port": "1433"}, "patch management")
+
+
 def _row(src, dst, port, mech="file share", status="observed", cz="no"):
     return {"src": src, "dst": dst, "port": port, "mechanism": mech, "status": status, "cross_zone": cz, "src_zone": "OT",
             "dst_zone": "OT", "sources": "c: 23_process_connection_mapping.txt line 1", "excerpt": "x", "signature": "",
@@ -58,6 +76,13 @@ def test_groups_merge_sources_to_one_end_and_ends_of_one_source():
     assert {tuple(g["srcs"]) for g in gs} == {("A1", "A2"), ("WEB1",)}
     assert [g for g in gs if g["srcs"] == ["WEB1"]][0]["dsts"] == ["8.8.8.8", "8.8.4.4"]
     assert gs[0]["cross_zone"] == "yes"                        # cross-zone groups come first
+
+
+def test_groups_keep_different_declared_flows_apart():
+    a = {**_row("APP1", "DB1", "56420", "database"), "declared_id": "R1"}
+    b = {**_row("CLIENT1", "DB1", "56420", "database"), "declared_id": "M1"}
+    gs = flows.groups([a, b])
+    assert sorted(g["srcs"][0] for g in gs) == ["APP1", "CLIENT1"] and len(gs) == 2
 
 
 def _cap(fname, text, host="H1"):
@@ -147,3 +172,11 @@ def test_two_tables_are_placed_and_replaced_together():
     assert what2 == "replaced" and twice == once
     gone, what3 = tt.place_xml(once, [], "Storage & Data Transfer")
     assert what3 == "removed" and gone == DOC
+
+
+def test_requirement_table_markdown_names_the_requirement():
+    table = {"status": "OK", "requirement": "SEP-STOR-01", "evidence_title": "Storage discovery evidence",
+             "columns": ["Role", "Hosts", "Database"], "common": "", "markers": [],
+             "rows": [{"role": "SQL node", "first": True, "hosts": ["DB1"], "cells": ["SQL Server"]}]}
+    text = tt.markdown([table])
+    assert text.startswith("### SEP-STOR-01 — Storage discovery evidence")

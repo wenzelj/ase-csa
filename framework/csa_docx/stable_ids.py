@@ -32,12 +32,14 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True, slots=True)
 class StableId:
-    kind: str            # "P" (paragraph) | "T" (table row)
+    kind: str            # "H" (heading) | "P" (paragraph) | "T" (table row)
     section_path: str    # e.g. "2.1.4"
     ordinal: int = 1     # 1-based ordinal (P ordinal, or T table ordinal)
     row: int | None = None  # 1-based table row ordinal; None for non-table kinds
 
     def __str__(self) -> str:
+        if self.kind == "H":
+            return f"@H{self.section_path}"
         if self.kind == "T" and self.row is not None:
             return f"@H{self.section_path}-T{self.ordinal}-R{self.row}"
         return f"@H{self.section_path}-{self.kind}{self.ordinal}"
@@ -57,7 +59,7 @@ def extract_stable_id(where: str) -> StableId | None:
     if match.group(5):
         row = int(match.group(8)) if match.group(8) else None
         return StableId(kind="T", section_path=section_path, ordinal=int(match.group(6)), row=row)
-    return None
+    return StableId(kind="H", section_path=section_path)
 
 
 def _heading_level(paragraph) -> int | None:

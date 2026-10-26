@@ -682,6 +682,53 @@ def _read_docx_table_rows(docx: Path) -> dict[str, list[str]]:
     return rows
 
 
+def test_docxengine_inserts_after_duplicate_heading_by_heading_stable_id(tmp_path):
+    package = tmp_path / "pkg"
+    document_xml = _make_test_docx_parts(package)
+    package_editor = DocumentEditor(document_xml)
+    body = package_editor.root.find(qn(W_NS, "body"))
+    assert body is not None
+    body.append(_make_heading("First section", 1))
+    body.append(_make_heading("Discovery Information", 2))
+    body.append(make_paragraph("First body"))
+    body.append(_make_heading("Second section", 1))
+    body.append(_make_heading("Discovery Information", 2))
+    body.append(make_paragraph("Second body"))
+    package_editor.save()
+
+    docx = tmp_path / "headings.docx"
+    with zipfile.ZipFile(docx, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for file_path in sorted(package.rglob("*")):
+            if file_path.is_file():
+                archive.write(file_path, file_path.relative_to(package).as_posix())
+
+    editor = DocxEngineEditor(docx)
+    record = parse_change_records(
+        """### E-200 - Add the first requirement story
+**Where:** `@H1.1` -- currently: "Discovery Information"
+**Do:** Insert After
+**Text:**
+> SEP-STOR-01 — Evidence-backed story.
+**Why:** The full story belongs below Discovery Information.
+"""
+    )[0]
+
+    result = editor.apply_change(record, "Wenzel Joubert", "WJ")
+    editor.save()
+
+    assert result.status == "APPLIED"
+    with zipfile.ZipFile(docx) as archive:
+        root = ET.fromstring(archive.read("word/document.xml"))
+    texts = [normalise_text(paragraph_text(p)) for p in root.iter(qn(W_NS, "p"))]
+    assert texts[:4] == [
+        "First section",
+        "Discovery Information",
+        "SEP-STOR-01 — Evidence-backed story.",
+        "First body",
+    ]
+    assert texts.count("SEP-STOR-01 — Evidence-backed story.") == 1
+
+
 def _make_table_row(*cells: str) -> ET.Element:
     tr = ET.Element(qn(W_NS, "tr"))
     for cell in cells:

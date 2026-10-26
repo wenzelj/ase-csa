@@ -6,8 +6,8 @@ The card (`CARD=`) is your whole input. Write the answer sheet (`SHEET=`) once a
 
 - One block per question on the card, in order: `## B1 <short label>`. Reviewer comments (`C1` ...) get `Answer: B<n>` (the block that answers them).
 - `Facts:` are one sentence each about the system, ending with the evidence IDs and the basis and scope: `- MOTPRDREV101 hosts the Reveloc application. (E-003) {observed; MOTPRDREV101}`. Basis is `observed`, `documented` or `stated` for evidence (E-) facts, and `background` only for a knowledge (K-) fact.
-- `Text:` (requirement and narrative blocks) is the finished prose for the document: one line per paragraph, built only from that block's Facts, with no evidence IDs.
-- Requirement blocks: `Facts:`, `Text:` (the current state, one to three sentences), `Rating:` (one of the card's ratings) and `Rating reason:` (one sentence).
+- `Text:` is the finished prose for narrative blocks. For requirement blocks on a card with "Requirement summaries and stories", use `Summary:` for the Current State table cell and `Story:` for the fuller paragraph under Discovery Information. All prose is built only from that block's Facts and has no evidence IDs.
+- Split requirement blocks: `Facts:`, `Summary:` (one to three sentences, at most 80 words), `Story:` (the fuller evidence-backed narrative), `Rating:` and `Rating reason:`. Do not repeat the SEP label because the framework adds it to the story.
 - Table blocks: `Rows:` starts with the header row exactly as the card gives the columns, then one row per item. Evidence IDs go in brackets in the last cell, and the framework strips them.
 - Findings blocks: `Bullets:` with one finding per bullet.
 - The optional note under a table (`note`): `None: <why>` removes it, or one or two evidenced sentences of a fact the rows cannot show (a host unlike its group, sources that disagree, fewer hosts covered). Start from the card's "Note candidates". Facts only, never a repeat of a row.
@@ -40,7 +40,7 @@ The card (`CARD=`) is your whole input. Write the answer sheet (`SHEET=`) once a
 
 ## Hard errors (the only ones that stop the write)
 
-QUESTION_MISSING, EMPTY_ANSWER, FACT_NO_EVIDENCE, UNKNOWN_EVIDENCE, RATING_INVALID, COLUMNS, ROW_WIDTH, NO_ROWS, REQUIREMENT_NO_FACTS, CROSS_PROJECT_ONLY, NOTE_TOO_LONG, NOTE_NONE_AND_TEXT, NOTE_NO_FACTS, SEMICOLON, PROCESS_AS_SUBJECT, CITATION_OFF_TOPIC, CAPTURE_DROPPED, UNKNOWN_BUNDLED and the BACKGROUND_ codes. Everything else is reported as a warning. `csa check-change` does not run in the draft lane.
+QUESTION_MISSING, EMPTY_ANSWER, FACT_NO_EVIDENCE, UNKNOWN_EVIDENCE, RATING_INVALID, COLUMNS, ROW_WIDTH, NO_ROWS, REQUIREMENT_NO_FACTS, SUMMARY_MISSING, STORY_MISSING, SUMMARY_TOO_LONG, SUMMARY_TOO_MANY_SENTENCES, SUMMARY_REPEATS_STORY, STORY_AND_TEXT, CROSS_PROJECT_ONLY, NOTE_TOO_LONG, NOTE_NONE_AND_TEXT, NOTE_NO_FACTS, SEMICOLON, PROCESS_AS_SUBJECT, CITATION_OFF_TOPIC, CAPTURE_DROPPED, UNKNOWN_BUNDLED and the BACKGROUND_ codes. Everything else is reported as a warning. `csa check-change` does not run in the draft lane.
 
 Do not open other rule files. Report in two lines: questions answered, questions unknown.
 - Drawbridge Impact: state each stop plainly and say what it means for operations in the function's own words (from the function map). Where a path's zone is not recorded, say so once in an `Unknown:` line; do not hedge the Text with "if" or "may" (DRAWBRIDGE_HEDGE). Leave out a part outside OT whose only paths are its own outward internet paths unless it loses a path into OT.

@@ -29,7 +29,7 @@ Out of scope (follow-up): `answer_cache` marks **every** answer stale when `host
 
 - Every matrix write goes through `evidence_matrix.py append` / `review`. Every graph write goes through `graph_store.py append-node` / `append-edge` / `review`. No CSV is edited directly. The matrix and graph stay append-only.
 - Never infer: VERIFIED rows quote the cited source (the source check must pass). Readings that depend on table layout carry `confidence: medium` and an `inference_reason`.
-- Model work runs only as a framework agent launched through `csa <verb> --headless` (its own visible window through `csa-window`). The model is chosen per run: `claude | codex | evo`.
+- Model work runs only as a framework agent launched through `csa <verb> --headless` in the invoking process. The model is chosen per run: `claude | codex | evo`.
 - This page never writes the working DOCX. Answering stays on Draft answers (draft lane) or Assessment (V1).
 - Framework skill scripts are stdlib only and Python 3.8+. `csa_docx` modules use Python 3.11+.
 - Projects allowlist stays `{"iamps-08", "utcdtc", "tetra-reveloc"}`. The server stays loopback only.
@@ -162,7 +162,7 @@ Out of scope (follow-up): `answer_cache` marks **every** answer stale when `host
 
 Page layout (one column, a step rail like Draft answers):
 1. **Bring in new data**, button *Ingest new data* → `ingest`. This shows added, changed and removed files with their status. Unreadable files sit in their own warning list, labelled "Not readable: supply a text or PDF copy".
-2. **Turn new documents into evidence**, with a model select (`claude | codex | evo`, remembered like `csa-draft-cli`) and the button *Run the evidence agent* → `intake`. The agent opens in its own window. This step lists `added_since_intake` rows (ID, status, claim, source) and shows the agent summary.
+2. **Turn new documents into evidence**, with a model select (`claude | codex | evo`, remembered like `csa-draft-cli`) and the button *Run the evidence agent* → `intake`. The agent runs as one tracked job and streams output in the page. This step lists `added_since_intake` rows (ID, status, claim, source) and shows the agent summary.
 3. **Check open questions**, button *Check open questions* → `gap_check`. This shows a table of each question with its verdict (Answered / Possible answer found / Not found) and evidence IDs.
 4. **Settle what was found**: one card per candidate with excerpt, source (*Open source* → `openFile`) and two buttons. *Not an answer* → `reviewEvidence(id,"rejected",…)`. *Write the fact* → `prepare` prefilled from the candidate (status VERIFIED, quote, source, location, question). On commit the page calls `reviewEvidence(id,"accepted","superseded by E-…")`.
 5. **Use it in the document**: the `gap_check.affected` sections, with *Open in Draft answers* (draft stage, focuses the row) or *Open in Assessment* (V1). The page does not run answers itself.

@@ -326,20 +326,74 @@ def build_flows(work_dir: Path, heading: str, profile: dict | None = None) -> di
 
 
 def build_all(work_dir: Path, heading: str, key: str = "") -> list[dict]:
-    """Every framework-built table for the topic: the role table, then the flows table when the profile asks for one."""
-    t = build(work_dir, heading, key)
-    out = [t]
-    if t.get("status") != "NO_PROFILE":
-        f = build_flows(work_dir, heading)
-        if f.get("status") == "OK":
-            out.append(f)
+    """Every framework-built table for the topic.
+
+    A profile may declare ``evidence_tables`` to project capture data into one table per requirement. The placer
+    keeps each projection immediately after that requirement's story. One-requirement profiles get the same
+    behaviour automatically; older multi-requirement profiles retain their combined tables.
+    """
+    profile = profile_for(heading)
+    if not profile:
+        return [{"status": "NO_PROFILE", "heading": heading}]
+    specs = profile.get("evidence_tables") or []
+    out: list[dict] = []
+    if specs:
+        for spec in specs:
+            projected = dict(profile)
+            projected["requirements"] = [spec["requirement"]]
+            if spec.get("kind", "roles") == "flows":
+                if spec.get("flows") is not None:
+                    projected["flows"] = spec["flows"]
+                table = build_flows(work_dir, heading, projected)
+            else:
+                attrs = set(spec.get("attributes") or [])
+                projected["columns"] = [c for c in profile.get("columns", []) if c.get("attribute") in attrs]
+                table = build(work_dir, heading, key, projected)
+            table["requirement"] = spec["requirement"]
+            table["evidence_title"] = spec.get("title", "Discovery evidence")
+            table["replace_observation_table"] = bool(profile.get("replace_observation_table"))
+            if table.get("status") == "OK":
+                out.append(table)
+    else:
+        t = build(work_dir, heading, key, profile)
+        out = [t]
+        if t.get("status") != "NO_PROFILE":
+            f = build_flows(work_dir, heading, profile)
+            if f.get("status") == "OK":
+                out.append(f)
+        reqs = profile.get("requirements") or []
+        if len(reqs) == 1:
+            for table in out:
+                table["requirement"] = reqs[0]
+
+    gaps: dict[tuple, dict] = {}
+    for table in out:
+        for gap in table.get("gaps", []):
+            sig = (gap.get("text", ""), tuple(gap.get("hosts", [])), gap.get("role", ""))
+            if sig not in gaps:
+                gaps[sig] = dict(gap)
+                gaps[sig]["reqs"] = []
+            gaps[sig]["reqs"] = sorted(set(gaps[sig]["reqs"]) | set(gap.get("reqs", [])))
+        table["gaps"] = []
+    merged = list(gaps.values())
+    for i, gap in enumerate(merged, 1):
+        gap["dr_id"] = f"DR-{key or profile.get('key', '')}-T{i:02d}"
+    if out:
+        out[0]["gaps"] = merged
     return out
 
 
 def markdown(t) -> str:
     """The table (or a list of tables) as Markdown (for the section card and the run log)."""
     if isinstance(t, list):
-        return "\n\n".join(m for m in (markdown(x) for x in t) if m)
+        parts = []
+        for x in t:
+            body = markdown(x)
+            if not body:
+                continue
+            label = x.get("requirement")
+            parts.append((f"### {label} — {x.get('evidence_title', 'Discovery evidence')}\n\n" if label else "") + body)
+        return "\n\n".join(parts)
     if t.get("status") != "OK":
         return ""
     out = ["| " + " | ".join(t["columns"]) + " |", "| " + " | ".join("---" for _ in t["columns"]) + " |"]
@@ -577,36 +631,65 @@ def place_xml(xml: str, t, heading: str, styles_xml: str = "") -> tuple[str, str
         raise ValueError(f"no 'Discovery Information' heading under '{heading}'")
     ins, fend, _lvl = loc
     blocks = _blocks(xml, ins, fend)
-    cut_s = cut_e = ins
-    replaced = False
-    keep: list[str] = []                          # figure blocks met among our tables: kept, after the new tables
     ours_tbl = lambda k, b: k == "tbl" and f'w:tblCaption w:val="{CAPTION}"' in b
     is_note = lambda k, b: k == "p" and 'w:val="TableNote"' in b and not _heading_level(b)
-    is_fig = lambda k, b: k == "p" and re.search(r'<w:pStyle w:val="(Figure|Caption|FigureSource)"', b) is not None
-    if blocks and (ours_tbl(blocks[0][0], blocks[0][3]) or is_fig(blocks[0][0], blocks[0][3])):
-        run: list[tuple[str, int, int, str]] = []
-        for kind, s, e, b in blocks:              # our tables, note lines and any figure placed among them,
-            if ours_tbl(kind, b) or is_note(kind, b) or is_fig(kind, b):   # up to the Aspect table or next heading
-                run.append((kind, s, e, b))
-                continue
-            break
-        if any(ours_tbl(k, b) for k, _s, _e, b in run):
-            replaced = True
-            cut_e = run[-1][2]
-            keep = [b for k, _s, _e, b in run if is_fig(k, b)]
-        else:
-            cut_e = cut_s
-    reference = next((b for k, _s, _e, b in blocks if k == "tbl" and f'w:tblCaption w:val="{CAPTION}"' not in b), None)
+    raw_tables = [(ins + m.start(), ins + m.end(), m.group(0)) for m in _TBL.finditer(xml[ins:fend])]
+    reference_entry = next(((s, e, b) for s, e, b in raw_tables
+                            if f'w:tblCaption w:val="{CAPTION}"' not in b), None)
+    reference = reference_entry[2] if reference_entry else None
     if reference is None:
         reference = next((m.group(0) for m in _TBL.finditer(xml) if "CSATable" in m.group(0)), None) or ""
+
+    # Requirement stories may now be the first paragraphs below Discovery Information. Previously the placer
+    # only recognised a framework table when it was the first block, so a rerun inserted a second copy ahead of
+    # the stories. Remove every framework table (and its generated notes) before the first ordinary table, then
+    # place one fresh set after the leading SEP stories. Figures and all other content stay where they are.
+    first_reference = next((i for i, (k, _s, _e, b) in enumerate(blocks)
+                            if k == "tbl" and not ours_tbl(k, b)), len(blocks))
+    replace_observation = any(x.get("replace_observation_table") for x in tables)
+    remove = [(s, e) for i, (k, s, e, b) in enumerate(blocks)
+              if ours_tbl(k, b) or (i < first_reference and is_note(k, b))]
+    if replace_observation and reference_entry:
+        remove.append(reference_entry[:2])
+    replaced = any(ours_tbl(k, b) for k, _s, _e, b in blocks)
+    clean = xml
+    for s, e in reversed(remove):
+        clean = clean[:s] + clean[e:]
+
     if not tables:
-        return xml[:cut_s] + "".join(keep) + xml[cut_e:], "removed" if replaced else "nothing to place"
+        return clean, "removed" if replaced else "nothing to place"
+
+    clean_loc = _locate(clean, heading)
+    if not clean_loc:
+        raise ValueError(f"no 'Discovery Information' heading under '{heading}' after table refresh")
+    clean_ins, clean_fend, _ = clean_loc
+    insert_at = clean_ins
+    story = re.compile(r"^SEP-[A-Z0-9-]+\s*(?:—|:|-)\s+", re.I)
+    clean_blocks = _blocks(clean, clean_ins, clean_fend)
+    story_ends: dict[str, int] = {}
+    for kind, _s, e, b in clean_blocks:
+        text = _text(b).strip() if kind == "p" else ""
+        m = re.match(r"^(SEP-[A-Z0-9-]+)\s*(?:—|:|-)\s+", text, re.I)
+        if m:
+            story_ends[m.group(1).upper()] = e
+    for kind, _s, e, b in clean_blocks:
+        if kind == "p" and story.match(_text(b).strip()):
+            insert_at = e
+            continue
+        break
     sid = (re.search(r'<w:tblStyle w:val="([^"]+)"', reference) or [None, ""])[1]
-    new = ""
-    for x in tables:
+
+    def rendered(x: dict) -> str:
         lines = [y for y in [x.get("common", ""), *x.get("markers", [])] if y] or [""]
-        new += table_xml(x, reference, band_fill(styles_xml, sid)) + "".join(_note(y) for y in lines)
-    return xml[:cut_s] + new + "".join(keep) + xml[cut_e:], "replaced" if replaced else "inserted"
+        return table_xml(x, reference, band_fill(styles_xml, sid)) + "".join(_note(y) for y in lines)
+
+    insertions: dict[int, str] = {}
+    for x in tables:
+        pos = story_ends.get((x.get("requirement") or "").upper(), insert_at)
+        insertions[pos] = insertions.get(pos, "") + rendered(x)
+    for pos in sorted(insertions, reverse=True):
+        clean = clean[:pos] + insertions[pos] + clean[pos:]
+    return clean, "replaced" if replaced else "inserted"
 
 
 def place(work_dir: Path, docx: Path, heading: str, key: str = "", backup: bool = True) -> dict:
@@ -634,7 +717,8 @@ def place(work_dir: Path, docx: Path, heading: str, key: str = "", backup: bool 
     from csa_docx.validator import validate_docx
     v = validate_docx(docx)
     return {"status": "OK", "action": what, "rows": len(t.get("rows", [])), "columns": t.get("columns", []),
-            "tables": [{"columns": x.get("columns", []), "rows": len(x.get("rows", []))} for x in tables if x.get("status") == "OK"],
+            "tables": [{"requirement": x.get("requirement"), "columns": x.get("columns", []),
+                        "rows": len(x.get("rows", []))} for x in tables if x.get("status") == "OK"],
             "gaps": [g["dr_id"] for g in t.get("gaps", [])], "unassigned": t.get("unassigned", []),
             "warnings": t.get("warnings", []), "backup": str(bak) if bak else None, "validation": v}
 

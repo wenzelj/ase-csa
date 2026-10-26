@@ -227,7 +227,7 @@ function AgentBox({ d, busy, run }: { d: Detail; busy: string; run: (mode: strin
       <p className="fg-muted">{built
         ? "The agent checks this figure against the design rules (IT, boundary and OT layers, one icon per role, one line per function, readable on A4) and lists each problem with its fix."
         : "This section has no figure the framework can draw yet. The agent works out whether a figure answers the section's question, what the evidence can show, and how to draw it, and writes a design. After you read the design, it can build the new kind of figure into the framework."}
-        {" "}It runs in its own window; this page updates when it finishes.</p>
+        {" "}It runs as one tracked job; this page updates when it finishes.</p>
       {confirm && <div className="fg-confirm">
         <span>Building changes the framework: the figure profile, the code that reads the evidence, and tests. It never changes the document.</span>
         <button className="primary" disabled={!!busy} onClick={() => { setConfirm(false); run("build", cli); }}>Build now</button>

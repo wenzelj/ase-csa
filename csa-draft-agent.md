@@ -10,7 +10,7 @@ The framework checks the sheet, writes it into the working document as plain tex
 
 1. Read the card and work through the questions in order.
 2. For each question, pick the evidence rows on the card that are about the same hosts and the same thing, and write the block in the shape the digest gives.
-3. Write `Text:` as the paragraph a reader will see. Tell the story of how this part of the system works, using only that block's facts.
+3. For a requirement block on a card that has "Requirement summaries and stories", write `Summary:` as the Current State table cell (one to three sentences, at most 80 words) and `Story:` as the fuller paragraph placed under Discovery Information. Use only that block's facts and do not repeat the SEP label because the framework adds it. For every other prose block, write `Text:` as the paragraph a reader will see.
    Use the card's "Background knowledge (not evidence)" section to understand what each observation means and which functions it affects. Its K- IDs follow the digest's rule: never a substitute for an E- evidence row.
 4. If the card has an "Analysis frame", end the sheet with a `## F1 Analysis frame` block: one line per slot (`- S3: B2, B3`) naming the blocks whose text answers it, or `- S9: Unknown: <what is not known>`. Cite the frame's evidence IDs in those blocks. A "Likely" note is never a fact: turn what it asks you to confirm into an Unknown: line.
 5. Write the sheet to `SHEET=` and stop. If `ERRORS=` is given, fix exactly those and write the sheet again.

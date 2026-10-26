@@ -22,7 +22,6 @@ codex_headless: codex exec -m gpt-5.6-sol -c model_reasoning_effort=medium --ski
 claude_interactive: claude {prompt}
 claude_headless: claude -p {prompt}
 # Evo: the dedicated Codex profile against the local model. Pick it per run with --cli evo.
-# Both modes stay in the invoking window; use `csa ... --window` only when a separate Terminal is wanted.
 evo_interactive: codex --profile evo-x3-qwen {prompt}
 evo_headless: codex exec --profile evo-x3-qwen --ignore-rules --skip-git-repo-check --output-last-message {last} {prompt}
 # Ollama: a local model (pick it per run with --cli ollama). --hidethinking keeps a thinking model's reasoning out of the reply.
@@ -47,7 +46,7 @@ task_cli:
 # `csa fleet`: run independent tasks side by side. One worker per slot; each task starts a
 # fresh headless CLI in a free slot and the process exits when the task is done. For codex,
 # each slot name is a Codex profile ({profile}); {last} is the file that gets the final message.
-# Each agent task opens its own Terminal window (csa-window); --no-window or CSA_NO_WINDOW=1 runs it in place.
+# Fleet workers remain children of the invoking command and never open separate Terminal windows.
 # DOCX steps never overlap (see `locks:` in registry.yaml). Override: --slots, --cli, CSA_FLEET_SLOTS.
 fleet_cli: codex
 fleet_slots: evo-x3-qwen

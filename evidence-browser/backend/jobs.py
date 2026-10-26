@@ -290,8 +290,8 @@ class JobManager:
     def _signal_process_tree(process: subprocess.Popen, value: signal.Signals) -> None:
         """Signal the job's process group, falling back to the direct child for injected/fake processes.
 
-        Jobs start in their own session so cancellation cannot leave ordinary descendants behind. A windowed CSA
-        command additionally forwards the signal from ``csa-window`` to the command running in Terminal.
+        Jobs start in their own process session solely so cancellation cannot leave ordinary descendants behind.
+        The model remains a tracked child of the Evidence Browser job; no Terminal window is opened.
         """
         if process.poll() is not None:
             return

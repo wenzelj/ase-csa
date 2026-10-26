@@ -23,13 +23,25 @@ assert(start.next === "ingest" && status(empty).ingest === "current" && status(e
 // New readable documents, no evidence yet.
 const fresh = { ...empty, intake: record };
 assert(deriveIntakeSteps(fresh, null).next === "documents" && status(fresh).ingest === "done", "added readable files: documents current");
-assert(deriveIntakeSteps(fresh, null).steps[0].detail.startsWith("1 new"), "ingest detail counts new files");
+assert(deriveIntakeSteps(fresh, null).steps[0].detail === "Complete · Last intake with changes: 1 new · 0 changed · 0 removed", "completed ingest is labelled as processed history");
+assert(deriveIntakeSteps(fresh, null).steps[1].detail === "1 document to read", "unprocessed documents remain explicit work");
 
 // Rows added, no gap check (or an older one): check open questions.
 const evidenced = { ...fresh, matrix: { ...fresh.matrix, added_since_intake: [{ evidence_id: "E-494" }] } };
 assert(deriveIntakeSteps(evidenced, null).next === "gaps", "rows added and no gap check: gaps current");
+assert(deriveIntakeSteps(evidenced, null).steps[0].detail === "Complete · Indexed changes processed", "completed intake does not present old file counts as outstanding");
+assert(deriveIntakeSteps(evidenced, null).steps[1].detail === "Complete · Documents processed", "completed evidence intake does not present old row counts as outstanding");
 const oldCheck = { ...evidenced, gap_check: { checked_at: "2026-10-11T00:00:00Z", section: "", questions: [], affected: [] } };
 assert(deriveIntakeSteps(oldCheck, null).next === "gaps", "gap check older than the intake: gaps current");
+
+// A completed agent run may legitimately add no rows when every statement was already recorded.
+const noRowsNeeded = { ...fresh, agent_summary: { path: "summary.md", text: "# Intake", modified_at: "2026-10-12T04:00:00Z" } };
+assert(deriveIntakeSteps(noRowsNeeded, null).steps[1].detail === "Complete · Documents processed", "completed no-op intake is not shown as unread work");
+
+// A completed run with many rows must not make historical totals look like pending work.
+const completedLargeRun = { ...fresh, matrix: { ...fresh.matrix, added_since_intake: Array.from({ length: 33 }, (_, i) => ({ evidence_id: `E-${500 + i}` })) }, agent_summary: { path: "summary.md", text: "# Intake", modified_at: "2026-10-12T04:00:00Z" } };
+const completedSteps = deriveIntakeSteps(completedLargeRun, null).steps;
+assert(!completedSteps[0].detail.includes("1 new") && !completedSteps[1].detail.includes("33"), "completed steps hide historical ingest and evidence counts");
 
 // One candidate to settle.
 const settle = { ...evidenced, gap_check: { checked_at: "2026-10-12T05:00:00Z", section: "", questions: [], affected: [{ number: "3.11", key: "BAK", title: "Backup", answered: 0, candidates: 1 }] },
@@ -54,7 +66,7 @@ assert(u.steps[1].detail === "Nothing readable came in" && u.steps[1].status ===
 
 // Ingest ran again with nothing new.
 const quiet = { ...use, nothing_new_since: "2026-10-12T03:00:00Z" };
-assert(deriveIntakeSteps(quiet, null).steps[0].detail.startsWith("Nothing new since"), "nothing new is said plainly");
+assert(deriveIntakeSteps(quiet, null).steps[0].detail.startsWith("Complete · Nothing new since"), "nothing new is said plainly and marked complete");
 
 // Write the fact settles only the candidate it was opened for, in the same project.
 const pending = { id: "E-510", dr: "DR-BAK-B1", system: "tetra" };

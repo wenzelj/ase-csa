@@ -55,6 +55,8 @@ Do not load specialist analysis skills, evidence skills, or the review skill.
 
 A requirement row (Req ID | Requirement | Current State | Rating) is written as `<current state> | <rating>` or as `Observed:` and `Assessment:` lines; the rating is one of the document's own (Met, Partially Met, Not Met, Not Applicable). Req ID and Requirement are never rewritten. The current state says whether the practice exists, what stands in for it and any scope exclusion, in one to three sentences, and never lists the hosts discovery found; wherever hosts are counted or listed, group them by role and make every breakdown add up to its total (see "Requirement rows" in `csa-writing-style`).
 
+A record titled `<SEP-ID> discovery story` is different from the table row. Preserve its leading `<SEP-ID> —` label and write the fuller operational narrative from that requirement's Facts. Do not condense it into the Current State summary and do not introduce a second requirement label.
+
 - Before rewriting any requirement row, read and validate its `Assessment basis` JSON against `current-state-reasoning.md` section 8. It must interpret the exact requirement text, split compound obligations, assess applicability, distinguish the actual communication mechanism, cite real E-ids, and justify the result. Do not write a rating from Facts alone. If the basis is absent, internally inconsistent, or `unable_to_determine`, return the record for author/reviewer action instead of guessing a document rating.
 
 - Read `WORK_DIR/author/<N>/search-notes.md` if it exists: do not repeat a search it records as done, and keep each `Not found:` line as an `Unknown:`, never a definite absence.

@@ -37,7 +37,7 @@ import sys
 from pathlib import Path
 
 _BLOCK = re.compile(r"^##\s+([BCF]\d+)\b[^\n]*$", re.M)
-_FIELD = re.compile(r"^(Facts|Text|Unknown|Rating reason|Rating|Rows|Bullets|Search|Keep|Answer|Dropped|Covers|None):\s*(.*)$", re.I)
+_FIELD = re.compile(r"^(Facts|Summary|Story|Text|Unknown|Rating reason|Rating|Rows|Bullets|Search|Keep|Answer|Dropped|Covers|None):\s*(.*)$", re.I)
 _PFX = r"(?:[a-z0-9][a-z0-9-]*:)?"                # another project's row: utcdtc:E-041 (estate member or system sibling)
 _ID = r"(?:" + _PFX + r"E-\d+|K-[0-9A-F]{6})"
 _FACT = re.compile(r"^[-*]\s+(?P<text>.+?)\s*(?:\((?P<ids>" + _ID + r"(?:\s*,\s*" + _ID + r")*)\))?\s*(?:\{(?P<meta>[^}]*)\})?\s*$")
@@ -63,7 +63,8 @@ def parse(text: str) -> dict[str, dict]:
     for i, m in enumerate(marks):
         body = text[m.end(): marks[i + 1].start() if i + 1 < len(marks) else len(text)]
         b = {"facts": [], "unknown": [], "rating": "", "rating_reason": "", "rows": [], "bullets": [],
-             "search": [], "keep": "", "answer": "", "text": "", "dropped": [], "none": "", "covers": [], "raw": body.strip()}
+             "search": [], "keep": "", "answer": "", "summary": "", "story": "", "text": "",
+             "dropped": [], "none": "", "covers": [], "raw": body.strip()}
         if m.group(1).startswith("F"):          # the analysis frame: one line per slot, blocks or Unknown:
             b["frame"] = {}
             for line in body.splitlines():
@@ -102,11 +103,13 @@ def parse(text: str) -> dict[str, dict]:
                     b["none"] = val or "yes"
                 elif field == "answer":
                     b["answer"] = val
+                elif field in ("summary", "story") and val:
+                    b[field] = b[field] + ("\n\n" if b[field] else "") + val
                 elif field == "text" and val:     # one Text: line per paragraph adds a paragraph, never replaces
                     b["text"] = b["text"] + ("\n\n" if b["text"] else "") + val
                 continue
-            if field == "text":            # draft lane: the finished prose for the block, any number of lines
-                b["text"] = b["text"] + ("\n\n" if b["text"] else "") + s     # one line = one paragraph
+            if field in ("summary", "story", "text"):
+                b[field] = b[field] + ("\n\n" if b[field] else "") + s
                 continue
             if field == "facts" and s.startswith(("-", "*")):
                 fm = _FACT.match(s)
@@ -129,6 +132,8 @@ def parse(text: str) -> dict[str, dict]:
                 b["search"].append(s.lstrip("-* "))
             elif field in ("rating reason",):
                 b["rating_reason"] = (b["rating_reason"] + " " + s).strip()
+        if b["story"] and not b["text"]:
+            b["text"] = b["story"]          # existing prose-quality checks apply to the detailed story
         out[m.group(1)] = b
     return out
 
@@ -217,7 +222,8 @@ HARD_CODES = {"CROSS_PROJECT_ONLY", "NOTE_TOO_LONG", "NOTE_NONE_AND_TEXT", "NOTE
               "SLOT_NOT_ANSWERED", "FLOW_NOT_COVERED", "ZONE_CONTRADICTED", "PART_NOT_NAMED", "ISOLATION_WRONG_SIDE",
               "PART_MISATTRIBUTED", "CITED_AND_DROPPED", "LABEL_AS_NAME", "PART_NAME_LIST", "SUBJECT_NOT_THIS_SYSTEM",
               "PRACTICE_NOT_ADDRESSED", "PRACTICE_ATTRIBUTION_DROPPED", "APPLICATION_ZONE_CLAIM",
-              "EXAMPLE_COPIED"}
+              "EXAMPLE_COPIED", "SUMMARY_MISSING", "STORY_MISSING", "SUMMARY_TOO_LONG", "SUMMARY_TOO_MANY_SENTENCES",
+              "SUMMARY_REPEATS_STORY", "STORY_AND_TEXT"}
 
 #: Relaxed draft lane (cli.yaml draft_strictness: relaxed, the default for csa answer): the answer's job is to answer the
 #: question from the evidence, so only what makes it wrong or unusable stops it: evidence it cannot cite, a missing or
@@ -228,7 +234,8 @@ HARD_CODES = {"CROSS_PROJECT_ONLY", "NOTE_TOO_LONG", "NOTE_NONE_AND_TEXT", "NOTE
 RELAXED_HARD = {"CROSS_PROJECT_ONLY", "QUESTION_MISSING", "EMPTY_ANSWER", "FACT_NO_EVIDENCE", "UNKNOWN_EVIDENCE",
                 "RATING_INVALID", "COLUMNS", "ROW_WIDTH", "NO_ROWS", "BACKGROUND_AS_EVIDENCE", "BACKGROUND_MIXED",
                 "BACKGROUND_NOT_ON_CARD", "BACKGROUND_ALONE", "ZONE_CONTRADICTED", "ISOLATION_WRONG_SIDE",
-                "ATTEMPT_AS_ESTABLISHED", "SLOT_NOT_ANSWERED", "CAPTURE_DROPPED"}
+                "ATTEMPT_AS_ESTABLISHED", "SLOT_NOT_ANSWERED", "CAPTURE_DROPPED", "SUMMARY_MISSING", "STORY_MISSING",
+                "SUMMARY_TOO_LONG", "SUMMARY_TOO_MANY_SENTENCES", "SUMMARY_REPEATS_STORY", "STORY_AND_TEXT"}
 
 # counts and totals of hosts ("9 of 12", "all 12 captured hosts", "nine hosts", "two RevViewer Jump Hosts"): CSA text
 # names the role groups instead. "stratum 5 hosts" and port numbers are not counts.
@@ -946,6 +953,7 @@ def _sheet_sentences(b: dict) -> list[tuple[str, str]]:
     """(where, text) for every line of a parsed block that can carry a claim into the document."""
     out = [("fact", f["text"]) for f in b["facts"]] + [("bullet", x) for x in b["bullets"]]
     out += [("row", " ".join(c)) for c in b["rows"][1:]]
+    out += [("Summary", s) for s in re.split(r"(?<=[.!?])\s+", b.get("summary") or "") if s.strip()]
     for para in (b.get("text") or "").split("\n\n"):
         out += [("Text", s) for s in re.split(r"(?<=[.!?])\s+", para) if s.strip()]
     return out
@@ -1020,7 +1028,8 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
         if b is None:
             findings.append(_f("ERROR", "QUESTION_MISSING", qid, f"no '## {qid}' block"))
             continue
-        has = b["facts"] or b["unknown"] or b["keep"] or b["rows"] or b["bullets"] or b["answer"] or b["search"] or b["none"]
+        has = (b["facts"] or b["unknown"] or b["keep"] or b["rows"] or b["bullets"] or b["answer"]
+               or b["search"] or b["none"] or b.get("summary") or b.get("story") or b.get("text"))
         if not has:
             findings.append(_f("ERROR", "EMPTY_ANSWER", qid, "no Facts, Rows, Bullets, Unknown, Keep, Search"
                                + (" or None" if q["kind"] == "note" else "")))
@@ -1080,7 +1089,7 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
                                    f"Unknown: line per question, so each becomes its own Discovery Required item: {u[:90]}"))
         if q["kind"] in ("requirement", "narrative", "findings", "note"):
             # no semicolons in anything that becomes document prose: Text, the facts it is built from, bullets
-            for where, s in [("Text", b.get("text") or "")] + [("fact", f["text"]) for f in b["facts"]] + \
+            for where, s in [("Summary", b.get("summary") or ""), ("Text", b.get("text") or "")] + [("fact", f["text"]) for f in b["facts"]] + \
                     [("bullet", x) for x in b["bullets"]]:
                 if ";" in s:
                     i = s.find(";")
@@ -1088,7 +1097,7 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
                                        "write two sentences, or join the parts with a comma and 'and' or 'but'"))
                     break
         # nothing about the framework's own search may reach the document, whatever the question kind
-        prose = [("Text", b.get("text") or "")] + [("fact", f["text"]) for f in b["facts"]] + \
+        prose = [("Summary", b.get("summary") or ""), ("Text", b.get("text") or "")] + [("fact", f["text"]) for f in b["facts"]] + \
                 [("bullet", x) for x in b["bullets"]] + [("unknown", u) for u in b["unknown"]] + \
                 [("row", " | ".join(c)) for c in b["rows"]]
         for where, s_ in prose:
@@ -1165,7 +1174,29 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
                 findings.append(_f("ERROR", "RATING_NO_REASON", qid, "a rating needs a 'Rating reason:'"))
             if not b["facts"] and not b["keep"] and b["rating"] not in ("Not Applicable",):
                 findings.append(_f("ERROR", "REQUIREMENT_NO_FACTS", qid, "a current state needs at least one fact"))
-        rendered = [("Text", b.get("text") or "")] + [("fact", f["text"]) for f in b["facts"]] + \
+            if card.get("requirement_stories") and not b["search"] and not b["keep"]:
+                summary = " ".join((b.get("summary") or "").split())
+                story = " ".join((b.get("story") or "").split())
+                if not summary:
+                    findings.append(_f("ERROR", "SUMMARY_MISSING", qid,
+                                       "write Summary: for the short Current State table cell"))
+                if not story:
+                    findings.append(_f("ERROR", "STORY_MISSING", qid,
+                                       "write Story: for this requirement under Discovery Information"))
+                if b.get("story") and re.search(r"(?im)^Text:\s*", b.get("raw") or ""):
+                    findings.append(_f("ERROR", "STORY_AND_TEXT", qid,
+                                       "use Story: for a split requirement answer; do not also provide legacy Text:"))
+                if summary and len(summary.split()) > 80:
+                    findings.append(_f("ERROR", "SUMMARY_TOO_LONG", qid,
+                                       f"Summary is {len(summary.split())} words; the Current State cell allows at most 80"))
+                sentences = [s for s in re.split(r"(?<=[.!?])\s+", summary) if s.strip()]
+                if len(sentences) > 3:
+                    findings.append(_f("ERROR", "SUMMARY_TOO_MANY_SENTENCES", qid,
+                                       f"Summary has {len(sentences)} sentences; use no more than three"))
+                if summary and story and _norm(summary) == _norm(story):
+                    findings.append(_f("ERROR", "SUMMARY_REPEATS_STORY", qid,
+                                       "Summary and Story are identical; keep the table concise and put the detail in the story"))
+        rendered = [("Summary", b.get("summary") or ""), ("Text", b.get("text") or "")] + [("fact", f["text"]) for f in b["facts"]] + \
                    [("bullet", x) for x in b["bullets"]] + [("row", " | ".join(c)) for c in b["rows"][1:]]
         for where, s_ in rendered:
             hit = totals_in(s_)
@@ -1284,6 +1315,7 @@ def render_records(sheet: dict[str, dict], card: dict, node: dict, section: str,
     """Change-file records for a valid sheet. Returns {records: [markdown], open: [...], keep: [...],
     scaffold: [...], audit: [...]}. Anchors come from the document spec node."""
     recs, open_q, keep, scaffold, audit = [], [], [], [], []
+    requirement_stories: list[dict] = []
     n = start
     parts = node["parts"]
 
@@ -1324,7 +1356,9 @@ def render_records(sheet: dict[str, dict], card: dict, node: dict, section: str,
             if not req:
                 continue
             observed = " ".join(_sentence(f) for f in b["facts"]) or "Not Applicable to the system in scope."
-            if b.get("text"):
+            if card.get("requirement_stories") and b.get("summary"):
+                observed = no_ids(" ".join(b["summary"].split()))
+            elif b.get("text"):
                 observed = no_ids(" ".join(b["text"].split()))
             elif b["unknown"]:
                 observed += f" Not established: {b['unknown'][0].rstrip('.')}."
@@ -1333,6 +1367,10 @@ def render_records(sheet: dict[str, dict], card: dict, node: dict, section: str,
                          facts, f"Observed: {observed}\nAssessment: {b['rating']}", why,
                          f"Current state and rating of {q['req_id']} from the evidence.")
             audit += [f"| {eid} | {_quote(_sentence(f), 160)} | {', '.join(f['ids'])} | {f['basis']} | {f['scope'] or '-'} |" for f in b["facts"]]
+            if card.get("requirement_stories") and b.get("story"):
+                requirement_stories.append({"req_id": q["req_id"], "qid": q["id"],
+                                            "text": no_ids(" ".join(b["story"].split())), "facts": facts,
+                                            "why": why, "fact_rows": list(b["facts"])})
         elif q["kind"] in ("observation", "register"):
             data = b["rows"][1:]
             have = p.get("rows", 0)
@@ -1382,6 +1420,51 @@ def render_records(sheet: dict[str, dict], card: dict, node: dict, section: str,
                                  "set_count": len(holders) - len(free) + len(bullets)})
             for (pid, cur), text in zip(free, bullets):
                 record(f"{node['title']}: finding", pid, cur, facts, no_ids(text), why, f"Finding for {node['title']}.")
+    if requirement_stories:
+        existing = {p.get("req_id"): p for p in node.get("parts", []) if p.get("kind") == "requirement-story"}
+        discovery = next((v for k, v in (node.get("facets") or {}).items()
+                          if k.strip().lower() == "discovery information"), None)
+
+        def story_record(item: dict, where: str, current: str, do: str) -> None:
+            text = f"{item['req_id']} — {item['text']}"
+            eid = record(f"{item['req_id']} discovery story", where, current, item["facts"], text,
+                         item["why"], f"Evidence-backed story for {item['req_id']} under Discovery Information.", do=do)
+            audit.extend(f"| {eid} | {_quote(_sentence(f), 160)} | {', '.join(f['ids'])} | {f['basis']} | {f['scope'] or '-'} |"
+                         for f in item["fact_rows"])
+
+        # Existing managed stories are replaced in place. Missing contiguous runs are inserted relative to the
+        # next existing story, or in reverse after the previous story/Discovery heading so document order is stable.
+        for item in requirement_stories:
+            part = existing.get(item["req_id"])
+            if part:
+                story_record(item, part["pid"], part.get("current") or item["req_id"], "Replace")
+        missing = [i for i, item in enumerate(requirement_stories) if item["req_id"] not in existing]
+        while missing:
+            start_i = missing[0]
+            run = [start_i]
+            while len(run) < len(missing) and missing[len(run)] == run[-1] + 1:
+                run.append(missing[len(run)])
+            missing = missing[len(run):]
+            next_i = next((i for i in range(run[-1] + 1, len(requirement_stories))
+                           if requirement_stories[i]["req_id"] in existing), None)
+            if next_i is not None:
+                anchor = existing[requirement_stories[next_i]["req_id"]]
+                for i in run:
+                    story_record(requirement_stories[i], anchor["pid"], anchor.get("current") or anchor["req_id"],
+                                 "Insert Before")
+                continue
+            prev_i = next((i for i in range(run[0] - 1, -1, -1)
+                           if requirement_stories[i]["req_id"] in existing), None)
+            if prev_i is not None:
+                anchor = existing[requirement_stories[prev_i]["req_id"]]
+                where, current = anchor["pid"], anchor.get("current") or anchor["req_id"]
+            else:
+                if not discovery:
+                    raise ValueError("requirement stories need a Discovery Information heading")
+                where, current = discovery["hid"], discovery["title"]
+            for i in reversed(run):
+                story_record(requirement_stories[i], where, current, "Insert After")
+
     return {"records": recs, "open": open_q, "keep": keep, "scaffold": scaffold, "audit": audit, "next": n}
 
 

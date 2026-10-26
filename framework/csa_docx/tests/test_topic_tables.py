@@ -141,6 +141,50 @@ def test_place_inserts_above_the_aspect_table_and_replaces_on_rerun(tmp_path):
     assert what3 == "removed" and empty == DOC
 
 
+def test_place_replaces_topic_table_after_requirement_stories_without_duplication(tmp_path):
+    t = build(tmp_path)
+    once, _ = tt.place_xml(DOC, t, "Time Synchronisation")
+    ours = once.index(f'<w:tbl>', once.index(f'w:tblCaption w:val="{tt.CAPTION}"') - 200)
+    story = ('<w:p><w:r><w:t>SEP-TIME-01 — The evidence-backed current-state story.</w:t></w:r></w:p>')
+    with_story = once[:ours] + story + once[ours:]
+
+    refreshed, what = tt.place_xml(with_story, t, "Time Synchronisation")
+
+    assert what == "replaced"
+    assert refreshed.count(f'w:tblCaption w:val="{tt.CAPTION}"') == 1
+    assert refreshed.count("SEP-TIME-01 —") == 1
+    assert refreshed.index("SEP-TIME-01 —") < refreshed.index(f'w:tblCaption w:val="{tt.CAPTION}"')
+    again, what2 = tt.place_xml(refreshed, t, "Time Synchronisation")
+    assert what2 == "replaced" and again == refreshed
+
+
+def test_place_interleaves_requirement_tables_and_removes_replaced_aspect_table():
+    stories = (
+        '<w:p><w:r><w:t>SEP-STOR-01 — Storage story.</w:t></w:r></w:p>'
+        '<w:p><w:r><w:t>SEP-STOR-02 — Transfer story.</w:t></w:r></w:p>'
+        '<w:p><w:r><w:t>SEP-STOR-03 — Direction story.</w:t></w:r></w:p>'
+    )
+    doc = DOC.replace(
+        '<w:p><w:pPr><w:pStyle w:val="Heading3"/></w:pPr><w:r><w:t>Discovery Information</w:t></w:r></w:p>',
+        '<w:p><w:pPr><w:pStyle w:val="Heading3"/></w:pPr><w:r><w:t>Discovery Information</w:t></w:r></w:p>' + stories,
+    ).replace("Time Synchronisation", "Storage &amp; Data Transfer")
+    tables = []
+    for req, value in (("SEP-STOR-01", "Storage evidence"), ("SEP-STOR-02", "Transfer evidence"),
+                       ("SEP-STOR-03", "Direction evidence")):
+        tables.append({"status": "OK", "requirement": req, "replace_observation_table": True,
+                       "columns": ["Role", "Hosts", "Finding"], "common": "", "markers": [],
+                       "rows": [{"role": "Application", "first": True, "hosts": ["HOST1"], "cells": [value]}]})
+
+    out, what = tt.place_xml(doc, tables, "Storage & Data Transfer")
+
+    assert what == "inserted"
+    assert ">Aspect<" not in out
+    order = [out.index(x) for x in ("SEP-STOR-01 —", "Storage evidence", "SEP-STOR-02 —", "Transfer evidence",
+                                     "SEP-STOR-03 —", "Direction evidence")]
+    assert order == sorted(order)
+    assert out.count(f'w:tblCaption w:val="{tt.CAPTION}"') == 3
+
+
 def test_place_replaces_tables_a_figure_split_and_keeps_the_figure(tmp_path):
     """A figure placed among the framework tables (a drawing with text boxes, so paragraphs inside a paragraph)
     must not strand the old tables: every framework table and note before the Aspect table is replaced, and the

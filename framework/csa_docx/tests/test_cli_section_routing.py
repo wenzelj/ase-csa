@@ -6,6 +6,8 @@ import json
 import runpy
 from pathlib import Path
 
+import pytest
+
 
 CSA = runpy.run_path(str(Path(__file__).parents[3] / "bin" / "csa"))
 
@@ -56,11 +58,9 @@ def test_unknown_visible_number_is_not_guessed(tmp_path):
     assert result["heading"] is None
 
 
-def test_interactive_answer_and_draft_passes_stay_in_the_invoking_window():
-    wrap = CSA["_agent_window_argv"]
-    command = ["codex", "--profile", "evo-x3-qwen", "prompt"]
-    assert wrap(command, "interactive", "answer") == command
-    assert wrap(command, "interactive", "draft") == command
+def test_model_commands_reject_removed_window_flag():
+    with pytest.raises(SystemExit):
+        CSA["main"](["answer", "--window", "3.9"])
 
 
 def test_local_prompt_names_the_supported_codex_cli_shell_tool(tmp_path):
@@ -77,52 +77,22 @@ def test_local_prompt_names_the_supported_codex_cli_shell_tool(tmp_path):
     assert "Never call `exec`" in prompt
 
 
-def test_agent_window_wrapper_does_not_change_headless_or_unforced_other_agents():
-    wrap = CSA["_agent_window_argv"]
-    command = ["codex", "prompt"]
-    assert wrap(command, "headless", "draft") == command
-    assert wrap(command, "interactive", "write") == command
+def test_fleet_model_argv_stays_in_the_invoking_process():
+    command = CSA["_fleet_argv"]({}, {"prompt": "prompt", "last": Path("last.md"), "verb": "author"},
+                                 "evo-x3-qwen", "codex")
+    assert command[0] == "codex"
+    assert not any("csa-window" in part for part in command)
 
 
-def test_agent_window_wrapper_forces_any_interactive_agent_into_a_window():
-    wrap = CSA["_agent_window_argv"]
-    command = ["codex", "prompt"]
-    wrapper = str(Path(__file__).parents[3] / "bin" / "csa-window")
-    assert wrap(command, "interactive", "settle", force=True) == [wrapper, *command]
+def test_fleet_rejects_removed_no_window_flag():
+    with pytest.raises(SystemExit):
+        CSA["main"](["fleet", "--no-window"])
 
 
-def test_agent_window_wrapper_can_show_a_headless_one_shot_agent():
-    wrap = CSA["_agent_window_argv"]
-    command = ["codex", "exec", "prompt"]
-    wrapper = str(Path(__file__).parents[3] / "bin" / "csa-window")
-    assert wrap(command, "headless", "answer", force=True) == [wrapper, *command]
-
-
-def test_headless_and_window_flags_can_be_combined():
-    seen = {}
-    main_globals = CSA["main"].__globals__
-    original = main_globals["cmd_agent"]
-    try:
-        main_globals["cmd_agent"] = lambda args: seen.update(headless=args.headless, window=args.window) or 0
-        assert CSA["main"](["answer", "--headless", "--window", "3.9"]) == 0
-    finally:
-        main_globals["cmd_agent"] = original
-    assert seen == {"headless": True, "window": True}
-
-
-def test_agent_window_wrapper_is_not_nested():
-    wrap = CSA["_agent_window_argv"]
-    wrapper = str(Path(__file__).parents[3] / "bin" / "csa-window")
-    command = [wrapper, "codex", "prompt"]
-    assert wrap(command, "interactive", "draft") == command
-
-
-def test_window_wrapper_forwards_stop_to_the_terminal_process_group():
-    wrapper = Path(__file__).parents[3] / "bin" / "csa-window"
-    source = wrapper.read_text(encoding="utf-8")
-    assert "shell-pid" in source
-    assert '/bin/kill -"$signal_name" -- -"$shell_pid"' in source
-    assert "trap on_term TERM HUP" in source
+def test_legacy_window_wrapper_is_an_in_place_compatibility_shim():
+    source = (Path(__file__).parents[3] / "bin" / "csa-window").read_text(encoding="utf-8")
+    assert "osascript" not in source
+    assert source.rstrip().endswith('exec "$@"')
 
 
 def test_focused_answer_written_to_base_is_recovered_before_exit_handling(tmp_path):
