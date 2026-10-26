@@ -39,6 +39,7 @@ CARD_FILL = "#ffffff"
 MECH = {"database": ("#167d8d", "Database"), "database replication": ("#167d8d", "Replication"),
         "file share": ("#2f6fb0", "File share"), "file transfer": ("#2f6fb0", "File transfer"),
         "backup agent": ("#b7791f", "Backup agent")}
+MECH_DASH = {"database replication": "2 0"}
 STATUS_DASH = {"seen": "", "declared": "7 5", "attempted": "2 4"}
 STATUS_TEXT = {"seen": "Seen in the captures", "declared": "Declared, not seen",
                "attempted": "Attempted, no reply seen"}
@@ -58,22 +59,21 @@ def text_w(text: str, size: float, bold: bool = False) -> float:
 
 
 def wrap(text: str, width: float, size: float, bold: bool = False) -> list[str]:
-    """Greedy word wrap by estimated width; a single word longer than the line is split, never truncated."""
+    """Greedy wrap by estimated width, breaking a word only at a space or a hyphen.
+
+    A single word wider than the box is not split: it is drawn on one line at a
+    smaller font size (down to 70%)."""
     lines, cur = [], ""
     for word in str(text).split():
-        while text_w(word, size, bold) > width:
-            k = len(word)
-            while k > 1 and text_w(word[:k], size, bold) > width:
-                k -= 1
-            if cur:
-                lines.append(cur); cur = ""
-            lines.append(word[:k]); word = word[k:]
+        # A single word wider than the box is drawn whole (at a smaller size, down to 70%),
+        # never split.
+        tok = word
         if not cur:
-            cur = word
-        elif text_w(cur + " " + word, size, bold) <= width:
-            cur += " " + word
+            cur = tok
+        elif text_w(cur + " " + tok, size, bold) <= width:
+            cur += " " + tok
         else:
-            lines.append(cur); cur = word
+            lines.append(cur); cur = tok
     if cur:
         lines.append(cur)
     return lines or [""]
@@ -86,11 +86,12 @@ def _text(x, y, lines, size, fill=NAVY, bold=False, anchor="start") -> str:
 
 
 # ------------------------------------------------------------------ the line sample
-def _sample(x, y, mech, status, data, opens_left=True, mid="m") -> str:
+def _sample(x, y, mech, status, data, opens_left=True, mid="m", dash: str | None = None) -> str:
     """A short line from the user (left) to the store (right): colour = mechanism, style = status,
     dot = the side that opens the connection, arrowheads = where the data goes."""
     col = MECH.get(mech, ("#6b7785", mech))[0]
-    dash = STATUS_DASH.get(status, "")
+    if dash is None:
+        dash = MECH_DASH.get(mech, "") or STATUS_DASH.get(status, "")
     da = f' stroke-dasharray="{dash}"' if dash else ""
     x1, x2 = x + 6, x + SAMPLE_W - 4
     o = [f'<line x1="{x1:.1f}" y1="{y:.1f}" x2="{x2:.1f}" y2="{y:.1f}" stroke="{col}" stroke-width="2.6" '
@@ -198,7 +199,7 @@ def card(c: dict, x: float, y: float, w: float) -> tuple[float, list[str]]:
     # replication between the nodes that hold the store
     for r in c.get("replication", []):
         cy += 8
-        o.append(_sample(x + PAD, cy + 6, "database replication", r["status"], "both", opens_left=False))
+        o.append(_sample(x + PAD, cy + 6, "database replication", r["status"], "both", opens_left=False, dash="2 0"))
         sites = sorted(r["sites"], key=lambda x_: next((i for i, lab in enumerate(SITE_ORDER) if lab.lower().startswith(x_.lower())), 99))
         where = (" and ".join(sites) if len(sites) > 1 else (sites[0] if sites else ""))
         txt = "Replicated between the cluster nodes" + (f", {where}" if where else "")
@@ -343,6 +344,14 @@ def render_store_svg(model: dict) -> tuple[str, dict]:
     uses = [u for c in cards for u in c["uses"]]
     reps = [r for c in cards for r in c.get("replication", [])]
     mechs = list(dict.fromkeys([u["mechanism"] for u in uses] + (["database replication"] if reps else [])))
+    if len(mechs) > 1:
+        seen = {}
+        for m in mechs:
+            dash = MECH_DASH.get(m, "") or STATUS_DASH.get("seen", "")
+            k = (MECH.get(m, ("", m))[0], dash)
+            if k in seen:
+                raise ValueError(f"legend entries {seen[k]} and {m} look the same")
+            seen[k] = m
     stats = list(dict.fromkeys([u["status"] for u in uses] + [r["status"] for r in reps]))
     flags = sorted({s["flag"] for c in cards for s in c["stores"] if s.get("flag")})
     rows: list[str] = []
@@ -364,7 +373,7 @@ def render_store_svg(model: dict) -> tuple[str, dict]:
         ly = y + (i % half) * (LH + 4) + 10
         tx = lx + SAMPLE_W + 10
         if kind == "mech":
-            o.append(_sample(lx, ly, val, "seen", "none", opens_left=False))
+            o.append(_sample(lx, ly, val, "seen", "none", opens_left=False, dash=MECH_DASH.get(val, "")))
             o.append(_text(tx, ly + 6, [MECH.get(val, ("", val))[1]], F_TEXT, MUTED))
         elif kind == "status":
             o.append(f'<line x1="{lx + 6:.1f}" y1="{ly:.1f}" x2="{lx + SAMPLE_W - 4:.1f}" y2="{ly:.1f}" stroke="{NAVY}" '

@@ -160,14 +160,10 @@ def _break_token(tok: str, avail: float, size: float, bold: bool = False) -> lis
 
 
 def _wrap(text: str, units: float, size: float, bold: bool = False, lines: int = 2) -> list[str]:
-    """Wrap to the width, breaking long tokens instead of ellipsising, then fold the remainder onto the last line.
-    Nothing is ever dropped: a long store name or UUID renders in full across as many lines as it needs."""
-    words: list[str] = []
-    for w in text.split():
-        if _tw(w, size, bold) <= units:
-            words.append(w)
-        else:
-            words.extend(_break_token(w, units, size, bold))
+    """Wrap to the width, breaking a word only at a space or a hyphen, then fold the remainder onto the last line.
+    A single word wider than the box is drawn at a smaller font size (down to 70%) instead of being split;
+    nothing is ever dropped."""
+    words = text.split()
     out, cur = [], ""
     for w in words:
         cand = f"{cur} {w}" if cur else w

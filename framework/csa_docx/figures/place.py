@@ -182,6 +182,51 @@ def _seq_runs(n: int) -> str:
             '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
 
 
+def _renumber_figures(text: str) -> tuple[str, int]:
+    """Walk every SEQ Figure field in document order and set its cached result to 1, 2, 3 ....
+
+    Handles the fldChar form _seq_runs writes (the <w:t> between separate and end) and the
+    w:fldSimple form (the <w:t> inside the field). The result text keeps its run properties;
+    Word still updates the fields itself. Returns the renumbered text and the count of live fields
+    (a field inside a tracked deletion is not live)."""
+    out, i, fields, L = [], 0, 0, len(text)
+    while i < L:
+        m = re.search(r"SEQ Figure|<w:fldSimple\b[^>]*>.*?</w:fldSimple>", text[i:], re.S)
+        if not m:
+            out.append(text[i:])
+            break
+        start = i + m.start()
+        if m.group(0).startswith("<w:fldSimple"):
+            end = i + m.end()
+            chunk = m.group(0)
+        else:
+            sep = text.find('w:fldCharType="separate"', start)
+            fin = text.find('w:fldCharType="end"', sep)
+            if sep < 0 or fin < 0:                      # malformed field: leave it alone, keep looking
+                out.append(text[i:start + 1])
+                i = start + 1
+                continue
+            end = fin
+            chunk = text[start:fin]
+        out.append(text[i:start])
+        deleted = "<w:del " in text[max(0, start - 1000):start] and "</w:del>" not in text[max(0, start - 1000):start]
+        if not deleted:
+            fields += 1
+        newn = str(fields)
+        out.append(re.sub(r"(<w:t(?:\s[^>]*)?>)[^<]*(</w:t>)",
+                          lambda mm, num=newn: mm.group(1) + num + mm.group(2), chunk, count=1))
+        i = end
+    return "".join(out), fields
+
+
+def _pointer(num: int, caption: str) -> str:
+    """A one-sentence pointer to the figure: its number, then the caption up to its first full stop."""
+    head = re.split(r"\s*\.", caption, maxsplit=1)[0].strip()
+    if head.endswith("."):
+        head = head[:-1].rstrip()
+    return f"Figure {num} shows {head}."
+
+
 def _new_block(drawing: str, caption: str, source: str, n: int, ids: _Ids, author: str, date: str, key: str) -> str:
     bm = ids.next()
     mark = lambda: f'<w:rPr><w:ins {_rev("ins", ids, author, date)}/></w:rPr>'
@@ -334,6 +379,7 @@ def place(docx: Path, title: str, level: int, key: str, png: Path, caption: str,
     text = xml.decode("utf-8")
     bpos = lambda i: len(xml[:kids[i][0]].decode("utf-8"))
     epos = lambda i: len(xml[:kids[i][1]].decode("utf-8"))
+    block = ""
     if where["mode"] in ("insert", "replace"):
         at = epos(where["after"]) if where["mode"] == "insert" else bpos(where["block"][0])
         n = len(re.findall(r"SEQ Figure", text[:at])) + 1
@@ -362,6 +408,10 @@ def place(docx: Path, title: str, level: int, key: str, png: Path, caption: str,
             cut = last if last >= 0 else chunk.rindex("</w:p>")
             new_parts.append(chunk[:cut] + ins + chunk[cut:])
         text = text[:bpos(fig)] + "".join(new_parts) + text[epos(where["block"][-1]):]
+    # Renumber every SEQ Figure field in document order: the cached results now read 1, 2, 3 ....
+    # A field inside a tracked deletion is not live and does not take a number.
+    text, nfields = _renumber_figures(text)
+    pointer = _pointer(nfields, caption)
     bak = create_backup(docx, f"figure_{key}") if backup else None
     parts["word/document.xml"] = text.encode("utf-8")
     parts["word/_rels/document.xml.rels"] = rels.encode("utf-8")
@@ -382,6 +432,7 @@ def place(docx: Path, title: str, level: int, key: str, png: Path, caption: str,
     finally:
         tmp.unlink(missing_ok=True)
     return {"status": "OK", "mode": where["mode"], "backup": str(bak) if bak else None, "media": media,
+            "pointer": pointer,
             "message": ("added a figure block after the section's first figure" if where.get("after_figure") else
                         {"slot": "filled the section's figure slot", "insert": "added a figure block after Discovery Information",
                          "replace": "replaced the figure placed earlier"}[where["mode"]]) + " (tracked)"
