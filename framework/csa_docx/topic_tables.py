@@ -292,8 +292,12 @@ def build(work_dir: Path, heading: str, key: str = "", profile: dict | None = No
 
 def build_flows(work_dir: Path, heading: str, profile: dict | None = None) -> dict:
     """The data-flow table for a topic whose profile has "flows": rows grouped by mechanism (merged cell), the side
-    that opens the connection, the other end, the port and whether the flow map declares it. No counts."""
-    from csa_docx import flows as flows_mod
+    that opens the connection, the other end, the port and whether the flow map declares it. No counts.
+
+    S461: only flows that cross the OT boundary (one end on the OT side, the other outside OT or of unknown zone)
+    are shown, with a Direction column (Pulled from OT / Pushed from OT / Zone not settled) and rows sorted pulled
+    first, then pushed, then not settled."""
+    from csa_docx import endpoints as EP, flows as flows_mod
     profile = profile or profile_for(heading)
     flt = (profile or {}).get("flows")
     if not flt:
@@ -301,27 +305,61 @@ def build_flows(work_dir: Path, heading: str, profile: dict | None = None) -> di
     rows = flows_mod.select(flows_mod.load(work_dir), flt, {h["host"].upper() for h in register(work_dir)})
     if not rows:
         return {"status": "EMPTY"}
+    side = flows_mod.ot_sides(work_dir)
+    endpoints = EP.load(work_dir)
     def zone(zs: list[str]) -> str:
         return "/".join(zs) or "zone not recorded"
+    def end_label(name: str) -> str:
+        row = endpoints.get(name.upper())
+        lab = EP.label(row) if row else ""
+        return lab or name
+    def gside(g: dict) -> str:
+        """'pulled', 'pushed' or 'unsettled' for a group: which end opens the connection against which side."""
+        ssrc = {side(x) for x in g["srcs"]}
+        sdst = {side(x) for x in g["dsts"]}
+        if "ot" in ssrc and sdst and sdst <= {"outside"}:
+            return "pushed"
+        if "ot" in sdst and ssrc and ssrc <= {"outside"}:
+            return "pulled"
+        return "unsettled"
     out, last = [], None
-    gs = sorted(flows_mod.groups(rows), key=lambda g: (g["mechanism"], g["status"] == "declared", g["srcs"][0]))
+    # S461: keep only groups that cross the OT boundary (one end OT, the other outside or unknown).
+    # When the zone data does not let us place any end (all unknown), the old behaviour is kept.
+    def crosses_ot(g: dict) -> bool:
+        ssrc = {side(x) for x in g["srcs"]}
+        sdst = {side(x) for x in g["dsts"]}
+        if ssrc == {"unknown"} and sdst == {"unknown"}:
+            return True      # no zone data: keep as before
+        has_ot = "ot" in ssrc or "ot" in sdst
+        if not has_ot:
+            return False
+        other = (ssrc - {"ot"}) | (sdst - {"ot"})
+        return "outside" in other or "unknown" in other
+    gs = [g for g in flows_mod.groups(rows) if crosses_ot(g)]
+    gs = sorted(gs,
+                key=lambda g: ({"pulled": 0, "pushed": 1, "unsettled": 2}[gside(g)], g["mechanism"], g["status"] == "declared", g["srcs"][0]))
     for g in gs:
         seen = {"both": f"Declared ({g['declared_id']}) and seen", "observed": "Seen, not in the flow map",
                 "declared": f"Declared ({g['declared_id']}), not seen",
                 "attempted": "Attempted, no reply seen"}[g["status"]]
         dsts = g["dsts"] if len(g["dsts"]) <= 4 else g["dsts"][:3] + ["other addresses"]   # every one stays in the sources
-        to = f"{', '.join(dsts[:-1]) + ' and ' + dsts[-1] if dsts[-1] == 'other addresses' else ', '.join(dsts)} " \
+        to = f"{', '.join(end_label(d) for d in dsts[:-1]) + ' and ' + end_label(dsts[-1]) if dsts[-1] == 'other addresses' else ', '.join(end_label(d) for d in dsts)} " \
              f"({zone(g['dst_zones'])}{', crosses zones' if g['cross_zone'] == 'yes' else ''})"
+        direction = {"pulled": "Pulled from OT", "pushed": "Pushed from OT", "unsettled": "Zone not settled"}[gside(g)]
         out.append({"role": g["mechanism"][:1].upper() + g["mechanism"][1:], "first": g["mechanism"] != last,
-                    "hosts": [f"{', '.join(g['srcs'])} ({zone(g['src_zones'])})"],
-                    "cells": [to, str(g["port"]), seen],
+                    "hosts": [f"{', '.join(end_label(s) for s in g['srcs'])} ({zone(g['src_zones'])})"],
+                    "cells": [to, direction, str(g["port"]), seen],
                     "sources": [c for f in g["flows"] for c in f["sources"].split("; ") if c]})
         last = g["mechanism"]
+    notes = ["From is the side that opens the connection."]
+    if any(r["cells"][3].startswith(("Seen", "Declared")) for r in out):
+        notes.append("Seen means it appeared in the sampled process connections.")
+    if any(r["cells"][3] == "Attempted, no reply seen" for r in out):
+        notes.append("Attempted means the host sent a connection request and no reply was seen in the netstat samples.")
+    notes.append("Zones come from the project zone list.")
     return {"status": "OK", "heading": heading, "key": (profile or {}).get("key", ""),
-            "columns": ["Mechanism", "From (opens the connection)", "To", "Port", "Flow map"], "rows": out,
-            "common": "From is the side that opens the connection. Seen means it appeared in the sampled process "
-                      "connections. Attempted means the host sent a connection request and no reply was seen in the "
-                      "netstat samples. Zones come from the project zone list.", "markers": [], "gaps": [], "unassigned": [],
+            "columns": ["Mechanism", "From (opens the connection)", "To", "Direction", "Port", "Flow map"], "rows": out,
+            "common": " ".join(notes), "markers": [], "gaps": [], "unassigned": [],
             "warnings": []}
 
 
@@ -349,6 +387,24 @@ def build_all(work_dir: Path, heading: str, key: str = "") -> list[dict]:
                 attrs = set(spec.get("attributes") or [])
                 projected["columns"] = [c for c in profile.get("columns", []) if c.get("attribute") in attrs]
                 table = build(work_dir, heading, key, projected)
+            if table.get("status") == "OK" and table.get("columns"):
+                # S461: one column once - a column label an earlier role table of the same section already shows is dropped.
+                # "Role" and "Hosts" are never dropped.
+                prior = set()
+                for t in out:
+                    if t.get("status") == "OK" and t.get("columns"):
+                        prior.update(t["columns"])
+                keep_idx = [i for i, c in enumerate(table["columns"]) if i < 2 or c not in prior]
+                if keep_idx != list(range(len(table["columns"]))):
+                    keep = [table["columns"][i] for i in keep_idx]
+                    new_rows = []
+                    for r in table["rows"]:
+                        cells = [v for i, v in enumerate(r["cells"]) if i in keep_idx]
+                        new_rows.append({**r, "cells": cells})
+                    table["rows"] = new_rows
+                    if isinstance(table.get("explains"), dict):
+                        table["explains"] = {k: v for k, v in table["explains"].items() if k in keep}
+                    table["columns"] = keep
             table["requirement"] = spec["requirement"]
             table["evidence_title"] = spec.get("title", "Discovery evidence")
             table["replace_observation_table"] = bool(profile.get("replace_observation_table"))
