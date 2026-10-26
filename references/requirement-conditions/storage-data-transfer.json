@@ -1,0 +1,53 @@
+{
+ "requirements": {
+  "SEP-STOR-01": {
+   "conditions": [
+    {
+     "id": "C1",
+     "text": "The vital OT systems hold their operational and application data on storage inside OT"
+    },
+    {
+     "id": "C2",
+     "text": "That storage does not depend on IT-hosted file shares"
+    },
+    {
+     "id": "C3",
+     "text": "A documented fallback keeps the data available during isolation"
+    }
+   ],
+   "logic": "C1 and (C2 or C3)",
+   "reviewed": true,
+   "basis": "split from the requirement text: localised OT-resident storage, independent of IT-hosted file shares, or a documented fallback"
+  },
+  "SEP-STOR-02": {
+   "conditions": [
+    {
+     "id": "C1",
+     "text": "File transfer between IT and OT follows a defined, controlled pattern (for example a proxy with antivirus scanning)"
+    },
+    {
+     "id": "C2",
+     "text": "No direct or ad hoc share access is used for transfer between IT and OT"
+    }
+   ],
+   "logic": "C1 and C2",
+   "reviewed": true,
+   "basis": "split from the requirement text"
+  },
+  "SEP-STOR-03": {
+   "conditions": [
+    {
+     "id": "C1",
+     "text": "OT pushes data outward to IT and external systems"
+    },
+    {
+     "id": "C2",
+     "text": "IT and external networks do not pull data in from OT"
+    }
+   ],
+   "logic": "C1 and C2",
+   "reviewed": true,
+   "basis": "split from the requirement text: push data outward rather than allowing IT/external networks to pull data in from OT"
+  }
+ }
+}

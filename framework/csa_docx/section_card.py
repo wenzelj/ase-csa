@@ -1186,6 +1186,7 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
                       "", f"(end of example answer ({k}))"]
     text = "\n".join(lines) + "\n"
     return {"status": "OK", "key": node["key"], "number": node["number"], "title": node["title"], "text": text,
+            "system_name": sysname,
             "questions": qs, "evidence": pack, "established": established, "background_ids": bg_ids,
             "keep": [{k: x[k] for k in ("question", "fact", "evidence_ids", "capture_ids")} for x in keep], "tokens": len(text) // 4,
             "correct": [{k: x[k] for k in ("question", "fact", "evidence_ids", "capture_ids", "contradicts")} for x in correct],

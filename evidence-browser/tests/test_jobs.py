@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import threading
 import time
@@ -124,6 +125,39 @@ def test_cancel_only_running_child(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     with pytest.raises(HTTPException) as caught:
         manager.cancel(item, created.id)
     assert caught.value.status_code == 409
+
+
+def test_cancel_terminates_descendant_processes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    child_pid = tmp_path / "child.pid"
+    script = (
+        "import subprocess, sys; "
+        "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)']); "
+        "open(sys.argv[1], 'w').write(str(child.pid)); "
+        "child.wait()"
+    )
+    item = commands.Operation("stub", "Stub", "Test operation", ("stub",))
+    monkeypatch.setitem(commands.OPERATIONS, "stub", item)
+    monkeypatch.setattr(commands, "build_argv", lambda *_args:
+                        (item, [sys.executable, "-c", script, str(child_pid)]))
+    project_row = project(tmp_path)
+    manager = JobManager(tmp_path / ".agents")
+    created = manager.submit(project_row, "stub", CommandRequest())
+    deadline = time.monotonic() + 2
+    while not child_pid.is_file() and time.monotonic() < deadline:
+        time.sleep(.01)
+    assert child_pid.is_file()
+    descendant = int(child_pid.read_text())
+    manager.cancel(project_row, created.id)
+    assert manager.wait(project_row, created.id).state == "cancelled"
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        try:
+            os.kill(descendant, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(.02)
+    else:
+        pytest.fail(f"descendant process {descendant} survived cancellation")
 
 
 def test_word_lock_rejects_docx_job_before_launch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

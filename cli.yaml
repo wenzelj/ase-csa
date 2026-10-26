@@ -24,7 +24,10 @@ claude_headless: claude -p {prompt}
 # Evo: the dedicated Codex profile against the local model. Pick it per run with --cli evo.
 # Both modes stay in the invoking window; use `csa ... --window` only when a separate Terminal is wanted.
 evo_interactive: codex --profile evo-x3-qwen {prompt}
-evo_headless: codex exec --profile evo-x3-qwen --skip-git-repo-check --output-last-message {last} {prompt}
+evo_headless: codex exec --profile evo-x3-qwen --ignore-rules --skip-git-repo-check --output-last-message {last} {prompt}
+# Ollama: a local model (pick it per run with --cli ollama). --hidethinking keeps a thinking model's reasoning out of the reply.
+ollama_interactive: ollama run qwen3.5:9b {prompt}
+ollama_headless: ollama run --hidethinking qwen3.5:9b {prompt}
 # Hermes has no "start interactive with a prompt" flag; both run the prompt as one query.
 hermes_interactive: hermes chat -q {prompt}
 hermes_headless: hermes chat -q {prompt}

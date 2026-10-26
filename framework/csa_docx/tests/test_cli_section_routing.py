@@ -91,11 +91,38 @@ def test_agent_window_wrapper_forces_any_interactive_agent_into_a_window():
     assert wrap(command, "interactive", "settle", force=True) == [wrapper, *command]
 
 
+def test_agent_window_wrapper_can_show_a_headless_one_shot_agent():
+    wrap = CSA["_agent_window_argv"]
+    command = ["codex", "exec", "prompt"]
+    wrapper = str(Path(__file__).parents[3] / "bin" / "csa-window")
+    assert wrap(command, "headless", "answer", force=True) == [wrapper, *command]
+
+
+def test_headless_and_window_flags_can_be_combined():
+    seen = {}
+    main_globals = CSA["main"].__globals__
+    original = main_globals["cmd_agent"]
+    try:
+        main_globals["cmd_agent"] = lambda args: seen.update(headless=args.headless, window=args.window) or 0
+        assert CSA["main"](["answer", "--headless", "--window", "3.9"]) == 0
+    finally:
+        main_globals["cmd_agent"] = original
+    assert seen == {"headless": True, "window": True}
+
+
 def test_agent_window_wrapper_is_not_nested():
     wrap = CSA["_agent_window_argv"]
     wrapper = str(Path(__file__).parents[3] / "bin" / "csa-window")
     command = [wrapper, "codex", "prompt"]
     assert wrap(command, "interactive", "draft") == command
+
+
+def test_window_wrapper_forwards_stop_to_the_terminal_process_group():
+    wrapper = Path(__file__).parents[3] / "bin" / "csa-window"
+    source = wrapper.read_text(encoding="utf-8")
+    assert "shell-pid" in source
+    assert '/bin/kill -"$signal_name" -- -"$shell_pid"' in source
+    assert "trap on_term TERM HUP" in source
 
 
 def test_focused_answer_written_to_base_is_recovered_before_exit_handling(tmp_path):

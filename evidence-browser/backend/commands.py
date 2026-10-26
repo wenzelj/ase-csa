@@ -124,13 +124,13 @@ OPERATIONS: dict[str, Operation] = {
     ),
     "answer": Operation(
         "answer", "Answer subsection", "Draft lane: card, one agent call, written into the working DOCX as plain text.",
-        ("answer", "--window"), "required", "section", {"cli": "identifier", "fresh": "boolean"},
-        timeout=3600, mutating=True, mutation_class="document_write", lock="docx", closes_word=True,
+        ("answer", "--headless", "--window"), "required", "section", {"cli": "identifier", "fresh": "boolean"},
+        timeout=14400, mutating=True, mutation_class="document_write", lock="docx", closes_word=True,
     ),
     "refresh_draft": Operation(
         "refresh_draft", "Refresh stale answers", "Draft lane: answer again every subsection whose evidence changed.",
-        ("refresh-draft", "--window"), options={"cli": "identifier"},
-        timeout=7200, mutating=True, mutation_class="document_write", lock="docx", closes_word=True,
+        ("refresh-draft", "--headless", "--window"), options={"cli": "identifier"},
+        timeout=14400, mutating=True, mutation_class="document_write", lock="docx", closes_word=True,
     ),
     # CSA figures: the agent rewords one figure's purpose and caption; placing puts a saved figure in the document.
     "figure_wording": Operation(

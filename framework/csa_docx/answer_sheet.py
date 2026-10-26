@@ -219,6 +219,17 @@ HARD_CODES = {"CROSS_PROJECT_ONLY", "NOTE_TOO_LONG", "NOTE_NONE_AND_TEXT", "NOTE
               "PRACTICE_NOT_ADDRESSED", "PRACTICE_ATTRIBUTION_DROPPED", "APPLICATION_ZONE_CLAIM",
               "EXAMPLE_COPIED"}
 
+#: Relaxed draft lane (cli.yaml draft_strictness: relaxed, the default for csa answer): the answer's job is to answer the
+#: question from the evidence, so only what makes it wrong or unusable stops it: evidence it cannot cite, a missing or
+#: invalid answer, a table that cannot be rendered, background used as evidence, a host put on the wrong side of OT, a
+#: false isolation claim, an attempt reported as established, another project's evidence as the only basis, and owed
+#: findings or kept facts silently lost. Wording, naming and style findings are warnings, and so is naming another
+#: application (IAMPS consumes what this system produces: the text may say so).
+RELAXED_HARD = {"CROSS_PROJECT_ONLY", "QUESTION_MISSING", "EMPTY_ANSWER", "FACT_NO_EVIDENCE", "UNKNOWN_EVIDENCE",
+                "RATING_INVALID", "COLUMNS", "ROW_WIDTH", "NO_ROWS", "BACKGROUND_AS_EVIDENCE", "BACKGROUND_MIXED",
+                "BACKGROUND_NOT_ON_CARD", "BACKGROUND_ALONE", "ZONE_CONTRADICTED", "ISOLATION_WRONG_SIDE",
+                "ATTEMPT_AS_ESTABLISHED", "SLOT_NOT_ANSWERED", "CAPTURE_DROPPED"}
+
 # counts and totals of hosts ("9 of 12", "all 12 captured hosts", "nine hosts", "two RevViewer Jump Hosts"): CSA text
 # names the role groups instead. "stratum 5 hosts" and port numbers are not counts.
 _NUMWORD = r"(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|twenty)"
@@ -278,13 +289,15 @@ _EVERY_PART = re.compile(r"\b(?:every|all)(?: other)? parts?\b", re.I)
 
 
 _THIS_SYSTEM = re.compile(r"\b(?:this|the) system\b", re.I)
+_ISOLATING = re.compile(r"\bisolat|\bunreachable\b|\bloses?\b|\blost\b", re.I)
 
 
 def subject_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
     """SUBJECT_NOT_THIS_SYSTEM (hard): a sentence, table row or bullet that names another application (a neighbour
     or a same-system sibling, card "parts" "foreign": its name or a host of it) but no part or host of this system.
     Each CSA describes its own application: another application appears only where this system meets it (a flow
-    between a part of this system and that application), never on its own."""
+    between a part of this system and that application), never on its own. In the Drawbridge Impact (narrative) a
+    sentence about what is lost or cut when OT is isolated may name it among the links that stop."""
     from csa_docx.parts import named
     pc = card.get("parts") or {}
     foreign = pc.get("foreign") or {}
@@ -301,6 +314,8 @@ def subject_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
         pieces += [" | ".join(r) for r in (b.get("rows") or [])[1:]]
         pieces += [s for t in (b.get("text") or "", b.get("rating_reason") or "") for s in re.split(r"(?<=[.!?])\s+|\n+", t)]
         for s in (x for x in pieces if x and x.strip()):
+            if kinds.get(qid) == "narrative" and (_LOSS.search(s) or _ISOLATING.search(s)):
+                continue                    # the Drawbridge Impact: a link this system loses when OT is isolated
             hit = [v["application"] for v in foreign.values() if named(s, v["names"])]
             if hit and not named(s, own) and not _THIS_SYSTEM.search(s):
                 out.append(_f("ERROR", "SUBJECT_NOT_THIS_SYSTEM", qid,
@@ -722,6 +737,17 @@ def block_ids(b: dict) -> set[str]:
     return ids
 
 
+def dropped_ids(sheet: dict[str, dict]) -> set[str]:
+    """Evidence IDs on a ``Dropped:`` line that also gives a reason."""
+    out = set()
+    for b in sheet.values():
+        for dropped in b.get("dropped", []):
+            found = list(_EID.finditer(dropped))
+            if found and dropped[found[-1].end():].strip(" \t,;:-"):
+                out |= {m.group(0).upper() for m in found}
+    return out
+
+
 _IPV4 = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
 
 
@@ -799,22 +825,23 @@ def regression(old: dict[str, dict], new: dict[str, dict], matrix: dict[str, dic
 
 def kept_facts(sheet: dict[str, dict], card: dict, already: list[dict] | None = None) -> list[dict]:
     """The card's "Facts to keep" (section_card.facts_to_keep): each capture-backed fact an applied answer of this
-    subsection stated must still be cited in its block, or named on a 'Dropped:' line. ERROR CAPTURE_DROPPED."""
+    subsection stated must still be cited in a fact, evidence-bearing table row or evidence-bearing bullet anywhere in
+    the merged section, or named on a 'Dropped:' line with a reason. ERROR CAPTURE_DROPPED is attributed to the fact's
+    recorded question."""
     reported = {(f.get("question"), i) for f in (already or []) if f["code"] == "CAPTURE_DROPPED"
                 for i in _EID.findall(f["message"].split(" (capture")[0])}
     out: list[dict] = []
-    shown = role_table_tokens(card)
-    obs = {q["id"] for q in card.get("questions", []) if q["kind"] == "observation"}
+    cited = set().union(*(block_ids(b) for b in sheet.values())) if sheet else set()
+    dropped = dropped_ids(sheet)
     for k in card.get("keep", []):
         qid, b = k["question"], sheet.get(k["question"])
-        if b is None or b.get("keep"):
+        if b is not None and b.get("keep"):
             continue
-        if qid in obs and shown and set(_HOSTTOKEN.findall(k["fact"])) & shown:
-            continue                    # a per-host row of the old table: the role table states it now
-        cited = block_ids(b)
-        caps = [i for i in k["capture_ids"] if i.upper() not in cited
-                and not any(i in d for d in b.get("dropped", [])) and (qid, i) not in reported]
-        if caps and not (set(i.upper() for i in k["capture_ids"]) & cited):
+        capture_ids = {i.upper() for i in k["capture_ids"]}
+        if capture_ids & (cited | dropped):
+            continue
+        caps = [i for i in k["capture_ids"] if (qid, i) not in reported]
+        if caps:
             out.append(_f("ERROR", "CAPTURE_DROPPED", qid,
                           f"{', '.join(caps)} (capture evidence): the card's Facts to keep lists \"{k['fact'][:200]}\" for {qid} "
                           f"and the answer no longer states it: keep it with its capture evidence, or add "
@@ -957,9 +984,21 @@ def example_checks(sheet: dict[str, dict], examples: set[str] | None = None) -> 
     return findings
 
 
+def block_checks(blk: str, card: dict, qid: str, matrix: dict[str, dict] | None = None, relaxed: bool = False) -> list[dict]:
+    """The sheet checks for one block alone: ``validate`` (draft lane) on a sheet holding only ``qid``'s block, keeping the
+    errors that name that block. Flow coverage and kept-fact retention span blocks and are left until the merged sheet is
+    validated. The per-requirement path runs this on every block it writes."""
+    sheet = parse(blk)
+    if qid not in sheet:
+        return [_f("ERROR", "QUESTION_MISSING", qid, f"no '## {qid}' block")]
+    res = validate({qid: sheet[qid]}, card, matrix, draft=True, relaxed=relaxed)
+    deferred = {"FLOW_NOT_COVERED", "CAPTURE_DROPPED"}
+    return [f for f in res["findings"] if f["level"] == "ERROR" and f.get("question") == qid and f["code"] not in deferred]
+
+
 def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None = None,
              ratings: list[str] | None = None, new_ids: set[str] | None = None, draft: bool = False,
-             previous: dict[str, dict] | None = None) -> dict:
+             previous: dict[str, dict] | None = None, relaxed: bool = False) -> dict:
     """Findings for a parsed sheet against its card. ERROR blocks rendering; WARN is reported.
     ``draft`` keeps only HARD_CODES as errors (the draft lane)."""
     findings: list[dict] = []
@@ -1191,8 +1230,9 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
         if qid not in qs and not qid.startswith("F"):
             findings.append(_f("WARN", "EXTRA_BLOCK", qid, "this question is not on the card"))
     if draft:
+        hard = RELAXED_HARD if relaxed else HARD_CODES
         for x in findings:
-            if x["level"] == "ERROR" and x["code"] not in HARD_CODES:
+            if x["level"] == "ERROR" and x["code"] not in hard:
                 x["level"] = "WARN"
     errors = [x for x in findings if x["level"] == "ERROR"]
     status = "NEEDS_SEARCH" if searches and not errors else "ERROR" if errors else "OK"
@@ -1540,6 +1580,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--matrix", type=Path)
     ap.add_argument("--new-ids", default="", help="validate: evidence IDs appended during this run")
     ap.add_argument("--draft", action="store_true", help="validate: draft lane, only the hard checks are errors")
+    ap.add_argument("--relaxed", action="store_true", help="validate --draft: only RELAXED_HARD are errors (cli.yaml draft_strictness)")
     ap.add_argument("--previous", type=Path, help="validate: the sheet this one replaces (regression report)")
     ap.add_argument("--docx", type=Path, help="render: the working document")
     ap.add_argument("--section", help="render: framework section number (3)")
@@ -1558,7 +1599,7 @@ def main(argv: list[str] | None = None) -> int:
     if a.action == "validate":
         prev = parse(a.previous.read_text(encoding="utf-8")) if a.previous and a.previous.is_file() else None
         res = validate(sheet, card, load_matrix(a.matrix), new_ids={x.strip() for x in a.new_ids.split(",") if x.strip()},
-                       draft=a.draft, previous=prev)
+                       draft=a.draft, previous=prev, relaxed=getattr(a, "relaxed", False))
         drift = sheet_hash_drift(a.sheet)
         if drift:
             res["findings"].append(drift)

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import signal
 import subprocess
 import threading
 import time
@@ -189,7 +191,7 @@ class JobManager:
                     )
             process = self._popen(
                 argv, cwd=str(self.agents_dir.parent), env=commands._minimal_environment(self.agents_dir),
-                shell=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                shell=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True,
             )
             with self._condition:
                 self._processes[job_id] = process
@@ -271,7 +273,7 @@ class JobManager:
             if job.state != "running" or process is None:
                 raise HTTPException(409, "Only a running child process can be cancelled")
             self._cancel_requested.add(job_id)
-            process.terminate()
+            self._signal_process_tree(process, signal.SIGTERM)
             snapshot = job.model_copy(deep=True)
         threading.Thread(target=self._kill_after_grace, args=(job_id, process), daemon=True).start()
         return snapshot
@@ -282,7 +284,24 @@ class JobManager:
         except subprocess.TimeoutExpired:
             with self._condition:
                 if self._processes.get(job_id) is process:
-                    process.kill()
+                    self._signal_process_tree(process, signal.SIGKILL)
+
+    @staticmethod
+    def _signal_process_tree(process: subprocess.Popen, value: signal.Signals) -> None:
+        """Signal the job's process group, falling back to the direct child for injected/fake processes.
+
+        Jobs start in their own session so cancellation cannot leave ordinary descendants behind. A windowed CSA
+        command additionally forwards the signal from ``csa-window`` to the command running in Terminal.
+        """
+        if process.poll() is not None:
+            return
+        try:
+            os.killpg(process.pid, value)
+        except (AttributeError, ProcessLookupError, PermissionError):
+            if value == signal.SIGKILL:
+                process.kill()
+            else:
+                process.terminate()
 
     def wait(self, project: dict[str, str], job_id: str, timeout: float = 5) -> JobRecord:
         deadline = time.monotonic() + timeout

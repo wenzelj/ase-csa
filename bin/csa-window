@@ -10,13 +10,44 @@ dir=$(mktemp -d "${TMPDIR:-/tmp}/csa-window.XXXXXX") || exit 1
 {
   print -r -- "#!/bin/zsh"
   print -r -- "print -r -- started > ${(q)dir}/started"
+  print -r -- "print -r -- \$\$ > ${(q)dir}/shell-pid"
   print -r -- "cd ${(q)PWD}"
+  # Terminal's foreground script is its own process group; the outer manager records it so timeout/cancel can stop
+  # the CLI and all of its descendants without closing the Terminal application.
   print -r -- "${(@q)@}"
   print -r -- "rc=\$?"
   print -r -- "print -r -- \$rc > ${(q)dir}/rc"
   print -r -- "print; print -- \"csa-window: finished (exit \$rc). You can close this window.\""
 } > "$dir/run.sh"
 chmod +x "$dir/run.sh"
+
+signal_remote() {
+  local signal_name="$1" shell_pid=""
+  if [[ -f "$dir/shell-pid" ]]; then
+    shell_pid=$(<"$dir/shell-pid")
+    if [[ "$shell_pid" == <-> && "$shell_pid" -gt 1 ]]; then
+      /bin/kill -"$signal_name" -- -"$shell_pid" 2>/dev/null || /bin/kill -"$signal_name" "$shell_pid" 2>/dev/null || true
+    fi
+  fi
+}
+
+stop_remote() {
+  signal_remote TERM
+  for _ in {1..30}; do
+    [[ -f "$dir/rc" ]] && return
+    sleep 0.1
+  done
+  signal_remote KILL
+  for _ in {1..10}; do
+    [[ -f "$dir/rc" ]] && return
+    sleep 0.1
+  done
+}
+
+on_term() { stop_remote; rm -rf "$dir"; exit 143; }
+on_int() { stop_remote; rm -rf "$dir"; exit 130; }
+trap on_term TERM HUP
+trap on_int INT
 if ! osascript >/dev/null <<EOF
 tell application "Terminal"
   activate

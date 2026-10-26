@@ -10,6 +10,14 @@ const OP_LABEL: Record<string, string> = { ingest: "Ingest new data", stale: "Ch
 
 function remembered(): string { try { return localStorage.getItem("csa-draft-cli") || "claude"; } catch { return "claude"; } }
 function when(value?: string | null) { if (!value) return "—"; const d = new Date(value); return isNaN(d.getTime()) ? value : d.toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }); }
+function phase(job: ReviewJob): string {
+  const output = [job.stdout_tail, job.stderr_tail].filter(Boolean).join("\n");
+  const rows = [...output.matchAll(/CSA_PHASE ([A-Z_]+): ([^\n]+)/g)];
+  if (!rows.length) return "Starting…";
+  const [, key, detail] = rows.at(-1)!;
+  const labels: Record<string, string> = { CARD: "Preparing the evidence card", GENERATING: "Generating the answer", VALIDATING: "Validating the answer", REPAIRING: "Repairing blocked answer content", APPLYING: "Writing the validated answer", APPLIED: "Written to the document", READY: "Answer ready" };
+  return `${labels[key] || key} — ${detail}`;
+}
 
 export function DraftLane({ system, focus = "", investigate }: { system: string; focus?: string; investigate: (query: string) => void }) {
   const [snap, setSnap] = useState<DraftSnapshot | null>(null); const [job, setJob] = useState<ReviewJob | null>(null);
@@ -68,7 +76,7 @@ export function DraftLane({ system, focus = "", investigate }: { system: string;
     <div className="draft-counts">{(["current", "stale", "answered", "not-answered"] as const).map(k => <div key={k} className={`draft-count draft-${k}`}><strong>{counts[k] || 0}</strong><span>{STATE_LABEL[k]}</span></div>)}<div className="draft-count"><strong>{snap.open_questions.total}</strong><span>Open questions</span></div></div>
 
     {error && <p className="desk-error" role="alert">{error}</p>}
-    {job && <div className={`draft-job draft-job-${job.state}`} role="status"><div><b>{OP_LABEL[job.operation] || job.operation}{jobTarget ? ` ${jobTarget}` : ""}</b><span>{running ? (job.operation === "answer" || job.operation === "refresh_draft" ? "Running — the agent works in its own Terminal window" : "Running…") : job.state === "succeeded" ? "Done" : `Stopped: ${job.state}`}</span></div><div className="draft-job-buttons"><button className="quiet" onClick={() => setShowLog(!showLog)}>{showLog ? "Hide output" : "Show output"}</button>{running && <button className="quiet" onClick={() => void cancelJob(system, job.id)}>Cancel</button>}</div>{showLog && <pre>{(job.stdout_tail || "") + (job.stderr_tail ? "\n" + job.stderr_tail : "") || job.message || "Waiting for output…"}</pre>}</div>}
+    {job && <div className={`draft-job draft-job-${job.state}`} role="status"><div><b>{OP_LABEL[job.operation] || job.operation}{jobTarget ? ` ${jobTarget}` : ""}</b><span>{running ? (job.operation === "answer" || job.operation === "refresh_draft" ? phase(job) : "Running…") : job.state === "succeeded" ? "Done" : `Stopped: ${job.state}`}</span></div><div className="draft-job-buttons"><button className="quiet" onClick={() => setShowLog(!showLog)}>{showLog ? "Hide output" : "Show output"}</button>{running && <button className="quiet" onClick={() => void cancelJob(system, job.id)}>Cancel</button>}</div>{showLog && <pre>{(job.stdout_tail || "") + (job.stderr_tail ? "\n" + job.stderr_tail : "") || job.message || "Waiting for output…"}</pre>}</div>}
     {snap.spec_error && <p className="desk-error">Section list unavailable: {snap.spec_error}</p>}
 
     <section className="decision-desk draft-desk"><header><div><h2>Subsections</h2><p>Answer one subsection at a time. A subsection with unaccepted tracked changes is refused until you accept or reject them in Word.</p></div><label className="draft-check"><input type="checkbox" checked={onlyOpen} onChange={e => setOnlyOpen(e.target.checked)} /> Only what needs an answer</label></header>

@@ -2000,6 +2000,30 @@ def cmd_budget(a):
     return subprocess.call([framework_python(), "-c", code, str(FRAMEWORK), *argv])
 
 
+def codex_profiles(config: Path | None = None) -> set[str]:
+    """Profile names in the codex config (~/.codex/config.toml, or $CODEX_HOME/config.toml): its [profiles.<name>] tables."""
+    config = config or Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "config.toml"
+    if not config.is_file():
+        return set()
+    return {m.group(1).strip('"') for m in re.finditer(r"^\s*\[profiles\.([^\]]+)\]", config.read_text(encoding="utf-8", errors="ignore"), re.M)}
+
+
+def cli_profile_report(cli: str, config: Path | None = None) -> list[tuple[str, bool | None, str]]:
+    """[(message, good, hint)] for one CLI as csa launches it headless: its cli.yaml line, its binary, and a codex
+    --profile it names (the evo profile was missing on a machine once and every evo run failed)."""
+    tmpl = settings().get(f"{cli}_headless")
+    if not tmpl:
+        return [(f"{cli}: no '{cli}_headless' line in cli.yaml", False, "add one, or choose another CLI")]
+    argv = shlex.split(tmpl)
+    out = [(f"{cli} -> {argv[0]}" + ("" if shutil.which(argv[0]) else " (not on PATH)"), True if shutil.which(argv[0]) else None, "")]
+    if "--profile" in argv and argv.index("--profile") + 1 < len(argv):
+        prof = argv[argv.index("--profile") + 1]
+        have = prof in codex_profiles(config)
+        out.append((f"{cli}: codex profile '{prof}' " + ("found" if have else "is not in the codex config"), have,
+                    "" if have else "add [profiles." + prof + "] to ~/.codex/config.toml, or use --judge-cli/--write-cli codex"))
+    return out
+
+
 def cmd_doctor(a):
     ok = True
     def line(good, msg, hint=""):
@@ -2051,6 +2075,9 @@ def cmd_doctor(a):
                 line(False, f"project {p['key']}: legacy document missing", str(ld))
     for cli in ("codex", "claude", "hermes"):
         line(True if shutil.which(cli) else None, f"{cli} CLI " + ("found" if shutil.which(cli) else "not on PATH"))
+    answer_cli = getattr(a, "cli", None) or os.environ.get("CSA_CLI") or task_cli("answer") or settings().get("default_cli", "codex")
+    for msg, good, hint in cli_profile_report(answer_cli):   # the CLI csa answer uses, and a codex profile it names
+        line(good, f"answer: {msg}", hint)
     if getattr(a, "tests", True):
         try:
             r = subprocess.run([framework_python(), "-m", "pytest", "-q", "-p", "no:cacheprovider",
@@ -2218,9 +2245,13 @@ def repeated_repair_action(signature: tuple, previous: tuple | None, current_cli
 
 
 def _agent_window_argv(argv: list[str], mode: str, verb: str, force: bool = False) -> list[str]:
-    """Put an interactive agent in a separate Terminal only when ``--window`` explicitly requests it."""
+    """Put the selected agent command in a separate Terminal when ``--window`` requests it.
+
+    Execution mode and display location are independent: ``--headless --window`` is a visible one-shot command,
+    while ``--window`` by itself remains an interactive command for callers that explicitly want that behaviour.
+    """
     wrapper = str(AGENTS_DIR / "bin" / "csa-window")
-    if mode == "interactive" and force and (not argv or argv[0] != wrapper):
+    if force and (not argv or argv[0] != wrapper):
         return [wrapper, *argv]
     return argv
 
@@ -2468,107 +2499,6 @@ def project_stage(p: dict) -> str:
     return str(p.get("stage") or "draft").strip().lower()
 
 
-def _model_reply(p: dict, prompt: str, a) -> str:
-    """One headless model call that returns the reply text (codex: its last message; other CLIs: standard output)."""
-    cli = getattr(a, "cli", None) or os.environ.get("CSA_CLI") or task_cli("answer") or settings().get("default_cli", "codex")
-    tmpl = settings().get(f"{cli}_headless")
-    if not tmpl:
-        die(f"no '{cli}_headless' command in .agents/cli.yaml")
-    last = STATE_DIR / "tmp" / f"req-{os.getpid()}-{int(time.time() * 1000)}.md" if "{last}" in tmpl else None
-    if last:
-        last.parent.mkdir(parents=True, exist_ok=True)
-    argv = [prompt if t == "{prompt}" else str(last) if t == "{last}" else t for t in shlex.split(tmpl)]
-    if not shutil.which(argv[0]):
-        die(f"'{argv[0]}' is not on PATH")
-    r = subprocess.run(argv, cwd=str(ROOT), capture_output=True, text=True)
-    if last and last.is_file():
-        return last.read_text(encoding="utf-8")
-    return r.stdout
-
-
-def _answer_by_requirement(p: dict, a) -> int:
-    """csa answer N --by-requirement: one small model call per requirement question of the section card. Each reply is
-    a JSON judgement; the framework writes the sheet block (Facts, Text, Rating) to cards/<KEY>.req-<QID>.md and the
-    blocks together to cards/<KEY>.requirements.md. Nothing is applied to the document."""
-    target = next((x for x in a.args if "=" not in x), None)
-    if not target:
-        die("usage: csa answer <section> --by-requirement")
-    res = resolve_target(p, target)
-    if res.get("status") != "OK":
-        die(res.get("message", "cannot resolve the section"))
-    number, key = res["number"], res["key"]
-    docx = working_docx(p)
-    if not docx:
-        die("no working DOCX to build the card from")
-    work = local_path(p["work_dir"])
-    cards = work / "cards"
-    cards.mkdir(parents=True, exist_ok=True)
-    card_md = cards / f"{key}.md"
-    argv = [number, "--docx", docx, "--workspace", local_path(p["project_root"]), "--work-dir", work, "--out", card_md, "--json"]
-    if legacy_docx(p):
-        argv += ["--exclude", legacy_docx(p).name]
-    out = _fw_json("csa_docx.section_card", *argv)
-    if out.get("status") != "OK":
-        die(f"the section card could not be built: {out.get('message', out)}")
-    sys.path.insert(0, str(FRAMEWORK))
-    from csa_docx import requirement_answer, section_card
-    card = json.loads(card_md.with_suffix(".json").read_text(encoding="utf-8"))
-    qids = [q["id"] for q in card["questions"] if q.get("kind") == "requirement"]
-    if not qids:
-        die(f"section {number} has no requirement questions")
-    results, failed = {}, []
-
-    def call(view, qid) -> None:
-        print(f"{C['b']}{qid} {view.get('req_id', view.get('label'))}: about {view['tokens']} tokens.{C['0']}")
-        if getattr(a, "print", False):
-            print(requirement_answer.prompt(view))
-            return
-        t0 = time.time()
-        r = requirement_answer.answer(view, lambda pr: _model_reply(p, pr, a),
-                                      retries=2, extra=lambda blk: requirement_answer.text_errors(card, qid, blk)
-                                      + requirement_answer.obligation_errors(card, qid, blk))
-        print(f"  {r['status']} in {time.time() - t0:.0f}s, {r['attempts']} call(s)")
-        if r["status"] == "OK":
-            (cards / f"{key}.req-{qid}.md").write_text(r["block"], encoding="utf-8")
-            results[qid] = {"view": view, "reply": r["reply"], "block": r["block"]}
-        else:
-            failed.append(qid)
-            print(f"{C['y']}  {qid} failed: {'; '.join(r['errors'][:4])}{C['0']}", file=sys.stderr)
-
-    if getattr(a, "print", False):
-        for qid in qids:
-            call(section_card.requirement_view(card, qid), qid)
-        return 0
-    from concurrent.futures import ThreadPoolExecutor      # the requirement calls do not depend on each other
-    with ThreadPoolExecutor(max_workers=len(qids)) as pool:
-        list(pool.map(lambda qid: call(section_card.requirement_view(card, qid), qid), qids))
-    views = [(q["id"], requirement_answer.compose_view(card, q["id"], results)) for q in card["questions"]]
-    with ThreadPoolExecutor(max_workers=2) as pool:       # the Discovery table and Drawbridge Impact, from the verdicts
-        list(pool.map(lambda x: call(x[1], x[0]), [x for x in views if x[1]]))
-    from csa_docx import modelstore
-    modelstore.record_verdicts(work, f"{key}-{time.strftime('%Y%m%dT%H%M%S')}", results)      # a no-op until `csa model build` made a store
-    m = requirement_answer.merge(card, results)
-    if m["missing"]:
-        print(f"{C['y']}Not answered by this lane (use the whole-section answer): {', '.join(m['missing'])}{C['0']}")
-    byreq = cards / f"{key}.answer.byreq.md"
-    byreq.write_text(m["sheet"], encoding="utf-8")
-    res = _fw_json("csa_docx.answer_sheet", "validate", byreq, "--card", card_md.with_suffix(".json"),
-                   "--matrix", work / "evidence-matrix.csv", "--draft")
-    if getattr(a, "apply", False) and not failed and not m["missing"] and res.get("status") == "OK":
-        sheet = cards / f"{key}.answer.md"
-        if sheet.is_file():
-            shutil.copyfile(sheet, sheet.with_suffix(".whole-section.md"))     # the answer this one replaces
-        shutil.copyfile(byreq, sheet)
-        hosts_csv = work / "hosts" / "hosts.csv"
-        _fw_json("csa_docx.answer_cache", "write", sheet, "--card", card_md.with_suffix(".json"), "--matrix", work / "evidence-matrix.csv",
-                 *(["--hosts", hosts_csv] if hosts_csv.is_file() else []), "--json")
-        print(f"{C['b']}Wrote {byreq}; validate (draft): OK. Applying it through the draft lane.{C['0']}")
-        a.no_resolve = True                  # the sheet is already final: no second pass by the answer agent
-        return _author_cards(p, a, draft=True)
-    print(f"{C['b']}Wrote {byreq}; validate (draft): {res.get('status')}, {res.get('errors', 0)} error(s). Nothing was applied.{C['0']}")
-    return 2 if failed or m["missing"] or res.get("status") != "OK" else 0
-
-
 def answer_blocks_failing(res: dict) -> set[str]:
     """The answer-sheet blocks that the check's errors name (csa_docx.answer_blocks.failing); "*" when an error belongs
     to no block, so the whole sheet goes back."""
@@ -2621,11 +2551,14 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
         if terminal and not block_text:
             block_text = str(run_state.get("blocks", ""))
         model = model or str(run_state.get("model", ""))
+        previous_phase = str(run_state.get("phase", ""))
         sheet_hash = hashlib.sha256(sheet.read_bytes()).hexdigest()[:16] if sheet.is_file() else ""
         _fw_json("csa_docx.draft_lane", "run", "--work-dir", work, "--key", key, "--number", number,
                  "--title", res.get("title", ""), "--status", status, "--detail", detail,
                  "--phase", phase, "--blocks", block_text, "--elapsed-s", round(time.time() - started, 1),
                  "--model", model, "--sheet-hash", sheet_hash)
+        if phase != previous_phase or terminal:
+            print(f"CSA_PHASE {phase}: {detail}", file=sys.stderr, flush=True)
         run_state.update({"terminal": terminal, "phase": phase, "blocks": block_text, "detail": detail, "model": model})
 
     def abandoned_run() -> None:
@@ -2757,7 +2690,7 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
                                                      "message": f"the answer agent wrote no {sheet.name}. Write the whole sheet "
                                                      f"with your file tool to exactly this path: {sheet}"}], "searches": {}}
         return _fw_json("csa_docx.answer_sheet", "validate", sheet, "--card", card_json, "--matrix", matrix,
-                        "--new-ids", ",".join(sorted((_matrix_ids(work) - before) | lead_ids)), *(["--draft"] if draft else []),
+                        "--new-ids", ",".join(sorted((_matrix_ids(work) - before) | lead_ids)), *(["--draft"] if draft else []), *(["--relaxed"] if draft else []),
                         *(["--previous", sheet.with_suffix(".prev.md")] if sheet.with_suffix(".prev.md").is_file() else []))
 
     timing: dict = {}
@@ -2985,6 +2918,8 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
             draft_run("READY", "answer sheet passed; --no-apply left the document unchanged", "READY", terminal=True)
             print(f"{C['d']}--no-apply: the document was not changed; the answer sheet and {cf.name} are ready.{C['0']}")
             return 0
+        draft_run("RUNNING", "answer passed validation; writing the document", "APPLYING",
+                  model=repair_cli_override or getattr(a, "cli", None) or settings().get("default_cli", ""))
         rc = _draft_write(p, a, card_json, docx, cf, cf_new, out, timing, started)
         if rc == 0:
             draft_run("OK", f"{out.get('records', 0)} part(s) written", "APPLIED", terminal=True)
@@ -3414,8 +3349,6 @@ def cmd_agent(a):
     p = project(a.project); banner(p)
     if a.verb in SECTION_VERBS and a.args and "=" not in a.args[0] and not re.fullmatch(r"\d+(\.\d+)*", a.args[0]):
         a.args = [section_arg(p, a.args[0])] + a.args[1:]
-    if a.verb == "answer" and getattr(a, "by_requirement", False):
-        return _answer_by_requirement(p, a)
     if (((a.verb in ("author", "answer") and project_stage(p) == "draft") or a.verb == "draft")
             and not getattr(a, "legacy", False) and a.args and not any(x.upper().startswith(("CARD=", "SHEET=", "MODE=", "EDIT_MODE=")) for x in a.args)):
         if not working_docx(p):
@@ -4943,10 +4876,10 @@ def main(argv=None) -> int:
         return s
 
     def agent_opts(s):
-        s.add_argument("--cli", choices=["codex", "claude", "hermes", "evo"])
-        display = s.add_mutually_exclusive_group()
-        display.add_argument("--headless", action="store_true")
-        display.add_argument("--window", action="store_true", help="run the model in a visible Terminal window")
+        s.add_argument("--cli", choices=sorted({"codex", "claude", "hermes", "evo"}         # plus any <name>_headless line in cli.yaml
+                                               | {k[:-len("_headless")] for k in settings() if k.endswith("_headless")}))
+        s.add_argument("--headless", action="store_true", help="run one model request and exit")
+        s.add_argument("--window", action="store_true", help="run the selected model command in a visible Terminal window")
         s.add_argument("--print", action="store_true", help="print the prompt instead of launching")
 
     sp("help", lambda a: print(HELP))
@@ -5130,10 +5063,6 @@ def main(argv=None) -> int:
                        help="author: the old change-authoring agent path instead of card -> answer agent -> render")
         s.add_argument("--fresh", action="store_true",
                        help="author --cards: ignore a saved answer sheet and always run the answer agent")
-        s.add_argument("--by-requirement", action="store_true",
-                       help="answer: one small model call per requirement question; writes cards/<KEY>.requirements.md, applies nothing")
-        s.add_argument("--apply", action="store_true",
-                       help="answer --by-requirement: when the sheet passes the draft checks, write it into the document through the draft lane")
         s.add_argument("--check-answers", action="store_true",
                        help="author --cards: an advisory answer check after the sheet passes (shown in the author report)")
         s.add_argument("--no-resolve", action="store_true",
