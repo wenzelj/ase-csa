@@ -831,6 +831,8 @@ def build(work_dir: Path) -> dict:
     iso_res = isolation.build(work_dir)
     addrs = build_addresses(work_dir, reg)
     ev = link_evidence(work_dir, set(reg), set(addrs))
+    from csa_docx import endpoints                # the endpoint register (hosts/endpoints.csv)
+    ep_res = endpoints.build(work_dir)
     return {"status": "OK", "hosts": len(reg), "unnamed_addresses": len(addrs), "with_capture": sum(1 for e in reg.values() if e["capture"]),
             "facts": len(seen), "links": len(links), "unclassified": sum(1 for e in reg.values() if not e["system"]),
             "role_from_evidence": sum(1 for e in reg.values() if e["role_source"].startswith("evidence")),
@@ -840,7 +842,9 @@ def build(work_dir: Path) -> dict:
             "addresses_named": sum(1 for e in reg.values() if any(x.startswith("address ") for x in e["sources"])),
             "addresses_ambiguous": ambiguous,
             "host_services": len(svc_rows), "host_settings": settings.get("rows", 0), "flows": flow_res.get("flows", 0),
-            "isolation": iso_res.get("rows", 0), "out": str(out)}
+            "isolation": iso_res.get("rows", 0),
+            "endpoint_conflicts": ep_res.get("conflicts", []), "endpoint_proposed": ep_res.get("proposed", []),
+            "out": str(out)}
 
 
 def build_addresses(work_dir: Path, reg: dict) -> dict:
