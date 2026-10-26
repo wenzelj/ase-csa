@@ -37,7 +37,6 @@
    ],
    "question": "Which shares do the hosts offer beyond the default and administrative shares, and what could they expose or receive?",
    "requirements": [
-    "SEP-STOR-01",
     "SEP-STOR-02"
    ],
    "source": {
@@ -54,22 +53,27 @@
    "id": "S3",
    "bind": {
     "ot_push": [
-     "SEP-STOR-01",
-     "SEP-STOR-03"
+     {
+      "mechanisms": [
+       "file share"
+      ],
+      "requirements": [
+       "SEP-STOR-01",
+       "SEP-STOR-03"
+      ]
+     },
+     [
+      "SEP-STOR-03"
+     ]
     ],
     "pull_into_ot": [
-     "SEP-STOR-01",
      "SEP-STOR-03"
     ],
     "into_ot": [
-     "SEP-STOR-02"
-    ],
-    "unknown_zone": [
-     "SEP-STOR-02",
      "SEP-STOR-03"
     ],
-    "inside_ot": [
-     "SEP-STOR-01"
+    "unknown_zone": [
+     "SEP-STOR-03"
     ]
    },
    "question": "Which data flows cross a zone boundary (OT to IT, IT to OT, to the internet or cloud), which side opens each one, and is it a push from OT or a pull into OT?",
@@ -125,10 +129,9 @@
      "SEP-STOR-03"
     ],
     "into_ot": [
-     "SEP-STOR-02"
+     "SEP-STOR-03"
     ],
     "unknown_zone": [
-     "SEP-STOR-02",
      "SEP-STOR-03"
     ],
     "inside_ot": []

@@ -351,14 +351,37 @@ def bind_requirements(slot: dict, findings: list[dict]) -> None:
     """Give each finding the requirements its answer must address. A flow takes the slot's "bind" entry for its
     direction (e.g. a pull out of OT binds to the outward-only requirement), else the slot's requirements. A flow
     with no OT end, and a setting whose value is one of the slot's "baseline_values" (None found, default shares
-    only), binds to none: it is context, shown on the card but owed by no requirement."""
+    only), binds to none: it is context, shown on the card but owed by no requirement.
+
+    A bind entry for a direction is either the flat list of requirement IDs it always matched, or a list of
+    entries evaluated in order where the first that matches the finding wins: a dict with an optional
+    "mechanisms" list (a finding matches when its mechanism is one of them) and a "requirements" list, or a
+    flat list of requirement IDs that matches any finding still unmatched."""
     base = {v.lower() for v in slot.get("baseline_values", [])}
     bind = slot.get("bind", {})
+
+    def reqs_for(f: dict, entries: list) -> list:
+        for e in entries:
+            if isinstance(e, dict):
+                mechs = {m.lower() for m in e.get("mechanisms", [])}
+                if mechs and (f.get("mechanism") or "").lower() not in mechs:
+                    continue
+                return list(e.get("requirements", []))
+            if isinstance(e, list):
+                return list(e)
+        return list(slot.get("requirements", []))
+
     for f in findings:
         if f.get("direction") == "not_ot" or (f.get("value") or "").lower() in base:
             f["requirements"] = []
         elif f.get("direction"):
-            f["requirements"] = list(bind.get(f["direction"], slot.get("requirements", [])))
+            entries = bind.get(f["direction"])
+            if entries is None:
+                f["requirements"] = list(slot.get("requirements", []))
+            elif any(isinstance(e, (dict, list)) for e in entries):
+                f["requirements"] = reqs_for(f, entries)
+            else:
+                f["requirements"] = list(entries)
         else:
             f["requirements"] = list(slot.get("requirements", []))
 
