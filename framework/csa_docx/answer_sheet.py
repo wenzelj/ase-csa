@@ -335,9 +335,8 @@ def subject_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
 
 def part_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
     """The system-part checks (card "parts", from csa-work/parts.json):
-    PART_NOT_NAMED (an error when the frame is strict, else a warning): a requirement's Text (or its facts, when it
-    has no Text) names every part the card lists under it, by name, short name or, for a dependency, an address;
-    "every other part" covers the rest. HOST_IN_TEXT (warning): a requirement or narrative Text names a host of the
+    PART_NOT_NAMED (an error when the frame is strict, else a warning): a requirement's Facts name every part the card
+    lists under it, by name, short name or, for a dependency, an address. HOST_IN_TEXT (warning): a requirement or narrative Text names a host of the
     system instead of its part. ISOLATION_WRONG_SIDE (hard): a sentence says a part outside OT loses something when
     OT is isolated, but names only what it keeps (its flows that never touch OT), none of its paths into OT.
     PART_MISATTRIBUTED (an error when the frame is strict, else a warning): a requirement or narrative sentence
@@ -355,14 +354,12 @@ def part_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
         b = sheet.get(qid)
         if not b or not pids:
             continue
-        text = b.get("text") or " ".join(f["text"] for f in b["facts"])
-        if _EVERY_PART.search(text):
-            continue
-        missing = [pc["parts"][p] for p in pids if not named(text, pc["names"].get(p, []))]
+        facts = " ".join(f["text"] for f in b.get("facts") or [])
+        missing = [pc["parts"][p] for p in pids if not named(facts, pc["names"].get(p, []))]
         if missing:
             out.append(_f("ERROR" if strict else "WARN", "PART_NOT_NAMED", qid,
-                          f"the Text does not name these parts, which this requirement's findings are about: "
-                          f"{', '.join(missing)}. Name each (see System parts on the card), or say \"every other part\""))
+                          f"the Facts do not name these parts, which this requirement's findings are about: "
+                          f"{', '.join(missing)}. Name each (see System parts on the card)"))
     hosts = pc.get("hosts") or {}
     for qid, b in sheet.items():
         if kinds.get(qid) in ("requirement", "narrative") and b.get("text"):

@@ -456,8 +456,8 @@ def card_view(work_dir: Path, fr: dict | None, qs: list[dict]) -> dict | None:
              "name the part, never a host of the system (HOST_IN_TEXT): the role table and the Discovery rows carry the "
              "hosts. Start each requirement's Text: with one lead sentence that gives the verdict and the part or parts "
              "that decide it, then one sentence for each part that differs. Every part listed under a requirement "
-             "question must be named in its Text: (PART_NOT_NAMED), or covered by a short clause \"and every other part\" that "
-             "adds no claim of its own. In the "
+             "question must be named in its Facts (PART_NOT_NAMED); in the Story name only the parts that decide the "
+             "rating, by their display name. In the "
              "Discovery Information table, give each part its own Aspect row where the topic touches it. The Drawbridge "
              "Impact says, part by part, what each keeps or loses when OT is isolated, from the \"When OT is isolated\" "
              "lines below: a part outside OT loses only its paths into OT (ISOLATION_WRONG_SIDE).", ""]
@@ -633,11 +633,13 @@ def requirement_findings(view: dict | None, req_id: str) -> list[dict]:
 
 
 def owed_lines(view: dict | None, qid: str) -> list[str]:
-    """The line under a requirement question naming the parts its Text: must name."""
+    """The line under a requirement question naming the parts the card lists it as owed (covered in the Facts;
+    named in the Story only where they decide the rating)."""
     pids = (view or {}).get("owed", {}).get(qid) or []
     if not pids:
         return []
-    return ["  Parts to name in the Text: (PART_NOT_NAMED): " + ", ".join(view["parts"][p] for p in pids)]
+    return ["  Parts these findings are about (name them in the Facts; in the Story name only the parts that decide the rating, by their display name): "
+            + ", ".join(display_name(view["parts"][p]) for p in pids)]
 
 
 # One name per part across the whole document: role-like names that end like a part's name but are none of its
