@@ -127,8 +127,13 @@ def _address(end: str) -> bool:
         return False
 
 
-def dependency_of(end: str, zone: str, hints: dict, register: set[str]) -> tuple[str, str]:
-    """(part name, basis) for a flow end that is not a host of the system."""
+def dependency_of(end: str, zone: str, hints: dict, register: set[str], register_rows: dict[str, dict] | None = None) -> tuple[str, str]:
+    """(part name, basis) for a flow end that is not a host of the system. An identity resolved in the
+    endpoint register (endpoints.csv) groups the end under that name before any other rule applies."""
+    row = (register_rows or {}).get((end or "").upper())
+    if (row or {}).get("name", "").strip():
+        from csa_docx import endpoints as E
+        return E.label(row), "endpoint register: " + (row.get("basis") or "").strip()
     h = hints.get(end) or hints.get(end.upper()) or {}
     if h.get("role"):
         return re.sub(r"\s+server$", "", h["role"].strip(), flags=re.I), "what the peer runs (flow signature)"
@@ -193,9 +198,10 @@ def assemble(work_dir: Path) -> dict:
     """The parts from the host register and the flows, with a person's aliases, dependency names, notes and
     assignments from parts.json. A system part's name is its machines' register role (a name given to it in
     parts.json is ignored). ``reviewed`` stays true only while no part gains or loses a member."""
-    from csa_docx import flows as F, zones as Z
+    from csa_docx import endpoints as EP, flows as F, zones as Z
     from csa_docx.topic_tables import register
     work = Path(work_dir)
+    register_rows = EP.load(work)
     zs, side = Z.for_project(work), F.ot_sides(work)
     old = load(work)
     assign = dict(old.get("assign") or {})
@@ -231,7 +237,7 @@ def assemble(work_dir: Path) -> dict:
                     parts[slug(assign.get(e, assign.get(e.upper(), name)))].update(owner=key, application=app)
                     continue
                 zone = (r.get(f"{col}_zone") or zs.of(e).get("zone", "") or "").strip()
-                name, basis = dependency_of(e, zone, hints, every)
+                name, basis = dependency_of(e, zone, hints, every, register_rows)
                 add(name, "dependency", e, basis)
     kept = {_RENAMED.get(p["id"], p["id"]): p for p in old.get("parts", [])}
     out = []

@@ -320,7 +320,7 @@ def build(work_dir: Path, con=None) -> dict:
             mech = "message/API" if mech in ("other", "web/API") else mech
         src = ", ".join(sorted(d["src_hosts"])) or d["source"]
         dst = ", ".join(sorted(d["dst_hosts"])) or d["destination"]
-        zs, zd = _zone_of_list(z, d["src_hosts"]), _zone_of_list(z, d["dst_hosts"])
+        zs, zd = _zone_of_list(z, d["src_hosts"]), _zone_of_list(z, d["dst_hosts"], EP.load(work_dir))
         out.append({"status": "declared", "mechanism": mech, "data": "yes" if mech in DATA_MECHANISMS else "no",
                     "src": src, "dst": dst, "port": d["ports"], "src_process": "", "dst_process": "",
                     "src_role": "", "dst_role": "", "src_zone": zs["zone"], "src_zone_kind": zs["kind"],
@@ -378,10 +378,19 @@ def _matches(d: dict, r: dict, mech: str = "") -> bool:
     return r["port"] in d["port_list"] and (not mech or mech in DATA_MECHANISMS)
 
 
-def _zone_of_list(z, hosts: set) -> dict:
+def _zone_of_list(z, hosts: set, register_rows: dict[str, dict] | None = None) -> dict:
     if not hosts:
         return {"zone": "", "kind": "unknown"}
-    rules = [z.of(h) for h in sorted(hosts)]
+    register_rows = register_rows or {}
+    rules = []
+    for h in sorted(hosts):
+        r = z.of(h)
+        if (r.get("kind") or "unknown") == "unknown":
+            zone = (register_rows.get(h.upper(), {}).get("zone") or "").strip()
+            if zone:
+                r = dict(r)
+                r["zone"] = zone
+        rules.append(r)
     kinds = {r["kind"] for r in rules}
     return {"zone": ", ".join(dict.fromkeys(r["zone"] for r in rules)), "kind": kinds.pop() if len(kinds) == 1 else "unknown"}
 
@@ -545,9 +554,10 @@ def ot_sides(work_dir: Path):
     The zone rule decides when it names a zone (ot, or it/internet/cloud/vendor = outside). An end with no zone
     recorded is still in OT when the host register puts a host of the system at a site that an OT zone names
     ("Rockhampton" in "OT Rockhampton"); otherwise it is unknown. A declared end "X via F5/Proxy" is judged by X."""
-    from csa_docx import zones as Z
+    from csa_docx import endpoints as EP, zones as Z
     zs = Z.for_project(work_dir)
     ot_zones = [(r.get("zone") or "").lower() for r in Z.load(work_dir) if r.get("kind") == "ot"]
+    register_rows = EP.load(work_dir)
     reg: dict[str, dict] = {}
     f = Path(work_dir) / "hosts" / "hosts.csv"
     if f.is_file():
@@ -556,7 +566,17 @@ def ot_sides(work_dir: Path):
 
     def side(end: str) -> str:
         x = re.sub(r"\s+via\s+.+$", "", (end or "").strip(), flags=re.I)
-        kind = zs.of(x).get("kind", "unknown") or "unknown"
+        rule = zs.of(x)
+        kind = rule.get("kind") or "unknown"
+        if kind == "unknown":
+            reg_zone = (register_rows.get(x.upper(), {}).get("zone") or "").strip()
+            if reg_zone:
+                rule = dict(rule)
+                rule["zone"] = reg_zone
+                if reg_zone.lower() in ot_zones:
+                    kind = "ot"
+                else:
+                    kind = "outside"
         if kind == "ot":
             return "ot"
         if kind != "unknown":
