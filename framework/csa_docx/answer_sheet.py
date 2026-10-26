@@ -471,6 +471,182 @@ def read_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
     return out
 
 
+
+_STORY_WORDS = 90
+_RATING_FIRST = re.compile(r"\b(?:Met|Partially Met|Not Met|Not Applicable|meets|does not meet|partially meets)\b", re.I)
+_ENDPOINT_GAP = re.compile(r"\bunidentified\b|\bnot identified\b|\bzone not recorded\b", re.I)
+
+
+def readability_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
+    """Story and narrative readability checks (all warn, never block, the draft lane's relaxed checks):
+    READ_LIST: a Story, Text or Summary sentence names more than 3 parts (parts.parts_in on the card's part names).
+    STORY_NO_REASON: a requirement block's Story first sentence contains none of Met, Partially Met, Not Met,
+    Not Applicable, meets, does not meet or partially meets.
+    TWO_ROLE_NAME: a sentence contains ", also the " or ", also " followed by a part name, or the full "A, B"
+    name of a two-role part.
+    STORY_TOO_LONG: a Story is over 90 words.
+    ENDPOINT_UNDERSTATED: a sentence says "unidentified", "not identified" or "zone not recorded" and names an end
+    (or the part grouping it) that endpoints.load gives a name or zone.
+    NARRATIVE_NEW_ENDPOINT: the Drawbridge Impact Text names a dependency part that no requirement block's Facts
+    mention."""
+    pc = card.get("parts") or {}
+    if not pc:
+        return []
+    from csa_docx import parts as _parts
+    from csa_docx import endpoints as _endpoints
+    names = pc.get("names") or {}
+    # card's parts view: {pid: name} when the card was built against a parts.json, else
+    # {pid: {"names": [...], ...}} (the parts.json row directly)
+    _pview = pc.get("parts") or {}
+    parts_names: dict[str, str] = {}
+    for _pid, _v in _pview.items():
+        if isinstance(_v, dict):
+            _n = _v.get("name") or (_v.get("names") or [None])[0]
+        else:
+            _n = _v
+        if _n:
+            parts_names[_pid] = str(_n)
+    # full names of two-role parts: those with a comma in their display name
+    two_role_full = sorted({nm for nm in parts_names.values() if "," in nm})
+    out: list[dict] = []
+
+    def _sentences(t: str) -> list[str]:
+        return [s for s in re.split(r"(?<=[.!?])\s+|\n+", t or "") if s.strip()]
+
+    def _parts_named(s: str) -> set[str]:
+        return _parts.parts_in(s, names)
+
+    # endpoint register: keyed by end upper-cased -> row with name/zone (empty without csa-work)
+    ends: dict[str, dict] = {}
+    for cand in (Path.cwd(), Path.cwd() / "csa-work"):
+        if (cand / "hosts" / "endpoints.csv").is_file():
+            ends = _endpoints.load(cand)
+            break
+
+    # build end tokens (the end itself, its name, its zone) to match in prose
+    end_tokens: list[tuple[str, dict]] = []
+    for endk, row in (ends or {}).items():
+        nm = (row.get("name") or "").strip()
+        zn = (row.get("zone") or "").strip()
+        if not nm and not zn:
+            continue
+        end_tokens.append((endk, row))
+        if nm:
+            end_tokens.append((nm, row))
+        if zn:
+            end_tokens.append((zn, row))
+
+    req_qids = [q for q in card.get("questions", []) if q.get("kind") == "requirement"]
+    narr_qids = [q for q in card.get("questions", []) if q.get("kind") == "narrative"]
+
+    # collect Facts text per requirement block (for NARRATIVE_NEW_ENDPOINT)
+    req_facts_text = {}
+    for q in req_qids:
+        b = sheet.get(q["id"]) or {}
+        req_facts_text[q["id"]] = " ".join((f.get("text") or "") for f in (b.get("facts") or []))
+
+    # the Drawbridge Impact narrative Text (narrative kind)
+    narrative_texts = {q["id"]: (sheet.get(q["id"]) or {}).get("text") or "" for q in narr_qids}
+
+    for q in card.get("questions", []):
+        b = sheet.get(q["id"])
+        if not b:
+            continue
+        kind = q.get("kind")
+        story = (b.get("story") or "")
+        text = (b.get("text") or "")
+        summary = (b.get("summary") or "")
+        story_sentences = _sentences(story)
+
+        # STORY_TOO_LONG
+        if kind == "requirement" and story:
+            words = len(" ".join(story.split()).split())
+            if words > _STORY_WORDS:
+                out.append(_f("WARN", "STORY_TOO_LONG", q["id"],
+                              f"Story is {words} words (over {_STORY_WORDS}): keep it under {_STORY_WORDS} words"))
+
+        # STORY_NO_REASON
+        if kind == "requirement" and story_sentences:
+            first = story_sentences[0]
+            if not _RATING_FIRST.search(first):
+                out.append(_f("WARN", "STORY_NO_REASON", q["id"],
+                              "the Story's first sentence should state the rating and its deciding condition "
+                              "(Met / Partially Met / Not Met / Not Applicable): \"" + first[:70] + "...\""))
+
+        # READ_LIST, TWO_ROLE_NAME, ENDPOINT_UNDERSTATED
+        if kind not in ("requirement", "narrative"):
+            continue
+        pieces: list[tuple[str, str]] = []
+        if story:
+            pieces += [("Story", s) for s in story_sentences]
+        if summary:
+            pieces += [("Summary", s) for s in _sentences(summary)]
+        if text:
+            pieces += [("Text", s) for s in _sentences(text)]
+
+        for where, s in pieces:
+            pids = _parts_named(s)
+            # READ_LIST: more than 3 parts in one sentence
+            if len(pids) > 3:
+                nm_list = ", ".join(dict.fromkeys(parts_names.get(p, p) for p in pids))
+                out.append(_f("WARN", "READ_LIST", q["id"],
+                              f"a {where} sentence names {len(pids)} parts (more than 3): split the sentence so "
+                              f"each names at most 3: {nm_list}"))
+            # TWO_ROLE_NAME: ", also the <part>" lists a second role of the same part as if it were a new one
+            m = re.search(r",\s*also\s+(?:the\s+)?([A-Z][^,]{2,120})", s)
+            if m and _parts_named(m.group(1)):
+                out.append(_f("WARN", "TWO_ROLE_NAME", q["id"],
+                              "the " + where + " sentence lists a part's second role as a new part ('"
+                              + m.group(1).strip() + "'): it is the same part; write its full name once or name "
+                              "it by its first role only"))
+            # the full "A, B" two-role name in a sentence
+            for full in two_role_full:
+                if re.search(r"(?<!\w)" + re.escape(full) + r"(?!\w)", s):
+                    out.append(_f("WARN", "TWO_ROLE_NAME", q["id"],
+                                  f"the {where} sentence uses the full two-role name \"{full}\": it reads as two "
+                                  f"parts; write \"{full.split(',')[0].strip()}\" in the sentence and the second "
+                                  f"role once elsewhere if it matters"))
+                    break
+            # ENDPOINT_UNDERSTATED
+            if _ENDPOINT_GAP.search(s) and end_tokens:
+                low = s.lower()
+                hit: dict[str, dict] = {}
+                for tok, row in end_tokens:
+                    tk = tok.lower()
+                    if len(tk) < 4 or tk not in low:
+                        continue
+                    key = row.get("end") or tok
+                    if key not in hit:
+                        hit[key] = row
+                if hit:
+                    named = []
+                    for key in sorted(hit):
+                        row = hit[key]
+                        disp = row.get("name") or key
+                        zn = (row.get("zone") or "").strip()
+                        named.append(disp + (f" ({zn})" if zn else ""))
+                    out.append(_f("WARN", "ENDPOINT_UNDERSTATED", q["id"],
+                                  "the sentence understates an end the register already names or zones: "
+                                  + "; ".join(named[:4]) + " - name it as the register does, or say what is still "
+                                  "unknown in an Unknown: line"))
+
+    # NARRATIVE_NEW_ENDPOINT: narrative Text names a part no requirement block's Facts mention
+    all_facts = " ".join(req_facts_text.values())
+    mentioned = _parts_named(all_facts) if all_facts else set()
+    for qid, ntext in narrative_texts.items():
+        if not ntext:
+            continue
+        nparts = _parts_named(ntext)
+        if not nparts:
+            continue
+        dep = nparts - mentioned
+        if dep:
+            nm_list = ", ".join(dict.fromkeys(parts_names.get(p, p) for p in dep))
+            out.append(_f("WARN", "NARRATIVE_NEW_ENDPOINT", qid,
+                          "the Drawbridge Impact Text names a part no requirement block's Facts mention: "
+                          + nm_list + " - either cover it in a requirement's Facts or drop it from the narrative"))
+    return out
+
 def application_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
     """The application checks (card "parts" applications, from csa-work/parts.json):
     APPLICATION_NOT_NAMED (warning): a requirement the card ties to an application (through a part that only that
@@ -1251,6 +1427,7 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
     findings += kept_facts(sheet, card, findings)
     findings += frame_checks(sheet, card)
     findings += read_checks(sheet, card)
+    findings += readability_checks(sheet, card)
     findings += practice_checks(sheet, card)
     findings += subject_checks(sheet, card)
     findings += example_checks({k: v for k, v in sheet.items() if not k.startswith("F")})
