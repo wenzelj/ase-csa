@@ -73,6 +73,45 @@ def short_names(name: str) -> list[str]:
     return out
 
 
+def display_name(p: dict) -> str:
+    """The name the card and the review show for the part: the "display" value a person set in parts.json,
+    else the first of the short names when the name holds two roles ("A, B" gives "A"), else the name itself."""
+    d = (p.get("display") or "").strip()
+    if d:
+        return d
+    if "," in p["name"]:
+        return p["name"].split(",")[0].strip()
+    return p["name"]
+
+
+def _confusable_key(name: str) -> str:
+    s = name.lower()
+    if s.startswith("ot "):
+        s = s[3:]
+    for tail in (" servers", " server", " host"):
+        if s.endswith(tail):
+            s = s[: -len(tail)]
+            break
+    return s
+
+
+def confusable(doc: dict) -> list[tuple[str, str]]:
+    """Pairs of parts whose display names a reader would read as one thing: equal after lower-casing, dropping
+    a leading "OT " and a trailing " server", " servers" or " host" - a two-role name compares on its first
+    role ("TETRA log server" and "OT TETRA Log Server, DAAM Node Controller")."""
+    parts = doc.get("parts") or []
+    keys = [(display_name(p), {_confusable_key(p2) for p2 in (display_name(p), display_name(p).split(",")[0])})
+            for p in parts]
+    out = []
+    for i in range(len(parts)):
+        for j in range(i + 1, len(parts)):
+            a, ka = keys[i]
+            b, kb = keys[j]
+            if ka & kb:
+                out.append((a, b))
+    return out
+
+
 def _public(end: str) -> bool:
     try:
         return ipaddress.ip_address(end).is_global
@@ -208,6 +247,8 @@ def assemble(work_dir: Path) -> dict:
         p["aliases"] = list(dict.fromkeys((prev.get("aliases") or []) + [a for a in short_names(p["name"])]))
         if prev.get("note"):
             p["note"] = prev["note"]
+        if prev.get("display"):
+            p["display"] = prev["display"]
         out.append(p)
     was = {_RENAMED.get(p["id"], p["id"]): sorted(p.get("members", [])) for p in old.get("parts", [])}
     same = {p["id"]: p["members"] for p in out} == was
@@ -418,8 +459,10 @@ def card_view(work_dir: Path, fr: dict | None, qs: list[dict]) -> dict | None:
         lines += ["The parts have not been reviewed yet (csa parts approve): use them, and say nothing that depends on "
                   "a part's name being final.", ""]
     for p in touched:
-        al = f" (also: {', '.join(p['aliases'][:3])})" if p.get("aliases") else ""
-        lines.append(f"### {p['name']}{al}")
+        dn = display_name(p)
+        also = [x for x in [p["name"]] + list(p.get("aliases") or []) if x != dn]
+        al = f" (also: {', '.join(also[:3])})" if also else ""
+        lines.append(f"### {dn}{al}")
         lines.append(f"- {p['kind']} part, {'in OT' if p['side'] == 'ot' else 'outside OT' if p['side'] == 'outside' else 'side of OT not settled (' + p['side'] + ')'}"
                      f" ({', '.join(p['zones'])}): {', '.join(p['members'][:8])}" + (" and more" if len(p["members"]) > 8 else ""))
         if p["kind"] == "system" and "," in p["name"]:
@@ -867,12 +910,37 @@ def show_applications(doc: dict) -> str:
             "(one plain sentence) and the parts, then approve."])
 
 
-def show(doc: dict) -> str:
+def _proposed(work_dir: Path) -> list[dict]:
+    """The identity rows a person must still confirm (endpoints.build proposed, nothing reviewed):
+    [{end, label, evidence}]."""
+    from csa_docx import endpoints as E
+    try:
+        res = E.build(work_dir)
+    except Exception:
+        return []
+    rows = E.load(work_dir)
+    out = []
+    for end in res.get("proposed") or []:
+        r = rows.get(end.upper(), {})
+        out.append({"end": end, "label": E.label(r), "evidence": (r.get("evidence") or "").strip()})
+    return out
+
+
+def show(doc: dict, proposed: list[dict] | None = None) -> str:
     out = [f"# System parts ({'reviewed ' + doc.get('reviewed_on', '') if doc.get('reviewed') else 'not reviewed yet'})", ""]
     for p in doc.get("parts", []):
+        dn = display_name(p)
         al = f" (also: {', '.join(p['aliases'])})" if p.get("aliases") else ""
-        out.append(f"- **{p['name']}**{al}: {p['kind']}, {p['side']}, {', '.join(p['zones'])}; {', '.join(p['members'])}"
+        out.append(f"- **{dn}**{al}: {p['kind']}, {p['side']}, {', '.join(p['zones'])}; {', '.join(p['members'])}"
                    f" [{p['basis']}]")
+    if proposed:
+        out += ["", "Identities to confirm (hosts/endpoints.csv):"]
+        out += [f'- {r["end"]}: {r["label"]} [{r["evidence"]}]  (set reviewed=yes in hosts/endpoints.csv to accept, or correct the name)'
+                for r in proposed]
+    pairs = confusable(doc)
+    if pairs:
+        out += ["", "Names a reader could confuse:"]
+        out += [f'- "{a}" and "{b}": set "display" on one of them in parts.json' for a, b in pairs]
     out += ["", "Edit csa-work/parts.json to rename a part (name), add the names the sources use for it (aliases), or move a "
             "flow end to another part (\"assign\": {\"<end>\": \"<part name>\"}), then build again and approve."]
     return "\n".join(out)
@@ -925,9 +993,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if a.action == "build":
         doc = build(a.work_dir)
-        print(show(doc))
+        print(show(doc, _proposed(a.work_dir)))
     elif a.action == "show":
-        print(show(load(a.work_dir)))
+        print(show(load(a.work_dir), _proposed(a.work_dir)))
     else:
         doc = load(a.work_dir)
         if not doc.get("parts"):
