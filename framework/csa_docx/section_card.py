@@ -1099,11 +1099,7 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
             lines += owed_lines(pview, q["id"])
     if requirement_stories:
         lines += ["", "## Requirement summaries and stories", "",
-                  "For every requirement block write both `Summary:` and `Story:`. Summary is the Current State table "
-                  "cell: one to three sentences, no more than 80 words, stating the control or practice and its main "
-                  "qualification. Story is the fuller evidence-backed operational narrative placed under Discovery "
-                  "Information. Do not put the SEP label in either field; the framework adds it to the story. Keep exact "
-                  "hosts, ports and inventories in the discovery tables unless a detail is necessary to explain the rating."]
+                  'For every requirement block write both `Summary:` and `Story:`. Do not put the SEP label in either field; the framework adds it.', '- Summary is the Current State table cell: one to three sentences, at most 80 words, stating the control or practice and its main qualification.', '- Story is the paragraph under Discovery Information. It explains the rating to a reader who has not seen the evidence:', '  1. First sentence: the rating and the condition that decides it (see "What decides this rating").', '  2. Then one sentence for each condition that is not met or is unknown, saying what the system does and which parts cause it. Name at most three parts in a sentence, by their display names.', '  3. End with what is still unknown, in one sentence, if anything is.', "  At most 90 words. Say nothing about another requirement's conditions. Hosts, ports and inventories stay in the tables."]
     sysname = system_name(workspace)
     if sysname:
         lines += ["", "## System name", "",
