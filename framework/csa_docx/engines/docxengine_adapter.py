@@ -372,6 +372,10 @@ class DocxEngineEditor:
                     return EditResult(record.edit_id, "BLOCKED", "Insert action has no Text", anchor_text)
                 result = self.doc.insert(record.text, before=paragraph.anchor, author=author, track_changes=self.track_changes)
                 comment_anchor = _result_anchor(result) or paragraph.anchor
+                if _is_requirement_story_record(record):
+                    formatted = self.doc.format(anchor=comment_anchor, props={"bold": True}, author=author,
+                                                track_changes=self.track_changes)
+                    comment_anchor = _result_anchor(formatted) or comment_anchor
                 comment_id = self._add_comment(comment_anchor, record, author, initials)
                 self._tag_bookmark(record.edit_id, comment_anchor)
                 return EditResult(record.edit_id, "APPLIED", "Inserted approved text before anchor with DocxEngine", anchor_text, comment_id)
@@ -390,6 +394,10 @@ class DocxEngineEditor:
                     return EditResult(record.edit_id, "BLOCKED", f"Anchor match count was {len(matches)}; expected 1", anchor_text)
                 result = self.doc.insert(record.text, after=paragraph.anchor, author=author, track_changes=self.track_changes)
                 comment_anchor = _result_anchor(result) or paragraph.anchor
+                if _is_requirement_story_record(record):
+                    formatted = self.doc.format(anchor=comment_anchor, props={"bold": True}, author=author,
+                                                track_changes=self.track_changes)
+                    comment_anchor = _result_anchor(formatted) or comment_anchor
                 comment_id = self._add_comment(comment_anchor, record, author, initials)
                 self._tag_bookmark(record.edit_id, comment_anchor)
                 return EditResult(record.edit_id, "APPLIED", "Inserted approved text after anchor with DocxEngine", anchor_text, comment_id)
@@ -408,6 +416,10 @@ class DocxEngineEditor:
                 first_anchor = _result_anchor(result) or self._find_unique_text(replacement_paragraphs[0])
                 if first_anchor is None:
                     return EditResult(record.edit_id, "BLOCKED", "Could not re-anchor edited paragraph", anchor_text)
+                if _is_requirement_story_record(record):
+                    formatted = self.doc.format(anchor=first_anchor, props={"bold": True}, author=author,
+                                                track_changes=self.track_changes)
+                    first_anchor = _result_anchor(formatted) or first_anchor
                 if len(replacement_paragraphs) > 1:
                     self.doc.insert("\n".join(replacement_paragraphs[1:]), after=first_anchor, author=author, track_changes=self.track_changes)
                 comment_id = self._add_comment(first_anchor, record, author, initials)
@@ -1653,6 +1665,10 @@ class DocxEngineEditor:
             first_anchor = _result_anchor(result) or self._find_unique_text(replacement_paragraphs[0])
             if first_anchor is None:
                 return EditResult(record.edit_id, "BLOCKED", "Could not re-anchor edited paragraph", start_anchor_text)
+            if _is_requirement_story_record(record):
+                formatted = self.doc.format(anchor=first_anchor, props={"bold": True}, author=author,
+                                            track_changes=self.track_changes)
+                first_anchor = _result_anchor(formatted) or first_anchor
             for paragraph in reversed(old_following):
                 self.doc.delete(anchor=paragraph.anchor, author=author, track_changes=self.track_changes)
             if len(replacement_paragraphs) > 1:
@@ -1794,6 +1810,12 @@ def _extract_heading_to_sentence_range(record: ChangeRecord) -> tuple[str, str] 
 def _has_paragraph_plus_following_line_replacement(record: ChangeRecord) -> bool:
     action = record.action.lower()
     return "replace this paragraph and the following line" in action or "replace this paragraph and following line" in action
+
+
+def _is_requirement_story_record(record: ChangeRecord) -> bool:
+    paragraphs = markdown_to_paragraph_texts(record.text or "")
+    return (record.title.lower().endswith("discovery story") and len(paragraphs) >= 2
+            and bool(re.match(r"^SEP-[A-Z0-9-]+\s*(?:—|:|-)\s+", paragraphs[0], re.I)))
 
 
 def _has_delete_until_heading(record: ChangeRecord) -> bool:

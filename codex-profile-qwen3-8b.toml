@@ -1,0 +1,9 @@
+# Optional: the same settings as `qwen8b` in cli.yaml, as a named Codex profile.
+# Paste into ~/.codex/config.toml, then `codex --profile qwen3-8b` works on its own.
+[model_providers.ollama-local]
+name = "Ollama"
+base_url = "http://localhost:11434/v1"
+
+[profiles.qwen3-8b]
+model = "qwen3:8b"
+model_provider = "ollama-local"

@@ -6,7 +6,7 @@ The card (`CARD=`) is your whole input. Write the answer sheet (`SHEET=`) once a
 
 - One block per question on the card, in order: `## B1 <short label>`. Reviewer comments (`C1` ...) get `Answer: B<n>` (the block that answers them).
 - `Facts:` are one sentence each about the system, ending with the evidence IDs and the basis and scope: `- MOTPRDREV101 hosts the Reveloc application. (E-003) {observed; MOTPRDREV101}`. Basis is `observed`, `documented` or `stated` for evidence (E-) facts, and `background` only for a knowledge (K-) fact.
-- `Text:` is the finished prose for narrative blocks. For requirement blocks on a card with "Requirement summaries and stories", use `Summary:` for the Current State table cell and `Story:` for the fuller paragraph under Discovery Information. All prose is built only from that block's Facts and has no evidence IDs.
+- `Text:` is the finished prose for narrative blocks. For requirement blocks on a card with "Requirement summaries and stories", use `Summary:` for the Current State table cell and `Story:` for the fuller paragraph under its framework-generated requirement title in Discovery Information. All prose is built only from that block's Facts and has no evidence IDs.
 - Split requirement blocks: `Facts:`, `Summary:` (one to three sentences, at most 80 words), `Story:` (the fuller evidence-backed narrative), `Rating:` and `Rating reason:`. Do not repeat the SEP label because the framework adds it to the story.
 - Table blocks: `Rows:` starts with the header row exactly as the card gives the columns, then one row per item. Evidence IDs go in brackets in the last cell, and the framework strips them.
 - Findings blocks: `Bullets:` with one finding per bullet.

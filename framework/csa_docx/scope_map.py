@@ -26,6 +26,20 @@ _FIELDS = {
     "signal terms": "signal_terms",
 }
 
+# Short technical forms and dependency language commonly used by system models but too broad or terse for the
+# prose-oriented Signal terms in section-scope.md. These extend, never replace, the controlled scope-map terms.
+_DEPENDENCY_ALIASES = {
+    "3.2": ["ad", "identity"],
+    "3.4": ["timestamp", "timestamps"],
+    "3.6": ["network", "mpls", "wan", "lan", "gateway", "cross-zone"],
+    "3.7": ["sql", "database", "storage"],
+    "3.8": ["citrix", "administrative access", "management access"],
+    "3.9": ["telemetry"],
+    "3.15": ["power", "windows", "linux"],
+    "3.16": ["remote support"],
+    "3.17": ["internet", "azure", "email"],
+}
+
 
 def _term_re(terms: list[str]) -> re.Pattern | None:
     if not terms:
@@ -107,3 +121,28 @@ def best_by_terms(text: str, keys: list[str], domains: dict) -> tuple[str | None
     scores = [score(text, domains[k]) for k in keys]
     top = max(scores)
     return keys[scores.index(top)], top, scores.count(top) > 1
+
+
+def for_section(number: str = "", title: str = "", domains: dict | None = None) -> dict | None:
+    """Return the controlled requirement domain for a template subsection/card."""
+    domains = domains if domains is not None else load()
+    m = re.match(r"^(3\.\d+)", str(number or ""))
+    if m and m.group(1) in domains:
+        return domains[m.group(1)]
+    wanted = norm(title)
+    return next((d for d in domains.values() if norm(d["title"]) == wanted), None)
+
+
+def dependency_terms(domain: dict) -> list[str]:
+    """Terms that establish a system-model dependency belongs to ``domain``."""
+    return list(dict.fromkeys([*(domain.get("signal_terms") or []), *_DEPENDENCY_ALIASES.get(domain["key"], [])]))
+
+
+def dependency_matches(text: str, domain: dict) -> list[str]:
+    """Controlled domain terms present in function/dependency text, longest first."""
+    terms = dependency_terms(domain)
+    rx = _term_re(terms)
+    if not rx:
+        return []
+    found = {m.group(0).lower() for m in rx.finditer(text or "")}
+    return sorted(found, key=lambda x: (-len(x), x))

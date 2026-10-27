@@ -166,8 +166,12 @@ export type IntakeSnapshot = {
   project_key: string;
   index: { built_at_utc: string | null; files_by_status: Record<string, number>; complete: boolean };
   intake: IntakeRecord | null; nothing_new_since: string | null;
-  matrix: { rows: number; by_status: Record<string, number>; pending_review: number; added_since_intake: IntakeEvidenceRow[] };
+  matrix: { rows: number; live?: number; rejected?: number; by_status: Record<string, number>; pending_review: number; added_since_intake: IntakeEvidenceRow[] };
   graph: { nodes: number; edges: number };
   candidates: IntakeCandidate[]; gap_check: GapCheck | null; stale: number;
   agent_summary: { path: string; text: string; modified_at: string } | null;
+  sync?: IntakeSync; refresh?: { at: string; retired: { evidence_id: string; reason: string }[]; recheck: IntakeRecheck[] };
+  hosts?: { to_classify: { host: string; ips: string; evidence_ids: string }[]; unnamed_addresses: number };
 };
+export type IntakeSync = { ok: boolean; failed: boolean; behind: boolean; last: { at: string; status: string; hosts_index: string; merged_nodes: string[] } | null };
+export type IntakeRecheck = { evidence_id: string; file: string; kind: string; why: string; claim: string };

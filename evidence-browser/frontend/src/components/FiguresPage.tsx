@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ReactElement } from "react";
 import { api, fetchJob, submitJob } from "../api";
+import { AGENT_CLIS, DEFAULT_AGENT_CLI } from "../agentClis";
 import type { ReviewJob } from "../types";
 import "./figures.css";
 
@@ -203,7 +204,7 @@ function Md({ text }: { text: string }) {
 }
 
 function AgentBox({ d, busy, run }: { d: Detail; busy: string; run: (mode: string, cli: string) => void }) {
-  const [cli, setCli] = useState("claude");
+  const [cli, setCli] = useState(DEFAULT_AGENT_CLI);
   const [confirm, setConfirm] = useState(false);
   const [open, setOpen] = useState<string | null>(null);
   const a = d.agent || {};
@@ -218,7 +219,7 @@ function AgentBox({ d, busy, run }: { d: Detail; busy: string; run: (mode: strin
     <div className="fg-box fg-agent">
       <div className="fg-boxhead"><h4>Figure design agent</h4>
         <span className="fg-tools">
-          <select value={cli} onChange={e => setCli(e.target.value)} aria-label="Agent CLI"><option>claude</option><option>codex</option><option>evo</option></select>
+          <select value={cli} onChange={e => setCli(e.target.value)} aria-label="Agent CLI">{AGENT_CLIS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}</select>
           {!built && <button disabled={!!busy} onClick={() => run("design", cli)}>{busy === "design-design" ? "Agent designing…" : a.design ? "Design again" : "Design this figure"}</button>}
           {!built && a.design && !confirm && <button className="primary" disabled={!!busy} onClick={() => setConfirm(true)}>{busy === "design-build" ? "Agent building…" : "Build from this design"}</button>}
           {built && <button disabled={!!busy} onClick={() => run("review", cli)}>{busy === "design-review" ? "Agent reviewing…" : "Review with agent"}</button>}
@@ -247,7 +248,7 @@ function Panel({ d, busy, job, fit, setFit, openEvidenceId, save, edit, place, r
   designer: (mode: string, cli: string) => void; system: string }) {
   const r = d.row, b = d.brief;
   const [draft, setDraft] = useState<{ purpose: string; caption: string } | null>(null);
-  const [cli, setCli] = useState("claude");
+  const [cli, setCli] = useState(DEFAULT_AGENT_CLI);
   const [view, setView] = useState<"print" | "screen">("print");
   const [drawing, setDrawingState] = useState<"picture" | "word">(readDrawing);
   const setDrawing = (v: "picture" | "word") => { setDrawingState(v); try { localStorage.setItem(DRAWING_KEY, v); } catch { /* per-browser only */ } };
@@ -282,7 +283,7 @@ function Panel({ d, busy, job, fit, setFit, openEvidenceId, save, edit, place, r
         <div className="fg-boxhead"><h4>Brief: what the figure must show</h4>
           {!draft && <span className="fg-tools">
             <button onClick={() => setDraft({ purpose: b.purpose.text, caption: b.caption.text })}>Edit wording</button>
-            <select value={cli} onChange={e => setCli(e.target.value)} aria-label="Agent CLI"><option>claude</option><option>codex</option><option>evo</option></select>
+            <select value={cli} onChange={e => setCli(e.target.value)} aria-label="Agent CLI">{AGENT_CLIS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}</select>
             <button disabled={!!busy} onClick={() => reword(cli)}>{busy === "agent" ? "Agent working…" : "Reword with agent"}</button>
           </span>}
         </div>

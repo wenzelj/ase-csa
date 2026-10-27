@@ -313,6 +313,18 @@ def validate_node_row(raw, known_evidence_ids, allow_new_type):
     return row, errs
 
 
+HOST_LABEL = re.compile(r"^([A-Za-z][A-Za-z0-9-]{2,30})(?: \((.*)\))?$")
+
+
+def host_key(label: str):
+    """The host a host-node label names ("NAME" or "NAME (description)", a name with a digit), upper case;
+    None for group or device labels ("IPR400 Radio Over IP gateways, ...") and bare addresses."""
+    m = HOST_LABEL.match((label or "").strip())
+    if not m or not re.search(r"\d", m[1]) or re.fullmatch(r"\d+(?:\.\d+){3}", m[1]):
+        return None
+    return m[1].upper()
+
+
 def cmd_append_node(args):
     workspace, project_key, nodes_path, _, matrix_path = resolve_paths(args)
     payload = _read_payload(args)
@@ -329,8 +341,21 @@ def cmd_append_node(args):
                 fail("nodes.csv header differs from the expected schema; repair before appending", found=header)
 
             prepared, errors = [], []
+            hosts_have = {}
+            for r in body:
+                d = dict(zip(header, r))
+                k = host_key(d.get("label", "")) if d.get("node_type") == "host" else None
+                if k:
+                    hosts_have.setdefault(k, d.get("node_id"))
             for i, item in enumerate(data):
                 item = dict(item)
+                k = host_key(item.get("label", "")) if (item.get("node_type") or "") == "host" else None
+                if k and k in hosts_have:          # one node per host: cite the existing node instead
+                    errors.append({"index": i, "label": (item.get("label") or "")[:80], "errors": [
+                        f"host {k} already has node {hosts_have[k]}; use that node_id for edges"]})
+                    continue
+                if k:
+                    hosts_have[k] = "(this batch)"
                 item.setdefault("project", project_key)
                 if item.get("project") != project_key:
                     errors.append({"index": i, "errors": [

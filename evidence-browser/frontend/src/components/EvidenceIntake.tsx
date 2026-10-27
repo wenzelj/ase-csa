@@ -1,14 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { api, cancelJob, fetchIntake, fetchJob, reviewEvidence, submitJob } from "../api";
+import { AGENT_CLIS, rememberedAgentCli, rememberAgentCli } from "../agentClis";
 import type { IntakeCandidate, IntakeEvidenceRow, IntakeFile, IntakeSnapshot, ReviewJob } from "../types";
 import { deriveIntakeSteps, resumableJob, type StepKey } from "./intakeSteps";
 
 const TERMINAL = ["succeeded", "failed", "cancelled", "interrupted"];
-const CLIS = [{ id: "claude", label: "Claude" }, { id: "codex", label: "Codex" }, { id: "evo", label: "Evo (local)" }];
 const OP_LABEL: Record<string, string> = { ingest: "Ingest new data", intake: "Evidence agent", gap_check: "Check open questions", resolve_gaps: "Resolve evidence and update answers" };
 const VERDICT: Record<string, string> = { ANSWERED: "Answered", CANDIDATES: "Possible answer found", NOT_FOUND: "Not found" };
 
-function remembered(): string { try { return localStorage.getItem("csa-draft-cli") || "claude"; } catch { return "claude"; } }
 function when(value?: string | null) { if (!value) return "—"; const d = new Date(value); return isNaN(d.getTime()) ? value : d.toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }); }
 function name(path: string) { return path.split("/").pop() || path; }
 
@@ -20,7 +19,7 @@ type Props = {
 
 export function EvidenceIntake({ system, draftStage, refreshKey, openEvidence, writeFact, openSection }: Props) {
   const [snap, setSnap] = useState<IntakeSnapshot | null>(null); const [job, setJob] = useState<ReviewJob | null>(null);
-  const [error, setError] = useState(""); const [cli, setCli] = useState(remembered()); const [showLog, setShowLog] = useState(false);
+  const [error, setError] = useState(""); const [cli, setCli] = useState(rememberedAgentCli()); const [showLog, setShowLog] = useState(false);
   const [onlyFound, setOnlyFound] = useState(true);
   const poll = useRef<number | undefined>(undefined);
 
@@ -46,7 +45,7 @@ export function EvidenceIntake({ system, draftStage, refreshKey, openEvidence, w
   }
   useEffect(() => { setSnap(null); setJob(null); void load(); void resume(); return () => window.clearInterval(poll.current); }, [system]);
   useEffect(() => { if (refreshKey) void load(); }, [refreshKey]);
-  useEffect(() => { try { localStorage.setItem("csa-draft-cli", cli); } catch { /* per-viewer convenience only */ } }, [cli]);
+  useEffect(() => { rememberAgentCli(cli); }, [cli]);
 
   async function run(operation: string, options: Record<string, string | boolean> = {}) {
     setError(""); setShowLog(true);
@@ -69,9 +68,9 @@ export function EvidenceIntake({ system, draftStage, refreshKey, openEvidence, w
   const files: IntakeFile[] = rec ? [...rec.added, ...rec.changed] : [];
   const action = (key: StepKey) => ({
     ingest: <button onClick={() => void run("ingest")} disabled={busy}>Ingest new data</button>,
-    documents: <span className="intake-action"><select value={cli} onChange={e => setCli(e.target.value)} disabled={busy} aria-label="Model for the evidence agent">{CLIS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}</select><button onClick={() => void run("intake", { cli })} disabled={busy || !rec}>Run the evidence agent</button></span>,
+    documents: <span className="intake-action"><select value={cli} onChange={e => setCli(e.target.value)} disabled={busy} aria-label="Agent for evidence intake">{AGENT_CLIS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}</select><button onClick={() => void run("intake", { cli })} disabled={busy || !rec}>Run the evidence agent</button></span>,
     gaps: <button onClick={() => void run("gap_check")} disabled={busy}>Check open questions</button>,
-    settle: <span className="intake-action"><select value={cli} onChange={e => setCli(e.target.value)} disabled={busy} aria-label="Model for evidence settlement">{CLIS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}</select><button onClick={() => void run("resolve_gaps", { cli })} disabled={busy || !snap.candidates.length}>Resolve and update answers</button></span>, use: null,
+    settle: <span className="intake-action"><select value={cli} onChange={e => setCli(e.target.value)} disabled={busy} aria-label="Agent for evidence settlement">{AGENT_CLIS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}</select><button onClick={() => void run("resolve_gaps", { cli })} disabled={busy || !snap.candidates.length}>Resolve and update answers</button></span>, use: null,
   })[key];
 
   return <section className="page draft-page intake-page">
@@ -82,13 +81,14 @@ export function EvidenceIntake({ system, draftStage, refreshKey, openEvidence, w
     </li>)}</ol>
 
     <div className="draft-counts">
-      <div className="draft-count"><strong>{snap.matrix.rows}</strong><span>Evidence rows</span></div>
+      <div className="draft-count"><strong>{snap.matrix.live ?? snap.matrix.rows}</strong><span>Evidence rows{snap.matrix.rejected ? ` (${snap.matrix.rejected} rejected not counted)` : ""}</span></div>
       <div className="draft-count"><strong>{snap.matrix.by_status.VERIFIED || 0}</strong><span>Verified</span></div>
       <div className="draft-count draft-stale"><strong>{snap.candidates.length}</strong><span>To settle</span></div>
       <div className="draft-count"><strong>{snap.graph.nodes} / {snap.graph.edges}</strong><span>Graph nodes / links</span></div>
       <div className="draft-count"><strong>{snap.stale}</strong><span>Stale answers</span></div>
     </div>
 
+    {snap.sync && !snap.sync.ok && <div className="intake-warn" role="alert"><b>{snap.sync.failed ? "The host files did not rebuild" : "The host files are older than the evidence"}</b><p>{snap.sync.failed ? `${snap.sync.last?.hosts_index || "Graph sync failed"}. ` : ""}Hosts, links, flows and per-host evidence shown elsewhere in the workspace may be out of date. Run Ingest new data{snap.sync.failed ? " once the error is fixed" : ""}.</p></div>}
     {error && <p className="desk-error" role="alert">{error}</p>}
     {job && <div className={`draft-job draft-job-${job.state}`} role="status"><div><b>{OP_LABEL[job.operation] || job.operation}</b><span>{running ? "Running…" : job.state === "succeeded" ? "Done" : `Stopped: ${job.state}`}</span></div><div className="draft-job-buttons"><button className="quiet" onClick={() => setShowLog(!showLog)}>{showLog ? "Hide output" : "Show output"}</button>{running && <button className="quiet" onClick={() => void cancelJob(system, job.id).then(() => fetchJob(system, job.id)).then(setJob)}>Stop</button>}</div>{showLog && <pre>{[job.stdout_tail, job.stderr_tail].filter(Boolean).join("\n") || "No output yet."}</pre>}</div>}
 
@@ -97,6 +97,13 @@ export function EvidenceIntake({ system, draftStage, refreshKey, openEvidence, w
       {files.length ? <table className="draft-table"><thead><tr><th>File</th><th>Change</th><th>Index</th></tr></thead><tbody>{files.map(f => <tr key={f.rel_path}><td>{name(f.rel_path)}<small>{f.rel_path}</small></td><td>{rec!.added.includes(f) ? "New" : "Changed"}</td><td>{f.status === "indexed" ? "Readable" : f.status}<small>{f.reason}</small></td></tr>)}</tbody></table> : <p className="draft-none">{rec ? "Only removals in the last intake." : "Nothing ingested yet."}</p>}
       {rec && rec.removed.length > 0 && <p className="draft-none">Removed from the index: {rec.removed.map(name).join(", ")}</p>}
     </section>
+
+    {((snap.refresh?.recheck.length || 0) + (snap.refresh?.retired.length || 0) + (snap.hosts?.to_classify.length || 0)) > 0 && <section className="decision-desk"><header><div><h2>Keeping the evidence true</h2><p>What the last ingest found about evidence already recorded. Re-check rows are handled by the evidence agent (step 2); hosts to classify need a role, site and scope in the project's roles.csv or an inventory.</p></div></header>
+      {!!snap.refresh?.recheck.length && <><h3>To re-check ({snap.refresh.recheck.length})</h3><table className="draft-table"><thead><tr><th>ID</th><th>Why</th><th>Claim</th></tr></thead><tbody>{snap.refresh.recheck.map(r => <tr key={r.evidence_id}><td>{r.evidence_id}</td><td>{r.why}<small>{name(r.file)}</small></td><td>{r.claim}</td></tr>)}</tbody></table></>}
+      {!!snap.refresh?.retired.length && <details className="intake-summary"><summary>Retired by the last ingest ({snap.refresh.retired.length})</summary><ul>{snap.refresh.retired.map(r => <li key={r.evidence_id}>{r.evidence_id}: {r.reason}</li>)}</ul></details>}
+      {!!snap.hosts?.to_classify.length && <><h3>Hosts named only in documents ({snap.hosts.to_classify.length})</h3><table className="draft-table"><thead><tr><th>Host</th><th>Address</th><th>Evidence</th></tr></thead><tbody>{snap.hosts.to_classify.map(h => <tr key={h.host}><td>{h.host}</td><td>{h.ips || "—"}</td><td>{h.evidence_ids.split(";").join(", ")}</td></tr>)}</tbody></table></>}
+      {!!snap.hosts?.unnamed_addresses && <p className="draft-none">{snap.hosts.unnamed_addresses} addresses are still seen only by IP (hosts/addresses.csv).</p>}
+    </section>}
 
     <section className="decision-desk"><header><div><h2>2 · New evidence</h2><p>Rows added to the evidence matrix since that ingest.</p></div></header>
       {snap.matrix.added_since_intake.length ? <table className="draft-table"><thead><tr><th>ID</th><th>Status</th><th>Claim</th><th /></tr></thead><tbody>{snap.matrix.added_since_intake.map(r => <tr key={r.evidence_id}><td>{r.evidence_id}</td><td><span className="draft-pill">{r.status}</span></td><td>{r.claim}<small>{r.source_title}</small></td><td><button className="quiet" onClick={() => openEvidence(r)}>Open source</button></td></tr>)}</tbody></table> : <p className="draft-none">No new rows yet.</p>}

@@ -14,7 +14,7 @@ The card (`CARD=`) is your whole input. Write the answer sheet (`SHEET=`) and st
 - The optional note under a table (`note`): `None: <why>` removes it, or one or two evidenced sentences of a fact the rows cannot show (a host unlike its group, sources that disagree, fewer hosts covered). Start from the card's "Note candidates". Facts only, never a repeat of a row.
 - Another application's rows (`<project>:E-nnn`, from "Shared enterprise services") are context: only in narrative and note blocks, with that project in the scope (`{observed; utcdtc: 8 hosts}`). Never the only support of a current state or table row (CROSS_PROJECT_ONLY).
 - Requirement questions judge the organisation's practice, not the assessment's data: say whether the tool or process exists, then any informal substitute and relevant scope exclusion. Capture host lists are not the organisation's inventory; put lists, counts and roles in table blocks. Rate the practice and keep it to one to three facts. See "Requirement rows" in `csa-writing-style`.
-- For a split requirement, `Summary:` is the Current State cell (one to three sentences and at most 80 words), while `Story:` is the fuller evidence-backed narrative placed under Discovery Information. Do not repeat the SEP label in either field.
+- For a split requirement, `Summary:` is the Current State cell (one to three sentences, at most 80 words), while `Story:` is the evidence-backed narrative under Discovery Information. Do not add the SEP label or a title; the framework adds bold `SEP-ID — requirement title` above the Story.
 - Rating is one of the ratings on the card, judged against the requirement text, with a one-sentence reason. Not Applicable needs a reason that says why the requirement does not apply.
 
 ## Never infer

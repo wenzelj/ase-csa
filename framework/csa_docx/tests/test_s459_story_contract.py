@@ -25,9 +25,9 @@ def _template() -> Path:
 
 
 EXPECTED_BODY = (
-    "For every requirement block write both `Summary:` and `Story:`. Do not put the SEP label in either field; the framework adds it.\n"
+    "For every requirement block write both `Summary:` and `Story:`. Do not put the SEP label or a title in either field; the framework adds a bold title from the requirement ID and wording.\n"
     "- Summary is the Current State table cell: one to three sentences, at most 80 words, stating the control or practice and its main qualification.\n"
-    "- Story is the paragraph under Discovery Information. It explains the rating to a reader who has not seen the evidence:\n"
+    "- Story is the paragraph under its requirement title in Discovery Information. It explains the rating to a reader who has not seen the evidence:\n"
     '  1. First sentence: the rating and the condition that decides it (see "What decides this rating").\n'
     "  2. Then one sentence for each condition that is not met or is unknown, saying what the system does and which parts cause it. "
     "Name at most three parts in a sentence, by their display names.\n"

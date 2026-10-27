@@ -69,6 +69,16 @@ def _style(p) -> str:
     return s.get(_q("val")) if s is not None else "Normal"
 
 
+def _all_text_bold(p) -> bool:
+    """Whether every visible text run is bold.
+
+    Requirement-story titles are bold normal paragraphs so they look like
+    titles without joining Word's numbered heading hierarchy or the TOC.
+    """
+    runs = [r for r in p.iter(_q("r")) if _text(r)]
+    return bool(runs) and all(r.find("w:rPr/w:b", NS) is not None for r in runs)
+
+
 def is_placeholder(text: str) -> bool:
     t = (text or "").strip()
     return bool(t) and bool(_BRACKET.match(t))
@@ -230,6 +240,7 @@ def read(path: Path | str) -> dict:
     all_ratings: list[str] = []
     pending_bullets: list[dict] = []
     topic_lines = False  # the TableNote lines right after a framework-built role table belong to it
+    pending_story = None  # bold SEP title waiting for its normal body paragraph
 
     def flush_bullets():
         nonlocal pending_bullets
@@ -243,6 +254,7 @@ def read(path: Path | str) -> dict:
 
     for el in _blocks(body):
         if el.tag == _q("tbl"):
+            pending_story = None
             flush_bullets()
             table_ord += 1
             if topic is None:
@@ -270,6 +282,7 @@ def read(path: Path | str) -> dict:
         notes = [comments[cs.get(_q('id'))] for cs in el.iter(_q('commentRangeStart')) if cs.get(_q('id')) in comments]
         m = _HEADING.match(style)
         if m:
+            pending_story = None
             flush_bullets()
             topic_lines = False
             level = int(m.group(1))
@@ -366,9 +379,22 @@ def read(path: Path | str) -> dict:
         else:
             story = _REQ_STORY.match(text) if (facet or "").strip().lower() == "discovery information" else None
             if story:
-                topic["parts"].append({"kind": "requirement-story", "facet": facet, "label": None,
-                                       "req_id": story.group(1), "text": story.group(2)[:300], "pid": pid,
-                                       "current": text})
+                part = {"kind": "requirement-story", "facet": facet, "label": None,
+                        "req_id": story.group(1), "text": story.group(2)[:300], "pid": pid,
+                        "current": text}
+                topic["parts"].append(part)
+                # New-format stories split a bold title from the normal body.
+                # Legacy unformatted stories remain one managed paragraph.
+                pending_story = part if _all_text_bold(el) else None
+                if pending_story is not None:
+                    pending_story["title"] = story.group(2)[:300]
+                    pending_story["text"] = ""
+                    pending_story["body_pid"] = None
+            elif pending_story is not None:
+                pending_story["text"] = text[:300]
+                pending_story["body_pid"] = pid
+                pending_story["body_current"] = text
+                pending_story = None
             else:
                 topic["parts"].append({"kind": "text", "facet": facet, "label": None, "text": text[:300], "pid": pid,
                                        "current": text})

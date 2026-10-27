@@ -154,7 +154,7 @@ OPERATIONS: dict[str, Operation] = {
     ),
 }
 
-DRAFT_CLIS = frozenset({"claude", "codex", "evo"})
+DRAFT_CLIS = frozenset({"claude", "codex", "evo", "qwen8b"})
 
 
 def catalogue() -> list[dict[str, Any]]:
@@ -220,7 +220,7 @@ def build_argv(agents_dir: Path, project_key: str, operation_key: str, request: 
         raise HTTPException(422, "mode must be design, build or review")
     if operation.key in ("answer", "refresh_draft", "figure_wording", "figure_design", "intake", "resolve_gaps"):
         if request.options.get("cli") not in (None, *DRAFT_CLIS):
-            raise HTTPException(422, "cli must be claude, codex or evo")
+            raise HTTPException(422, "cli must be claude, codex, evo or qwen8b")
     if operation.key == "freeze" and request.target != "v1":
         raise HTTPException(422, "freeze takes the target v1")
     if operation.key not in {"author", "review", "cleanup", "build_preview", "build", "audit",

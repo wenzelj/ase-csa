@@ -158,6 +158,22 @@ def test_place_replaces_topic_table_after_requirement_stories_without_duplicatio
     assert what2 == "replaced" and again == refreshed
 
 
+def test_place_puts_requirement_table_after_split_story_body(tmp_path):
+    t = build(tmp_path)
+    once, _ = tt.place_xml(DOC, t, "Time Synchronisation")
+    ours = once.index(f'<w:tbl>', once.index(f'w:tblCaption w:val="{tt.CAPTION}"') - 200)
+    story = (
+        '<w:p><w:r><w:rPr><w:b/></w:rPr><w:t>SEP-TIME-01 — Independent OT time source</w:t></w:r></w:p>'
+        '<w:p><w:r><w:t>The evidence-backed current-state story.</w:t></w:r></w:p>'
+    )
+    with_story = once[:ours] + story + once[ours:]
+
+    refreshed, _ = tt.place_xml(with_story, t, "Time Synchronisation")
+
+    assert refreshed.index("Independent OT time source") < refreshed.index("evidence-backed current-state story")
+    assert refreshed.index("evidence-backed current-state story") < refreshed.index(f'w:tblCaption w:val="{tt.CAPTION}"')
+
+
 def test_place_interleaves_requirement_tables_and_removes_replaced_aspect_table():
     stories = (
         '<w:p><w:r><w:t>SEP-STOR-01 — Storage story.</w:t></w:r></w:p>'

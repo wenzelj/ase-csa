@@ -145,6 +145,8 @@ def build(project: dict[str, str], agents: Path, document: Path | None) -> dict[
                                                 "source": r.get("source", ""), "line": r.get("line", "")})
     ev_by_host: dict[str, list[str]] = {}
     for r in _csv(work / "hosts" / "evidence_hosts.csv"):
+        if (r.get("review_state") or "").lower() == "rejected":      # rejected rows are not a host's evidence
+            continue
         for h in (r.get("hosts") or "").split(";"):
             if h.strip():
                 ev_by_host.setdefault(h.strip(), []).append(r["evidence_id"])

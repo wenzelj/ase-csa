@@ -90,6 +90,56 @@ def _count_rows(path: Path) -> int:
         return sum(1 for _ in csv.DictReader(fh))
 
 
+def _last_sync(work: Path) -> dict[str, Any] | None:
+    """The newest graph sync report (graph-audit.jsonl): did the host files rebuild?"""
+    path = work / "graph-audit.jsonl"
+    if not path.is_file():
+        return None
+    with path.open("rb") as fh:
+        fh.seek(0, 2)
+        fh.seek(max(0, fh.tell() - 65536))
+        lines = fh.read().decode("utf-8", "replace").splitlines()
+    for line in reversed(lines):
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        if rec.get("action") == "sync":
+            rep = rec.get("report") or {}
+            return {"at": rec.get("ts", ""), "status": rep.get("status", ""), "hosts_index": rep.get("hosts_index", ""),
+                    "merged_nodes": rep.get("merged_nodes", [])}
+    return None
+
+
+def _sync_health(work: Path) -> dict[str, Any]:
+    """Are the host files current with the evidence? The last sync must have rebuilt them, and the per-host
+    evidence file must be no older than the matrix and the review log."""
+    last = _last_sync(work)
+    matrix, reviews_log = work / "evidence-matrix.csv", work / "evidence-reviews.jsonl"
+    per_host = work / "hosts" / "evidence_hosts.csv"
+    newest = max((f.stat().st_mtime for f in (matrix, reviews_log) if f.is_file()), default=0)
+    behind = bool(newest) and (not per_host.is_file() or per_host.stat().st_mtime + 1 < newest)
+    failed = bool(last) and last["status"] != "OK"
+    return {"ok": not failed and not behind, "failed": failed, "behind": behind, "last": last}
+
+
+def _hosts_to_classify(work: Path, rejected: set[str]) -> list[dict[str, str]]:
+    """Register hosts that only the evidence names (no capture, no inventory, no role): they need a role,
+    site and scope (roles.csv or an inventory) before the CSA can group them."""
+    out = []
+    path = work / "hosts" / "hosts.csv"
+    if not path.is_file():
+        return out
+    with path.open(encoding="utf-8-sig", newline="") as fh:
+        for r in csv.DictReader(fh):
+            src = [x for x in (r.get("sources") or "").split(";") if x]
+            ev = [x for x in src if _EID.match(x) and x.upper() not in rejected]
+            if r.get("capture") or r.get("role") or not ev or len(ev) != len(src):
+                continue
+            out.append({"host": r["host"], "ips": r.get("ips", ""), "evidence_ids": ";".join(ev)})
+    return out
+
+
 def snapshot(project: dict[str, str]) -> dict[str, Any]:
     work = Path(project["work_dir"]).expanduser()
     intake_dir = work / "intake"
@@ -107,6 +157,8 @@ def snapshot(project: dict[str, str]) -> dict[str, Any]:
             rows = [dict(r) for r in csv.DictReader(fh)]
     by_status: dict[str, int] = {}
     for r in rows:
+        if reviews.get(r.get("evidence_id", "").upper()) == "rejected":
+            continue                                   # a rejected row is not evidence
         by_status[r.get("status", "")] = by_status.get(r.get("status", ""), 0) + 1
     mine = _intake_ids(work, record)
     added = [r for r in rows if r.get("evidence_id", "").upper() in mine]
@@ -134,8 +186,16 @@ def snapshot(project: dict[str, str]) -> dict[str, Any]:
     stale_doc = _json(work / "draft" / "stale.json") or {}
     stale = sum(1 for s in stale_doc.get("sections", []) if s.get("status") not in ("REUSE", None, ""))
 
+    rejected = {i for i, st in reviews.items() if st == "rejected"}
+    refresh = _json(intake_dir / "refresh-latest.json") or {}
+    recheck = [x for x in refresh.get("recheck", []) if str(x.get("evidence_id", "")).upper() not in rejected]
+    unnamed = _count_rows(work / "hosts" / "addresses.csv")
     return {"project_key": project.get("key"), "index": index, "intake": record, "nothing_new_since": nothing_new_since,
-            "matrix": {"rows": len(rows), "by_status": by_status, "pending_review": pending, "added_since_intake": added},
+            "sync": _sync_health(work), "refresh": {"at": refresh.get("at", ""), "retired": refresh.get("rejected", []),
+                                                   "recheck": recheck},
+            "hosts": {"to_classify": _hosts_to_classify(work, rejected), "unnamed_addresses": unnamed},
+            "matrix": {"rows": len(rows), "live": len(rows) - sum(1 for r in rows if r.get("evidence_id", "").upper() in rejected),
+                       "rejected": len(rejected), "by_status": by_status, "pending_review": pending, "added_since_intake": added},
             "graph": {"nodes": _count_rows(work / "graph" / "nodes.csv"), "edges": _count_rows(work / "graph" / "edges.csv")},
             "candidates": candidates, "gap_check": _json(intake_dir / "gap-check-latest.json"),
             "stale": stale, "agent_summary": summary}

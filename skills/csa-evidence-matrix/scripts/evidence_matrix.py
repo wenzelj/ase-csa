@@ -785,11 +785,14 @@ def graph_sync(workspace, written):
         return
     import subprocess
     try:
-        subprocess.run([sys.executable, str(Path(__file__).with_name("graph_sync.py")), "--workspace", str(workspace)],
-                       env=dict(os.environ, CSA_NO_GRAPH_SYNC="1"), stdout=subprocess.DEVNULL,
-                       stderr=subprocess.DEVNULL, timeout=600)
-    except Exception:
-        pass
+        r = subprocess.run([sys.executable, str(Path(__file__).with_name("graph_sync.py")), "--workspace", str(workspace)],
+                           env=dict(os.environ, CSA_NO_GRAPH_SYNC="1"), stdout=subprocess.DEVNULL,
+                           stderr=subprocess.PIPE, text=True, timeout=600)
+        if r.returncode != 0:                    # the rows are written; the host files are not current
+            print("WARNING: evidence written, but the graph/host sync failed: " + (r.stderr or "").strip()[-400:]
+                  + " (run `csa ingest` after fixing)", file=sys.stderr)
+    except Exception as ex:
+        print(f"WARNING: evidence written, but the graph/host sync did not run: {ex}", file=sys.stderr)
 
 
 # --------------------------------------------------------------------------- main
@@ -820,6 +823,15 @@ def cmd_review(args):
     missing = [i for i in ids if i not in known]
     if missing:
         fail(f"unknown evidence_id(s): {', '.join(missing)}")
+    # a rejection says the row is not true. A row that is true but does not answer some question stays evidence:
+    # only an UNCONFIRMED candidate (a search hit) is rejected for not being an answer.
+    if args.state == "rejected" and re.search(r"does not answer|not an answer", args.note or "", re.I):
+        status = {r[0].strip().upper(): as_dict(header, r).get("status", "") for r in body if r}
+        kept = [i for i in ids if status.get(i) != "UNCONFIRMED"]
+        if kept:
+            fail(f"not rejected: {', '.join(kept)} are {', '.join(sorted({status[i] for i in kept}))} evidence; a row is rejected "
+                 "only when it is wrong. Leave it as evidence (it answers other questions) and reject only the UNCONFIRMED "
+                 "candidate rows, or give the reason the row is wrong.")
     log = matrix.parent / "evidence-reviews.jsonl"
     at = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
     with open(log, "a", encoding="utf-8") as fh:

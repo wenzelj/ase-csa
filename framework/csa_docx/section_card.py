@@ -286,7 +286,8 @@ def _file_rows(work: Path, rel: str, encoding: str = "utf-8") -> list[dict]:
 
 
 def _matrix_rows(workspace: Path) -> list[dict]:
-    return _file_rows(Path(workspace) / "csa-work", "evidence-matrix.csv", "utf-8-sig")
+    from csa_docx import evidence_live
+    return evidence_live.read(Path(workspace) / "csa-work" / "evidence-matrix.csv")
 
 
 def _rejected(workspace: Path) -> set[str]:
@@ -861,47 +862,85 @@ def _dns_order_candidates(workspace: Path, rows: list[dict]) -> list[dict]:
 
 
 def drawbridge_function_lines(node: dict, qs: list[dict], workspace: Path | None) -> dict[str, list[str]]:
-    """{question id: lines} for the Drawbridge Impact question: the system model's functions that this
-    section's parts view covers, one line per function with what delivers it and its isolation effect.
-    The effect comes from the parts view (``isolation``): ``lost`` when any of the function's parts loses
-    a path, ``may be lost`` when one only may, else ``keeps working``. {} without a system model. A function
-    names a part when it shares a proper-name word with the part's name or an accepted short name (a machine-kind
-    word like "server" or "database" is not a name, so it is not matched on)."""
+    """Domain-specific function prompts for Drawbridge Impact.
+
+    Every requirement-domain card receives only functions whose declared dependencies explicitly match that
+    domain's controlled scope terms. A function's name is not evidence that it depends on the domain. The overall
+    isolation-validation domain (3.12) is the sole exception:
+    it owns the whole-system isolation summary and therefore receives every function with its path-isolation effect.
+    """
     if not workspace:
         return {}
-    from csa_docx import knowledge, parts as parts_mod
-    from csa_docx.parts import is_label
+    from csa_docx import knowledge, scope_map
     model = knowledge.system_model(workspace)
     if not (model.get("functions") or []):
         return {}
-    try:
-        doc = parts_mod.assemble(Path(workspace) / "csa-work")
-    except (OSError, ValueError, KeyError):
+    domain = scope_map.for_section(node.get("number", ""), node.get("title", ""))
+    if not domain:
         return {}
-    if not doc.get("parts"):
-        return {}
-    iso = parts_mod.isolation(Path(workspace) / "csa-work", doc)
-    GENERIC = {"server", "servers", "host", "group", "availability", "cluster", "application",
-               "applications", "general", "purpose", "management", "system", "node", "controller",
-               "services", "service", "data", "other", "internal", "peers", "not", "identified",
-               "unidentified", "enterprise", "directory", "time", "sql", "tgoip", "license",
-               "licence", "manager", "radio"}
-    def words(s: str) -> set[str]:
-        return {w for w in re.findall(r"[a-z0-9]+(?:[./][a-z0-9]+)*", (s or "").lower())
-                if len(w) >= 4 and not w.isdigit() and w not in GENERIC}
+
+    whole_system = domain["key"] == "3.12"
+    iso: dict[str, dict] = {}
     cand: dict[str, set[str]] = {}
-    for p in doc["parts"]:
-        if p["id"] not in iso:
-            continue
-        names = {p["name"]} | set(p.get("aliases") or []) | set(parts_mod.short_names(p["name"]))
-        if is_label(p):
-            names |= set(parts_mod.names(p))
-        cand[p["id"]] = {w for n in names for w in words(n)}
+    if whole_system:
+        from csa_docx import parts as parts_mod
+        from csa_docx.parts import is_label
+        try:
+            doc = parts_mod.assemble(Path(workspace) / "csa-work")
+        except (OSError, ValueError, KeyError):
+            return {}
+        if not doc.get("parts"):
+            return {}
+        iso = parts_mod.isolation(Path(workspace) / "csa-work", doc)
+        generic = {"server", "servers", "host", "group", "availability", "cluster", "application",
+                   "applications", "general", "purpose", "management", "system", "node", "controller",
+                   "services", "service", "data", "other", "internal", "peers", "not", "identified",
+                   "unidentified", "enterprise", "directory", "time", "sql", "tgoip", "license",
+                   "licence", "manager", "radio"}
+
+        def words(s: str) -> set[str]:
+            return {w for w in re.findall(r"[a-z0-9]+(?:[./][a-z0-9]+)*", (s or "").lower())
+                    if len(w) >= 4 and not w.isdigit() and w not in generic}
+
+        for part in doc["parts"]:
+            if part["id"] not in iso:
+                continue
+            names = {part["name"]} | set(part.get("aliases") or []) | set(parts_mod.short_names(part["name"]))
+            if is_label(part):
+                names |= set(parts_mod.names(part))
+            cand[part["id"]] = {w for name in names for w in words(name)}
+
     out: dict[str, list[str]] = {}
     for q in qs:
         if q.get("kind") != "narrative" or "drawbridge" not in (q.get("text") or "").lower():
             continue
         lines: list[str] = []
+        if not whole_system:
+            for fn in model.get("functions", []):
+                dependency = "; ".join(str(fn.get(k) or "") for k in ("depends_on", "it_dependencies")
+                                       if str(fn.get(k) or "").strip())
+                matched = scope_map.dependency_matches(dependency, domain)
+                if not matched:
+                    continue
+                lines.append(
+                    f"  Function with an explicit {domain['title']} dependency to assess: {fn['function']}: "
+                    f"recorded dependency: {dependency} (matched: {', '.join(matched)})"
+                )
+            if lines:
+                lines.append(
+                    f"  Write only consequences caused by loss or unavailability of {domain['title']}. A function stops "
+                    "only where this section's evidence establishes that its matched dependency is unavailable during "
+                    "isolation. Do not import an outcome caused by another domain. If the behaviour is not established, "
+                    "record it as Unknown."
+                )
+            else:
+                lines.append(
+                    f"  No function in the system model declares an explicit {domain['title']} dependency. Do not infer "
+                    "one from shared servers or from a whole-system isolation outcome. Use this section's evidence or "
+                    "record the function-level impact as Unknown."
+                )
+            out[q["id"]] = lines
+            continue
         for fn in model.get("functions", []):
             text = " ".join(str(fn.get(k) or "") for k in ("function", "delivered_by", "depends_on", "it_dependencies"))
             toks = words(text)
@@ -919,7 +958,8 @@ def drawbridge_function_lines(node: dict, qs: list[dict], workspace: Path | None
         if lines:
             lines.append("  Write: one sentence on what keeps working, by function; one sentence for each function lost "
                          "or at risk, saying what stops; one sentence on any fallback and what is unknown. Name "
-                         "functions, not lists of parts.")
+                         "functions, not lists of parts. This whole-system view is permitted here because Isolation & "
+                         "Resilience Validation owns the overall Drawbridge outcome.")
             out[q["id"]] = lines
     return out
 
@@ -1165,7 +1205,7 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
             lines += owed_lines(pview, q["id"])
     if requirement_stories:
         lines += ["", "## Requirement summaries and stories", "",
-                  'For every requirement block write both `Summary:` and `Story:`. Do not put the SEP label in either field; the framework adds it.', '- Summary is the Current State table cell: one to three sentences, at most 80 words, stating the control or practice and its main qualification.', '- Story is the paragraph under Discovery Information. It explains the rating to a reader who has not seen the evidence:', '  1. First sentence: the rating and the condition that decides it (see "What decides this rating").', '  2. Then one sentence for each condition that is not met or is unknown, saying what the system does and which parts cause it. Name at most three parts in a sentence, by their display names.', '  3. End with what is still unknown, in one sentence, if anything is.', "  At most 90 words. Say nothing about another requirement's conditions. Hosts, ports and inventories stay in the tables."]
+                  'For every requirement block write both `Summary:` and `Story:`. Do not put the SEP label or a title in either field; the framework adds a bold title from the requirement ID and wording.', '- Summary is the Current State table cell: one to three sentences, at most 80 words, stating the control or practice and its main qualification.', '- Story is the paragraph under its requirement title in Discovery Information. It explains the rating to a reader who has not seen the evidence:', '  1. First sentence: the rating and the condition that decides it (see "What decides this rating").', '  2. Then one sentence for each condition that is not met or is unknown, saying what the system does and which parts cause it. Name at most three parts in a sentence, by their display names.', '  3. End with what is still unknown, in one sentence, if anything is.', "  At most 90 words. Say nothing about another requirement's conditions. Hosts, ports and inventories stay in the tables."]
     sysname = system_name(workspace)
     if sysname:
         lines += ["", "## System name", "",

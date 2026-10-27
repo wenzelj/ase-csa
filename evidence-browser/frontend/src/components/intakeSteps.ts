@@ -26,25 +26,30 @@ export function deriveIntakeSteps(snap: IntakeSnapshot, job: ReviewJob | null): 
   const newest = [rec?.built_at_utc, snap.agent_summary?.modified_at].filter(Boolean).sort().pop() || "";
   const checkCurrent = !!snap.gap_check && snap.gap_check.checked_at >= newest;
   const affected = snap.gap_check?.affected.length || 0;
+  const recheck = snap.refresh?.recheck.length || 0;
+  const syncBad = !!snap.sync && !snap.sync.ok;
 
   const status: Record<StepKey, IntakeStep["status"]> = {
-    ingest: rec ? "done" : "current",
-    documents: !rec ? "waiting" : evidenceDone ? "done" : "current",
+    ingest: rec && !syncBad ? "done" : "current",
+    documents: !rec ? "waiting" : evidenceDone && !recheck ? "done" : "current",
     gaps: !evidenceDone ? "waiting" : checkCurrent ? "done" : "current",
     settle: !checkCurrent ? "waiting" : snap.candidates.length ? "current" : "done",
-    use: !checkCurrent || snap.candidates.length ? "waiting" : affected ? "current" : "done",
+    use: !checkCurrent || snap.candidates.length ? "waiting" : affected || snap.stale ? "current" : "done",
   };
   const detail: Record<StepKey, string> = {
-    ingest: !rec ? "Nothing ingested yet"
+    ingest: syncBad ? (snap.sync!.failed ? `Host files not rebuilt: ${snap.sync!.last?.hosts_index || "graph sync failed"}` : "Host files are older than the evidence · run Ingest new data")
+      : !rec ? "Nothing ingested yet"
       : snap.nothing_new_since ? `Complete · Nothing new since ${when(snap.nothing_new_since)}`
       : evidenceDone ? "Complete · Indexed changes processed"
       : `Complete · Last intake with changes: ${rec.added.length} new · ${rec.changed.length} changed · ${rec.removed.length} removed` + (rec.unreadable.length ? ` · ${rec.unreadable.length} not readable` : ""),
-    documents: !rec ? "" : readable.length === 0 ? "Complete · Nothing readable came in"
+    documents: !rec ? "" : evidenceDone && recheck ? `${plural(recheck, "row")} to re-check against changed sources`
+      : readable.length === 0 ? "Complete · Nothing readable came in"
       : evidenceDone ? "Complete · Documents processed"
-      : `${plural(readable.length, "document")} to read`,
+      : `${plural(readable.length, "document")} to read` + (recheck ? ` · ${plural(recheck, "row")} to re-check` : ""),
     gaps: snap.gap_check ? `Checked ${when(snap.gap_check.checked_at)} · ${plural(snap.gap_check.questions.length, "question")}` : "Not checked yet",
     settle: snap.candidates.length ? `${snap.candidates.length} to settle` : checkCurrent ? "Nothing to settle" : "",
-    use: affected ? `${affected} subsection${affected === 1 ? "" : "s"} can be answered again` : checkCurrent ? "Nothing new to answer" : "",
+    use: affected ? `${affected} subsection${affected === 1 ? "" : "s"} can be answered again`
+      : snap.stale ? `${plural(snap.stale, "answer")} built on changed evidence · refresh on Draft answers` : checkCurrent ? "Nothing new to answer" : "",
   };
   const running = !!job && !TERMINAL.includes(job.state);
   const runningStep = running ? STEP_FOR_JOB[job!.operation] : undefined;

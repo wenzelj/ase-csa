@@ -1,14 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { cancelJob, fetchDraft, fetchJob, submitJob } from "../api";
+import { AGENT_CLIS, rememberedAgentCli, rememberAgentCli } from "../agentClis";
 import type { DraftSection, DraftSnapshot, ReviewJob } from "../types";
 import { Empty } from "./ui";
 
 const TERMINAL = ["succeeded", "failed", "cancelled", "interrupted"];
-const CLIS = [{ id: "claude", label: "Claude" }, { id: "codex", label: "Codex" }, { id: "evo", label: "Evo (local)" }];
 const STATE_LABEL: Record<string, string> = { current: "Current", stale: "Evidence changed", answered: "Answered", "not-answered": "Not answered" };
 const OP_LABEL: Record<string, string> = { ingest: "Ingest new data", stale: "Check for stale answers", answer: "Answer", refresh_draft: "Refresh stale answers", freeze: "Freeze at V1" };
 
-function remembered(): string { try { return localStorage.getItem("csa-draft-cli") || "claude"; } catch { return "claude"; } }
 function when(value?: string | null) { if (!value) return "—"; const d = new Date(value); return isNaN(d.getTime()) ? value : d.toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }); }
 function phase(job: ReviewJob): string {
   const output = [job.stdout_tail, job.stderr_tail].filter(Boolean).join("\n");
@@ -21,7 +20,7 @@ function phase(job: ReviewJob): string {
 
 export function DraftLane({ system, focus = "", investigate }: { system: string; focus?: string; investigate: (query: string) => void }) {
   const [snap, setSnap] = useState<DraftSnapshot | null>(null); const [job, setJob] = useState<ReviewJob | null>(null);
-  const [error, setError] = useState(""); const [cli, setCli] = useState(remembered()); const [fresh, setFresh] = useState(false);
+  const [error, setError] = useState(""); const [cli, setCli] = useState(rememberedAgentCli()); const [fresh, setFresh] = useState(false);
   const [onlyOpen, setOnlyOpen] = useState(false); const [showLog, setShowLog] = useState(false);
   const poll = useRef<number | undefined>(undefined);
 
@@ -34,7 +33,7 @@ export function DraftLane({ system, focus = "", investigate }: { system: string;
   }
   useEffect(() => { setSnap(null); setJob(null); void load(); return () => window.clearInterval(poll.current); }, [system]);
   useEffect(() => { if (!focus) return; const el = document.getElementById(`draft-row-${focus}`); el?.scrollIntoView({ block: "center" }); }, [focus, snap]);
-  useEffect(() => { try { localStorage.setItem("csa-draft-cli", cli); } catch { /* per-viewer convenience only */ } }, [cli]);
+  useEffect(() => { rememberAgentCli(cli); }, [cli]);
 
   const running = !!job && !TERMINAL.includes(job.state);
   async function run(operation: string, target?: string, options: Record<string, string | boolean> = {}) {
@@ -64,13 +63,13 @@ export function DraftLane({ system, focus = "", investigate }: { system: string;
   return <section className="page draft-page">
     <header className="page-heading draft-heading">
       <div><span>Draft lane · before V1</span><h1>Draft answers</h1><p>Index new data, then answer each subsection from the evidence. Every answer goes straight into the working document as plain text. No change files, review or cleanup until the document reaches V1.</p></div>
-      <div className="draft-model"><label><span>Model for answers</span><select value={cli} onChange={e => setCli(e.target.value)} disabled={running}>{CLIS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}</select></label><label className="draft-check"><input type="checkbox" checked={fresh} onChange={e => setFresh(e.target.checked)} /> Ask fresh (ignore the saved answer)</label></div>
+      <div className="draft-model"><label><span>Agent for answers</span><select value={cli} onChange={e => setCli(e.target.value)} disabled={running}>{AGENT_CLIS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}</select></label><label className="draft-check"><input type="checkbox" checked={fresh} onChange={e => setFresh(e.target.checked)} /> Ask fresh (ignore the saved answer)</label></div>
     </header>
 
     <div className="draft-actions">
       <button onClick={() => void run("ingest")} disabled={running}><b>1 · Ingest new data</b><small>Index new files, update hosts and graph from captures. Documents: use Evidence intake</small></button>
       <button onClick={() => void run("stale")} disabled={running}><b>2 · Check for stale answers</b><small>{snap.stale_checked_at ? `Last checked ${when(snap.stale_checked_at)}` : "Not checked yet"} · no model</small></button>
-      <button onClick={() => void run("refresh_draft", undefined, { cli })} disabled={running || !stale}><b>3 · Refresh stale answers{stale ? ` (${stale})` : ""}</b><small>{stale ? `Answer again with ${CLIS.find(c => c.id === cli)?.label}` : "Nothing is stale"}</small></button>
+      <button onClick={() => void run("refresh_draft", undefined, { cli })} disabled={running || !stale}><b>3 · Refresh stale answers{stale ? ` (${stale})` : ""}</b><small>{stale ? `Answer again with ${AGENT_CLIS.find(c => c.id === cli)?.label}` : "Nothing is stale"}</small></button>
     </div>
 
     <div className="draft-counts">{(["current", "stale", "answered", "not-answered"] as const).map(k => <div key={k} className={`draft-count draft-${k}`}><strong>{counts[k] || 0}</strong><span>{STATE_LABEL[k]}</span></div>)}<div className="draft-count"><strong>{snap.open_questions.total}</strong><span>Open questions</span></div></div>

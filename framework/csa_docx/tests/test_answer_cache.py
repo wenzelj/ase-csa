@@ -45,9 +45,14 @@ def test_stale_when_sheet_edited(tmp_path):
 def test_stale_when_questions_change_or_hosts_change(tmp_path):
     cj, mx, sheet = _setup(tmp_path)
     hosts = tmp_path / "hosts.csv"
-    hosts.write_text("h\n1\n", encoding="utf-8")
+    card = json.loads(cj.read_text())
+    card["evidence"]["B1"]["rows"][0]["claim"] = "HOST01 runs the database"
+    cj.write_text(json.dumps(card), encoding="utf-8")
+    hosts.write_text("host,role\nHOST01,db\nOTHER02,web\n", encoding="utf-8")
     ac.write_manifest(sheet, ac.fingerprint(cj, mx, hosts))
-    hosts.write_text("h\n2\n", encoding="utf-8")
+    hosts.write_text("host,role\nHOST01,db\nOTHER02,app\n", encoding="utf-8")      # a host the card does not name
+    assert ac.compare(sheet, ac.fingerprint(cj, mx, hosts))["status"] == "REUSE"
+    hosts.write_text("host,role\nHOST01,database cluster\nOTHER02,app\n", encoding="utf-8")
     assert ac.compare(sheet, ac.fingerprint(cj, mx, hosts))["status"] == "STALE"
     card = json.loads(cj.read_text())
     card["questions"].append({"id": "B3", "text": "q3"})

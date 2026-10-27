@@ -141,6 +141,9 @@ def peer_rows(work_dir) -> dict[str, dict]:
 def _read(path: Path) -> list[dict]:
     if not path.is_file():
         return []
+    if path.name == "evidence-matrix.csv":           # every matrix read carries the latest review
+        from csa_docx import evidence_live
+        return evidence_live.read(path)
     from csa_docx import modelstore
     return modelstore.read_csv(path)
 

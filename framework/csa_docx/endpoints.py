@@ -82,7 +82,8 @@ def _evidence_names(work_dir: Path) -> dict[str, tuple[str, str]]:
     """{end (as the question names it): (name, evidence_id)} from VERIFIED gap_lookup rows
     whose question ends in "zone and operational role of <end>" (E-1547 style)."""
     out: dict[str, tuple[str, str]] = {}
-    for r in _csv(work_dir, "evidence-matrix.csv"):
+    from csa_docx import evidence_live
+    for r in evidence_live.read(Path(work_dir) / "evidence-matrix.csv", drop_rejected=True):
         if (r.get("csa_area") or "") != "gap_lookup" or (r.get("status") or "") != "VERIFIED":
             continue
         q = (r.get("question") or "").strip()

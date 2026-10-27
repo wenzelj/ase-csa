@@ -62,7 +62,7 @@ assert(!deriveIntakeSteps(fresh, job("intake", "succeeded")).busy, "a finished j
 // Only unreadable files came in.
 const unreadable = { ...empty, intake: { ...record, added: [doc("diagram.png", "skipped")], unreadable: [doc("diagram.png", "skipped")] } };
 const u = deriveIntakeSteps(unreadable, null);
-assert(u.steps[1].detail === "Nothing readable came in" && u.steps[1].status === "done", "only unreadable files: documents has nothing to do");
+assert(u.steps[1].detail === "Complete · Nothing readable came in" && u.steps[1].status === "done", "only unreadable files: documents has nothing to do");
 
 // Ingest ran again with nothing new.
 const quiet = { ...use, nothing_new_since: "2026-10-12T03:00:00Z" };
@@ -81,3 +81,15 @@ assert(resumableJob(jobs)?.id === "g1", "the running gap check is resumed");
 assert(resumableJob([job("ingest", "failed"), job("answer")]) === null, "finished or unrelated jobs are not resumed");
 
 console.log("intake step fixtures passed");
+
+// The host files did not rebuild after the last sync: ingest is the step to run again.
+const broken = { ...use, sync: { ok: false, failed: true, behind: false, last: { at: "x", status: "ERROR", hosts_index: "FAILED: NameError", merged_nodes: [] } } };
+assert(status(broken).ingest === "current" && deriveIntakeSteps(broken, null).steps[0].detail.includes("NameError"), "a failed host rebuild sends you back to ingest");
+
+// Rows on a changed source need the evidence agent again.
+const recheck = { ...evidenced, refresh: { at: "x", retired: [], recheck: [{ evidence_id: "E-1", file: "a.xlsx", kind: "changed source", why: "quote gone", claim: "c" }] } };
+assert(status(recheck).documents === "current" && deriveIntakeSteps(recheck, null).steps[1].detail.includes("1 row to re-check"), "re-check rows keep documents current");
+
+// Stale answers from ingest alone make step 5 current.
+const staleOnly = { ...use, gap_check: { ...use.gap_check, affected: [] }, stale: 3 };
+assert(status(staleOnly).use === "current" && deriveIntakeSteps(staleOnly, null).steps[4].detail.startsWith("3 answers"), "stale answers are work for step 5");

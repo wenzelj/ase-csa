@@ -638,8 +638,12 @@ def owed_lines(view: dict | None, qid: str) -> list[str]:
     pids = (view or {}).get("owed", {}).get(qid) or []
     if not pids:
         return []
+    names = []
+    for p in pids:
+        v = view["parts"].get(p) if isinstance(view["parts"], dict) else None
+        names.append(v if isinstance(v, str) else display_name(v))
     return ["  Parts these findings are about (name them in the Facts; in the Story name only the parts that decide the rating, by their display name): "
-            + ", ".join(display_name(view["parts"][p]) for p in pids)]
+            + ", ".join(names)]
 
 
 # One name per part across the whole document: role-like names that end like a part's name but are none of its

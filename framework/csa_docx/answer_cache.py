@@ -2,12 +2,13 @@
 
 `csa author <N> --cards` writes `cards/<KEY>.answer.md`. After the sheet validates, a manifest
 `cards/<KEY>.manifest.json` records a fingerprint of what the answer was built from: per question, its id, text,
-columns, the evidence rows the card lists for it and the current matrix rows those cite; plus `hosts/hosts.csv`.
+columns, the evidence rows the card lists for it, the current matrix rows those cite and the host/link digest the
+answer reads; plus the `hosts/hosts.csv` rows of the hosts the card names.
 On the next run `compare` says whether the sheet can be reused as it is.
 
     REUSE    every question hash matches
     PARTIAL  some questions changed (ids in "changed"); only those blocks need rewriting
-    STALE    the sheet was edited since the manifest, the questions were added or removed, or hosts.csv changed
+    STALE    the sheet was edited since the manifest, the questions were added or removed, or a named host's register row changed
     NONE     no sheet or no manifest
 
     python3 -m csa_docx.answer_cache check <sheet> --card <card.json> --matrix <csv> [--hosts <csv>] --json
@@ -19,6 +20,7 @@ import argparse
 import csv
 import hashlib
 import json
+import re
 import os
 import sys
 from datetime import datetime, timezone
@@ -59,11 +61,23 @@ def fingerprint(card_json: Path, matrix: Path, hosts_csv: Path | None = None) ->
         cited = sorted({r["id"] for r in listed if r["id"]})
         cited_all.update(cited)
         current = [rows.get(i) or {"evidence_id": i, "missing": True} for i in cited]
+        digest = (evidence.get(qid) or {}).get("digest") or []      # the host / link tables the answer reads
         questions[qid] = _sha(json.dumps({"id": qid, "text": q.get("text", ""), "columns": q.get("columns") or [],
-                                           "card_rows": listed, "matrix_rows": current}, sort_keys=True))
+                                           "card_rows": listed, "matrix_rows": current, "digest": digest}, sort_keys=True))
     matrix_hash = _sha(json.dumps([rows.get(i) or {"evidence_id": i, "missing": True} for i in sorted(cited_all)],
                                   sort_keys=True))
-    return {"questions": questions, "matrix": matrix_hash, "hosts": _file_sha(Path(hosts_csv) if hosts_csv else None)}
+    return {"questions": questions, "matrix": matrix_hash, "hosts": _hosts_sha(card, Path(hosts_csv) if hosts_csv else None)}
+
+
+def _hosts_sha(card: dict, hosts_csv: Path | None) -> str:
+    """Hash of the register rows of the hosts this card names (not the whole file: a change to an
+    unrelated host must not make every answer stale)."""
+    if not hosts_csv or not hosts_csv.is_file():
+        return ""
+    text = json.dumps(card, sort_keys=True).upper()
+    with hosts_csv.open(newline="", encoding="utf-8-sig") as fh:
+        named = [r for r in csv.DictReader(fh) if r.get("host") and re.search(rf"\b{re.escape(r['host'].upper())}\b", text)]
+    return _sha(json.dumps(named, sort_keys=True))
 
 
 def write_manifest(sheet: Path, fp: dict) -> Path:
@@ -93,7 +107,7 @@ def compare(sheet: Path, fp: dict) -> dict:
     if set(old_q) != set(new_q):
         return {"status": "STALE", "changed": sorted(set(old_q) ^ set(new_q)), "reason": "the card's questions changed"}
     if old.get("hosts", "") != fp.get("hosts", ""):
-        return {"status": "STALE", "changed": [], "reason": "hosts.csv changed"}
+        return {"status": "STALE", "changed": [], "reason": "a host the card names changed in hosts.csv"}
     changed = [q for q in new_q if old_q[q] != new_q[q]]
     return {"status": "PARTIAL" if changed else "REUSE", "changed": changed}
 

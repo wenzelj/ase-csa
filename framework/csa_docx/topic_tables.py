@@ -723,16 +723,20 @@ def place_xml(xml: str, t, heading: str, styles_xml: str = "") -> tuple[str, str
     story = re.compile(r"^SEP-[A-Z0-9-]+\s*(?:—|:|-)\s+", re.I)
     clean_blocks = _blocks(clean, clean_ins, clean_fend)
     story_ends: dict[str, int] = {}
-    for kind, _s, e, b in clean_blocks:
+    for i, (kind, _s, e, b) in enumerate(clean_blocks):
         text = _text(b).strip() if kind == "p" else ""
         m = re.match(r"^(SEP-[A-Z0-9-]+)\s*(?:—|:|-)\s+", text, re.I)
         if m:
-            story_ends[m.group(1).upper()] = e
-    for kind, _s, e, b in clean_blocks:
-        if kind == "p" and story.match(_text(b).strip()):
-            insert_at = e
-            continue
-        break
+            story_end = e
+            # A new-format story has a bold SEP title and one normal body
+            # paragraph. Requirement-specific tables belong after that body.
+            if '<w:b' in b and i + 1 < len(clean_blocks):
+                nk, _ns, ne, nb = clean_blocks[i + 1]
+                if nk == "p" and not story.match(_text(nb).strip()) and not _heading_level(nb):
+                    story_end = ne
+            story_ends[m.group(1).upper()] = story_end
+    if story_ends:
+        insert_at = max(story_ends.values())
     sid = (re.search(r'<w:tblStyle w:val="([^"]+)"', reference) or [None, ""])[1]
 
     def rendered(x: dict) -> str:

@@ -118,8 +118,9 @@ def parse(text: str) -> dict[str, dict]:
                 b["facts"].append({"text": (fm.group("text") if fm else s.lstrip("-* ")).strip(),
                                    "ids": _ANYID.findall(fm.group("ids") or "") if fm else _ANYID.findall(s),
                                    "basis": basis.strip().lower(), "scope": scope.strip(), "line": s})
-            elif field == "rows" and s.startswith("|"):
-                cells = [c.strip() for c in s.strip().strip("|").split("|")]
+            elif field == "rows" and (s.startswith("|") or len(re.split(r"\s*\|\s*", s)) == 3):
+                raw = s if s.startswith("|") else "| " + s + " |"      # a row without pipe markers still answers the block
+                cells = [c.strip() for c in raw.strip().strip("|").split("|")]
                 if not all(re.fullmatch(r":?-{3,}:?", c) for c in cells):
                     b["rows"].append(cells)
             elif field == "bullets" and s.startswith(("-", "*")):
@@ -222,6 +223,7 @@ HARD_CODES = {"CROSS_PROJECT_ONLY", "NOTE_TOO_LONG", "NOTE_NONE_AND_TEXT", "NOTE
               "SLOT_NOT_ANSWERED", "FLOW_NOT_COVERED", "ZONE_CONTRADICTED", "PART_NOT_NAMED", "ISOLATION_WRONG_SIDE",
               "PART_MISATTRIBUTED", "CITED_AND_DROPPED", "LABEL_AS_NAME", "PART_NAME_LIST", "SUBJECT_NOT_THIS_SYSTEM",
               "PRACTICE_NOT_ADDRESSED", "PRACTICE_ATTRIBUTION_DROPPED", "APPLICATION_ZONE_CLAIM",
+              "DRAWBRIDGE_CAUSAL_SCOPE",
               "EXAMPLE_COPIED", "SUMMARY_MISSING", "STORY_MISSING", "SUMMARY_TOO_LONG", "SUMMARY_TOO_MANY_SENTENCES",
               "SUMMARY_REPEATS_STORY", "STORY_AND_TEXT"}
 
@@ -235,7 +237,8 @@ RELAXED_HARD = {"CROSS_PROJECT_ONLY", "QUESTION_MISSING", "EMPTY_ANSWER", "FACT_
                 "RATING_INVALID", "COLUMNS", "ROW_WIDTH", "NO_ROWS", "BACKGROUND_AS_EVIDENCE", "BACKGROUND_MIXED",
                 "BACKGROUND_NOT_ON_CARD", "BACKGROUND_ALONE", "ZONE_CONTRADICTED", "ISOLATION_WRONG_SIDE",
                 "ATTEMPT_AS_ESTABLISHED", "SLOT_NOT_ANSWERED", "CAPTURE_DROPPED", "SUMMARY_MISSING", "STORY_MISSING",
-                "SUMMARY_TOO_LONG", "SUMMARY_TOO_MANY_SENTENCES", "SUMMARY_REPEATS_STORY", "STORY_AND_TEXT"}
+                "SUMMARY_TOO_LONG", "SUMMARY_TOO_MANY_SENTENCES", "SUMMARY_REPEATS_STORY", "STORY_AND_TEXT",
+                "DRAWBRIDGE_CAUSAL_SCOPE"}
 
 # counts and totals of hosts ("9 of 12", "all 12 captured hosts", "nine hosts", "two RevViewer Jump Hosts"): CSA text
 # names the role groups instead. "stratum 5 hosts" and port numbers are not counts.
@@ -330,6 +333,42 @@ def subject_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
                               f"name it only where it meets a part of this system (which part, what moves), or leave "
                               f"it out: \"{s[:150]}\""))
                 break
+    return out
+
+
+_FUNCTION_EFFECT = re.compile(
+    r"\b(?:stops?|stopped|lose|loses|lost|unavailable|keeps? working|remain(?:s)? available)\b",
+    re.IGNORECASE,
+)
+
+
+def drawbridge_topic_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
+    """Keep every requirement-domain Drawbridge narrative causal and in scope."""
+    from csa_docx import scope_map
+    domain = scope_map.for_section(card.get("number", ""), card.get("title", ""))
+    if not domain or domain["key"] == "3.12":
+        return []
+    drawbridge_ids = {
+        q["id"] for q in card.get("questions", [])
+        if q.get("kind") == "narrative" and "drawbridge" in str(q.get("text") or "").lower()
+    }
+    out: list[dict] = []
+    for qid, block in sheet.items():
+        if qid not in drawbridge_ids:
+            continue
+        for sentence in re.split(r"(?<=[.!?])\s+|\n+", block.get("text") or ""):
+            if not sentence.strip() or not _FUNCTION_EFFECT.search(sentence):
+                continue
+            if scope_map.dependency_matches(sentence, domain):
+                continue
+            out.append(_f(
+                "ERROR",
+                "DRAWBRIDGE_CAUSAL_SCOPE",
+                qid,
+                f"a {domain['title']} Drawbridge effect does not name a {domain['title']} cause. Describe only what "
+                "loss or unavailability of this domain changes, or move the generic isolation consequence to its "
+                f"owning domain: {sentence[:150]}",
+            ))
     return out
 
 
@@ -1205,7 +1244,8 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
                or b["search"] or b["none"] or b.get("summary") or b.get("story") or b.get("text"))
         if not has:
             findings.append(_f("ERROR", "EMPTY_ANSWER", qid, "no Facts, Rows, Bullets, Unknown, Keep, Search"
-                               + (" or None" if q["kind"] == "note" else "")))
+                               + (" or None" if q["kind"] == "note" else "")
+                               + " - every Rows: line must start with a pipe: | column | column |"))
         if q["kind"] == "note":
             findings += _note_checks(qid, q, b, sheet, qs)
         elif b["none"]:
@@ -1430,6 +1470,7 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
     findings += readability_checks(sheet, card)
     findings += practice_checks(sheet, card)
     findings += subject_checks(sheet, card)
+    findings += drawbridge_topic_checks(sheet, card)
     findings += example_checks({k: v for k, v in sheet.items() if not k.startswith("F")})
     for qid in sheet:
         if qid not in qs and not qid.startswith("F"):
@@ -1480,12 +1521,30 @@ def no_ids(s: str) -> str:
     return s
 
 
+_REQ_TITLES: dict[str, str] | None = None
+
+
+def requirement_story_title(req_id: str, fallback: str) -> str:
+    """Return the concise controlled description used as a story title."""
+    global _REQ_TITLES
+    if _REQ_TITLES is None:
+        path = (Path(__file__).resolve().parents[2] / "skills" / "csa-document-template" /
+                "references" / "requirement-map.csv")
+        _REQ_TITLES = {}
+        if path.exists():
+            with path.open(encoding="utf-8", newline="") as handle:
+                _REQ_TITLES = {row["req_id"].strip(): row["requirement"].strip().rstrip(".")
+                               for row in csv.DictReader(handle) if row.get("req_id") and row.get("requirement")}
+    return _REQ_TITLES.get(req_id, fallback.strip().rstrip("."))
+
+
 def _quote(s: str, n: int = 90) -> str:
     s = " ".join((s or "").split()).replace('"', "'")
     return s[:n]
 
 
-def render_records(sheet: dict[str, dict], card: dict, node: dict, section: str, start: int) -> dict:
+def render_records(sheet: dict[str, dict], card: dict, node: dict, section: str, start: int,
+                   *, stories_only: bool = False) -> dict:
     """Change-file records for a valid sheet. Returns {records: [markdown], open: [...], keep: [...],
     scaffold: [...], audit: [...]}. Anchors come from the document spec node."""
     recs, open_q, keep, scaffold, audit = [], [], [], [], []
@@ -1517,6 +1576,8 @@ def render_records(sheet: dict[str, dict], card: dict, node: dict, section: str,
             if b["answer"]:
                 keep.append(f"- [{q['id']}] {b['answer']}")
             continue
+        if stories_only and q["kind"] != "requirement":
+            continue
         p = parts[q["part"]] if q.get("part") is not None and q["part"] < len(parts) else {}
         facts = [f"- [{q['id']}] {f['text']} ({', '.join(f['ids'])}) {{basis: {f['basis']}; scope: {f['scope'] or 'see evidence'}}}"
                  for f in b["facts"]] + [f"- Unknown: {u}" for u in b["unknown"][:1]]
@@ -1536,13 +1597,16 @@ def render_records(sheet: dict[str, dict], card: dict, node: dict, section: str,
                 observed = no_ids(" ".join(b["text"].split()))
             elif b["unknown"]:
                 observed += f" Not established: {b['unknown'][0].rstrip('.')}."
-            eid = record(f"{q['req_id']} current state and rating", f"{p['table']}-R{req['row']}",
-                         (p.get("row_texts") or [""] * req["row"])[req["row"] - 2] if len(p.get("row_texts", [])) >= req["row"] - 1 else q["req_id"],
-                         facts, f"Observed: {observed}\nAssessment: {b['rating']}", why,
-                         f"Current state and rating of {q['req_id']} from the evidence.")
-            audit += [f"| {eid} | {_quote(_sentence(f), 160)} | {', '.join(f['ids'])} | {f['basis']} | {f['scope'] or '-'} |" for f in b["facts"]]
+            if not stories_only:
+                eid = record(f"{q['req_id']} current state and rating", f"{p['table']}-R{req['row']}",
+                             (p.get("row_texts") or [""] * req["row"])[req["row"] - 2] if len(p.get("row_texts", [])) >= req["row"] - 1 else q["req_id"],
+                             facts, f"Observed: {observed}\nAssessment: {b['rating']}", why,
+                             f"Current state and rating of {q['req_id']} from the evidence.")
+                audit += [f"| {eid} | {_quote(_sentence(f), 160)} | {', '.join(f['ids'])} | {f['basis']} | {f['scope'] or '-'} |" for f in b["facts"]]
             if card.get("requirement_stories") and b.get("story"):
                 requirement_stories.append({"req_id": q["req_id"], "qid": q["id"],
+                                            "title": requirement_story_title(
+                                                q["req_id"], req.get("text") or q.get("text") or "Requirement"),
                                             "text": no_ids(" ".join(b["story"].split())), "facts": facts,
                                             "why": why, "fact_rows": list(b["facts"])})
         elif q["kind"] in ("observation", "register"):
@@ -1600,9 +1664,15 @@ def render_records(sheet: dict[str, dict], card: dict, node: dict, section: str,
                           if k.strip().lower() == "discovery information"), None)
 
         def story_record(item: dict, where: str, current: str, do: str) -> None:
-            text = f"{item['req_id']} — {item['text']}"
-            eid = record(f"{item['req_id']} discovery story", where, current, item["facts"], text,
-                         item["why"], f"Evidence-backed story for {item['req_id']} under Discovery Information.", do=do)
+            text = f"{item['req_id']} — {item['title']}\n\n{item['text']}"
+            # A format-only record still carries one existing evidence-backed
+            # fact so the ordinary change-file evidence gate remains intact.
+            facts = item["facts"][:1] if stories_only else item["facts"]
+            why = ("Formatting only: separated the requirement title from the unchanged story paragraph."
+                   if stories_only else item["why"])
+            note = ("Reformatted the requirement story with a descriptive title and the narrative underneath."
+                    if stories_only else f"Evidence-backed story for {item['req_id']} under Discovery Information.")
+            eid = record(f"{item['req_id']} discovery story", where, current, facts, text, why, note, do=do)
             audit.extend(f"| {eid} | {_quote(_sentence(f), 160)} | {', '.join(f['ids'])} | {f['basis']} | {f['scope'] or '-'} |"
                          for f in item["fact_rows"])
 
@@ -1611,7 +1681,8 @@ def render_records(sheet: dict[str, dict], card: dict, node: dict, section: str,
         for item in requirement_stories:
             part = existing.get(item["req_id"])
             if part:
-                story_record(item, part["pid"], part.get("current") or item["req_id"], "Replace")
+                action = "Replace this paragraph and the following line" if part.get("body_pid") else "Replace"
+                story_record(item, part["pid"], part.get("current") or item["req_id"], action)
         missing = [i for i, item in enumerate(requirement_stories) if item["req_id"] not in existing]
         while missing:
             start_i = missing[0]
@@ -1643,10 +1714,11 @@ def render_records(sheet: dict[str, dict], card: dict, node: dict, section: str,
 
 
 def render_change_file(sheet: dict[str, dict], card: dict, node: dict, spec: dict, *, app: str, docx_name: str,
-                       section: str, start: int, brief: str, existing: str | None = None) -> dict:
+                       section: str, start: int, brief: str, existing: str | None = None,
+                       stories_only: bool = False) -> dict:
     """A new change file, or `existing` with the new records, audit rows, unchanged items and open questions added
     (earlier records are never touched; the brief is replaced by the one from the document)."""
-    r = render_records(sheet, card, node, section, start)
+    r = render_records(sheet, card, node, section, start, stories_only=stories_only)
     first, last = f"S{section}-E{start}", f"S{section}-E{r['next'] - 1}"
     change_set = f"{first} to {last}" if r["records"] else "none"
     if existing:
@@ -1843,6 +1915,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--section", help="render: framework section number (3)")
     ap.add_argument("--change-file", type=Path, help="render: the change file to write (merged when it exists)")
     ap.add_argument("--app", default="")
+    ap.add_argument("--stories-only", action="store_true",
+                    help="render only requirement-story title/body records")
     a = ap.parse_args(argv)
     sheet = parse(a.sheet.read_text(encoding="utf-8"))
     if a.action == "parse":
@@ -1870,7 +1944,8 @@ def main(argv: list[str] | None = None) -> int:
     existing = cf.read_text(encoding="utf-8") if cf and cf.is_file() else None
     start = next_edit_number(cf.parent, a.section) if cf else 1
     out = render_change_file(sheet, card, node, spec, app=a.app, docx_name=a.docx.name if a.docx else "",
-                             section=a.section, start=start, brief=section_card.brief_markdown(node, spec), existing=existing)
+                             section=a.section, start=start, brief=section_card.brief_markdown(node, spec), existing=existing,
+                             stories_only=a.stories_only)
     if cf and not out["scaffold"]:
         cf.parent.mkdir(parents=True, exist_ok=True)
         cf.write_text(out["text"], encoding="utf-8")

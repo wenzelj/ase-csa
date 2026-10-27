@@ -476,7 +476,8 @@ def build(work_dir: Path) -> dict:
     if mpath.is_file():
         pair = re.compile(r"\b([A-Z][A-Z0-9-]{4,30})\s*(?:\(|at\s+|on\s+|=\s*)(\d+\.\d+\.\d+\.\d+)\b"
                           r"|\b(\d+\.\d+\.\d+\.\d+)\s*(?:\(|\bas\s+)([A-Za-z][A-Za-z0-9-]{4,30})\b")
-        for r in modelstore.read_csv(mpath):
+        from csa_docx import evidence_live
+        for r in evidence_live.read(mpath):
             if (r.get("review_state") or "") == "rejected" or r.get("status") not in ("VERIFIED",):
                 continue
             for m in pair.finditer(r.get("claim") or ""):
@@ -542,6 +543,27 @@ def build(work_dir: Path) -> dict:
             e["fqdn"] = e["fqdn"] or (name if "." in name else "")
             e["ips"].add(ip)
             e["sources"].add(f"DNS test on {host}")
+    # 2f. hosts the evidence names only in documents: a graph host node (written by the intake agent from
+    #     the rows it cites) labelled "NAME" or "NAME (description)", with at least one live evidence row.
+    #     Registered as a peer until an inventory, capture or roles.csv says what it is, so it names links
+    #     and is listed for classification instead of being invisible outside the graph.
+    nodes_p = work_dir / "graph" / "nodes.csv"
+    if nodes_p.is_file():
+        from csa_docx import evidence_live
+        live = {r["evidence_id"].upper() for r in evidence_live.read(work_dir / "evidence-matrix.csv", drop_rejected=True)}
+        label_re = re.compile(r"^([A-Za-z][A-Za-z0-9-]{2,30})(?: \((.*)\))?$")
+        for n in modelstore.read_csv(nodes_p):
+            m = label_re.match((n.get("label") or "").strip())
+            ev = [i for i in (n.get("evidence_ids") or "").split(";") if i.strip().upper() in live]
+            if (n.get("node_type") or "") != "host" or not m or not ev or not re.search(r"\d", m[1]) or _is_address(m[1]):
+                continue
+            e = entry(m[1])
+            if not e["capture"] and not e["in_scope"]:
+                e["in_scope"] = "peer"
+            for ip in re.findall(r"\b\d{1,3}(?:\.\d{1,3}){3}\b", m[2] or ""):
+                if not ip.startswith(("127.", "0.", "169.254.")):
+                    e["ips"].add(ip)
+            e["sources"].update(i.strip().upper() for i in ev)
     known = set(reg)
 
     # 3. facts from every non-capture row that names a known host
@@ -827,6 +849,8 @@ def build(work_dir: Path) -> dict:
     settings = host_settings.build(work_dir, con, svc_rows)
     from csa_docx import flows as flows_mod      # the data-flow inventory (zones from hosts/zones.csv, if any)
     flow_res = flows_mod.build(work_dir, con)
+    if flow_res.get("status") == "OK":
+        flows_mod.write_peers(work_dir)          # the peer hints the endpoint register reads, from these flows
     from csa_docx import isolation              # the isolation dependency matrix (3.12), from settings and flows
     iso_res = isolation.build(work_dir)
     addrs = build_addresses(work_dir, reg)
@@ -884,7 +908,8 @@ def build_addresses(work_dir: Path, reg: dict) -> dict:
         try:
             from csa_docx import evidence_digest
             with m.open(encoding="utf-8-sig", newline="") as fh:
-                for l in evidence_digest.links(list(csv.DictReader(fh))):
+                from csa_docx import evidence_live
+                for l in evidence_digest.links(evidence_live.apply(list(csv.DictReader(fh)), m)):
                     add(l["peer"], l["host"], l["dir"], l["port"], l["proc"], l["id"])
         except ImportError:
             pass
@@ -917,8 +942,9 @@ def link_evidence(work_dir: Path, known: set[str], addresses: set[str] | None = 
     m = work_dir / "evidence-matrix.csv"
     out, none = [], 0
     if m.is_file():
-        with m.open(encoding="utf-8-sig", newline="") as fh:
-            for r in csv.DictReader(fh):
+        from csa_docx import evidence_live
+        if True:
+            for r in evidence_live.read(m):
                 text = " ".join(r.get(k) or "" for k in ("claim", "evidence_excerpt", "page_or_location", "question"))
                 toks = set()
                 for w in re.findall(r"[A-Za-z][A-Za-z0-9-]{2,30}(?:\s*/\s*\d+)*(?:\s*-\s*\d+)?", text):
@@ -1074,7 +1100,8 @@ def to_graph(work_dir: Path, workspace: Path, domain: str = "3.6 Network / Segme
     matrix = work_dir / "evidence-matrix.csv"
     claims = defaultdict(list)            # src -> [(evidence_id, claim)]
     qpat = re.compile(r"^Which captured hosts does (\S+) hold established sessions to\?")
-    for r in modelstore.read_csv(matrix):
+    from csa_docx import evidence_live
+    for r in evidence_live.read(matrix):
         m = qpat.match(r.get("question") or "")
         if m and (r.get("review_state") or "") != "rejected":
             claims[m[1]].append((r["evidence_id"], r.get("claim") or ""))

@@ -14,7 +14,7 @@ to skip). Idempotent; each step only acts on what changed:
 3. services  - each host's configured DNS and time servers (hosts/host_services.csv, from its
                resolver and time-status captures) become one VERIFIED matrix row per host and
                service, a node per server and name-resolution / time-source edges (sync_services).
-4. prune     - evidence IDs no longer in the matrix are dropped from nodes and edges; an
+4. prune     - evidence IDs no longer in the matrix, or rejected in the review log, are dropped from nodes and edges; an
                edge left with no evidence is removed; a node left with no evidence and no
                edge is removed. A backup is taken before any rewrite.
 5. hosts     - hosts/evidence_hosts.csv is rebuilt from the matrix (csa hosts build).
@@ -58,6 +58,13 @@ def run(cmd, payload=None):
 
 
 EM = HERE.parent / "evidence_matrix.py"
+sys.path.insert(0, str(AGENTS / "framework"))
+from csa_docx import evidence_live          # the matrix with each row's latest review applied
+
+
+def read_matrix(path):
+    """Matrix rows with the review log applied (a rejected row is not evidence for nodes, edges or hosts)."""
+    return evidence_live.read(path)
 ORDINALS = ("first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth")
 SERVICE = {
     "dns": {"question": "Which DNS servers is {c} configured to use?", "section": "3.5 DNS",
@@ -98,7 +105,7 @@ def sync_services(workspace, dry_run=False):
             groups.setdefault((r["client_host"], r["service"]), []).append(r)
     if not groups:
         return out
-    _, M = read_csv(wd / "evidence-matrix.csv")
+    M = read_matrix(wd / "evidence-matrix.csv")
     have_q = {r["question"]: r["evidence_id"] for r in M if r.get("review_state") != "rejected"}
 
     # 1. matrix rows
@@ -127,7 +134,7 @@ def sync_services(workspace, dry_run=False):
                    "--rows-file", "-"], rows)
         if res.get("status") != "APPENDED":
             return {"status": "ERROR", "step": "matrix rows", "detail": res, "rows": 0, "nodes": 0, "edges": 0}
-        _, M = read_csv(wd / "evidence-matrix.csv")
+        M = read_matrix(wd / "evidence-matrix.csv")
         have_q = {r["question"]: r["evidence_id"] for r in M if r.get("review_state") != "rejected"}
 
     # 2. nodes
@@ -213,8 +220,8 @@ def main():
             report["captures_recorded"] = done
 
     # 2. link rows without an edge
-    _, M = read_csv(wd / "evidence-matrix.csv")
-    ids = {r["evidence_id"] for r in M}
+    M = read_matrix(wd / "evidence-matrix.csv")
+    ids = {r["evidence_id"] for r in M if r.get("review_state") != "rejected"}
     nf, N = read_csv(gdir / "nodes.csv")
     ef, E = read_csv(gdir / "edges.csv")
     on_edge = {i for e in E for i in e["evidence_ids"].split(";") if i}
@@ -228,7 +235,7 @@ def main():
     OUT = re.compile(r"^(\S+) has an .*?connection from \S+ to (\S+) ")
     want = []
     for r in M:
-        if r["status"] != "VERIFIED" or r["evidence_id"] in on_edge:
+        if r["status"] != "VERIFIED" or r["evidence_id"] not in ids or r["evidence_id"] in on_edge:
             continue
         m = IN.match(r["claim"]) or OUT.match(r["claim"])
         if not m or m[1] not in by_name or m[2] not in by_name or m[1] == m[2]:
@@ -244,13 +251,56 @@ def main():
 
     # 3. configured DNS and time servers
     report["services"] = sync_services(ws, a.dry_run)
+    if report["services"].get("status") == "ERROR":
+        report["status"] = "ERROR"
     if not a.dry_run:                     # the prune below rewrites the files: start from what step 3 wrote
-        _, M = read_csv(wd / "evidence-matrix.csv")
-        ids = {r["evidence_id"] for r in M}
+        M = read_matrix(wd / "evidence-matrix.csv")
+        ids = {r["evidence_id"] for r in M if r.get("review_state") != "rejected"}
         nf, N = read_csv(gdir / "nodes.csv")
         ef, E = read_csv(gdir / "edges.csv")
 
-    # 4. prune references to removed evidence
+    # 3b. one node per host: merge host nodes that name the same host (the first node keeps its id and takes
+    #     the others' evidence; their edges move to it; an edge left the same as another is folded into it)
+    sys.path.insert(0, str(HERE.parent))
+    from graph_store import host_key
+    keep, alias = {}, {}
+    for n in sorted(N, key=lambda x: x["node_id"]):
+        k = host_key(n["label"]) if n["node_type"] == "host" else None
+        if not k:
+            continue
+        if k in keep:
+            alias[n["node_id"]] = keep[k]["node_id"]
+            have = keep[k]["evidence_ids"].split(";")
+            keep[k]["evidence_ids"] = ";".join(dict.fromkeys([i for i in have + n["evidence_ids"].split(";") if i]))
+        else:
+            keep[k] = n
+    if alias:
+        N = [n for n in N if n["node_id"] not in alias]
+        out_e, by_key = [], {}
+        for e in E:                                 # untouched edges stay exactly as they are
+            by_key.setdefault((e["source_node_id"], e["target_node_id"], e["relationship_type"]), e)
+        for e in E:
+            moved = e["source_node_id"] in alias or e["target_node_id"] in alias
+            if not moved:
+                out_e.append(e)
+                continue
+            e = dict(e, source_node_id=alias.get(e["source_node_id"], e["source_node_id"]),
+                     target_node_id=alias.get(e["target_node_id"], e["target_node_id"]))
+            if e["source_node_id"] == e["target_node_id"]:
+                continue
+            twin = by_key.get((e["source_node_id"], e["target_node_id"], e["relationship_type"]))
+            if twin is not None and twin is not e and twin["source_node_id"] not in alias and twin["target_node_id"] not in alias:
+                twin["evidence_ids"] = ";".join(dict.fromkeys([i for i in (twin["evidence_ids"] + ";" + e["evidence_ids"]).split(";") if i]))
+                continue
+            by_key[(e["source_node_id"], e["target_node_id"], e["relationship_type"])] = e
+            out_e.append(e)
+        E = out_e
+        if not a.dry_run:
+            write_csv(gdir / "nodes.csv", nf, N, stamp)
+            write_csv(gdir / "edges.csv", ef, E, stamp)
+    report["merged_nodes"] = [f"{x} -> {y}" for x, y in alias.items()]
+
+    # 4. prune references to removed or rejected evidence
     def clean(x):
         keep = [i for i in x["evidence_ids"].split(";") if i and i in ids]
         changed = ";".join(keep) != x["evidence_ids"]
@@ -297,12 +347,18 @@ def main():
             if late.get("rows") or late.get("nodes") or late.get("edges"):
                 report["services_after_index"] = late
                 hostmodel.build(wd)
-        except Exception as ex:                      # the framework may need a newer Python
-            report["hosts_index"] = f"skipped: {type(ex).__name__}: {ex}"[:200]
+        except Exception as ex:                      # a failed rebuild leaves the host files out of date: say so loudly
+            import traceback
+            where = traceback.extract_tb(ex.__traceback__)[-1]
+            report["hosts_index"] = f"FAILED: {type(ex).__name__}: {ex} ({Path(where.filename).name} line {where.lineno})"[:300]
+            report["status"] = "ERROR"
         with open(wd / "graph-audit.jsonl", "a", encoding="utf-8") as fh:
             fh.write(json.dumps({"ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                                  "agent": "graph-sync", "action": "sync", "report": report}) + "\n")
     print(json.dumps(report, indent=2))
+    if report.get("status") != "OK":
+        print("graph sync: " + str(report.get("hosts_index") or report.get("services") or "failed"), file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

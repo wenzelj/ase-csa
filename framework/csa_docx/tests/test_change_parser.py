@@ -25,6 +25,7 @@ from csa_docx.ooxml import (
     find_anchor,
 )
 from csa_docx.engines.docxengine_adapter import (
+    Document,
     DocxEngineEditor,
     _extract_delete_until_heading,
     _extract_heading_to_sentence_range,
@@ -727,6 +728,54 @@ def test_docxengine_inserts_after_duplicate_heading_by_heading_stable_id(tmp_pat
         "First body",
     ]
     assert texts.count("SEP-STOR-01 — Evidence-backed story.") == 1
+
+
+def test_docxengine_splits_and_refreshes_a_requirement_story_title_and_body(tmp_path):
+    docx = tmp_path / "story.docx"
+    Document.create(content_md="## Discovery Information\n\nSEP-TIME-01 — Old combined story.").save(docx)
+
+    first = parse_change_records(
+        """### S3-E1 - SEP-TIME-01 discovery story
+**Where:** `SEP-TIME-01 — Old combined story.` -- currently: "SEP-TIME-01 — Old combined story."
+**Do:** Replace
+**Text:**
+> SEP-TIME-01 — Independent OT time source
+>
+> The current-state story starts underneath the title.
+**Why:** Structure test.
+**Note:** Split the story title from its paragraph.
+"""
+    )[0]
+    editor = DocxEngineEditor(docx, track_changes=False)
+    assert editor.apply_change(first, "Wenzel Joubert", "WJ").status == "APPLIED"
+    editor.save()
+
+    second = parse_change_records(
+        """### S3-E2 - SEP-TIME-01 discovery story
+**Where:** `SEP-TIME-01 — Independent OT time source`
+**Do:** Replace this paragraph and the following line
+**Text:**
+> SEP-TIME-01 — Independent OT time source
+>
+> The refreshed story remains underneath the title.
+**Why:** Structure test.
+**Note:** Refreshed the story.
+"""
+    )[0]
+    editor = DocxEngineEditor(docx, track_changes=False)
+    assert editor.apply_change(second, "Wenzel Joubert", "WJ").status == "APPLIED"
+    editor.save()
+
+    paragraphs = Document.open(docx).paragraphs()
+    assert [p.text for p in paragraphs] == [
+        "Discovery Information",
+        "SEP-TIME-01 — Independent OT time source",
+        "The refreshed story remains underneath the title.",
+    ]
+    with zipfile.ZipFile(docx) as archive:
+        xml = archive.read("word/document.xml").decode("utf-8")
+    title = xml[xml.index("SEP-TIME-01") - 200:xml.index("SEP-TIME-01")]
+    assert "<w:b" in title
 
 
 def _make_table_row(*cells: str) -> ET.Element:

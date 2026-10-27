@@ -30,7 +30,8 @@ def build(work_dir: Path, agents: Path) -> dict[str, Any]:
     from csa_docx import evidence_digest, section_card
 
     matrix = work_dir / "evidence-matrix.csv"
-    rows = list(csv.DictReader(matrix.open(encoding="utf-8-sig", newline=""))) if matrix.is_file() else []
+    from csa_docx import evidence_live          # the latest review applied: rejected rows draw no link
+    rows = evidence_live.read(matrix)
     hosts_csv = work_dir / "hosts" / "hosts.csv"
     reg = {r["host"]: r for r in csv.DictReader(hosts_csv.open(encoding="utf-8", newline=""))} if hosts_csv.is_file() else {}
     roles: dict[str, str] = {}
@@ -66,7 +67,7 @@ def build(work_dir: Path, agents: Path) -> dict[str, Any]:
         nodes[name] = {"id": name, "kind": "public" if public else "unnamed", "role": "", "site": "", "ips": name}
 
     edges: dict[tuple, dict] = {}
-    for l in evidence_digest.links(rows):
+    for l in evidence_digest.links(rows, reg):
         node(l["host"])
         node(l["peer"])
         s, t = (l["peer"], l["host"]) if l["dir"] == "inbound" else (l["host"], l["peer"])

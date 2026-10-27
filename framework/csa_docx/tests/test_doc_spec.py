@@ -176,7 +176,9 @@ None: every host fits a row of the table.
     t = out["text"]
     assert "**Where:** `@H3.4-T1-R2`" in t and "> Assessment: Not Met" in t and "`@H3.4.1-T1-R2`" in t
     assert "`@H3.4.2-P1`" in t and "> Time source | Enterprise servers | all hosts" in t
-    assert "SEP-TIME-01 discovery story" in t and "SEP-TIME-01 — The system's hosts synchronise" in t
+    assert "SEP-TIME-01 discovery story" in t
+    assert "SEP-TIME-01 — Time from an OT-resident authoritative source independent of the IT domain hierarchy" in t
+    assert "The system's hosts synchronise" in t
     assert "E-1" not in t.split("**Text:**")[2].split("**Why:**")[0]
 
 

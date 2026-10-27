@@ -1,7 +1,7 @@
 # Settings for the `csa` command. Per-machine overrides: environment variables
 # CSA_CLI, CSA_PYTHON, CSA_PROJECT.
 
-# Default agent CLI for `csa <verb>`: codex | claude | evo | hermes. Override per call with --cli (claude, codex or evo).
+# Default agent CLI for `csa <verb>`: codex | claude | evo | qwen8b | hermes. Override per call with --cli (claude, codex, evo or qwen8b).
 default_cli: evo
 
 # Interpreter for the csa_docx framework and skill scripts (needs Python >= 3.11).
@@ -24,6 +24,11 @@ claude_headless: claude -p {prompt}
 # Evo: the dedicated Codex profile against the local model. Pick it per run with --cli evo.
 evo_interactive: codex --profile evo-x3-qwen {prompt}
 evo_headless: codex exec --profile evo-x3-qwen --ignore-rules --skip-git-repo-check --output-last-message {last} {prompt}
+# Qwen3 8B: Codex against the local Ollama model qwen3:8b (pick it per run with --cli qwen8b). The -c settings are the
+# Codex profile, kept here so it needs no change to ~/.codex/config.toml (codex-profile-qwen3-8b.toml has the same as
+# a named profile).
+qwen8b_interactive: codex -c 'model_provider="ollama-local"' -c 'model="qwen3:8b"' -c 'model_providers.ollama-local.name="Ollama"' -c 'model_providers.ollama-local.base_url="http://localhost:11434/v1"' {prompt}
+qwen8b_headless: codex exec -c 'model_provider="ollama-local"' -c 'model="qwen3:8b"' -c 'model_providers.ollama-local.name="Ollama"' -c 'model_providers.ollama-local.base_url="http://localhost:11434/v1"' --skip-git-repo-check --output-last-message {last} {prompt}
 # Ollama: a local model (pick it per run with --cli ollama). --hidethinking keeps a thinking model's reasoning out of the reply.
 ollama_interactive: ollama run qwen3.5:9b {prompt}
 ollama_headless: ollama run --hidethinking qwen3.5:9b {prompt}

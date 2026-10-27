@@ -109,20 +109,37 @@ def _zone(peer: str, reg: dict) -> str:
         return "named host, role not recorded"
 
 
-def links(rows: list[dict]) -> list[dict]:
+def ip_owners(reg: dict | None) -> dict[str, str]:
+    """{address: register host} for every address a register host lists."""
+    out: dict[str, str] = {}
+    for h, r in (reg or {}).items():
+        for ip in (r.get("ips") or "").split(";"):
+            ip = ip.strip()
+            if ip and not ip.startswith(("127.", "0.", "169.254.")):
+                out.setdefault(ip, h)
+    return out
+
+
+def links(rows: list[dict], reg: dict | None = None) -> list[dict]:
+    """Connection rows in host_profile's link grammar. With the host register, a peer the capture saw only as
+    an address is named by the register host that now owns it (peer_ip keeps the address)."""
+    owner = ip_owners(reg)
     out = []
     for r in rows:
-        if r.get("status") != "VERIFIED" or r.get("csa_area") != "network_and_connectivity":
+        if r.get("status") != "VERIFIED" or r.get("csa_area") != "network_and_connectivity" \
+                or (r.get("review_state") or "").lower() == "rejected":
             continue
         c = r.get("claim", "")
         m = _IN.match(c)
         if m:
-            out.append({"dir": "inbound", "host": m["host"], "peer": m["peer"], "port": m["port"], "proc": m["proc"],
+            out.append({"dir": "inbound", "host": m["host"], "peer": owner.get(m["peer"], m["peer"]), "peer_ip": m["peer"]
+                        if m["peer"] in owner else (m["pip"] or ""), "port": m["port"], "proc": m["proc"],
                         "state": m["state"].strip(), "id": r["evidence_id"], "psvc": ""})
             continue
         m = _OUT.match(c)
         if m:
-            out.append({"dir": "outbound", "host": m["host"], "peer": m["peer"], "port": m["port"] or "dynamic",
+            out.append({"dir": "outbound", "host": m["host"], "peer": owner.get(m["peer"], m["peer"]),
+                        "peer_ip": m["peer"] if m["peer"] in owner else (m["pip"] or ""), "port": m["port"] or "dynamic",
                         "proc": m["proc"], "state": m["state"].strip(), "id": r["evidence_id"], "psvc": m["psvc"] or ""})
     return out
 
@@ -137,7 +154,7 @@ def _keep(l: dict, flt) -> bool:
 def dependency_table(rows: list[dict], workspace: Path, flt=None, external_only: bool = False, limit: int = 40) -> tuple[list[str], set[str]]:
     reg = _register(workspace)
     groups: dict[tuple, dict] = {}
-    for l in links(rows):
+    for l in links(rows, reg):
         if not _keep(l, flt):
             continue
         zone = _zone(l["peer"], reg)

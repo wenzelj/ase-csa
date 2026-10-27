@@ -240,6 +240,7 @@ def indexed_aliases(con) -> tuple[dict[str, str], set[str]]:
 
 
 def build(work_dir: Path, con=None) -> dict:
+    from csa_docx import endpoints as EP          # endpoints imports flows: import here, not at module level
     work_dir = Path(work_dir)
     own = con is None
     if own:
@@ -451,6 +452,17 @@ def load(work_dir: Path) -> list[dict]:
     return modelstore.read_csv(f) if f.is_file() else []
 
 
+def write_peers(work_dir: Path) -> tuple[list[dict], Path]:
+    """hosts/unrecorded-peers.csv from the current flows (rebuilt with the host index, so its hints stay in step)."""
+    rows = load(work_dir)
+    peers = unrecorded_peers(rows, peer_hints(rows))
+    f = Path(work_dir) / "hosts" / "unrecorded-peers.csv"
+    with f.open("w", encoding="utf-8", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=PEER_FIELDS)
+        w.writeheader(); w.writerows(peers)
+    return peers, f
+
+
 def peer_hints(rows: list[dict], sigs: list[dict] | None = None) -> dict[str, dict]:
     """{peer: {"role", "hint", "flows"}} for ends with no role in the register whose flows match a product
     signature that names the role of the opening side (opener_role) or the listening side (listener_role).
@@ -522,12 +534,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(out, indent=1))
         return 0 if out["status"] == "OK" else 1
     if a.cmd == "peers":
-        rows = load(a.work_dir)
-        peers = unrecorded_peers(rows, peer_hints(rows))
-        f = Path(a.work_dir) / "hosts" / "unrecorded-peers.csv"
-        with f.open("w", encoding="utf-8", newline="") as fh:
-            w = csv.DictWriter(fh, fieldnames=PEER_FIELDS)
-            w.writeheader(); w.writerows(peers)
+        peers, f = write_peers(a.work_dir)
         for p in peers:
             print(f"{p['peer']:18} {p['side']:8} ports {p['ports']:14} {p['mechanisms']:28} talks to {p['talks_to']}"
                   + (f"  [{p['hint']}]" if p["hint"] else ""))

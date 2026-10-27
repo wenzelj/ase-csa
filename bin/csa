@@ -1415,6 +1415,13 @@ def cmd_place(a):
 def _after_agent(p: dict, verb: str, args: list[str], started: float, a) -> int:
     """Change the document straight after the agent that wrote the change: an author run's change file
     is applied, a writer's section file is placed. `--no-apply` stops after the agent."""
+    if verb in ("intake", "settle"):           # the agent wrote rows and graph nodes: bring hosts, graph and links in step
+        gs = SKILLS / "csa-evidence-matrix" / "scripts" / "graph_sync.py"
+        print(f"{C['b']}Graph and host sync after the evidence agent ...{C['0']}", flush=True)
+        if subprocess.call([framework_python(), str(gs), "--workspace", _ws(p), "--no-captures"], stdout=subprocess.DEVNULL) != 0:
+            print(f"{C['r']}Graph/host sync failed after the agent; run `csa ingest` once the error above is fixed.{C['0']}", file=sys.stderr)
+            return 1
+        return 0
     r = agent(verb)
     values = task_values(r, args)
     spec = values.get("SECTION", "")
@@ -2117,7 +2124,7 @@ def local_launch(cmdline: str = "") -> bool:
     """A local-model launch: CSA_LOCAL=1, or a codex command line that picks a --profile."""
     if os.environ.get("CSA_LOCAL", "").strip().lower() in ("1", "true", "yes", "on"):
         return True
-    return "--profile" in cmdline
+    return "--profile" in cmdline or "model_provider=\"ollama" in cmdline
 
 
 def build_prompt(p: dict, r: dict, args: list[str], local: bool | None = None) -> str:
@@ -2627,6 +2634,15 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
             if mg.get("status") != "OK":
                 print(f"{C['y']}The {verb} agent wrote no {out.name}; the sheet is unchanged.{C['0']}")
             else:
+                if mg.get("missing") and mg.get("ignored"):
+                    # the agent returned a block it was not asked for and left out the one it was: the merge
+                    # would drop the requested block and the sheet would fail with EMPTY_ANSWER for no repair
+                    # reason it can act on. Keep the base blocks (none of them fail yet) and say what happened.
+                    print(f"{C['r']}The {verb} agent wrote {', '.join(mg['ignored'])} instead of the requested "
+                          f"{', '.join(mg['missing'])}; {sheet.name} is unchanged and the next round rewrites "
+                          f"{', '.join(mg['missing'])}.{C['0']}", file=sys.stderr)
+                    draft_run("RUNNING", f"validating model pass {kind}", "VALIDATING", blocks or ["all"], model=chosen_cli)
+                    return 0
                 note = f"{C['d']}merged {', '.join(mg.get('merged', []) + mg.get('added', [])) or 'nothing'} into {sheet.name}"
                 if mg.get("missing"):
                     note += f"; not returned: {', '.join(mg['missing'])}"
@@ -3260,24 +3276,40 @@ def cmd_shared(a):
 
 
 def cmd_ingest(a):
-    """New data in: discovery index (only new or changed files), then graph sync (captures -> matrix rows, nodes,
-    edges, host register), then the list of answered subsections whose evidence changed."""
+    """New data in: discovery index (only new or changed files), graph sync (captures -> matrix rows, nodes,
+    edges, host register), evidence refresh (rows on removed files or older captures retired, rows on changed
+    files listed for re-check), estate register, system model, then the answered subsections whose evidence changed."""
     p = project(a.project); banner(p)
-    print(f"{C['b']}1/4 discovery index{C['0']}")
+    work = local_path(p["work_dir"])
+    gs = SKILLS / "csa-evidence-matrix" / "scripts" / "graph_sync.py"
+    print(f"{C['b']}1/6 discovery index{C['0']}")
     if run_script("index", ["--project", p["key"], "build", *(["--rebuild"] if a.rebuild else [])]) != 0:
         die("the discovery index build failed")
-    print(f"{C['b']}2/4 graph sync (captures, links, configured DNS and time servers, hosts){C['0']}")
-    gs = SKILLS / "csa-evidence-matrix" / "scripts" / "graph_sync.py"
+    print(f"{C['b']}2/6 graph sync (captures, links, configured DNS and time servers, hosts){C['0']}")
     if subprocess.call([framework_python(), str(gs), "--workspace", _ws(p)]) != 0:
-        die("graph sync failed")
+        die("graph sync failed: the host files are not current (see the error above)")
+    print(f"{C['b']}3/6 evidence refresh (removed files, changed files, older captures){C['0']}")
+    ref = _fw_json("csa_docx.evidence_refresh", "--work-dir", work, "--json")
+    if ref.get("status") != "OK":
+        die(f"evidence refresh failed: {ref.get('message', ref)}")
+    print(f"Re-checked {ref.get('checked', 0)} row(s); {len(ref.get('rejected', []))} retired; "
+          f"{len(ref.get('recheck', []))} to re-check in intake")
+    if ref.get("rejected"):
+        if subprocess.call([framework_python(), str(gs), "--workspace", _ws(p), "--no-captures"],
+                           stdout=subprocess.DEVNULL) != 0:
+            die("graph sync after the evidence refresh failed")
     if p.get("estate"):
-        print(f"{C['b']}3/4 estate register ({p['estate']}){C['0']}")
+        print(f"{C['b']}4/6 estate register ({p['estate']}){C['0']}")
         res = _fw_json("csa_docx.estate", "build", "--project", p["key"])
         print(f"Estate {res.get('estate')}: {res.get('servers')} servers, {res.get('shared')} shared"
               if res.get("status") == "OK" else f"{C['y']}estate register not rebuilt: {res.get('message', res)}{C['0']}")
     else:
-        print(f"{C['d']}3/4 estate register: this project has no estate{C['0']}")
-    print(f"{C['b']}4/4 stale subsections{C['0']}")
+        print(f"{C['d']}4/6 estate register: this project has no estate{C['0']}")
+    print(f"{C['b']}5/6 system model{C['0']}")
+    if subprocess.call([framework_python(), "-m", "csa_docx.modelstore", "build", "--work-dir", str(work),
+                        "--project", str(p.get("key") or "")], cwd=str(FRAMEWORK), env=_fw_env(), stdout=subprocess.DEVNULL) != 0:
+        print(f"{C['y']}system model not rebuilt (csa model build shows why){C['0']}")
+    print(f"{C['b']}6/6 stale subsections{C['0']}")
     if a.no_stale:
         return 0
     return cmd_stale(argparse.Namespace(project=a.project, json=False))
