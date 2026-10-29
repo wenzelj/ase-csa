@@ -24,6 +24,8 @@ Every agent and skill in `.agents/` follows these rules. Where a line in an agen
 ## Evidence
 
 - Classes: `VERIFIED`, `INFERRED`, `UNCONFIRMED`, `CONFLICTING`, `NOT_FOUND`. Never upgrade an inference because it is plausible. "Not observed in the evidence searched" is never written as "does not exist".
+- A discovery-index hit found while checking an open question is a lead, not evidence. Store it in `csa-work/intake/leads.jsonl`; read its original source before writing evidence. `UNCONFIRMED` remains valid for unsupported assertions from other workflows, but gap lookup never creates it.
+- Only source-checked `VERIFIED` rows answer an open question. `INFERRED` and `CONFLICTING` rows may be related context. Scoped `NOT_FOUND` remains in the matrix as search history, not proof of absence.
 - Work from the hosts: `csa hosts show <HOST>` gives everything known about one machine (register entry, facts from every source with file and line, evidence IDs, connections to other hosts); `csa hosts group --attr "<attribute>" [--attr ...] [--system UTC]` gives the hosts that share a configuration; `csa hosts links [HOST]` gives host-to-host connections. Rebuild with `csa hosts build` after `csa index build`.
 - Applications of the same system (for example UTC/DTC and IAMPS in TCS) know each other's hosts: each project's `hosts/roles.csv` lists the others as `system_project`. A connection is verified when either project's capture proves it, and the basis names that project. Cite the sibling project's evidence as `<project>:E-nnn` (for example `utcdtc:E-088`); `csa check-change` checks it against that project's matrix. Never state as observed what neither project's evidence shows. `csa hosts system --name <system>` writes the combined view to `.agents/csa-context/systems/<system>/`.
 - One evidence row per claim about a host or a group of hosts that share the value. Write every host name in full (expand `CONTROLLER70 / 73` shorthand); keep the source's row or collection ID in `page_or_location` only.
@@ -53,7 +55,7 @@ Every agent and skill in `.agents/` follows these rules. Where a line in an agen
 ## Evidence matrix first
 
 - Every technical fact (hosts, services, ports, addresses, software, configuration, ownership, dates) starts with `csa ev lookup --brief`. If a row answers this question for this host and date, cite its E-id and stop searching.
-- Otherwise search the discovery index, then raw files for what it does not cover, and append every finding (including NOT_FOUND with the scope searched) with `csa ev append`; never edit the matrix CSV by hand.
+- Otherwise search the discovery index, then raw files for what it does not cover. A search hit awaiting source review goes to the lead store, not the matrix. Append only source-read findings (including scoped NOT_FOUND search records) with `csa ev append`; never edit the matrix CSV by hand.
 - Never write a claim you have neither found in the matrix nor verified in Discovery Data.
 
 ## Change files

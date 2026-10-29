@@ -43,19 +43,20 @@ changes the working DOCX.
    source-checked rows through `evidence_matrix.py append` and graph items through `graph_store.py`. Its summary is
    `csa-work/intake/<id>.evidence.md`.
 3. **Check open questions** runs `csa gap-check` (no model): every question in `csa-work/draft/open-questions.md` is
-   looked up in the matrix and the index. What the index finds is added as UNCONFIRMED candidate rows.
+   looked up in the matrix and the index. What the index finds is added to `csa-work/intake/leads.jsonl`, not the
+   evidence matrix. Evidence IDs, related evidence IDs and lead IDs are kept separate.
    Result: `csa-work/intake/gap-check-latest.json`.
-4. **Settle what was found**: *Resolve and update answers* runs the evidence investigator over every candidate's
+4. **Settle what was found**: *Resolve and update answers* runs the evidence investigator over every lead's
    original source. It reuses the gap-check record already displayed on the page and streams framework progress from
    the selected model into the job panel. Supported findings become
-   source-checked evidence, irrelevant candidates are rejected, and a
+   source-checked VERIFIED evidence, irrelevant leads are marked `not_an_answer`, and a
    bounded search that still has no answer becomes a scoped NOT_FOUND row. The individual *Not an answer* and *Write
    the fact* controls remain available for recovery or manual review.
 5. **Use it in the document**: the resolve operation reruns each affected subsection through Draft answers (draft
    lane) or tracked authoring (V1). The subsection links remain available for inspection and follow-up.
 
-Routes: `GET /api/systems/{key}/intake` (snapshot) and `POST /api/systems/{key}/evidence/{id}/review`
-(`{"state": "rejected" | "reviewed", "note": "..."}`). Jobs: `ingest`, `intake`, `gap_check`.
+Routes: `GET /api/systems/{key}/intake` (snapshot), `POST /api/systems/{key}/leads/{id}/review` for lead settlement,
+and `POST /api/systems/{key}/evidence/{id}/review` for actual evidence only. Jobs: `ingest`, `intake`, `gap_check`.
 
 ## Authoring decisions
 

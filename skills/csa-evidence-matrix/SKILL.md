@@ -35,11 +35,13 @@ See "Evidence matrix first" in .agents/csa-core-rules.md. The five steps:
                  yes -> use it, cite its E-id, STOP searching for it
                  no  -> continue
 3. SEARCH   -> search Discovery Data (only the part the matrix did not answer)
-4. APPEND   -> record every finding, including NOT_FOUND with the scope searched
+4. APPEND   -> after reading the source, record every finding, including NOT_FOUND with the scope searched
 5. CITE     -> quote the E-id(s) in your Why / comment / report
 ```
 
 Step 3 uses the discovery index first where the project has one (`csa-discovery-index` skill), then raw files only for what the index reports as not indexed.
+
+A discovery-index search hit is not yet a finding. When gap lookup finds a possible answer, it writes an append-only lead to `csa-work/intake/leads.jsonl`. Do not put that hit in the matrix as an UNCONFIRMED row and do not return its L-ID from matrix lookup. Read the original source first: append/source-check a VERIFIED row and resolve the lead to its E-ID, or mark the lead `not_an_answer`. `UNCONFIRMED` remains supported for non-gap assertions that genuinely belong in the matrix. Scoped NOT_FOUND records remain in the matrix.
 
 ## Script
 
@@ -78,7 +80,7 @@ Use a short phrase of the topic plus the names that matter (hosts, ports, servic
 
 | verdict | meaning | what to do |
 |---|---|---|
-| `LIKELY_ANSWERED` | a VERIFIED/INFERRED row covers the question | read the row; confirm host, capture date and wording match your claim; use it and cite the E-id. Do not re-search Discovery Data for it. |
+| `LIKELY_ANSWERED` | a source-checked VERIFIED row covers the question | read the row; confirm host, capture date and wording match your claim; use it and cite the E-id. Do not re-search Discovery Data for it. |
 | `PRIOR_NOT_FOUND` | an earlier search found nothing | read the row's `source_title` (the scope searched); search only outside that scope or in newer captures; append the result. |
 | `OPEN_ON_RECORD` | a CONFLICTING/UNCONFIRMED row exists | do not present the point as settled; look for deciding evidence; append the outcome citing the earlier E-id in `gap_or_action`. |
 | `PARTIAL_MATCH` | related rows, none clearly answers | search Discovery Data for the remainder; append. |

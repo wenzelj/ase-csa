@@ -92,29 +92,35 @@ def test_snapshot_flags_unreadable(tmp_path):
     assert snap["intake"]["unreadable"][0]["reason"] == "binary type .png"
 
 
-def test_snapshot_hides_settled_candidates(tmp_path):
-    rows = [_row("E-001", "UNCONFIRMED", "Possible answer to DR-BAK-B1: the source reads: x"),
-            _row("E-002", "UNCONFIRMED", "Possible answer to DR-TIME-F01: the source reads: y"),
-            _row("E-003", "UNCONFIRMED", "Possible answer to DR-DNS-B3: the source reads: z"),
-            _row("E-004", "UNCONFIRMED", "Something else not from the gap check")]
-    project = _work(tmp_path, rows)
-    reviews = [{"evidence_id": "E-002", "state": "rejected"}, {"evidence_id": "E-003", "state": "reviewed"}]
-    (Path(project["work_dir"]) / "evidence-reviews.jsonl").write_text(
-        "".join(json.dumps(r) + "\n" for r in reviews), encoding="utf-8")
-    snap = intake_workflow.snapshot(project)
-    assert [(c["evidence_id"], c["dr_id"]) for c in snap["candidates"]] == [("E-001", "DR-BAK-B1")]
-
-
-def test_snapshot_retires_candidates_the_gap_check_no_longer_asks(tmp_path):
-    rows = [_row("E-001", "UNCONFIRMED", "Possible answer to DR-BAK-B1: the source reads: x"),
-            _row("E-002", "UNCONFIRMED", "Possible answer to DR-OLD-B9: the source reads: y")]
-    project = _work(tmp_path, rows)
+def test_snapshot_lists_only_open_leads_and_counts_terminal_states(tmp_path):
+    project = _work(tmp_path, [_row("E-001"), _row("E-002", "NOT_FOUND")])
     intake = Path(project["work_dir"]) / "intake"
-    intake.mkdir(exist_ok=True)
-    (intake / "gap-check-latest.json").write_text(json.dumps(
-        {"checked_at": "2026-10-16T00:00:00Z", "questions": [{"dr_id": "DR-BAK-B1", "verdict": "CANDIDATES"}],
-         "affected": []}), encoding="utf-8")
-    assert [c["evidence_id"] for c in intake_workflow.snapshot(project)["candidates"]] == ["E-001"]
+    intake.mkdir()
+    base = {"qid": "B1", "question": "q", "question_fingerprint": "sha256:q", "source_title": "src/a.txt",
+            "source_ref": "src/a.txt", "rel_path": "src/a.txt", "source_version": "v1", "source_class": "other",
+            "page_or_location": "line 1", "excerpt": "a sufficiently long source excerpt", "excerpt_hash": "sha256:x",
+            "terms": ["source"], "found_at": "2026-10-29T00:00:00Z"}
+    leads = [{**base, "lead_id": f"L-{n:06d}", "dr_id": f"DR-X-B{n}"} for n in range(1, 5)]
+    (intake / "leads.jsonl").write_text("".join(json.dumps(r) + "\n" for r in leads), encoding="utf-8")
+    states = ["not_an_answer", "resolved", "retired"]
+    reviews = [{"lead_id": f"L-{n:06d}", "state": state, "evidence_ids": ["E-001"] if state == "resolved" else [],
+                "by": "test", "at": "2026-10-29T01:00:00Z", "note": "done"} for n, state in zip(range(2, 5), states)]
+    (intake / "leads-reviews.jsonl").write_text("".join(json.dumps(r) + "\n" for r in reviews), encoding="utf-8")
+    snap = intake_workflow.snapshot(project)
+    assert [(c["lead_id"], c["dr_id"]) for c in snap["open_leads"]] == [("L-000001", "DR-X-B1")]
+    assert snap["leads"]["by_state"] == {"open": 1, "not_an_answer": 1, "resolved": 1, "retired": 1}
+    assert snap["matrix"]["evidence_rows"] == 1 and snap["matrix"]["not_found"] == 1
+
+
+def test_snapshot_counts_legacy_candidate_tombstones_but_not_as_evidence(tmp_path):
+    candidate = _row("E-001", "UNCONFIRMED", "Possible answer to DR-BAK-B1: the source reads: x").replace(",general_asset_inventory,", ",gap_lookup,", 1)
+    project = _work(tmp_path, [candidate, _row("E-002")])
+    (Path(project["work_dir"]) / "evidence-reviews.jsonl").write_text(
+        json.dumps({"evidence_id": "E-001", "state": "rejected", "note": "migrated to lead L-000001; not an evidence row"}) + "\n",
+        encoding="utf-8")
+    snap = intake_workflow.snapshot(project)
+    assert snap["matrix"]["legacy_candidate_tombstones"] == 1
+    assert snap["matrix"]["evidence_rows"] == 1 and snap["matrix"]["by_status"] == {"VERIFIED": 1}
 
 
 def test_snapshot_without_intake(tmp_path):
@@ -155,16 +161,26 @@ def test_review_route_refuses_other_states():
     assert workspace.EvidenceReviewRequest(state="rejected", note="not an answer").state == "rejected"
 
 
-def test_review_route_settles_a_candidate(tmp_path, monkeypatch):
-    project = _work(tmp_path, [_row("E-001", "UNCONFIRMED", "Possible answer to DR-BAK-B1: the source reads: x")])
+def test_lead_review_route_settles_a_lead_and_evidence_route_refuses_it(tmp_path, monkeypatch):
+    project = _work(tmp_path, [_row("E-001")])
+    intake = Path(project["work_dir"]) / "intake"
+    intake.mkdir()
+    lead = {"lead_id": "L-000001", "dr_id": "DR-BAK-B1", "qid": "B1", "question": "q",
+            "question_fingerprint": "sha256:q", "source_title": "src/a.txt", "source_ref": "src/a.txt",
+            "rel_path": "src/a.txt", "source_version": "v1", "source_class": "other", "page_or_location": "line 1",
+            "excerpt": "a sufficiently long source excerpt", "excerpt_hash": "sha256:x", "terms": [],
+            "found_at": "2026-10-29T00:00:00Z"}
+    (intake / "leads.jsonl").write_text(json.dumps(lead) + "\n", encoding="utf-8")
     reg = tmp_path / "PROJECTS.yaml"
     reg.write_text("projects:\n  - key: tetra-reveloc\n    label: \"T\"\n"
                    f"    project_root: \"{tmp_path}\"\n    work_dir: \"{project['work_dir']}\"\n", encoding="utf-8")
     monkeypatch.setenv("CSA_PROJECTS_FILE", str(reg))
-    res = workspace.review_evidence("tetra", "E-001", workspace.EvidenceReviewRequest(state="rejected", note="not an answer"))
-    assert res["status"] == "OK" and res["reviewed"] == ["E-001"] and res["state"] == "rejected"
-    log = (Path(project["work_dir"]) / "evidence-reviews.jsonl").read_text(encoding="utf-8")
-    assert '"rejected"' in log and "E-001" in log
-    assert intake_workflow.snapshot(project)["candidates"] == []
+    res = workspace.review_lead("tetra", "L-000001", workspace.LeadReviewRequest(state="not_an_answer", note="not an answer"))
+    assert res["status"] == "OK" and res["reviewed"] == ["L-000001"] and res["state"] == "not_an_answer"
+    log = (intake / "leads-reviews.jsonl").read_text(encoding="utf-8")
+    assert '"not_an_answer"' in log and "L-000001" in log
+    assert intake_workflow.snapshot(project)["open_leads"] == []
     with pytest.raises(HTTPException):
-        workspace.review_evidence("tetra", "E-1; rm", workspace.EvidenceReviewRequest(state="rejected"))
+        workspace.review_evidence("tetra", "L-000001", workspace.EvidenceReviewRequest(state="rejected"))
+    with pytest.raises(HTTPException):
+        workspace.review_lead("tetra", "E-001", workspace.LeadReviewRequest(state="not_an_answer"))

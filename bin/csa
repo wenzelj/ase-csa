@@ -3358,7 +3358,7 @@ def cmd_stale(a):
 
 def cmd_gap_check(a):
     """Check every open question (draft/open-questions.md) against the evidence matrix and the discovery index.
-    What the index finds is added to the matrix as UNCONFIRMED candidate rows to settle (no model)."""
+    What the index finds is stored as append-only leads to settle (no model)."""
     p = project(a.project); banner(p)
     argv = [framework_python(), "-m", "csa_docx.gap_sweep", "--workspace", str(local_path(p["project_root"]))]
     if a.section:
@@ -3403,6 +3403,8 @@ def _latest_gap_check(p: dict, section: str = "") -> dict:
         record = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as error:
         die(f"cannot read {path}: {error}")
+    if record.get("schema_version") != 2:
+        die("saved gap check uses schema 1; rerun `csa gap-check` to create a schema-2 record with separate evidence and lead IDs")
     wanted = ""
     if section:
         wanted = section if re.fullmatch(r"[A-Z][A-Z0-9_]*", section) else ""
@@ -3426,7 +3428,7 @@ def answered_blocks(questions: list[dict], verified: set[str] | None = None) -> 
     for q in questions:
         if q.get("verdict") != "ANSWERED" or not re.fullmatch(r"B\d+", str(q.get("qid") or "")):
             continue
-        ids = q.get("evidence_ids") or []
+        ids = q.get("answer_evidence_ids") or []
         ids = [i for i in (list(ids) if isinstance(ids, (list, tuple)) else [ids]) if verified is None or str(i).upper() in verified]
         if verified is not None and not ids:
             continue
@@ -3462,7 +3464,7 @@ def cmd_resolve_gaps(a):
         if getattr(a, "print", False):
             return 0
     else:
-        print(f"{C['d']}1/3 no unconfirmed candidates need settlement{C['0']}")
+        print(f"{C['d']}1/3 no open discovery leads need settlement{C['0']}")
         if getattr(a, "print", False):
             return 0
 
@@ -5232,11 +5234,11 @@ def main(argv=None) -> int:
     s = sp("stale", cmd_stale, help="answered subsections whose evidence changed since their answer (no model)")
     s.add_argument("--json", action="store_true")
     s = sp("gap-check", cmd_gap_check, help="check every open question against the matrix and index (no model)",
-           description="Check every open question against the evidence matrix and the discovery index. What the index finds is added as UNCONFIRMED candidate rows to settle. No model.")
+           description="Check every open question against the evidence matrix and the discovery index. Index hits are stored as append-only leads, separate from evidence. No model.")
     s.add_argument("section", nargs="?", default="", help="one section: number, heading or key (default: all)")
     s.add_argument("--json", action="store_true")
-    s = sp("resolve-gaps", cmd_resolve_gaps, help="settle evidence candidates from their sources and update affected answers",
-           description="Check open questions, have the evidence investigator adjudicate every source candidate, then rerun each subsection whose question is answered by the resulting evidence.")
+    s = sp("resolve-gaps", cmd_resolve_gaps, help="settle discovery leads from their sources and update affected answers",
+           description="Check open questions, have the evidence investigator adjudicate each saved lead against its original source, then rerun only subsections whose question is answered by source-checked VERIFIED evidence.")
     s.add_argument("section", nargs="?", default="", help="one section: number, heading or key (default: all)")
     s.add_argument("--latest", action="store_true", help="use the saved gap-check record already shown in Evidence Intake")
     agent_opts(s)

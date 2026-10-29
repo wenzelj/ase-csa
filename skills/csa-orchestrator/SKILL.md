@@ -38,6 +38,8 @@ The evidence classes and the current-state boundary live in `csa-section-writer/
 
 Maintain these classes exactly: `VERIFIED`, `INFERRED`, `UNCONFIRMED`, `CONFLICTING`, and `NOT_FOUND`. General technical knowledge may explain significance but may not fill a current-state gap. Keep recommendations and future-state design out of a CSA unless explicitly requested.
 
+Gap-search hits are append-only leads in `csa-work/intake/leads.jsonl`, not evidence-matrix rows. Settlement reads each lead's original source and links it to source-checked VERIFIED evidence or marks it `not_an_answer`; it never reruns lookup from the saved gap check. Only VERIFIED evidence can trigger an answer repair. NOT_FOUND stays in the matrix as scoped search history, and UNCONFIRMED remains available for non-gap legacy/assertion workflows.
+
 ## Outputs
 
 Keep the assessment state current and report:

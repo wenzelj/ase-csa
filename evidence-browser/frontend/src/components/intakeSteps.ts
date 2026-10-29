@@ -1,4 +1,4 @@
-import type { IntakeSnapshot, ReviewJob } from "../types";
+import type { GapQuestion, IntakeSnapshot, ReviewJob } from "../types";
 
 export type StepKey = "ingest" | "documents" | "gaps" | "settle" | "use";
 export type IntakeStep = { key: StepKey; title: string; status: "done" | "current" | "waiting" | "blocked"; detail: string };
@@ -33,8 +33,8 @@ export function deriveIntakeSteps(snap: IntakeSnapshot, job: ReviewJob | null): 
     ingest: rec && !syncBad ? "done" : "current",
     documents: !rec ? "waiting" : evidenceDone && !recheck ? "done" : "current",
     gaps: !evidenceDone ? "waiting" : checkCurrent ? "done" : "current",
-    settle: !checkCurrent ? "waiting" : snap.candidates.length ? "current" : "done",
-    use: !checkCurrent || snap.candidates.length ? "waiting" : affected || snap.stale ? "current" : "done",
+    settle: !checkCurrent ? "waiting" : snap.open_leads.length ? "current" : "done",
+    use: !checkCurrent || snap.open_leads.length ? "waiting" : affected || snap.stale ? "current" : "done",
   };
   const detail: Record<StepKey, string> = {
     ingest: syncBad ? (snap.sync!.failed ? `Host files not rebuilt: ${snap.sync!.last?.hosts_index || "graph sync failed"}` : "Host files are older than the evidence · run Ingest new data")
@@ -47,7 +47,7 @@ export function deriveIntakeSteps(snap: IntakeSnapshot, job: ReviewJob | null): 
       : evidenceDone ? "Complete · Documents processed"
       : `${plural(readable.length, "document")} to read` + (recheck ? ` · ${plural(recheck, "row")} to re-check` : ""),
     gaps: snap.gap_check ? `Checked ${when(snap.gap_check.checked_at)} · ${plural(snap.gap_check.questions.length, "question")}` : "Not checked yet",
-    settle: snap.candidates.length ? `${snap.candidates.length} to settle` : checkCurrent ? "Nothing to settle" : "",
+    settle: snap.open_leads.length ? `${snap.open_leads.length} lead${snap.open_leads.length === 1 ? "" : "s"} to settle` : checkCurrent ? "Nothing to settle" : "",
     use: affected ? `${affected} subsection${affected === 1 ? "" : "s"} can be answered again`
       : snap.stale ? `${plural(snap.stale, "answer")} built on changed evidence · refresh on Draft answers` : checkCurrent ? "Nothing new to answer" : "",
   };
@@ -62,7 +62,7 @@ export function deriveIntakeSteps(snap: IntakeSnapshot, job: ReviewJob | null): 
 
 export type PendingSettle = { id: string; dr: string; system: string };
 
-/** The candidate a just-committed evidence row settles: only the one "Write the fact" was opened for, in the same
+/** The lead a just-committed evidence row settles: only the one "Write the fact" was opened for, in the same
  *  project, and only while the draft still says it answers that question. Anything else settles nothing. */
 export function settleTarget(pending: PendingSettle | null, draft: { gap_or_action: string } | null, system: string): string | null {
   if (!pending || !draft || pending.system !== system) return null;
@@ -73,4 +73,17 @@ export function settleTarget(pending: PendingSettle | null, draft: { gap_or_acti
 export function resumableJob(jobs: ReviewJob[]): ReviewJob | null {
   const live = jobs.filter(j => j.operation in STEP_FOR_JOB && !TERMINAL.includes(j.state));
   return live.sort((a, b) => b.created_at.localeCompare(a.created_at))[0] || null;
+}
+
+/** What a gap-check question found, read from either result shape: `evidence_ids`/`related` (current) or
+ *  `answer_evidence_ids`/`related_evidence_ids`/`lead_ids` (earlier). Evidence IDs count as an answer only when the
+ *  verdict is ANSWERED; for CANDIDATES they are possible answers still to be read. */
+export function gapFindings(q: GapQuestion): { answers: string[]; possible: string[]; related: string[] } {
+  const ids = q.answer_evidence_ids ?? q.evidence_ids ?? [];
+  const leads = q.lead_ids ?? [];
+  return {
+    answers: q.verdict === "ANSWERED" ? ids : [],
+    possible: q.verdict === "CANDIDATES" ? [...leads, ...ids.filter(i => !leads.includes(i))] : [],
+    related: q.related_evidence_ids ?? q.related ?? [],
+  };
 }

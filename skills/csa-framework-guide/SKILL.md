@@ -96,6 +96,8 @@ Keep evidence, analysis, and document prose separate.
 
 Retain the framework evidence classes: `VERIFIED`, `INFERRED`, `UNCONFIRMED`, `CONFLICTING`, and `NOT_FOUND`. Scope negative findings. “Not observed in the reviewed sources” is not proof that something does not exist.
 
+When `csa gap-check` finds a discovery-index hit, it records an append-only L-ID in `csa-work/intake/leads.jsonl`; the hit is not evidence and must not enter matrix lookup. Settlement reads the original source, then resolves the lead to source-checked VERIFIED E-IDs or marks it `not_an_answer`. Only VERIFIED answer IDs may trigger a document-answer repair. NOT_FOUND remains scoped search history in the matrix; UNCONFIRMED remains supported outside the gap-lookup lead workflow.
+
 ## Verify in proportion to the action
 
 After framework or document work, use the applicable checks rather than declaring success from a zero exit code:

@@ -1,5 +1,6 @@
 """csa resolve-gaps re-answers only the answered blocks, and the repair is told which question the evidence now answers."""
 import re
+import json
 from pathlib import Path
 
 SRC = (Path(__file__).resolve().parents[3] / "bin" / "csa").read_text(encoding="utf-8")
@@ -7,10 +8,10 @@ ns = {"re": re}
 exec(SRC[SRC.index("def answered_blocks"):SRC.index("def cmd_resolve_gaps")], ns)
 
 Q = [
-    {"verdict": "ANSWERED", "key": "SUPPLY", "number": "3.16", "title": "Supply", "qid": "B1", "text": "Which vendors support it?", "evidence_ids": ["E-2777", "E-2778"]},
-    {"verdict": "ANSWERED", "key": "DNS", "number": "3.5", "title": "DNS", "qid": "F03", "text": "figure gap", "evidence_ids": ["E-1"]},
-    {"verdict": "CANDIDATES", "key": "STOR", "number": "3.7", "title": "Storage", "qid": "B2", "text": "open", "evidence_ids": ["E-2"]},
-    {"verdict": "ANSWERED", "key": "SUPPLY", "number": "3.16", "title": "Supply", "qid": "B3", "text": "Fallback?", "evidence_ids": ["E-9"]},
+    {"verdict": "ANSWERED", "key": "SUPPLY", "number": "3.16", "title": "Supply", "qid": "B1", "text": "Which vendors support it?", "answer_evidence_ids": ["E-2777", "E-2778"], "lead_ids": []},
+    {"verdict": "ANSWERED", "key": "DNS", "number": "3.5", "title": "DNS", "qid": "F03", "text": "figure gap", "answer_evidence_ids": ["E-1"], "lead_ids": []},
+    {"verdict": "CANDIDATES", "key": "STOR", "number": "3.7", "title": "Storage", "qid": "B2", "text": "open", "answer_evidence_ids": [], "lead_ids": ["L-000002"]},
+    {"verdict": "ANSWERED", "key": "SUPPLY", "number": "3.16", "title": "Supply", "qid": "B3", "text": "Fallback?", "answer_evidence_ids": ["E-9"], "lead_ids": []},
 ]
 
 
@@ -30,7 +31,24 @@ def test_a_question_with_no_evidence_gives_no_line():
 
 
 def test_only_verified_evidence_is_named_and_a_question_with_none_is_not_answered():
-    q = [{"verdict": "ANSWERED", "key": "DNS", "number": "3.5", "title": "DNS", "qid": "B1", "text": "t", "evidence_ids": ["E-1", "E-2620"]},
-         {"verdict": "ANSWERED", "key": "TIME", "number": "3.4", "title": "Time", "qid": "B3", "text": "t", "evidence_ids": ["E-2670"]}]
+    q = [{"verdict": "ANSWERED", "key": "DNS", "number": "3.5", "title": "DNS", "qid": "B1", "text": "t", "answer_evidence_ids": ["E-1", "E-2620"], "lead_ids": ["L-000001"]},
+         {"verdict": "ANSWERED", "key": "TIME", "number": "3.4", "title": "Time", "qid": "B3", "text": "t", "answer_evidence_ids": ["E-2670"], "lead_ids": []}]
     res = ns["answered_blocks"](q, {"E-1"})
     assert list(res) == ["DNS"] and res["DNS"]["resolved"][0]["ids"] == ["E-1"]
+
+
+def test_saved_schema_one_gap_check_requires_a_fresh_sweep(tmp_path):
+    work = tmp_path / "csa-work"
+    (work / "intake").mkdir(parents=True)
+    (work / "intake" / "gap-check-latest.json").write_text(json.dumps({"questions": []}), encoding="utf-8")
+    local = {"json": json, "re": re, "local_path": Path, "resolve_target": lambda *a: {"status": "OK", "key": ""}}
+    local["die"] = lambda message: (_ for _ in ()).throw(RuntimeError(message))
+    start = SRC.index("def _latest_gap_check")
+    end = SRC.index("def answered_blocks")
+    exec(SRC[start:end], local)
+    try:
+        local["_latest_gap_check"]({"work_dir": str(work)}, "")
+    except RuntimeError as exc:
+        assert "schema 1" in str(exc) and "csa gap-check" in str(exc)
+    else:
+        raise AssertionError("schema-1 record was accepted")

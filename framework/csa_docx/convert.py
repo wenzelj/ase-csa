@@ -236,10 +236,11 @@ def _plan_check(workspace: Path, section: str, legacy_docx: Path | None = None) 
         checked.add(m.group(1))
         look = gap_lookup.lookup_gap(workspace, m.group(1), m.group(2), exclude=exclude)
         if look["verdict"] != "NOT_FOUND":
+            refs = look.get("answer_evidence_ids", []) if look["verdict"] == "ANSWERED" else look.get("lead_ids", [])
+            kind = "source-checked evidence" if look["verdict"] == "ANSWERED" else "discovery leads"
             findings.append({"level": "ERROR", "code": "GAP_HAS_EVIDENCE", "row": n, "message": (
-                f"{m.group(1)}: the evidence already holds {', '.join(look['evidence_ids'])}. Read them: if one answers it, "
-                "restate the row with that evidence; if none does, reject each with `evidence_matrix.py review --state "
-                "rejected` and rerun")})
+                f"{m.group(1)}: the lookup found {kind} {', '.join(refs)}. Read the original sources: if one answers it, "
+                "append/source-check VERIFIED evidence and resolve the lead; otherwise mark the lead not_an_answer and rerun")})
     if not (work / "convert" / section / "search-notes.md").is_file():
         findings.append({"level": "WARNING", "code": "NO_SEARCH_NOTES", "message": (
             "the evidence agent left no convert/%s/search-notes.md; the writer will repeat its searches" % section)})

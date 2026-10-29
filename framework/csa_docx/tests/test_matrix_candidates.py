@@ -83,10 +83,10 @@ def test_related_rows_never_change_a_gaps_verdict(tmp_path, monkeypatch):
     work = tmp_path / "csa-work"
     work.mkdir()
     with open(work / "evidence-matrix.csv", "w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=["evidence_id", "csa_area", "status", "claim", "gap_or_action"])
+        w = csv.DictWriter(f, fieldnames=["evidence_id", "csa_area", "status", "claim", "gap_or_action", "review_state"])
         w.writeheader()
-        w.writerow(ROWS[0] | {"gap_or_action": ""})
-    monkeypatch.setattr(G, "_matrix_stage", lambda *a: ("NONE", []))
+        w.writerow(ROWS[0] | {"gap_or_action": "", "review_state": "reviewed"})
+    monkeypatch.setattr(G, "_matrix_stage", lambda *a: ("NONE", [], []))
     monkeypatch.setattr(G, "_index_stage", lambda *a: ([], ["q"], True))
     res = G.lookup_gap(tmp_path, "DR-TIME-B1", "which time connections were observed to which servers, which the owner could confirm")
     assert res["verdict"] == "NOT_FOUND" and res["related"] == ["E-1249"]

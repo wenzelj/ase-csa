@@ -13,15 +13,18 @@ Build a defensible evidence set before analysis or writing.
 
 1. Define the precise question and relevant source set.
 2. Search headings, tables, diagrams, appendices, metadata, and surrounding text. For Discovery Data, use the discovery index first where the project has one (`csa index rows` / `csa index search`; see `csa-discovery-index/SKILL.md`) and cite the original capture file and line it returns.
-3. Record atomic claims in the evidence matrix. Split compound statements when their support differs.
-4. Capture source title, document identifier or version, section, page or location, exact supporting excerpt where permitted, and retrieval date when relevant.
-5. Classify each claim:
+3. Treat a search hit as a lead until you read its original source. Gap lookup stores these in `csa-work/intake/leads.jsonl`; never copy an unreviewed hit into the matrix as gap-search evidence.
+4. Record source-read atomic claims in the evidence matrix. Split compound statements when their support differs.
+5. Capture source title, document identifier or version, section, page or location, exact supporting excerpt where permitted, and retrieval date when relevant.
+6. Classify each claim:
    - `VERIFIED`: directly supported by an authoritative source.
    - `INFERRED`: reasoned from verified facts; record the reasoning.
    - `UNCONFIRMED`: asserted but not adequately supported.
    - `CONFLICTING`: credible sources disagree.
    - `NOT_FOUND`: absent after a proportionate search of the stated source set.
-6. Compare duplicate claims across sources and preserve disagreements.
+7. Compare duplicate claims across sources and preserve disagreements.
+
+Only source-checked `VERIFIED` rows may answer an open document question. INFERRED and CONFLICTING rows remain related context. `NOT_FOUND` is scoped search history in the matrix, never proof that a capability does not exist. `UNCONFIRMED` remains supported for non-gap assertions; gap lookup creates leads instead.
 
 Never upgrade an inference because it is technically plausible. Do not use prior knowledge to complete hostnames, addresses, versions, ownership, topology, control status, or dates. A diagram may establish relationships but not undocumented implementation details. When a diagram's concrete value (address, hostname, port, version, role) disagrees with a live capture, connection log, resolver/DNS or asset/inventory record, the log/inventory value is authoritative and the diagram is out of date: record the log/inventory value as `VERIFIED` and reject the diagram row as superseded (do not carry it as `CONFLICTING`). See the Evidence section of `.agents/csa-core-rules.md`.
 

@@ -6,9 +6,9 @@ evidence does not answer it. This runs the framework's own lookups in the usual 
 1. the evidence matrix (`evidence_matrix.py lookup`), ignoring rows that only restate the previous
    assessment (`gap_or_action` starts `legacy L-`), earlier NOT_FOUND rows and rejected rows;
 2. the discovery index (`discovery_index.py search`): by host name in workbooks and documents, and by
-   host plus topic word in the captures. Every usable hit is added to the matrix as an UNCONFIRMED row
-   that quotes the source (read it: a person or the evidence agent promotes it to VERIFIED with a claim,
-   or rejects it with `evidence_matrix.py review --state rejected`; a rejected row is not offered again).
+   host plus topic word in the captures. Every usable hit is added to the append-only lead store. A lead
+   is never evidence and cannot answer the question until its original source has been read and a
+   source-checked VERIFIED evidence row exists.
 
 Verdicts: ANSWERED (the matrix already answers it), CANDIDATES (something was found, so the gap is not
 yet a gap), NOT_FOUND (nothing; `searched` says exactly what was looked in, for the NOT_FOUND row).
@@ -16,8 +16,8 @@ yet a gap), NOT_FOUND (nothing; `searched` says exactly what was looked in, for 
 After reading what was found, a person or the evidence agent settles it one of two ways:
   * it answers the question: record a VERIFIED row that states the answer and restate the gap;
   * it does not: `python3 -m csa_docx.gap_lookup confirm --workspace W --dr DR-DNS-01 --text "..."
-    --considered E-052,E-053 --ask "who to ask"` rejects the candidate rows and records a NOT_FOUND row that
-    lists the rows considered, so the same rows are not offered again.
+    --leads L-000052,L-000053 --searched "<saved scope>" --ask "who to ask"` records a NOT_FOUND row and
+    marks exactly those saved leads not_an_answer. It never reruns lookup.
 
     python3 -m csa_docx.gap_lookup check   --workspace W --dr DR-DNS-01 --text "..." [--legacy-docx F]
     python3 -m csa_docx.gap_lookup confirm --workspace W --dr DR-DNS-01 --text "..." --considered E-1,E-2 --ask "..."
@@ -26,7 +26,6 @@ After reading what was found, a person or the evidence agent settles it one of t
 from __future__ import annotations
 
 import argparse
-import csv
 import json
 import re
 import subprocess
@@ -264,23 +263,23 @@ def queries(text: str, kind: str = "system", vocab: list[str] | None = None) -> 
     return out[:_MAX_QUERIES]
 
 
-def _matrix_stage(workspace: Path, text: str, rejected: set[str]) -> tuple[str, list[str]]:
+def _matrix_stage(workspace: Path, text: str) -> tuple[str, list[str], list[str]]:
     res = _run([sys.executable, str(MATRIX_SCRIPT), "--workspace", str(workspace), "lookup", text, "--limit", "40"])
     if not res or res.get("status") != "OK":
-        return "NO_MATRIX", []
+        return "NO_MATRIX", [], []
     kept = []
     for m in res.get("matches", []):
-        if m["evidence_id"].upper() in rejected or m.get("status") == "NOT_FOUND":
+        if m.get("review_state") == "rejected" or m.get("status") == "NOT_FOUND" or m.get("csa_area") == "gap_lookup":
             continue
         if (m.get("gap_or_action") or "").startswith("legacy L-"):
             continue
         kept.append(m)
-    answered = any(m["status"] in ("VERIFIED", "INFERRED") and m["score"] >= _ANSWER_SCORE
-                   and m["coverage"] >= _ANSWER_COVERAGE for m in kept)
-    # the lookup is asked for 40 rows so that the framework's own NOT_FOUND rows cannot crowd the real ones out; what is
-    # offered to read is the best few, and only a row that scores like an answer
-    kept = sorted((m for m in kept if m.get("score", 0) >= _MIN_MATRIX_SCORE), key=lambda m: -m.get("score", 0))[:_MAX_CANDIDATES]
-    return ("ANSWERED" if answered else "CANDIDATES" if kept else "NONE"), [m["evidence_id"] for m in kept]
+    ranked = sorted((m for m in kept if m.get("score", 0) >= _MIN_MATRIX_SCORE), key=lambda m: -m.get("score", 0))
+    answers = [m["evidence_id"] for m in ranked
+               if m.get("status") == "VERIFIED" and str(m.get("review_state") or "").lower() in ("reviewed", "accepted")
+               and m.get("score", 0) >= _ANSWER_SCORE and m.get("coverage", 0) >= _ANSWER_COVERAGE][:_MAX_CANDIDATES]
+    related = [m["evidence_id"] for m in ranked if m["evidence_id"] not in answers][:_MAX_CANDIDATES]
+    return ("ANSWERED" if answers else "NONE"), answers, related
 
 
 def hit_score(excerpt: str, source: str, text: str, vocab: list[str] | None = None) -> float:
@@ -334,170 +333,103 @@ def _index_stage(workspace: Path, text: str, exclude: tuple[str, ...], kind: str
     return rank_hits(hits, text, vocab), ran, has_index
 
 
-def _add_candidates(workspace: Path, dr_id: str, text: str, hits: list[dict], rejected: set[str]) -> list[str]:
-    rows = [{
-        "csa_area": "gap_lookup", "question": f"{dr_id}: {text}"[:400],
-        "claim": f"Possible answer to {dr_id}: the source reads: {h['evidence_excerpt'][:260]}",
-        "status": "UNCONFIRMED", "source_title": h["source_title"], "source_version": h.get("source_version", ""),
-        "section": "", "page_or_location": h.get("page_or_location", ""), "evidence_excerpt": h["evidence_excerpt"][:1200],
-        "inference_reason": "", "confidence": "low",
-        "gap_or_action": (f"Found by the gap lookup for {dr_id}. Read it: if it answers the question, record a VERIFIED row "
-                          "that states the answer; if not, reject this row (evidence_matrix.py review --state rejected)"),
-    } for h in hits]
-    ids: list[str] = []
-    for row in rows:            # one call each, so a row the matrix refuses does not stop the others
-        res = _run([sys.executable, str(MATRIX_SCRIPT), "--workspace", str(workspace), "append", "--agent", "gap lookup",
-                    "--context", dr_id, "--allow-new-area", "--row-json", json.dumps(row, ensure_ascii=False)])
-        if not res:
-            continue
-        for w in res.get("written", []):
-            ids.append(w["evidence_id"])
-        for s in res.get("skipped_duplicates", []):
-            dup = s.get("duplicate_of", "")
-            if dup and dup.upper() not in rejected:
-                ids.append(dup)
-    return list(dict.fromkeys(ids))
-
-
 def lookup_gap(workspace: Path, dr_id: str, text: str, *, exclude: tuple[str, ...] = ()) -> dict:
-    """Search the matrix, then the index, for evidence on a gap; add what is found to the matrix."""
+    """Search the matrix, then the index; index hits become leads, never evidence."""
     workspace = Path(workspace)
-    related: list[str] = []
-    rejected = _rejected(workspace) | _acknowledged(workspace, dr_id)
     kind, owners = classify_gap(text), owners_in(text)
     text = strip_confirmers(text) or text
-    matrix_state, matrix_ids = _matrix_stage(workspace, text, rejected)
+    matrix_state, answer_ids, related = _matrix_stage(workspace, text)
     vocab, area = section_vocabulary(dr_id)          # the topic's own words find "Time source on X" for "time connections"
     if vocab:
         from csa_docx import evidence_live, matrix_candidates
         csv_path = workspace / "csa-work" / "evidence-matrix.csv"
-        near = (matrix_candidates.candidates(evidence_live.get_verified_evidence(csv_path), text, vocab, area, limit=6, skip=rejected)
+        checked = [r for r in evidence_live.read(csv_path, drop_rejected=True) if evidence_live.is_verified(r)]
+        near = (matrix_candidates.candidates(checked, text, vocab, area, limit=6)
                 if csv_path.is_file() else [])
-        related = [c["id"] for c in near if c["id"] not in matrix_ids]     # rows to read: they never change the verdict
-    hits, ran, has_index = _index_stage(workspace, text, exclude, kind, vocab)
-    index_ids = _add_candidates(workspace, dr_id, text, hits, rejected) if hits else []
-    found = list(dict.fromkeys(matrix_ids + [i for i in index_ids if i.upper() not in rejected]))
-    if matrix_state == "ANSWERED" and not matrix_ids:
+        related = list(dict.fromkeys([*related, *[c["id"] for c in near if c["id"] not in answer_ids]]))[:_MAX_CANDIDATES]
+    if matrix_state == "ANSWERED" and not answer_ids:
         matrix_state = "NONE"
-    verdict = "ANSWERED" if matrix_state == "ANSWERED" else "CANDIDATES" if found else "NOT_FOUND"
+    hits, ran, has_index = ([], [], True) if matrix_state == "ANSWERED" else _index_stage(workspace, text, exclude, kind, vocab)
+    lead_ids: list[str] = []
+    if hits:
+        from csa_docx import leads
+        added = leads.add_leads(workspace, dr_id, dr_id.rsplit("-", 1)[-1], text, hits)
+        open_ids = {r["lead_id"] for r in leads.open_leads(workspace, dr_id)}
+        lead_ids = [lead_id for lead_id in added if lead_id in open_ids]
+    verdict = "ANSWERED" if matrix_state == "ANSWERED" else "CANDIDATES" if lead_ids else "NOT_FOUND"
     where = "documents only, since " + ("a person has to confirm it" if kind == "owner" else "it is about a policy, procedure or test") \
         if kind != "system" else "all sources"
     scope = ("evidence matrix" + ("" if matrix_state != "NO_MATRIX" else " (none)")
              + "; discovery index" + (f" ({where}; {len(ran)} searches: {'; '.join(ran)})" if has_index else " (no index built)"))
-    return {"verdict": verdict, "matrix": matrix_ids, "index": index_ids, "evidence_ids": found,
+    return {"verdict": verdict, "answer_evidence_ids": answer_ids, "related_evidence_ids": related,
+            "lead_ids": lead_ids, "evidence_ids": answer_ids, "matrix": answer_ids, "index": lead_ids,
             "related": related, "kind": kind, "owners": owners, "queries": ran, "searched": scope}
 
 
-def confirm_gap(workspace: Path, dr_id: str, text: str, considered: list[str], *, ask: str,
-                exclude: tuple[str, ...] = ()) -> dict:
-    """Record that the evidence found for a gap was read and does not answer it: reject the candidate rows the
-    lookup added, and append a NOT_FOUND row that names everything considered and what was searched."""
+def confirm_gap(workspace: Path, dr_id: str, text: str, lead_ids: list[str], *, searched: str, ask: str,
+                related_evidence_ids: list[str] | None = None) -> dict:
+    """Settle exactly the saved leads as non-answers and append/reuse a scoped NOT_FOUND row.
+
+    This deliberately does not call :func:`lookup_gap`; the saved search scope and lead IDs are the
+    auditable unit being confirmed.
+    """
     workspace = Path(workspace)
-    look = lookup_gap(workspace, dr_id, text, exclude=exclude)
-    ids = sorted({i.upper() for i in considered} | {i.upper() for i in look["evidence_ids"]})
-    from csa_docx import modelstore
-    candidates = {r["evidence_id"].upper() for r in modelstore.read_csv(workspace / "csa-work" / "evidence-matrix.csv")
-                  if r["status"] == "UNCONFIRMED" and r["claim"].startswith(f"Possible answer to {dr_id}")}
-    to_reject = [i for i in ids if i in candidates]
-    if to_reject:
-        subprocess.run([sys.executable, str(MATRIX_SCRIPT), "--workspace", str(workspace), "review", *to_reject,
-                        "--by", "gap lookup", "--state", "rejected",
-                        "--note", f"read for {dr_id}: does not answer the question"], capture_output=True, text=True)
+    from csa_docx import leads
+    saved = {r["lead_id"]: r for r in leads._list(workspace, None, None)["leads"]}
+    ids = list(dict.fromkeys(i.upper() for i in lead_ids))
+    missing = [i for i in ids if i not in saved]
+    wrong = [i for i in ids if i in saved and saved[i].get("dr_id") != dr_id]
+    if missing:
+        raise ValueError("unknown lead ID(s): " + ", ".join(missing))
+    if wrong:
+        raise ValueError(f"lead ID(s) do not belong to {dr_id}: " + ", ".join(wrong))
+    if not searched.strip():
+        raise ValueError("saved search scope is required")
     from csa_docx import evidence_live
-    verified = {str(r["evidence_id"]).upper() for r in evidence_live.get_verified_evidence(workspace / "csa-work" / "evidence-matrix.csv")}
-    known = [i for i in dict.fromkeys([*ids, *[x.upper() for x in look.get("related", [])]]) if i in verified]
+    verified = {str(r["evidence_id"]).upper() for r in evidence_live.read(workspace / "csa-work" / "evidence-matrix.csv")
+                if evidence_live.is_verified(r)}
+    known = [i.upper() for i in (related_evidence_ids or []) if i.upper() in verified]
     # a question can be answered in part: say which verified rows bear on it, so the record never reads as a total miss
     claim = (f"No evidence answers all of: {text[:300]}. Verified rows on this subject (not an answer to the whole): {', '.join(known)}"
              if known else f"No evidence in the matrix or the discovery index answers: {text[:300]}")
     row = {"csa_area": "discovery_required", "question": text[:400],
            "claim": claim,
-           "status": "NOT_FOUND", "source_title": f"searched: {look['searched']}"[:1400], "source_version": "",
+           "status": "NOT_FOUND", "source_title": f"searched: {searched}"[:1400], "source_version": "",
            "section": "8 Discovery Required", "page_or_location": "", "evidence_excerpt": "",
            "inference_reason": f"read and considered, not an answer to {dr_id}: {', '.join(ids)}" if ids else "",
            "confidence": "low", "gap_or_action": f"{dr_id} {ask}"}
     res = _run([sys.executable, str(MATRIX_SCRIPT), "--workspace", str(workspace), "append", "--agent", "gap lookup",
                 "--context", f"confirm {dr_id}", "--allow-new-area", "--row-json", json.dumps(row, ensure_ascii=False)])
     written = (res or {}).get("written", [])
-    return {"status": "OK" if written or (res or {}).get("skipped_duplicates") else "ERROR",
-            "dr_id": dr_id, "not_found_row": written[0]["evidence_id"] if written else "",
-            "rejected": to_reject, "considered": ids}
-
-
-_CAND_CLAIM = re.compile(r"^Possible answer to (DR-[A-Za-z0-9_.-]+): ")
-
-
-def judge_pending(workspace: Path) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
-    """({DR id: the best pending candidate ids, at most ``_MAX_CANDIDATES``}, {reason: ids to reject}) for every pending
-    "Possible answer to DR-x" row, judged with the current rules: it must be about the gap (``relevant``) and rank in
-    the best few."""
-    from csa_docx import modelstore
-    workspace = Path(workspace)
-    csv_path = workspace / "csa-work" / "evidence-matrix.csv"
-    rows = modelstore.read_csv(csv_path) if csv_path.is_file() else []
-    rejected = _rejected(workspace)
-    by_dr: dict[str, list[dict]] = {}
-    for r in rows:
-        m = _CAND_CLAIM.match(r.get("claim", ""))
-        if (m and r.get("status") == "UNCONFIRMED" and (r.get("review_state") or "pending").lower() == "pending"
-                and r["evidence_id"].upper() not in rejected):
-            by_dr.setdefault(m.group(1), []).append(r)
-    keep: dict[str, list[str]] = {}
-    drop: dict[str, list[str]] = {"not about the gap": [], "beyond the best five": []}
-    for dr, cands in by_dr.items():
-        text = strip_confirmers(re.sub(r"^DR-[^:]*:\s*", "", cands[0].get("question", "")))
-        vocab, _ = section_vocabulary(dr)
-        good = []
-        for r in cands:
-            ex = r.get("evidence_excerpt", "")
-            if relevant(ex, text, vocab):
-                good.append((hit_score(ex, r.get("source_title", ""), text, vocab), r["evidence_id"]))
-            else:
-                drop["not about the gap"].append(r["evidence_id"])
-        good.sort(key=lambda x: (-x[0], x[1]))
-        keep[dr] = [i for s, i in good[:_MAX_CANDIDATES] if s > 0]
-        drop["beyond the best five"] += [i for _, i in good[_MAX_CANDIDATES:]]
-    return keep, drop
-
-
-def triage_pending(workspace: Path, apply: bool = False) -> dict:
-    """Re-judge every pending candidate with the current rules (``judge_pending``). The rest are rejected: a review record,
-    which the matrix never offers again; nothing is deleted and a later review can restore a row. Dry run unless
-    ``apply``. Returns counts."""
-    keep, drop = judge_pending(workspace)
-    out = {"gaps": len(keep), "pending": sum(len(v) for v in keep.values()) + sum(len(v) for v in drop.values()),
-           "keep": sum(len(v) for v in keep.values()), "reject": {k: len(v) for k, v in drop.items()}, "applied": False}
-    if apply:
-        for reason, ids in drop.items():
-            for i in range(0, len(ids), 50):
-                _run([sys.executable, str(MATRIX_SCRIPT), "--workspace", str(workspace), "review", *ids[i:i + 50],
-                      "--by", "gap triage", "--state", "rejected", "--note", f"triage: {reason}"])
-        out["applied"] = True
-    return out
+    duplicates = (res or {}).get("skipped_duplicates", [])
+    if written or duplicates:
+        leads.review(workspace, ids, "not_an_answer", "gap lookup", f"read for {dr_id}: does not answer the question")
+    not_found_id = written[0]["evidence_id"] if written else (duplicates[0].get("duplicate_of", "") if duplicates else "")
+    return {"status": "OK" if written or duplicates else "ERROR", "dr_id": dr_id,
+            "not_found_row": not_found_id, "lead_ids": ids}
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Search the evidence matrix and the discovery index for a gap.")
-    ap.add_argument("action", choices=["check", "confirm", "triage"])
+    ap.add_argument("action", choices=["check", "confirm"])
     ap.add_argument("--workspace", type=Path, required=True)
     ap.add_argument("--dr", default="")
     ap.add_argument("--text", default="")
-    ap.add_argument("--apply", action="store_true", help="triage: reject the pending candidates that fail (default: dry run)")
-    ap.add_argument("--considered", default="", help="confirm: evidence IDs read and judged not to answer it")
+    ap.add_argument("--leads", default="", help="confirm: exact saved lead IDs read and judged not to answer it")
+    ap.add_argument("--searched", default="", help="confirm: exact saved search scope from the gap-check record")
+    ap.add_argument("--related-evidence", default="", help="confirm: related source-checked evidence IDs from the saved record")
     ap.add_argument("--ask", default="Confirm with the site team or the application owner", help="confirm: who to ask")
     ap.add_argument("--legacy-docx", type=Path)
     a = ap.parse_args(argv)
     exclude = (a.legacy_docx.name,) if a.legacy_docx else ()
-    if a.action == "triage":
-        res = triage_pending(a.workspace, apply=a.apply)
-        print(json.dumps(res, ensure_ascii=False))
-        return 0
     if not a.dr or not a.text:
         ap.error("check and confirm need --dr and --text")
     if a.action == "check":
         print(json.dumps(lookup_gap(a.workspace, a.dr, a.text, exclude=exclude), ensure_ascii=False))
         return 0
-    considered = [x.strip() for x in a.considered.split(",") if x.strip()]
-    res = confirm_gap(a.workspace, a.dr, a.text, considered, ask=a.ask, exclude=exclude)
+    lead_ids = [x.strip() for x in a.leads.split(",") if x.strip()]
+    related = [x.strip() for x in a.related_evidence.split(",") if x.strip()]
+    res = confirm_gap(a.workspace, a.dr, a.text, lead_ids, searched=a.searched, ask=a.ask, related_evidence_ids=related)
     print(json.dumps(res, ensure_ascii=False))
     return 0 if res["status"] == "OK" else 2
 

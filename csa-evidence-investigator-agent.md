@@ -50,7 +50,7 @@ Do not load any other skill. If the task needs technical interpretation, return 
 5. Keep qualifiers such as not observed, not tested and not confirmed. A legacy absolute ("no X exists") becomes "no X was evidenced" with `qualify` in `transformation`, unless a capture proves absence (`verified absence`).
 6. Recommendations never go to a current-state field: their destination is `roadmap (convert/parked.md)`; turn their factual basis into its own `observed` or `gap` row. Legacy readiness scores are not carried: write the `REQ <id> / Rating` row from the evidence on the agreed scale (Met, Partially Met, Not Met, Not Applicable).
 7. Every requirement gets a `REQ <id> / Current State` row and a `REQ <id> / Rating` row. Every point the evidence cannot answer gets a `gap` row with `gap_generated` = `DR-<AREA>-nn <what to confirm>`; do not manufacture a conclusion.
-7a. Before you write a `gap` row, look for the answer: `python3 -m csa_docx.gap_lookup check --workspace WORKSPACE --dr DR-<AREA>-nn --text "<what to confirm>"` searches the evidence matrix and then the discovery index and adds what it finds to the matrix (UNCONFIRMED rows that quote their source). `plan-check` runs the same lookup and stops on `GAP_HAS_EVIDENCE`. Read what it found. If it answers the question, record a VERIFIED row and write an `observed` row instead of the gap. If it does not, run `python3 -m csa_docx.gap_lookup confirm ... --considered E-..,E-.. --ask "who to ask"`: it rejects the candidate rows and records the NOT_FOUND row with the scope searched.
+7a. Before you write a `gap` row, look for the answer: `python3 -m csa_docx.gap_lookup check --workspace WORKSPACE --dr DR-<AREA>-nn --text "<what to confirm>"` searches the evidence matrix and then the discovery index. Index hits are appended to `WORK_DIR/intake/leads.jsonl`, not the evidence matrix. `plan-check` runs the same lookup and stops on `GAP_HAS_EVIDENCE`. Read each lead's original source. If it answers the question, append a source-checked VERIFIED row and resolve the lead to that E-ID. If it does not, confirm only the exact saved lead IDs and saved search scope; do not rerun lookup.
 8. Facts under `Facts that belong elsewhere`, and candidates the requirement's `Not evidence for` excludes, get `MOVED <subsection>` or `none` with the reason in `transformation`.
 9. Run `python3 -m csa_docx.answer_plan WORK_DIR/convert/<N>/answer-plan.csv --target <N>` and fix every ERROR. Never infer.
 10. Write `WORK_DIR/convert/<N>/search-notes.md` for the writer: at most 40 lines, one `## <requirement id>` block per requirement with three bullets. `Searched:` the index tables, capture files and terms you tried. `Found:` one line per finding, with its evidence ID. `Not found:` what you looked for and did not locate. No inference. Evidence IDs belong in this file only, never in document text. The writer trusts this note instead of repeating your searches.
@@ -76,26 +76,28 @@ Stop after reporting the rows per requirement and the Discovery Required items.
 `WORK_DIR/intake/gap-check-latest.json`. Your job is to settle every `CANDIDATES` result from its original source. A
 search hit is only a lead: never promote it merely because its words overlap the question.
 
-1. Read `GAP_CHECK`, `WORK_DIR/draft/open-questions.md`, the candidate rows named in each result, and their cited
-   source passages. Work only on the questions in this gap-check record.
-2. For each question, check the existing VERIFIED and INFERRED matrix rows first. If one already answers the precise
-   question for the correct host, scope and date, retain it and settle any redundant candidate rows as `reviewed`,
-   noting `settled by <existing E-id>`.
-3. Read each UNCONFIRMED candidate in its original indexed source, including enough surrounding context to establish
-   its subject and scope. Use `csa index search` with `--path-like` or open the indexed source. Do not rely on the
-   candidate's truncated excerpt alone.
+1. Read the schema-2 `GAP_CHECK`, `WORK_DIR/draft/open-questions.md`, and the exact `lead_ids` named in each result through
+   `python3 -m csa_docx.leads list --workspace WORKSPACE --dr <DR-id>`. Work only on the questions and saved search scope
+   in this gap-check record. Never rerun gap lookup or create fresh leads during settlement.
+2. For each question, check existing source-checked VERIFIED matrix rows first. INFERRED and CONFLICTING rows are related
+   context but cannot satisfy `answer_evidence_ids`. If existing VERIFIED evidence answers the precise question for the
+   correct host, scope and date, resolve the lead to those E-IDs.
+3. Read each lead in its original indexed source, including enough surrounding context to establish its subject and scope.
+   Use its durable `source_ref`, `rel_path` and `page_or_location` with `csa index search --path-like`, or open the indexed
+   source. Do not rely on the lead's truncated excerpt alone.
 4. When a source directly answers the question, append one or more atomic VERIFIED rows through
    `evidence_matrix.py append`. Use `gap_or_action: Answers <DR-id>`. The automated source check must approve every
-   VERIFIED row. Then review the corresponding candidate row as `reviewed` with note `settled by <new E-id>`.
+   VERIFIED row. Only after the E-ID exists, run `python3 -m csa_docx.leads review ... --state resolved --evidence E-...`.
+   If a run stopped after the matrix append, reuse the duplicate E-ID on retry and then resolve the lead.
 5. When deciding evidence requires reasoning from verified facts, append an INFERRED row with the reasoning and leave
    it pending for human review. It may inform the next answer but must not be described as directly observed.
-6. Reject each UNCONFIRMED candidate row that does not answer its question with note `read for <DR-id>: does not answer the question`. Never reject a VERIFIED, INFERRED, CONFLICTING or NOT_FOUND row for not answering a question: it is still evidence for what it states (rejecting it removes it from hosts, links and every other answer). Reject such a row only when it is wrong, with a note saying what is wrong.
-   If no retained or newly written row answers the question after all candidates have been read, run
-   `python3 -m csa_docx.gap_lookup confirm` with every considered candidate ID. This records the searched scope and the
-   still-open request as NOT_FOUND.
+6. If a lead's source does not answer its exact question, leave every real evidence row untouched. When no retained or
+   newly written VERIFIED row answers after all saved leads are read, run `python3 -m csa_docx.gap_lookup confirm` with
+   the exact `lead_ids` and `searched` value from `GAP_CHECK`. This appends/reuses the scoped NOT_FOUND row and marks those
+   leads `not_an_answer`; it must not search again. If the question disappeared, mark its leads `retired` with the reason.
 7. Do not rerun `csa gap-check` and do not edit an answer sheet, change record or DOCX. The calling framework verifies
    the questions again and reruns affected subsection answers after settlement.
-8. Write `WORK_DIR/intake/gap-settlement-<UTC>.md` listing each DR id, the candidate IDs considered, the resulting
+8. Write `WORK_DIR/intake/gap-settlement-<UTC>.md` listing each DR id, the lead IDs considered, the resulting
    evidence ID or NOT_FOUND ID, and any unresolved conflict. Keep it concise and do not copy source passages into it.
 
 ## Output

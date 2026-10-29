@@ -110,7 +110,10 @@ def build(workspace: Path, legacy_docx: Path | None = None) -> dict:
         # A gap is only a gap when the evidence matrix and the discovery index do not answer it.
         look = gap_lookup.lookup_gap(workspace, it["dr_id"], it["text"], exclude=exclude)
         if look["verdict"] != "NOT_FOUND":
-            possibly_answered.append({"dr_id": it["dr_id"], "verdict": look["verdict"], "evidence_ids": look["evidence_ids"]})
+            possibly_answered.append({"dr_id": it["dr_id"], "verdict": look["verdict"],
+                                      "answer_evidence_ids": look.get("answer_evidence_ids", []),
+                                      "related_evidence_ids": look.get("related_evidence_ids", []),
+                                      "lead_ids": look.get("lead_ids", [])})
             continue
         how = answer_from.get(it["reqs"][0], "") if it["reqs"] else ""
         owner = ", ".join(look.get("owners") or []) or "To be assigned"       # the gap names who can confirm it

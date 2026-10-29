@@ -137,6 +137,13 @@ class EvidenceReviewRequest(BaseModel):
     note: str = Field(default="", max_length=400)
 
 
+class LeadReviewRequest(BaseModel):
+    """Review one discovery lead without treating it as an evidence row."""
+    state: Literal["open", "not_an_answer", "resolved", "retired"]
+    note: str = Field(default="", max_length=400)
+    evidence_ids: list[str] = Field(default_factory=list, max_length=50)
+
+
 class CommitRequest(BaseModel):
     draft: EvidenceDraft
     confirmed: bool
@@ -214,6 +221,14 @@ def matrix_script() -> Path:
 
 def index_script() -> Path:
     return agents_dir() / "skills" / "csa-discovery-index" / "scripts" / "discovery_index.py"
+
+
+def lead_store():
+    framework = agents_dir() / "framework"
+    if str(framework) not in sys.path:
+        sys.path.insert(0, str(framework))
+    from csa_docx import leads
+    return leads
 
 
 def reviews_for(project: dict[str, str]) -> dict[str, dict[str, Any]]:
@@ -470,6 +485,18 @@ def review_evidence(system_key: str, evidence_id: str, request: EvidenceReviewRe
         raise HTTPException(422, "Invalid evidence ID")
     return run_json([sys.executable, str(matrix_script()), "--workspace", project["project_root"], "review", evidence_id,
                      "--by", "evidence workspace", "--state", request.state, "--note", request.note or request.state])
+
+
+@app.post("/api/systems/{system_key}/leads/{lead_id}/review")
+def review_lead(system_key: str, lead_id: str, request: LeadReviewRequest) -> dict[str, Any]:
+    project = system_project(system_key)
+    if not re.fullmatch(r"L-\d{6,}", lead_id):
+        raise HTTPException(422, "Invalid lead ID")
+    try:
+        return lead_store().review(project["project_root"], [lead_id], request.state, "evidence workspace",
+                                   request.note or request.state, request.evidence_ids)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 @app.get("/api/systems/{system_key}/commands")
@@ -1081,15 +1108,7 @@ def preview(system_key: str, file_id: int, anchor: str | None = None, mode: str 
     return result
 
 
-@app.get("/api/systems/{system_key}/evidence/{evidence_id}/sources")
-def evidence_sources(system_key: str, evidence_id: str) -> dict[str, Any]:
-    project = system_project(system_key)
-    # Source lookup is by stable evidence ID, not by the paginated ledger view.  Large
-    # projects routinely have more than the API page limit (TETRA has over 2,000 rows).
-    target = next((row for row in matrix_rows(project)
-                   if row["evidence_id"].upper() == evidence_id.upper()), None)
-    if not target:
-        raise HTTPException(404, "Evidence row was not found")
+def _source_matches(project: dict[str, str], target: dict[str, Any]) -> list[dict[str, Any]]:
     source_title = target.get("source_title", "")
     names = re.findall(r"[\w.\-]+\.(?:txt|csv|xlsx|docx|doc|pdf|md|log|json|xml|ps1|pptx)\b",
                        source_title, re.I)
@@ -1126,7 +1145,35 @@ def evidence_sources(system_key: str, evidence_id: str) -> dict[str, Any]:
         if cited_hosts:
             matches = [row for row in matches if str(row.get("host", "")).casefold() in cited_hosts]
     matches = list({row["file_id"]: row for row in matches}.values())
+    return matches
+
+
+@app.get("/api/systems/{system_key}/evidence/{evidence_id}/sources")
+def evidence_sources(system_key: str, evidence_id: str) -> dict[str, Any]:
+    project = system_project(system_key)
+    # Source lookup is by stable evidence ID, not by the paginated ledger view.  Large
+    # projects routinely have more than the API page limit (TETRA has over 2,000 rows).
+    target = next((row for row in matrix_rows(project)
+                   if row["evidence_id"].upper() == evidence_id.upper()), None)
+    if not target:
+        raise HTTPException(404, "Evidence row was not found")
+    matches = _source_matches(project, target)
     return {"evidence": target, "sources": matches,
+            "state": "found" if len(matches) == 1 else "ambiguous" if matches else "unavailable"}
+
+
+@app.get("/api/systems/{system_key}/leads/{lead_id}/sources")
+def lead_sources(system_key: str, lead_id: str) -> dict[str, Any]:
+    project = system_project(system_key)
+    if not re.fullmatch(r"L-\d{6,}", lead_id):
+        raise HTTPException(422, "Invalid lead ID")
+    rows = lead_store()._list(project["project_root"], None, None)["leads"]
+    target = next((row for row in rows if row["lead_id"] == lead_id), None)
+    if not target:
+        raise HTTPException(404, "Lead was not found")
+    source = {**target, "source_title": target.get("rel_path") or target.get("source_ref") or target.get("source_title", "")}
+    matches = _source_matches(project, source)
+    return {"lead": target, "sources": matches,
             "state": "found" if len(matches) == 1 else "ambiguous" if matches else "unavailable"}
 
 

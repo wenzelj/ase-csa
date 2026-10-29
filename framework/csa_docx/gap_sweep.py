@@ -1,8 +1,8 @@
 """Check every open question against the evidence matrix and the discovery index (no model).
 
 Reads csa-work/draft/open-questions.md (the `Unknown:` lines of every answered card, written by the draft lane) and
-runs gap_lookup.lookup_gap on each question. What the index finds goes into the matrix as UNCONFIRMED candidate rows
-(gap_lookup's rules: append-only, duplicates reused, rejected rows never offered again). The result is written to
+runs gap_lookup.lookup_gap on each question. What the index finds goes into the append-only lead store
+(duplicates are reused and terminal leads are never offered again). The result is written to
 csa-work/intake/gap-check-<UTC>.json and gap-check-latest.json for the Evidence Workspace.
 
     python3 -m csa_docx.gap_sweep --workspace <project_root> [--section KEY] [--json]
@@ -11,7 +11,6 @@ csa-work/intake/gap-check-<UTC>.json and gap-check-latest.json for the Evidence 
 from __future__ import annotations
 
 import argparse
-import csv
 import json
 import re
 import sys
@@ -23,39 +22,6 @@ from csa_docx import gap_lookup
 _SECTION = re.compile(r"^##\s+(\d+(?:\.\d+)*)\s+(.*?)\s+\(([A-Z0-9_]+)\)\s*$")
 _FIGURE = re.compile(r"^##\s+Figure for\s+(\d+(?:\.\d+)*)\s+(.*?)\s*$")
 _BULLET = re.compile(r"^\s*-\s+\[([A-Za-z0-9_.-]+)\]\s+(.+?)\s*$")
-_CANDIDATE = re.compile(r"^Possible answer to (DR-[A-Za-z0-9_.-]+):")
-
-
-def pending_candidates(workspace: Path) -> dict[str, list[str]]:
-    """Pending gap-lookup rows by exact DR id.
-
-    A later fuzzy lookup may not rank an earlier candidate highly enough to return it.  The exact
-    DR id embedded when the row was created remains authoritative until the row is reviewed.
-    """
-    work = Path(workspace) / "csa-work"
-    latest: dict[str, str] = {}
-    reviews = work / "evidence-reviews.jsonl"
-    if reviews.is_file():
-        for line in reviews.read_text(encoding="utf-8").splitlines():
-            try:
-                record = json.loads(line)
-            except ValueError:
-                continue
-            latest[str(record.get("evidence_id", "")).upper()] = str(record.get("state", ""))
-    out: dict[str, list[str]] = {}
-    matrix = work / "evidence-matrix.csv"
-    if not matrix.is_file():
-        return out
-    from csa_docx import modelstore
-    for row in modelstore.read_csv(matrix):             # the store when it is current, else the file (S421)
-        evidence_id = str(row.get("evidence_id", "")).upper()
-        state = (latest.get(evidence_id) or row.get("review_state") or "pending").lower()
-        match = _CANDIDATE.match(row.get("claim", ""))
-        if row.get("status") == "UNCONFIRMED" and state == "pending" and match:
-            out.setdefault(match.group(1), []).append(evidence_id)
-    return out
-
-
 def parse_open_questions(text: str) -> list[dict]:
     """[{number, title, key, qid, dr_id, text}] from open-questions.md. A figure heading takes the key of the section
     with the same number (FIGURE-<number> when there is none). Lines outside a recognised heading, and bullets without
@@ -91,29 +57,50 @@ def parse_open_questions(text: str) -> list[dict]:
     return out
 
 
+def _safe_for_retirement(text: str, questions: list[dict]) -> bool:
+    """Retirement is allowed only when the question file was present, non-empty and parsed completely."""
+    if not text.strip() or not questions:
+        return False
+    bracket_bullets = sum(1 for line in text.splitlines() if line.lstrip().startswith("- ["))
+    return bracket_bullets == len(questions)
+
+
+def _retire_absent(workspace: Path, questions: list[dict], section_key: str | None) -> list[str]:
+    from csa_docx import leads
+    active = {q["dr_id"] for q in questions}
+    rows = leads.open_leads(workspace)
+    if section_key:
+        rows = [r for r in rows if str(r.get("dr_id", "")).startswith(f"DR-{section_key}-")]
+    ids = [r["lead_id"] for r in rows if r.get("dr_id") not in active]
+    if ids:
+        scope = f"section {section_key}" if section_key else "complete open-question set"
+        leads.review(workspace, ids, "retired", "gap sweep", f"question absent from successful {scope}")
+    return ids
+
+
 def sweep(workspace: Path, section_key: str | None = None) -> dict:
     """Look up every open question (or one section's); write intake/gap-check-<ts>.json and gap-check-latest.json."""
     workspace = Path(workspace)
     work = workspace / "csa-work"
     source = work / "draft" / "open-questions.md"
-    qs = parse_open_questions(source.read_text(encoding="utf-8")) if source.is_file() else []
+    source_text = source.read_text(encoding="utf-8") if source.is_file() else ""
+    all_questions = parse_open_questions(source_text)
+    safe_retirement = _safe_for_retirement(source_text, all_questions)
+    qs = list(all_questions)
     if section_key:
         qs = [q for q in qs if q["key"] == section_key]
-    carried = pending_candidates(workspace)
-    best, _ = gap_lookup.judge_pending(workspace)        # an old pending candidate counts only if it still ranks in the best few
     results = []
     for q in qs:
         res = gap_lookup.lookup_gap(workspace, q["dr_id"], q["text"])
-        pending = [i for i in carried.get(q["dr_id"], []) if i in best.get(q["dr_id"], [])]
-        if pending:
-            res["verdict"] = "CANDIDATES"
-        # what is offered to read is _MAX_CANDIDATES rows at most: up to two matrix rows (they may be verified evidence), then the
-        # index candidates, then the older pending ones
-        ids = list(dict.fromkeys([*res.get("matrix", [])[:2], *res.get("index", []), *pending, *res.get("matrix", [])[2:]]))
-        res["evidence_ids"] = ids[:gap_lookup._MAX_CANDIDATES] if res["verdict"] == "CANDIDATES" else ids[:gap_lookup._MAX_CANDIDATES]
-        results.append({**q, "verdict": res["verdict"], "evidence_ids": res.get("evidence_ids", []),
-                        "kind": res.get("kind", ""), "owners": res.get("owners", []), "related": res.get("related", []),
+        answers = list(dict.fromkeys(res.get("answer_evidence_ids", res.get("evidence_ids", []))))[:gap_lookup._MAX_CANDIDATES]
+        related = list(dict.fromkeys(res.get("related_evidence_ids", res.get("related", []))))[:gap_lookup._MAX_CANDIDATES]
+        lead_ids = list(dict.fromkeys(res.get("lead_ids", res.get("index", []))))[:gap_lookup._MAX_CANDIDATES]
+        results.append({**q, "verdict": res["verdict"], "answer_evidence_ids": answers,
+                        "related_evidence_ids": related, "lead_ids": lead_ids, "evidence_ids": answers,
+                        "kind": res.get("kind", ""), "owners": res.get("owners", []), "related": related,
+                        "queries": res.get("queries", []), "searched": res.get("searched", ""),
                         "searches": len(res.get("queries", []))})
+    retired = _retire_absent(workspace, qs, section_key) if safe_retirement else []
     affected: dict[str, dict] = {}
     for r in results:
         if r["verdict"] not in ("ANSWERED", "CANDIDATES"):
@@ -122,8 +109,9 @@ def sweep(workspace: Path, section_key: str | None = None) -> dict:
                                            "answered": 0, "candidates": 0})
         a["answered" if r["verdict"] == "ANSWERED" else "candidates"] += 1
     stamp = time.gmtime()
-    record = {"checked_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", stamp), "section": section_key or "",
-              "questions": results, "affected": list(affected.values()), "summary": summarise(results)}
+    record = {"schema_version": 2, "checked_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", stamp), "section": section_key or "",
+              "questions": results, "affected": list(affected.values()), "retired_lead_ids": retired,
+              "summary": summarise(results)}
     folder = work / "intake"
     folder.mkdir(parents=True, exist_ok=True)
     text = json.dumps(record, indent=1, ensure_ascii=False)
@@ -140,7 +128,7 @@ def summarise(results: list[dict]) -> dict:
     ask = collections.Counter(o for r in results if r["verdict"] == "NOT_FOUND" for o in r.get("owners", []))
     return {"gaps": len(results), "by_kind": dict(collections.Counter(r.get("kind") or "system" for r in results)),
             "by_verdict": dict(verdicts), "searches": sum(r.get("searches", 0) for r in results),
-            "candidates_to_read": sum(len(r["evidence_ids"]) for r in results if r["verdict"] == "CANDIDATES"),
+            "candidates_to_read": sum(len(r.get("lead_ids", [])) for r in results if r["verdict"] == "CANDIDATES"),
             "gaps_with_related_rows": sum(1 for r in results if r.get("related")),
             "to_ask": dict(ask.most_common(6))}
 
@@ -174,7 +162,7 @@ def main(argv: list[str] | None = None) -> int:
         print("No open questions (csa-work/draft/open-questions.md is missing or empty).")
         return 0
     for q in res["questions"]:
-        ids = ", ".join(q["evidence_ids"])
+        ids = ", ".join(q.get("lead_ids", []) if q["verdict"] == "CANDIDATES" else q.get("answer_evidence_ids", []))
         print(f"  {q['number']:<6} {q['dr_id']:<34} {_LABEL.get(q['verdict'], q['verdict'].lower())}" + (f" ({ids})" if ids else ""))
     print("")
     for line in report_lines(res["summary"]):

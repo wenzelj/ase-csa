@@ -1,4 +1,4 @@
-import { deriveIntakeSteps, resumableJob, settleTarget } from "../components/intakeSteps";
+import { deriveIntakeSteps, gapFindings, resumableJob, settleTarget } from "../components/intakeSteps";
 import type { IntakeSnapshot, IntakeFile, ReviewJob } from "../types";
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -8,8 +8,8 @@ function assert(condition: unknown, message: string): asserts condition {
 const doc = (name: string, status = "indexed"): IntakeFile => ({ rel_path: `src/${name}`, ext: name.slice(name.lastIndexOf(".")), status, reason: status === "indexed" ? "pdf text" : "binary type .png", source_class: "other", host: null });
 const empty: IntakeSnapshot = {
   project_key: "tetra-reveloc", index: { built_at_utc: null, files_by_status: {}, complete: true }, intake: null, nothing_new_since: null,
-  matrix: { rows: 0, by_status: {}, pending_review: 0, added_since_intake: [] }, graph: { nodes: 0, edges: 0 },
-  candidates: [], gap_check: null, stale: 0, agent_summary: null,
+  matrix: { rows: 0, evidence_rows: 0, raw_rows: 0, not_found: 0, legacy_candidate_tombstones: 0, by_status: {}, pending_review: 0, added_since_intake: [] }, graph: { nodes: 0, edges: 0 },
+  leads: { by_state: {} }, open_leads: [], gap_check: null, stale: 0, agent_summary: null,
 };
 const record = { id: "20261012T030000Z", built_at_utc: "2026-10-12T03:00:00Z", matrix_last_id: "E-493", added: [doc("IS-REVELOC.pdf")], changed: [], removed: [], unreadable: [] };
 const job = (operation: string, state = "running"): ReviewJob => ({ id: "j1", project_key: "tetra-reveloc", operation, state, created_at: "2026-10-12T03:00:00Z" });
@@ -31,7 +31,7 @@ const evidenced = { ...fresh, matrix: { ...fresh.matrix, added_since_intake: [{ 
 assert(deriveIntakeSteps(evidenced, null).next === "gaps", "rows added and no gap check: gaps current");
 assert(deriveIntakeSteps(evidenced, null).steps[0].detail === "Complete · Indexed changes processed", "completed intake does not present old file counts as outstanding");
 assert(deriveIntakeSteps(evidenced, null).steps[1].detail === "Complete · Documents processed", "completed evidence intake does not present old row counts as outstanding");
-const oldCheck = { ...evidenced, gap_check: { checked_at: "2026-10-11T00:00:00Z", section: "", questions: [], affected: [] } };
+const oldCheck = { ...evidenced, gap_check: { schema_version: 2, checked_at: "2026-10-11T00:00:00Z", section: "", questions: [], affected: [] } };
 assert(deriveIntakeSteps(oldCheck, null).next === "gaps", "gap check older than the intake: gaps current");
 
 // A completed agent run may legitimately add no rows when every statement was already recorded.
@@ -43,14 +43,14 @@ const completedLargeRun = { ...fresh, matrix: { ...fresh.matrix, added_since_int
 const completedSteps = deriveIntakeSteps(completedLargeRun, null).steps;
 assert(!completedSteps[0].detail.includes("1 new") && !completedSteps[1].detail.includes("33"), "completed steps hide historical ingest and evidence counts");
 
-// One candidate to settle.
-const settle = { ...evidenced, gap_check: { checked_at: "2026-10-12T05:00:00Z", section: "", questions: [], affected: [{ number: "3.11", key: "BAK", title: "Backup", answered: 0, candidates: 1 }] },
-  candidates: [{ evidence_id: "E-510", dr_id: "DR-BAK-B1" }] };
+// One lead to settle.
+const settle = { ...evidenced, gap_check: { schema_version: 2, checked_at: "2026-10-12T05:00:00Z", section: "", questions: [], affected: [{ number: "3.11", key: "BAK", title: "Backup", answered: 0, candidates: 1 }] },
+  open_leads: [{ lead_id: "L-000510", dr_id: "DR-BAK-B1", qid: "B1", question: "q", source_title: "a.txt", source_ref: "a.txt", rel_path: "a.txt", source_version: "v1", source_class: "other", page_or_location: "line 1", excerpt: "source excerpt", found_at: "2026-10-12T04:00:00Z", state: "open" as const }] };
 const settleSteps = deriveIntakeSteps(settle, null);
-assert(settleSteps.next === "settle" && settleSteps.steps[3].detail === "1 to settle", "one candidate: settle current with count");
+assert(settleSteps.next === "settle" && settleSteps.steps[3].detail === "1 lead to settle", "one lead: settle current with count");
 
 // Settled, affected sections remain: use it.
-const use = { ...settle, candidates: [], gap_check: { ...settle.gap_check, affected: [settle.gap_check.affected[0], { number: "2.1", key: "EXECUTIVE_SUMMARY", title: "Executive Summary", answered: 1, candidates: 0 }] } };
+const use = { ...settle, open_leads: [], gap_check: { ...settle.gap_check, affected: [settle.gap_check.affected[0], { number: "2.1", key: "EXECUTIVE_SUMMARY", title: "Executive Summary", answered: 1, candidates: 0 }] } };
 const useSteps = deriveIntakeSteps(use, null);
 assert(useSteps.next === "use" && useSteps.steps[4].detail === "2 subsections can be answered again", "settled: use current with count");
 
@@ -68,9 +68,9 @@ assert(u.steps[1].detail === "Complete · Nothing readable came in" && u.steps[1
 const quiet = { ...use, nothing_new_since: "2026-10-12T03:00:00Z" };
 assert(deriveIntakeSteps(quiet, null).steps[0].detail.startsWith("Complete · Nothing new since"), "nothing new is said plainly and marked complete");
 
-// Write the fact settles only the candidate it was opened for, in the same project.
-const pending = { id: "E-510", dr: "DR-BAK-B1", system: "tetra" };
-assert(settleTarget(pending, { gap_or_action: "Answers DR-BAK-B1" }, "tetra") === "E-510", "the matching draft settles its candidate");
+// Write the fact settles only the lead it was opened for, in the same project.
+const pending = { id: "L-000510", dr: "DR-BAK-B1", system: "tetra" };
+assert(settleTarget(pending, { gap_or_action: "Answers DR-BAK-B1" }, "tetra") === "L-000510", "the matching draft settles its lead");
 assert(settleTarget(pending, { gap_or_action: "" }, "tetra") === null, "a draft prepared from search does not settle it");
 assert(settleTarget(pending, { gap_or_action: "Answers DR-BAK-B1" }, "iamps") === null, "another project never settles it");
 assert(settleTarget(null, { gap_or_action: "Answers DR-BAK-B1" }, "tetra") === null, "nothing pending, nothing settled");
@@ -93,3 +93,10 @@ assert(status(recheck).documents === "current" && deriveIntakeSteps(recheck, nul
 // Stale answers from ingest alone make step 5 current.
 const staleOnly = { ...use, gap_check: { ...use.gap_check, affected: [] }, stale: 3 };
 assert(status(staleOnly).use === "current" && deriveIntakeSteps(staleOnly, null).steps[4].detail.startsWith("3 answers"), "stale answers are work for step 5");
+
+const gq = { number: "3.16", title: "", key: "SUPPLY", qid: "F01", dr_id: "DR-SUPPLY-F01", text: "q" };
+const current = gapFindings({ ...gq, verdict: "CANDIDATES", evidence_ids: ["E-1"], related: ["E-2"], owners: [], kind: "owner", searches: 4 });
+assert(current.possible.join() === "E-1" && current.answers.length === 0 && current.related.join() === "E-2", "current shape: candidates are possible answers, not verified");
+const earlier = gapFindings({ ...gq, verdict: "ANSWERED", answer_evidence_ids: ["E-3"], related_evidence_ids: [], lead_ids: [], evidence_ids: ["E-3"] });
+assert(earlier.answers.join() === "E-3" && earlier.possible.length === 0, "earlier shape: answered evidence is verified");
+assert(gapFindings({ ...gq, verdict: "NOT_FOUND" }).related.length === 0, "missing fields do not throw");

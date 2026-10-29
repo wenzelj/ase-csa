@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { api, cancelJob, fetchIntake, fetchJob, reviewEvidence, submitJob } from "../api";
+import { api, cancelJob, fetchIntake, fetchJob, reviewLead, submitJob } from "../api";
 import { AGENT_CLIS, rememberedAgentCli, rememberAgentCli } from "../agentClis";
-import type { IntakeCandidate, IntakeEvidenceRow, IntakeFile, IntakeSnapshot, ReviewJob } from "../types";
-import { deriveIntakeSteps, resumableJob, type StepKey } from "./intakeSteps";
+import type { IntakeLead, IntakeEvidenceRow, IntakeFile, IntakeSnapshot, ReviewJob } from "../types";
+import { deriveIntakeSteps, gapFindings, resumableJob, type StepKey } from "./intakeSteps";
 
 const TERMINAL = ["succeeded", "failed", "cancelled", "interrupted"];
 const OP_LABEL: Record<string, string> = { ingest: "Ingest new data", intake: "Evidence agent", gap_check: "Check open questions", resolve_gaps: "Resolve evidence and update answers" };
@@ -13,7 +13,7 @@ function name(path: string) { return path.split("/").pop() || path; }
 
 type Props = {
   system: string; draftStage: boolean; refreshKey: number;
-  openEvidence: (row: IntakeEvidenceRow) => void; writeFact: (candidate: IntakeCandidate) => void;
+  openEvidence: (row: IntakeEvidenceRow) => void; writeFact: (lead: IntakeLead) => void;
   openSection: (key: string) => void;
 };
 
@@ -53,9 +53,9 @@ export function EvidenceIntake({ system, draftStage, refreshKey, openEvidence, w
       const started = await submitJob(system, operation, undefined, options); setJob(started); watch(started.id);
     } catch (e) { setError((e as Error).message); }
   }
-  async function notAnAnswer(c: IntakeCandidate) {
+  async function notAnAnswer(c: IntakeLead) {
     setError("");
-    try { await reviewEvidence(system, c.evidence_id, "rejected", `read for ${c.dr_id}: does not answer the question`); await load(); }
+    try { await reviewLead(system, c.lead_id, "not_an_answer", `read for ${c.dr_id}: does not answer the question`); await load(); }
     catch (e) { setError((e as Error).message); }
   }
 
@@ -70,7 +70,7 @@ export function EvidenceIntake({ system, draftStage, refreshKey, openEvidence, w
     ingest: <button onClick={() => void run("ingest")} disabled={busy}>Ingest new data</button>,
     documents: <span className="intake-action"><select value={cli} onChange={e => setCli(e.target.value)} disabled={busy} aria-label="Agent for evidence intake">{AGENT_CLIS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}</select><button onClick={() => void run("intake", { cli })} disabled={busy || !rec}>Run the evidence agent</button></span>,
     gaps: <button onClick={() => void run("gap_check")} disabled={busy}>Check open questions</button>,
-    settle: <span className="intake-action"><select value={cli} onChange={e => setCli(e.target.value)} disabled={busy} aria-label="Agent for evidence settlement">{AGENT_CLIS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}</select><button onClick={() => void run("resolve_gaps", { cli })} disabled={busy || !snap.candidates.length}>Resolve and update answers</button></span>, use: null,
+    settle: <span className="intake-action"><select value={cli} onChange={e => setCli(e.target.value)} disabled={busy} aria-label="Agent for evidence settlement">{AGENT_CLIS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}</select><button onClick={() => void run("resolve_gaps", { cli })} disabled={busy || !snap.open_leads.length}>Resolve and update answers</button></span>, use: null,
   })[key];
 
   return <section className="page draft-page intake-page">
@@ -81,9 +81,10 @@ export function EvidenceIntake({ system, draftStage, refreshKey, openEvidence, w
     </li>)}</ol>
 
     <div className="draft-counts">
-      <div className="draft-count"><strong>{snap.matrix.live ?? snap.matrix.rows}</strong><span>Evidence rows{snap.matrix.rejected ? ` (${snap.matrix.rejected} rejected not counted)` : ""}</span></div>
+      <div className="draft-count"><strong>{snap.matrix.evidence_rows}</strong><span>Evidence rows</span></div>
       <div className="draft-count"><strong>{snap.matrix.by_status.VERIFIED || 0}</strong><span>Verified</span></div>
-      <div className="draft-count draft-stale"><strong>{snap.candidates.length}</strong><span>To settle</span></div>
+      <div className="draft-count"><strong>{snap.matrix.not_found}</strong><span>NOT_FOUND searches</span></div>
+      <div className="draft-count draft-stale"><strong>{snap.open_leads.length}</strong><span>Open leads</span></div>
       <div className="draft-count"><strong>{snap.graph.nodes} / {snap.graph.edges}</strong><span>Graph nodes / links</span></div>
       <div className="draft-count"><strong>{snap.stale}</strong><span>Stale answers</span></div>
     </div>
@@ -111,16 +112,16 @@ export function EvidenceIntake({ system, draftStage, refreshKey, openEvidence, w
     </section>
 
     <section className="decision-desk"><header><div><h2>3 · Open questions</h2><p>{snap.gap_check ? `Checked ${when(snap.gap_check.checked_at)}.` : "Not checked yet."}</p></div><label className="draft-check"><input type="checkbox" checked={onlyFound} onChange={e => setOnlyFound(e.target.checked)} /> Only questions with something found</label></header>
-      {questions.length ? <table className="draft-table"><thead><tr><th>Section</th><th>Question</th><th>Result</th><th>Evidence</th></tr></thead><tbody>{questions.map(q => <tr key={q.dr_id}><td><b>{q.number}</b><small>{q.dr_id}</small></td><td>{q.text}</td><td><span className={`draft-pill intake-${q.verdict.toLowerCase()}`}>{VERDICT[q.verdict] || q.verdict}</span></td><td>{q.evidence_ids.join(", ") || "—"}</td></tr>)}</tbody></table> : <p className="draft-none">{snap.gap_check ? "Nothing found for the open questions." : "Run Check open questions."}</p>}
+      {questions.length ? <table className="draft-table"><thead><tr><th>Section</th><th>Question</th><th>Result</th><th>Verified evidence</th><th>Possible answers</th><th>Related rows</th></tr></thead><tbody>{questions.map(q => { const f = gapFindings(q); return <tr key={`${q.dr_id}-${q.text}`}><td><b>{q.number}</b><small>{q.dr_id}</small></td><td>{q.text}</td><td><span className={`draft-pill intake-${q.verdict.toLowerCase()}`}>{VERDICT[q.verdict] || q.verdict}</span></td><td>{f.answers.join(", ") || "—"}</td><td>{f.possible.join(", ") || "—"}</td><td>{f.related.join(", ") || "—"}</td></tr>; })}</tbody></table> : <p className="draft-none">{snap.gap_check ? "Nothing found for the open questions." : "Run Check open questions."}</p>}
     </section>
 
-    <section className="decision-desk"><header><div><h2>4 · Settle what was found</h2><p>The framework can read every candidate in its original source, record supported facts or scoped gaps, and rerun the affected answers. The individual controls remain available for recovery or manual review.</p></div></header>
-      {snap.candidates.length ? <div className="intake-cards">{snap.candidates.map(c => <article key={c.evidence_id} className="intake-card">
-        <header><b>{c.dr_id}</b><span>{c.evidence_id}</span></header>
-        <p className="intake-question">{(c.question || "").replace(/^DR-[^:]+:\s*/, "")}</p>
-        <blockquote>{c.evidence_excerpt}</blockquote>
-        <small>{c.source_title}{c.page_or_location ? ` · ${c.page_or_location}` : ""}</small>
-        <footer><button className="quiet" onClick={() => openEvidence(c)}>Open source</button><button className="quiet" onClick={() => void notAnAnswer(c)} disabled={busy}>Not an answer</button><button onClick={() => writeFact(c)} disabled={busy}>Write the fact</button></footer>
+    <section className="decision-desk"><header><div><h2>4 · Settle what was found</h2><p>The framework reads each lead in its original source, records source-checked facts or scoped gaps, and reruns only answers supported by VERIFIED evidence. Individual controls remain available for recovery or manual review.</p></div></header>
+      {snap.open_leads.length ? <div className="intake-cards">{snap.open_leads.map(c => <article key={c.lead_id} className="intake-card">
+        <header><b>{c.dr_id}</b><span>{c.lead_id}</span></header>
+        <p className="intake-question">{c.question}</p>
+        <blockquote>{c.excerpt}</blockquote>
+        <small>{c.source_ref}{c.page_or_location ? ` · ${c.page_or_location}` : ""}</small>
+        <footer><button className="quiet" onClick={() => openEvidence({ evidence_id: c.lead_id, source_title: c.source_ref, page_or_location: c.page_or_location })}>Open source</button><button className="quiet" onClick={() => void notAnAnswer(c)} disabled={busy}>Not an answer</button><button onClick={() => writeFact(c)} disabled={busy}>Write the fact</button></footer>
       </article>)}</div> : <p className="draft-none">Nothing to settle.</p>}
     </section>
 

@@ -2,7 +2,7 @@ import { FormEvent, lazy, Suspense, useEffect, useState } from "react";
 import NetworkMap from "./components/NetworkMap";
 import SystemExplorer from "./components/SystemExplorer";
 import FiguresPage from "./components/FiguresPage";
-import { api, fetchWordReview, reviewEvidence } from "./api";
+import { api, fetchWordReview, reviewLead } from "./api";
 import { WordReviewPanel } from "./components/WordReviewPanel";
 import { BuildPanel } from "./components/BuildPanel";
 import { AuditPanel } from "./components/AuditPanel";
@@ -11,7 +11,7 @@ import { EvidenceIntake } from "./components/EvidenceIntake";
 import { settleTarget, type PendingSettle } from "./components/intakeSteps";
 
 const MarkupViewer = lazy(() => import("./components/MarkupViewer").then(module => ({ default: module.MarkupViewer })));
-import type { IntakeCandidate, AssessmentState, PipelineSection, PipelineSnapshot, SectionInspection, WordReview } from "./types";
+import type { IntakeLead, AssessmentState, PipelineSection, PipelineSnapshot, SectionInspection, WordReview } from "./types";
 import { pipelineState } from "./pipelineState";
 import { SectionWorkspace } from "./components/SectionWorkspace";
 import { Empty, Loading, Status, human } from "./components/ui";
@@ -91,15 +91,15 @@ export default function App() {
   async function runSearch(text: string) { if (!text.trim()) return; setQuery(text); setBusy(true); setError(""); try { setSearch(await api<SearchResponse>(`/api/systems/${system}/search`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query: text }) })); } catch (e) { setError((e as Error).message); } finally { setBusy(false); } }
   function submit(event: FormEvent) { event.preventDefault(); void runSearch(query); }
   async function openFile(id: number, anchor = "") { try { setPreview(await api<Preview>(`/api/systems/${system}/files/${id}/preview?anchor=${encodeURIComponent(anchor)}`)); } catch (e) { setError((e as Error).message); } }
-  async function openEvidence(row: EvidenceRow) { try { const result = await api<{ sources: FileRow[] }>(`/api/systems/${system}/evidence/${row.evidence_id}/sources`); if (result.sources.length === 1) await openFile(result.sources[0].file_id, row.page_or_location); else if (!result.sources.length) setError(`Source unavailable for ${row.evidence_id}. The claim is recorded, but its cited file is not in the current index.`); else setChoices({ row, files: result.sources }); } catch (e) { setError((e as Error).message); } }
+  async function openEvidence(row: EvidenceRow) { try { const kind = row.evidence_id.startsWith("L-") ? "leads" : "evidence"; const result = await api<{ sources: FileRow[] }>(`/api/systems/${system}/${kind}/${row.evidence_id}/sources`); if (result.sources.length === 1) await openFile(result.sources[0].file_id, row.page_or_location); else if (!result.sources.length) setError(`Source unavailable for ${row.evidence_id}. Its source reference is ${row.source_title || "not indexed"}.`); else setChoices({ row, files: result.sources }); } catch (e) { setError((e as Error).message); } }
   function byId(id: string) { return evidence.find(row => row.evidence_id === id) || { evidence_id: id }; }
   function prepare(hit: IndexHit) { setSettleAfter(null); setDraft({ ...EMPTY_DRAFT, question: search?.query || "", source_title: hit.source_title, source_version: hit.source_version, page_or_location: hit.page_or_location, evidence_excerpt: hit.evidence_excerpt }); setDraftResult(null); }
-  function prepareFact(c: IntakeCandidate) { setDraft({ ...EMPTY_DRAFT, question: (c.question || "").replace(/^DR-[^:]+:\s*/, ""), source_title: c.source_title || "", source_version: c.source_version || "", page_or_location: c.page_or_location || "", evidence_excerpt: c.evidence_excerpt || "", gap_or_action: `Answers ${c.dr_id}` }); setSettleAfter({ id: c.evidence_id, dr: c.dr_id, system }); setDraftResult(null); }
+  function prepareFact(c: IntakeLead) { setDraft({ ...EMPTY_DRAFT, question: c.question || "", source_title: c.source_title || c.source_ref || "", source_version: c.source_version || "", page_or_location: c.page_or_location || "", evidence_excerpt: c.excerpt || "", gap_or_action: `Answers ${c.dr_id}` }); setSettleAfter({ id: c.lead_id, dr: c.dr_id, system }); setDraftResult(null); }
   async function settleCandidate(result: Record<string, unknown>) {
     const written = (result.written as { evidence_id: string }[] | undefined) || [];
     const target = settleTarget(settleAfter, draft, system);
     if (!target || !written.length) return;
-    try { await reviewEvidence(system, target, "reviewed", `settled by ${written[0].evidence_id}`); } catch (e) { setError((e as Error).message); }
+    try { await reviewLead(system, target, "resolved", `settled by ${written[0].evidence_id}`, [written[0].evidence_id]); } catch (e) { setError((e as Error).message); return; }
     setSettleAfter(null); setIntakeRefresh(n => n + 1);
   }
   async function validateDraft() { if (!draft) return; try { setDraftResult(await api(`/api/systems/${system}/evidence-drafts/validate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(draft) })); } catch (e) { setError((e as Error).message); } }

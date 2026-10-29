@@ -105,3 +105,6 @@ export async function fetchIntake(system: string): Promise<IntakeSnapshot> { ret
 export async function reviewEvidence(system: string, id: string, state: "rejected" | "reviewed", note: string): Promise<{ status: string; reviewed: string[]; state: string }> {
   return api(`/api/systems/${system}/evidence/${encodeURIComponent(id)}/review`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ state, note }) });
 }
+export async function reviewLead(system: string, id: string, state: "open" | "not_an_answer" | "resolved" | "retired", note: string, evidenceIds: string[] = []): Promise<{ status: string; reviewed: string[]; reused: string[]; state: string }> {
+  return api(`/api/systems/${system}/leads/${encodeURIComponent(id)}/review`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ state, note, evidence_ids: evidenceIds }) });
+}

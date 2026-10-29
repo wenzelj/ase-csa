@@ -3,6 +3,7 @@ import json
 
 from csa_docx import gap_lookup as gl
 from csa_docx import gap_sweep as gs
+from csa_docx import leads
 
 OPEN = """# Open questions (draft lane, 2026-10-10 20:56)
 
@@ -47,9 +48,10 @@ def test_parse_skips_malformed():
 
 
 def _workspace(tmp_path):
-    (tmp_path / "csa-work" / "draft").mkdir(parents=True)
-    (tmp_path / "csa-work" / "draft" / "open-questions.md").write_text(OPEN, encoding="utf-8")
-    return tmp_path
+    ws = tmp_path / "workspace"
+    (ws / "csa-work" / "draft").mkdir(parents=True)
+    (ws / "csa-work" / "draft" / "open-questions.md").write_text(OPEN, encoding="utf-8")
+    return ws
 
 
 def test_sweep_writes_affected_sections(tmp_path, monkeypatch):
@@ -57,17 +59,19 @@ def test_sweep_writes_affected_sections(tmp_path, monkeypatch):
 
     def lookup(workspace, dr_id, text, exclude=()):
         if dr_id == "DR-BAK-B1":
-            return {"verdict": "CANDIDATES", "evidence_ids": ["E-510"], "matrix": [], "index": ["E-510"], "searched": "x"}
+            return {"verdict": "CANDIDATES", "answer_evidence_ids": [], "related_evidence_ids": [], "lead_ids": ["L-000510"], "searched": "x"}
         if dr_id == "DR-EXECUTIVE_SUMMARY-F01":
-            return {"verdict": "ANSWERED", "evidence_ids": ["E-495"], "matrix": ["E-495"], "index": [], "searched": "x"}
-        return {"verdict": "NOT_FOUND", "evidence_ids": [], "matrix": [], "index": [], "searched": "x"}
+            return {"verdict": "ANSWERED", "answer_evidence_ids": ["E-495"], "related_evidence_ids": [], "lead_ids": [], "searched": "x"}
+        return {"verdict": "NOT_FOUND", "answer_evidence_ids": [], "related_evidence_ids": [], "lead_ids": [], "searched": "x"}
     monkeypatch.setattr(gs.gap_lookup, "lookup_gap", lookup)
     res = gs.sweep(ws)
     assert res["affected"] == [
         {"number": "3.11", "key": "BAK", "title": "Backup & Recovery", "answered": 0, "candidates": 1},
         {"number": "2.1", "key": "EXECUTIVE_SUMMARY", "title": "Executive Summary", "answered": 1, "candidates": 0}]
     saved = json.loads((ws / "csa-work" / "intake" / "gap-check-latest.json").read_text(encoding="utf-8"))
-    assert saved == res and len(saved["questions"]) == 5 and saved["checked_at"]
+    assert saved == res and saved["schema_version"] == 2 and len(saved["questions"]) == 5 and saved["checked_at"]
+    candidate = next(q for q in saved["questions"] if q["dr_id"] == "DR-BAK-B1")
+    assert candidate["lead_ids"] == ["L-000510"] and candidate["evidence_ids"] == []
     assert {q["dr_id"]: q["verdict"] for q in saved["questions"]}["DR-INET-B2"] == "NOT_FOUND"
     only = gs.sweep(ws, section_key="BAK")
     assert [q["dr_id"] for q in only["questions"]] == ["DR-BAK-B1"]
@@ -78,17 +82,13 @@ HIT = {"rel_path": "src/IS-REVELOC.pdf", "page_or_location": "line 40", "source_
 
 
 def _stateful_run(appended):
-    """A matrix that writes a candidate once and reports the same row as a duplicate afterwards."""
     def run(cmd):
         if "lookup" in cmd:
             return {"status": "OK", "matches": []}
         if "search" in cmd:
             return {"status": "OK", "results": [HIT]}
         if "append" in cmd:
-            if appended:
-                return {"status": "NOTHING_TO_WRITE", "skipped_duplicates": [{"duplicate_of": "E-600"}]}
             appended.append(cmd)
-            return {"status": "APPENDED", "written": [{"evidence_id": "E-600"}]}
         return None
     return run
 
@@ -100,35 +100,57 @@ def test_sweep_is_idempotent(tmp_path, monkeypatch):
     first = gs.sweep(ws, section_key="EXECUTIVE_SUMMARY")
     second = gs.sweep(ws, section_key="EXECUTIVE_SUMMARY")
     f01 = lambda r: next(q for q in r["questions"] if q["dr_id"] == "DR-EXECUTIVE_SUMMARY-F01")
-    assert f01(first)["evidence_ids"] == f01(second)["evidence_ids"] == ["E-600"]
-    assert len(appended) == 1
+    assert f01(first)["lead_ids"] == f01(second)["lead_ids"] == ["L-000001"]
+    assert not appended
+    assert len((ws / "csa-work" / "intake" / "leads.jsonl").read_text().splitlines()) == 1
 
 
-def test_sweep_skips_rejected(tmp_path, monkeypatch):
+def test_sweep_skips_terminal_leads(tmp_path, monkeypatch):
     ws = _workspace(tmp_path)
     monkeypatch.setattr(gl, "_run", _stateful_run([]))
     assert {q["dr_id"]: q["verdict"] for q in gs.sweep(ws, "EXECUTIVE_SUMMARY")["questions"]}["DR-EXECUTIVE_SUMMARY-F01"] == "CANDIDATES"
-    (ws / "csa-work" / "evidence-reviews.jsonl").write_text(
-        json.dumps({"evidence_id": "E-600", "state": "rejected"}) + "\n", encoding="utf-8")
+    lead_id = leads.open_leads(ws, "DR-EXECUTIVE_SUMMARY-F01")[0]["lead_id"]
+    leads.review(ws, [lead_id], "not_an_answer", "tester", "read")
     again = gs.sweep(ws, "EXECUTIVE_SUMMARY")
     assert {q["dr_id"]: q["verdict"] for q in again["questions"]}["DR-EXECUTIVE_SUMMARY-F01"] == "NOT_FOUND"
     assert again["affected"] == []
 
 
-def test_sweep_carries_pending_candidate_by_exact_dr_id(tmp_path, monkeypatch):
+def test_sweep_carries_open_lead_by_exact_dr_id(tmp_path, monkeypatch):
     ws = _workspace(tmp_path)
-    matrix = ws / "csa-work" / "evidence-matrix.csv"
-    matrix.write_text(
-        "evidence_id,csa_area,question,claim,status,review_state\n"
-        'E-700,gap_lookup,q,"Possible answer to DR-BAK-B1: the source reads: backup",UNCONFIRMED,pending\n',
-        encoding="utf-8",
-    )
+    lead_id = leads.add_leads(ws, "DR-BAK-B1", "B1", "the exact backup product", [HIT])[0]
     monkeypatch.setattr(gs.gap_lookup, "lookup_gap", lambda *args, **kwargs:
-                        {"verdict": "NOT_FOUND", "evidence_ids": []})
+                        {"verdict": "CANDIDATES", "answer_evidence_ids": [], "related_evidence_ids": [],
+                         "lead_ids": [lead_id], "searched": "x"})
     result = gs.sweep(ws, "BAK")
     assert result["questions"][0]["verdict"] == "CANDIDATES"
-    assert result["questions"][0]["evidence_ids"] == ["E-700"]
+    assert result["questions"][0]["lead_ids"] == [lead_id]
+    assert result["questions"][0]["evidence_ids"] == []
     assert result["affected"][0]["candidates"] == 1
+
+
+def test_successful_scoped_sweep_retires_only_absent_questions_in_that_section(tmp_path, monkeypatch):
+    ws = _workspace(tmp_path)
+    old_bak = leads.add_leads(ws, "DR-BAK-B9", "B9", "old backup question", [HIT])[0]
+    other = leads.add_leads(ws, "DR-INET-B9", "B9", "old internet question", [dict(HIT, page_or_location="line 50")])[0]
+    monkeypatch.setattr(gs.gap_lookup, "lookup_gap", lambda *args, **kwargs:
+                        {"verdict": "NOT_FOUND", "answer_evidence_ids": [], "related_evidence_ids": [],
+                         "lead_ids": [], "searched": "x"})
+    result = gs.sweep(ws, "BAK")
+    assert result["retired_lead_ids"] == [old_bak]
+    assert [r["lead_id"] for r in leads.open_leads(ws)] == [other]
+
+
+def test_missing_or_malformed_question_input_never_retires_leads(tmp_path, monkeypatch):
+    ws = _workspace(tmp_path)
+    lead_id = leads.add_leads(ws, "DR-BAK-B9", "B9", "old backup question", [HIT])[0]
+    source = ws / "csa-work" / "draft" / "open-questions.md"
+    source.write_text("## malformed\n\n- [B1] orphan\n", encoding="utf-8")
+    assert gs.sweep(ws)["retired_lead_ids"] == []
+    assert [r["lead_id"] for r in leads.open_leads(ws)] == [lead_id]
+    source.unlink()
+    assert gs.sweep(ws)["retired_lead_ids"] == []
+    assert [r["lead_id"] for r in leads.open_leads(ws)] == [lead_id]
 
 
 def test_csa_has_gap_check_and_resolve_commands():
@@ -144,9 +166,9 @@ def test_csa_has_gap_check_and_resolve_commands():
 
 def test_the_run_report_counts_what_the_lookup_did():
     results = [
-        {"verdict": "NOT_FOUND", "evidence_ids": [], "kind": "document", "owners": ["backup service owner"], "related": [], "searches": 12},
-        {"verdict": "NOT_FOUND", "evidence_ids": [], "kind": "document", "owners": ["backup service owner", "application owner"], "related": ["E-1"], "searches": 12},
-        {"verdict": "CANDIDATES", "evidence_ids": ["E-9", "E-10"], "kind": "system", "owners": [], "related": [], "searches": 4},
+        {"verdict": "NOT_FOUND", "lead_ids": [], "kind": "document", "owners": ["backup service owner"], "related": [], "searches": 12},
+        {"verdict": "NOT_FOUND", "lead_ids": [], "kind": "document", "owners": ["backup service owner", "application owner"], "related": ["E-1"], "searches": 12},
+        {"verdict": "CANDIDATES", "lead_ids": ["L-000009", "L-000010"], "kind": "system", "owners": [], "related": [], "searches": 4},
     ]
     s = gs.summarise(results)
     assert s["gaps"] == 3 and s["by_kind"] == {"document": 2, "system": 1} and s["searches"] == 28

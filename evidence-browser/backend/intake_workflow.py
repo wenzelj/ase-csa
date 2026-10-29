@@ -1,16 +1,22 @@
 """Evidence intake page: what came into the index, what became evidence, which open questions it may answer.
 
-Read only. The page's actions are framework jobs (commands.py: ingest, intake, gap_check); candidate rows are
-settled through evidence_matrix.py review (app.py)."""
+Read only. The page's actions are framework jobs (commands.py: ingest, intake, gap_check); discovery leads are
+settled through the append-only lead review API (app.py)."""
 from __future__ import annotations
 
 import csv
 import json
 import re
 import sqlite3
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+FRAMEWORK = Path(__file__).resolve().parents[2] / "framework"
+if str(FRAMEWORK) not in sys.path:
+    sys.path.insert(0, str(FRAMEWORK))
+from csa_docx import leads as lead_store
 
 _CANDIDATE = re.compile(r"^Possible answer to (DR-[A-Za-z0-9_.-]+):")
 _EID = re.compile(r"^E-(\d+)$")
@@ -41,6 +47,33 @@ def _reviews(work: Path) -> dict[str, str]:
                     continue
                 latest[str(rec.get("evidence_id", "")).upper()] = rec.get("state", "")
     return latest
+
+
+def _review_records(work: Path) -> dict[str, dict[str, Any]]:
+    path = work / "evidence-reviews.jsonl"
+    latest: dict[str, dict[str, Any]] = {}
+    if path.is_file():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            latest[str(rec.get("evidence_id", "")).upper()] = rec
+    return latest
+
+
+def _leads(work: Path) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    rows, row_errors, _ = lead_store._read_jsonl(work / "intake" / "leads.jsonl")
+    reviews, review_errors, _ = lead_store._read_jsonl(work / "intake" / "leads-reviews.jsonl")
+    if row_errors or review_errors:
+        raise ValueError(f"Malformed lead store: {row_errors + review_errors}")
+    overlaid = lead_store._overlay(rows, reviews)
+    counts: dict[str, int] = {state: 0 for state in sorted(lead_store.STATES)}
+    for row in overlaid:
+        counts[row["state"]] = counts.get(row["state"], 0) + 1
+    return [row for row in overlaid if row["state"] == "open"], counts
 
 
 def _intake_ids(work: Path, record: dict | None) -> set[str]:
@@ -149,32 +182,31 @@ def snapshot(project: dict[str, str]) -> dict[str, Any]:
     if record and index["complete"] and index["built_at_utc"] and index["built_at_utc"] > record.get("built_at_utc", ""):
         nothing_new_since = record.get("built_at_utc")
 
-    reviews = _reviews(work)
+    review_records = _review_records(work)
+    reviews = {evidence_id: rec.get("state", "") for evidence_id, rec in review_records.items()}
     rows: list[dict[str, str]] = []
     matrix = work / "evidence-matrix.csv"
     if matrix.is_file():
         with matrix.open(encoding="utf-8-sig", newline="") as fh:
             rows = [dict(r) for r in csv.DictReader(fh)]
+    def legacy_candidate(row: dict[str, str]) -> bool:
+        return (row.get("csa_area") == "gap_lookup" and row.get("status") == "UNCONFIRMED"
+                and bool(_CANDIDATE.match(row.get("claim", ""))))
+
+    live_rows = [r for r in rows if reviews.get(r.get("evidence_id", "").upper()) != "rejected"]
+    evidence_rows = [r for r in live_rows if not legacy_candidate(r) and r.get("status") != "NOT_FOUND"]
+    not_found = [r for r in live_rows if r.get("status") == "NOT_FOUND"]
     by_status: dict[str, int] = {}
-    for r in rows:
-        if reviews.get(r.get("evidence_id", "").upper()) == "rejected":
-            continue                                   # a rejected row is not evidence
+    for r in evidence_rows:
         by_status[r.get("status", "")] = by_status.get(r.get("status", ""), 0) + 1
     mine = _intake_ids(work, record)
-    added = [r for r in rows if r.get("evidence_id", "").upper() in mine]
-    pending = sum(1 for r in rows if reviews.get(r.get("evidence_id", "").upper(), r.get("review_state", "pending"))
+    added = [r for r in evidence_rows if r.get("evidence_id", "").upper() in mine]
+    pending = sum(1 for r in evidence_rows if reviews.get(r.get("evidence_id", "").upper(), r.get("review_state", "pending"))
                   in ("", "pending"))
-    candidates = []
-    for r in rows:
-        m = _CANDIDATE.match(r.get("claim", ""))
-        if r.get("status") == "UNCONFIRMED" and m and reviews.get(r.get("evidence_id", "").upper()) not in ("rejected", "reviewed"):
-            candidates.append({**r, "dr_id": m.group(1)})
-    # a candidate for a question the latest gap check no longer asks is retired: the question was answered or
-    # renumbered by a later draft, so there is nothing left to settle (the row stays in the matrix)
-    latest_gaps = _json(intake_dir / "gap-check-latest.json") or {}
-    if latest_gaps.get("questions"):
-        asked = {q.get("dr_id") for q in latest_gaps["questions"]}
-        candidates = [c for c in candidates if c["dr_id"] in asked]
+    open_leads, lead_counts = _leads(work)
+    tombstones = sum(1 for r in rows if legacy_candidate(r)
+                     and reviews.get(r.get("evidence_id", "").upper()) == "rejected"
+                     and "migrated to lead L-" in str(review_records.get(r.get("evidence_id", "").upper(), {}).get("note", "")))
 
     summary = None
     if record and record.get("id"):
@@ -194,8 +226,10 @@ def snapshot(project: dict[str, str]) -> dict[str, Any]:
             "sync": _sync_health(work), "refresh": {"at": refresh.get("at", ""), "retired": refresh.get("rejected", []),
                                                    "recheck": recheck},
             "hosts": {"to_classify": _hosts_to_classify(work, rejected), "unnamed_addresses": unnamed},
-            "matrix": {"rows": len(rows), "live": len(rows) - sum(1 for r in rows if r.get("evidence_id", "").upper() in rejected),
+            "matrix": {"rows": len(evidence_rows), "evidence_rows": len(evidence_rows), "raw_rows": len(rows),
+                       "not_found": len(not_found), "legacy_candidate_tombstones": tombstones,
                        "rejected": len(rejected), "by_status": by_status, "pending_review": pending, "added_since_intake": added},
             "graph": {"nodes": _count_rows(work / "graph" / "nodes.csv"), "edges": _count_rows(work / "graph" / "edges.csv")},
-            "candidates": candidates, "gap_check": _json(intake_dir / "gap-check-latest.json"),
+            "leads": {"by_state": lead_counts}, "open_leads": open_leads,
+            "gap_check": _json(intake_dir / "gap-check-latest.json"),
             "stale": stale, "agent_summary": summary}

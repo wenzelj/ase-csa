@@ -13,7 +13,7 @@ The agent definition is authoritative. Read it in full and follow it; do not wor
 /Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-answer-agent.md
 ```
 
-Inputs: `SECTION`, `CARD*`, `SHEET*`, `MODE=answer`, `ERRORS`, `ANSWER` (`*` = required, `NAME=value` = default).
+Inputs: `SECTION`, `CARD*`, `SHEET*`, `MODE=answer`, `ERRORS`, `ANSWER`, `ONLY` (`*` = required, `NAME=value` = default).
 
 ## Project
 

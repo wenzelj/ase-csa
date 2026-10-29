@@ -158,17 +158,17 @@ export type DraftSnapshot = {
 export type IntakeFile = { rel_path: string; ext: string; status: string; reason?: string | null; source_class: string; host?: string | null };
 export type IntakeRecord = { id: string; built_at_utc: string; matrix_last_id: string; carried_from?: string[]; added: IntakeFile[]; changed: IntakeFile[]; removed: string[]; unreadable: IntakeFile[] };
 export type IntakeEvidenceRow = Record<string, string>;
-export type IntakeCandidate = IntakeEvidenceRow & { dr_id: string };
-export type GapQuestion = { number: string; title: string; key: string; qid: string; dr_id: string; text: string; verdict: "ANSWERED" | "CANDIDATES" | "NOT_FOUND"; evidence_ids: string[] };
+export type IntakeLead = { lead_id: string; dr_id: string; qid: string; question: string; source_title: string; source_ref: string; rel_path: string | null; source_version: string; source_class: string; page_or_location: string; excerpt: string; found_at: string; state: "open" | "not_an_answer" | "resolved" | "retired" };
+export type GapQuestion = { number: string; title: string; key: string; qid: string; dr_id: string; text: string; verdict: "ANSWERED" | "CANDIDATES" | "NOT_FOUND"; kind?: string; owners?: string[]; searches?: number; evidence_ids?: string[]; related?: string[]; answer_evidence_ids?: string[]; related_evidence_ids?: string[]; lead_ids?: string[] };
 export type GapAffected = { number: string; key: string; title: string; answered: number; candidates: number };
-export type GapCheck = { checked_at: string; section: string; questions: GapQuestion[]; affected: GapAffected[] };
+export type GapCheck = { schema_version: number; checked_at: string; section: string; questions: GapQuestion[]; affected: GapAffected[] };
 export type IntakeSnapshot = {
   project_key: string;
   index: { built_at_utc: string | null; files_by_status: Record<string, number>; complete: boolean };
   intake: IntakeRecord | null; nothing_new_since: string | null;
-  matrix: { rows: number; live?: number; rejected?: number; by_status: Record<string, number>; pending_review: number; added_since_intake: IntakeEvidenceRow[] };
+  matrix: { rows: number; evidence_rows: number; raw_rows: number; not_found: number; legacy_candidate_tombstones: number; rejected?: number; by_status: Record<string, number>; pending_review: number; added_since_intake: IntakeEvidenceRow[] };
   graph: { nodes: number; edges: number };
-  candidates: IntakeCandidate[]; gap_check: GapCheck | null; stale: number;
+  leads: { by_state: Record<string, number> }; open_leads: IntakeLead[]; gap_check: GapCheck | null; stale: number;
   agent_summary: { path: string; text: string; modified_at: string } | null;
   sync?: IntakeSync; refresh?: { at: string; retired: { evidence_id: string; reason: string }[]; recheck: IntakeRecheck[] };
   hosts?: { to_classify: { host: string; ips: string; evidence_ids: string }[]; unnamed_addresses: number };
