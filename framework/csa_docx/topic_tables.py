@@ -677,6 +677,18 @@ def _note(text: str, style: str = "TableNote") -> str:
     return f'<w:p><w:pPr><w:pStyle w:val="{style}"/></w:pPr>{run}</w:p>'
 
 
+def _caption(title: str, number: int) -> str:
+    """A standards-aligned table caption: Caption style plus a live Word SEQ field."""
+    seq = ('<w:r><w:t xml:space="preserve">Table </w:t></w:r>'
+           '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+           '<w:r><w:instrText xml:space="preserve"> SEQ Table \\* ARABIC </w:instrText></w:r>'
+           '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+           f'<w:r><w:rPr><w:noProof/></w:rPr><w:t>{number}</w:t></w:r>'
+           '<w:r><w:fldChar w:fldCharType="end"/></w:r>'
+           f'<w:r><w:t xml:space="preserve">: {_esc(title)}</w:t></w:r>')
+    return f'<w:p><w:pPr><w:pStyle w:val="Caption"/></w:pPr>{seq}</w:p>'
+
+
 def place_xml(xml: str, t, heading: str, styles_xml: str = "") -> tuple[str, str]:
     """(new document.xml, what happened). ``t`` is one table or a list of tables (role table, flows table).
     Replaces the framework-built tables and their note lines under the same heading; removes them when there is
@@ -689,6 +701,7 @@ def place_xml(xml: str, t, heading: str, styles_xml: str = "") -> tuple[str, str
     blocks = _blocks(xml, ins, fend)
     ours_tbl = lambda k, b: k == "tbl" and f'w:tblCaption w:val="{CAPTION}"' in b
     is_note = lambda k, b: k == "p" and 'w:val="TableNote"' in b and not _heading_level(b)
+    is_table_caption = lambda k, b: k == "p" and 'w:val="Caption"' in b and "SEQ Table" in b
     raw_tables = [(ins + m.start(), ins + m.end(), m.group(0)) for m in _TBL.finditer(xml[ins:fend])]
     reference_entry = next(((s, e, b) for s, e, b in raw_tables
                             if f'w:tblCaption w:val="{CAPTION}"' not in b), None)
@@ -705,11 +718,15 @@ def place_xml(xml: str, t, heading: str, styles_xml: str = "") -> tuple[str, str
     replace_observation = any(x.get("replace_observation_table") for x in tables)
     remove = [(s, e) for i, (k, s, e, b) in enumerate(blocks)
               if ours_tbl(k, b) or (i < first_reference and is_note(k, b))]
+    # Captions are framework-owned only when they sit immediately before one
+    # of our marked tables. Figure captions and human-authored captions stay.
+    remove += [(s, e) for i, (k, s, e, b) in enumerate(blocks[:-1])
+               if is_table_caption(k, b) and ours_tbl(blocks[i + 1][0], blocks[i + 1][3])]
     if replace_observation and reference_entry:
         remove.append(reference_entry[:2])
     replaced = any(ours_tbl(k, b) for k, _s, _e, b in blocks)
     clean = xml
-    for s, e in reversed(remove):
+    for s, e in sorted(set(remove), reverse=True):
         clean = clean[:s] + clean[e:]
 
     if not tables:
@@ -739,14 +756,17 @@ def place_xml(xml: str, t, heading: str, styles_xml: str = "") -> tuple[str, str
         insert_at = max(story_ends.values())
     sid = (re.search(r'<w:tblStyle w:val="([^"]+)"', reference) or [None, ""])[1]
 
-    def rendered(x: dict) -> str:
+    def rendered(x: dict, number: int) -> str:
         lines = [y for y in [x.get("common", ""), *x.get("markers", [])] if y] or [""]
-        return table_xml(x, reference, band_fill(styles_xml, sid)) + "".join(_note(y) for y in lines)
+        title = x.get("evidence_title") or f"{heading} discovery evidence"
+        return _caption(title, number) + table_xml(x, reference, band_fill(styles_xml, sid)) + "".join(_note(y) for y in lines)
 
     insertions: dict[int, str] = {}
-    for x in tables:
-        pos = story_ends.get((x.get("requirement") or "").upper(), insert_at)
-        insertions[pos] = insertions.get(pos, "") + rendered(x)
+    positions = [(story_ends.get((x.get("requirement") or "").upper(), insert_at), x) for x in tables]
+    for offset, (pos, x) in enumerate(sorted(positions, key=lambda item: item[0]), 1):
+        prior = len(re.findall(r"SEQ\s+Table\b", clean[:pos], re.I))
+        number = prior + offset
+        insertions[pos] = insertions.get(pos, "") + rendered(x, number)
     for pos in sorted(insertions, reverse=True):
         clean = clean[:pos] + insertions[pos] + clean[pos:]
     return clean, "replaced" if replaced else "inserted"

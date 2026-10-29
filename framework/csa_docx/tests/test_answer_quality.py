@@ -115,6 +115,40 @@ def test_facts_to_keep_are_the_newest_capture_backed_facts_of_this_subsection(tm
     assert keep[1]["fact"].startswith("RevBroadcast cannot reach")           # newest wording wins
 
 
+def test_mixed_verified_and_unverified_fact_is_not_carried_forward(tmp_path):
+    """Removing an ineligible ID must remove its whole old claim, not only the citation."""
+    import json
+    root = _store(tmp_path)
+    facts = root / "csa-work" / "facts" / "facts.jsonl"
+    mixed = {"fact": "RevBroadcast reaches Azure, and no fallback exists.",
+             "evidence_ids": ["E-456", "E-999"], "section": "DNS", "question": "B3",
+             "added": "2026-10-14T10:31:27Z"}
+    with facts.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(mixed) + "\n")
+
+    keep = section_card.facts_to_keep({"key": "DNS"}, root)
+
+    assert all("no fallback exists" not in k["fact"] for k in keep)
+    assert all("E-999" not in k["evidence_ids"] for k in keep)
+    assert any(k["fact"].startswith("RevBroadcast cannot reach") for k in keep)
+
+
+def test_sanitised_negative_fact_needs_negative_verified_support(tmp_path):
+    """A prior run may already have stripped the NOT_FOUND ID before storing the fact again."""
+    import json
+    root = _store(tmp_path)
+    facts = root / "csa-work" / "facts" / "facts.jsonl"
+    unsupported = {"fact": "The expected path is declared, but no matching connection appeared.",
+                   "evidence_ids": ["E-456"], "section": "DNS", "question": "B3",
+                   "added": "2026-10-15T10:31:27Z"}
+    with facts.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(unsupported) + "\n")
+
+    keep = section_card.facts_to_keep({"key": "DNS"}, root)
+
+    assert all("no matching connection" not in k["fact"] for k in keep)
+
+
 def test_losing_a_fact_to_keep_is_refused_even_with_no_previous_sheet(tmp_path):
     keep = [{**k, "question": "B1"} for k in section_card.facts_to_keep({"key": "DNS"}, _store(tmp_path))]
     card = {**CARD, "keep": keep}

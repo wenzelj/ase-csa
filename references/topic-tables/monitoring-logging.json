@@ -45,8 +45,43 @@
    "explains": "workload telemetry leaving the host",
    "common": "send telemetry with {value}",
    "noun": "workload telemetry agent"
+  },
+  {
+   "label": "Patch compliance client",
+   "attribute": "agent.patch_management",
+   "explains": "patch-compliance coverage",
+   "common": "run {value}",
+   "noun": "patch-compliance client"
   }
  ],
+ "evidence_tables": [
+  {
+   "requirement": "SEP-MON-01",
+   "kind": "flows",
+   "title": "Monitoring and logging destination evidence"
+  },
+  {
+   "requirement": "SEP-MON-02",
+   "kind": "roles",
+   "title": "Continuous monitoring coverage evidence",
+   "attributes": [
+    "agent.edr",
+    "agent.antivirus",
+    "agent.monitoring",
+    "agent.security_telemetry",
+    "agent.patch_management"
+   ]
+  },
+  {
+   "requirement": "SEP-MON-03",
+   "kind": "roles",
+   "title": "Log configuration coverage evidence",
+   "attributes": [
+    "agent.log_forwarding"
+   ]
+  }
+ ],
+ "replace_observation_table": true,
  "flows": {
   "mechanisms": [
    "log forwarding",

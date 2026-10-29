@@ -82,5 +82,5 @@ answer_stall_minutes: 3
 answer_stall_restarts: 1
 # csa answer: one focused model call per block (its own evidence only) instead of one call for the whole card.
 # Calls run one after another; answer_by_block_workers > 1 runs that many at once if the model server allows it.
-answer_by_block: false
+answer_by_block: true
 answer_by_block_workers: 1

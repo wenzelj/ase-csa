@@ -116,6 +116,41 @@ def test_stor_shares_appears_once(tmp_path):
     assert t2["columns"][:2] == ["Role", "Hosts"]
 
 
+def test_monitoring_profile_builds_one_focused_table_per_requirement(tmp_path):
+    """Monitoring uses the generic requirement-story-table layout, not one shared domain table."""
+    wd = _work(tmp_path)
+    with (wd / "hosts" / "host_settings.csv").open("w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        w.writerow(["host", "topic", "attribute", "value", "capture", "source", "excerpt"])
+        for host in ("ROTPRDREV102", "MOTPRDPDM101"):
+            for attr, value in (
+                ("agent.edr", "CrowdStrike Falcon" if host == "ROTPRDREV102" else "None found"),
+                ("agent.antivirus", "Microsoft Defender Antivirus"),
+                ("agent.monitoring", "Microsoft Monitoring Agent (SCOM)"),
+                ("agent.security_telemetry", "None found"),
+                ("agent.patch_management", "Microsoft Configuration Manager client (MECM)"),
+                ("agent.log_forwarding", "Splunk Universal Forwarder" if host == "ROTPRDREV102" else "None found"),
+            ):
+                w.writerow([host, "agents", attr, value, "fixture", "capture line 1", "x"])
+    _write_flows(wd, [
+        _flow_row("F-MON-01", "observed", "monitoring", "ROTPRDREV102", "34.1.2.3", "5723",
+                  "OT Rockhampton", "Internet", "ot", "internet", "yes")
+    ])
+    orig_register = tt.register
+    tt.register = lambda work_dir: _HOSTS
+    try:
+        tables = [t for t in tt.build_all(wd, "Monitoring & Logging", "MON") if t.get("status") == "OK"]
+    finally:
+        tt.register = orig_register
+
+    assert [t["requirement"] for t in tables] == ["SEP-MON-01", "SEP-MON-02", "SEP-MON-03"]
+    assert tables[0]["columns"][0] == "Mechanism"
+    assert "EDR" in tables[1]["columns"]
+    assert "Patch compliance client" in tables[1]["columns"] or "Configuration Manager" in tables[1]["common"]
+    assert tables[2]["columns"] == ["Role", "Hosts", "Log forwarding"]
+    assert all(t["replace_observation_table"] for t in tables)
+
+
 def test_stor_flow_table_crossing_only_and_direction(tmp_path):
     """The flow table shows only flows that cross OT, with a Direction column and pulls first."""
     wd = _work(tmp_path)

@@ -430,6 +430,7 @@ def _current(node: dict) -> list[str]:
 
 
 _HOST = re.compile(r"\b(?=[A-Z0-9]*\d)[A-Z][A-Z0-9]{6,}\b")
+_NEGATIVE_ASSERTION = re.compile(r"\b(?:no|not|none|without|absent|missing|never|neither|nor)\b", re.I)
 
 
 def facts_to_keep(node: dict, workspace: Path | None) -> list[dict]:
@@ -447,6 +448,24 @@ def facts_to_keep(node: dict, workspace: Path | None) -> list[dict]:
     for f in fact_store._read(work):
         if f.get("section") != node["key"] or f.get("basis") == "background":
             continue
+        # A stored fact is one semantic statement. If any citation that supported
+        # it is no longer eligible, retaining the prose while silently removing
+        # that citation can leave an unsupported clause on the next card. Do not
+        # attempt semantic clause-splitting here: omit the mixed fact and let the
+        # verified evidence pack rebuild the supported parts.
+        cited = [i.upper() for i in f.get("evidence_ids", [])]
+        if any(i not in rows or i in rejected for i in cited):
+            continue
+        # Older framework versions sometimes persisted a mixed fact a second
+        # time after its NOT_FOUND IDs had already been stripped. Catch that
+        # contaminated derivative too: a negative assertion is carried only
+        # when at least one of its still-eligible evidence claims is itself
+        # negative. Dropping is safer than presenting positive evidence as
+        # proof of absence; the normal evidence pack can restate supported
+        # positive clauses.
+        if (_NEGATIVE_ASSERTION.search(f.get("fact", ""))
+                and not any(_NEGATIVE_ASSERTION.search((rows.get(i) or {}).get("claim", "")) for i in cited)):
+            continue
         caps = sorted(i for i in f.get("evidence_ids", []) if (rows.get(i.upper()) or {}).get("status") == "VERIFIED"
                       and source_class(rows.get(i.upper())) == "capture" and i.upper() not in rejected)
         if not caps:                 # a fact keeps the evidence that is verified; with none of its capture rows left it is not carried
@@ -454,7 +473,7 @@ def facts_to_keep(node: dict, workspace: Path | None) -> list[dict]:
         k = (f.get("question", ""), tuple(caps))
         if k not in latest or f.get("added", "") >= latest[k].get("added", ""):
             latest[k] = {"question": f.get("question", ""), "fact": f["fact"],
-                         "evidence_ids": [i for i in f["evidence_ids"] if i.upper() in rows],
+                         "evidence_ids": list(f["evidence_ids"]),
                          "capture_ids": caps, "added": f.get("added", ""), "kind": f.get("kind", "fact")}
     # a capture set already covered by a newer fact of the same question is not asked for twice
     out = sorted(latest.values(), key=lambda x: (x["question"], x["added"]), reverse=True)
@@ -610,6 +629,14 @@ def host_register(workspace: Path | None) -> dict | None:
             role = m.group(1) if m else ""
         site = (r.get("site") or "").strip()
         if (r.get("in_scope") or "").strip() == "peer":
+            # A neighbour_project rule imports the other application's inventory as identity-only peers so this
+            # project's flows can name an endpoint. They are not uncaptured hosts of this system. If a neighbour is
+            # relevant to this subsection it is carried by the flow/evidence and System parts; listing every host of
+            # the neighbouring application here bloats every card and misstates its scope.
+            sources = (r.get("sources") or "").lower()
+            role_source = (r.get("role_source") or "").strip().lower()
+            if "neighbour:" in sources or role_source.startswith("neighbour "):
+                continue
             if role or (r.get("system") or "").strip():
                 uncaptured.append({"host": host, "role": (role or "role not recorded"), "site": site})
             continue
@@ -643,7 +670,7 @@ def _register_lines(reg: dict) -> list[str]:
         out.append(f"- {g['role']}: {', '.join(g['hosts'])}" + (f"; site: {', '.join(g['sites'])}" if g["sites"] else "")
                    + (f"; zone: {', '.join(g['zones'])}" if g.get("zones") else ""))
     if reg["uncaptured"]:
-        out += ["", "Named in the sources for this system but not captured (scope to be confirmed):"]
+        out += ["", "Named in this project's sources but not captured as this system's hosts (scope to be confirmed):"]
         for u in reg["uncaptured"]:
             out.append(f"- {u['host']}: {u['role']}" + (f"; site: {u['site']}" if u["site"] else ""))
     un = reg.get("unnamed") or []
@@ -1257,7 +1284,14 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
             lines += owed_lines(pview, q["id"])
     if requirement_stories:
         lines += ["", "## Requirement summaries and stories", "",
-                  'For every requirement block write both `Summary:` and `Story:`. Do not put the SEP label or a title in either field; the framework adds a bold title from the requirement ID and wording.', '- Summary is the Current State table cell: one to three sentences, at most 80 words, stating the control or practice and its main qualification.', '- Story is the paragraph under its requirement title in Discovery Information. It explains the rating to a reader who has not seen the evidence:', '  1. First sentence: the rating and the condition that decides it (see "What decides this rating").', '  2. Then one sentence for each condition that is not met or is unknown, saying what the system does and which parts cause it. Name at most three parts in a sentence, by their display names.', '  3. End with what is still unknown, in one sentence, if anything is.', "  At most 90 words. Say nothing about another requirement's conditions. Hosts, ports and inventories stay in the tables."]
+                  'For every requirement block write both `Summary:` and `Story:`. Do not put the SEP label or a title in either field; the framework adds a bold title from the requirement ID and wording.',
+                  '- Summary is the Current State table cell. It is decision-first: state the observed control or practice, then finish with `The requirement is <Rating> because ...` and name the decisive requirement condition. Use one to three sentences and at most 80 words. Do not put discovery questions, host inventories or the detailed evidence trail in Summary.',
+                  '- Story is the paragraph under its requirement title in Discovery Information. It is evidence-first and tells how the assessment reached the rating to a reader who has not seen the evidence:',
+                  '  1. Start with how the capability or practice currently operates. Do not start with the rating.',
+                  '  2. Explain the relevant coverage, behaviour and gaps in a logical order. Name at most three parts in a sentence, by their display names.',
+                  '  3. State any material limitation as a factual unknown. Keep the corresponding `QUESTION:` line separate so the framework sends it to Discovery Required.',
+                  '  4. Finish with `The requirement is <Rating> because ...` and the decisive comparison with the requirement.',
+                  "  At most 90 words. Story must add the evidence path, not paraphrase Summary. Say nothing about another requirement's conditions. Hosts, ports and inventories stay in the tables."]
     sysname = system_name(workspace)
     if sysname:
         lines += ["", "## System name", "",

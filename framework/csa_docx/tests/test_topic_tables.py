@@ -188,6 +188,7 @@ def test_place_interleaves_requirement_tables_and_removes_replaced_aspect_table(
     for req, value in (("SEP-STOR-01", "Storage evidence"), ("SEP-STOR-02", "Transfer evidence"),
                        ("SEP-STOR-03", "Direction evidence")):
         tables.append({"status": "OK", "requirement": req, "replace_observation_table": True,
+                       "evidence_title": value,
                        "columns": ["Role", "Hosts", "Finding"], "common": "", "markers": [],
                        "rows": [{"role": "Application", "first": True, "hosts": ["HOST1"], "cells": [value]}]})
 
@@ -199,6 +200,14 @@ def test_place_interleaves_requirement_tables_and_removes_replaced_aspect_table(
                                      "SEP-STOR-03 —", "Direction evidence")]
     assert order == sorted(order)
     assert out.count(f'w:tblCaption w:val="{tt.CAPTION}"') == 3
+    assert out.count("SEQ Table") == 3
+    assert [out.index(f": {title}") for title in ("Storage evidence", "Transfer evidence", "Direction evidence")] == sorted(
+        out.index(f": {title}") for title in ("Storage evidence", "Transfer evidence", "Direction evidence"))
+    # Captions are refreshed with their tables and never accumulate on rerun.
+    again, what = tt.place_xml(out, tables, "Storage & Data Transfer")
+    assert what == "replaced"
+    assert again.count("SEQ Table") == 3
+    assert again.count('w:pStyle w:val="Caption"') == out.count('w:pStyle w:val="Caption"')
 
 
 def test_place_replaces_tables_a_figure_split_and_keeps_the_figure(tmp_path):

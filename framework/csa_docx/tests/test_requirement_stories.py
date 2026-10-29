@@ -37,8 +37,8 @@ def _sheet(two=True):
     blocks = ["""## B1 SEP-X-01
 Facts:
 - The application uses local storage. (E-001) {observed; application}
-Summary: The application uses local storage, but recovery testing was not established.
-Story: The application keeps its operational data locally. Recovery fitness and an isolation fallback were not established.
+Summary: The application uses local storage. The requirement is Partially Met because recovery testing was not established.
+Story: The application keeps its operational data in local storage. No recovery test or isolation fallback was established. The requirement is Partially Met because storage exists but recovery evidence is incomplete.
 Rating: Partially Met
 Rating reason: local storage exists but recovery evidence is incomplete.
 """]
@@ -46,8 +46,8 @@ Rating reason: local storage exists but recovery evidence is incomplete.
         blocks.append("""## B2 SEP-X-02
 Facts:
 - Direct transfer remains in use. (E-002) {observed; application}
-Summary: Direct transfer remains in use and no controlled pattern was identified.
-Story: The application transfers files directly. No proxy, scanning point or approved transfer pattern was identified.
+Summary: Direct transfer remains in use. The requirement is Not Met because no controlled transfer pattern was identified.
+Story: The application transfers files directly between its parts. No proxy or scanning point was identified for that path. The requirement is Not Met because the transfer does not use a defined controlled pattern.
 Rating: Not Met
 Rating reason: the observed transfer does not use a defined controlled pattern.
 """)
@@ -63,11 +63,11 @@ def test_split_requirement_fields_validate_and_render_to_two_destinations():
 
     rendered = A.render_records(sheet, card, _node(), "3", 1)
     text = "\n".join(rendered["records"])
-    assert "Observed: The application uses local storage, but recovery testing was not established." in text
+    assert "Observed: The application uses local storage. The requirement is Partially Met because recovery testing was not established." in text
     assert "SEP-X-01 — x" in text
-    assert "The application keeps its operational data locally." in text
+    assert "The application keeps its operational data in local storage." in text
     assert "SEP-X-02 — y" in text
-    assert "The application transfers files directly." in text
+    assert "The application transfers files directly between its parts." in text
     assert text.index("SEP-X-02 discovery story") < text.index("SEP-X-01 discovery story")
     assert text.count("**Do:** Insert After") == 2
     assert "`@H3.1.1`" in text
@@ -128,3 +128,53 @@ Rating reason: recovery was not established.
     oversized = A.validate(A.parse(raw.replace("Story:", f"Summary: {words}\nStory:")), card,
                            {"E-001": {"claim": "local storage"}})
     assert "SUMMARY_TOO_LONG" in {f["code"] for f in oversized["findings"]}
+
+
+def test_split_requirement_contract_separates_decision_summary_from_evidence_story():
+    card = _card(two=False)
+    matrix = {"E-001": {"claim": "local storage"}}
+    raw = """## B1 SEP-X-01
+Facts:
+- The application uses local storage. (E-001) {observed; application}
+Summary: The application uses local storage but recovery was not established.
+Story: Partially Met because local storage exists but recovery was not established.
+Rating: Partially Met
+Rating reason: recovery was not established.
+"""
+    res = A.validate(A.parse(raw), card, matrix, draft=True, relaxed=True)
+    codes = {f["code"] for f in res["findings"] if f["level"] == "ERROR"}
+    assert "SUMMARY_NO_RATING_BASIS" in codes
+    assert "STORY_STARTS_WITH_RATING" in codes
+    assert "STORY_NO_EVIDENCE_PATH" in codes
+    no_conclusion = raw.replace(
+        "Story: Partially Met because local storage exists but recovery was not established.",
+        "Story: The application uses local storage. Recovery testing was not established.",
+    )
+    res2 = A.validate(A.parse(no_conclusion), card, matrix, draft=True, relaxed=True)
+    assert "STORY_NO_RATING_CONCLUSION" in {f["code"] for f in res2["findings"] if f["level"] == "ERROR"}
+
+
+def test_near_duplicate_summary_and_story_are_rejected():
+    card = _card(two=False)
+    matrix = {"E-001": {"claim": "local storage"}}
+    raw = """## B1 SEP-X-01
+Facts:
+- The application uses local storage. (E-001) {observed; application}
+Summary: The application uses local storage. The requirement is Partially Met because recovery testing was not established.
+Story: The application uses local storage for its data. Recovery testing was not established. The requirement is Partially Met because recovery testing was not established.
+Rating: Partially Met
+Rating reason: recovery testing was not established.
+"""
+    res = A.validate(A.parse(raw), card, matrix, draft=True, relaxed=True)
+    assert "SUMMARY_STORY_OVERLAP" in {f["code"] for f in res["findings"] if f["level"] == "ERROR"}
+
+
+def test_discovery_question_is_not_rendered_into_current_state_cell():
+    card = _card(two=False)
+    sheet = _sheet(two=False)
+    sheet["B1"]["unknown"] = ["Has recovery been tested?"]
+    rendered = A.render_records(sheet, card, _node(two=False), "3", 1)
+    current_state = next(r for r in rendered["records"] if "current state and rating" in r)
+    current_state_text = current_state.split("**Text:**", 1)[1].split("**Why:**", 1)[0]
+    assert "QUESTION:" not in current_state_text
+    assert any("Has recovery been tested?" in q for q in rendered["open"])

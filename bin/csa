@@ -2763,6 +2763,9 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
         focus_md = cards / f"{key}.focus.md"
         fo = _fw_json("csa_docx.answer_blocks", "focus", card_md, "--only", ",".join(ids), "--out", focus_md)
         use_card = focus_md if fo.get("status") == "OK" else card_md
+        if fo.get("status") == "OK":
+            print(f"{C['d']}focused card {','.join(ids)}: {fo.get('words', '?')} words, "
+                  f"{fo.get('bytes', '?')} bytes ({fo.get('reduction_pct', '?')}% smaller){C['0']}")
         errs.write_text(f"{header}\n\nRewrite only these blocks: {', '.join(ids)}. Write only those blocks to SHEET=; the "
                         f"framework puts them into the answer sheet (ANSWER=) and keeps every other block as it is.\n\n"
                         + "\n".join(lines) + "\n", encoding="utf-8")
@@ -2814,57 +2817,99 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
             return []
         return ids if len(ids) >= 3 else []
 
-    def parallel_answer(ids: list[str]) -> int:
+    def parallel_answer(ids: list[str], resume: bool = False) -> int:
         """First answer, one focused call per block (its own evidence only), then the analysis frame from the merged
-        blocks. Calls run one at a time unless cli.yaml answer_by_block_workers > 1. The framework merges the
-        patches; a block a call did not return stays missing and goes through the normal fix round."""
+        blocks. Calls run one at a time unless cli.yaml answer_by_block_workers > 1. Each returned block is merged and
+        checkpointed immediately, so a later timeout loses only its own block and the next run resumes the missing
+        blocks. ``resume`` keeps the blocks already present in the sheet."""
         from concurrent.futures import ThreadPoolExecutor
+        ids = sorted(set(ids), key=lambda b: ("BCF".index(b[0]) if b[:1] in "BCF" else 9,
+                                               int(re.sub(r"\D", "", b) or 0)))
+        content_ids = [b for b in ids if not b.startswith("F")]
+        want_frame = bool(json.loads(card_json.read_text(encoding="utf-8")).get("frame"))
         base = cards / f"{key}.answer-base.md"
-        base.write_text("(no blocks yet: each block is answered separately and merged by the framework)\n", encoding="utf-8")
         workers = max(1, int(settings().get("answer_by_block_workers", 1) or 1))
+
+        if not resume:
+            if sheet.is_file():
+                retired = sheet.with_suffix(".prev.md")
+                try:
+                    applied = json.loads(card_md.with_suffix(".manifest.json").read_text(encoding="utf-8")).get("sheet_sha256") == \
+                        hashlib.sha256(sheet.read_bytes()).hexdigest()
+                except (OSError, ValueError):
+                    applied = not retired.exists()
+                sheet.replace(retired if applied else sheet.with_suffix(".failed.md"))
+                _fw_json("csa_docx.answer_blocks", "wip-clear", sheet)
+            sheet.write_text("", encoding="utf-8")
+        base.write_text(sheet.read_text(encoding="utf-8") if resume and sheet.is_file()
+                        else "(no blocks yet: each block is answered separately and merged by the framework)\n",
+                        encoding="utf-8")
+        answer_ref = base                         # never let a focused agent edit the live merged sheet directly
 
         def one(bid: str) -> tuple[str, int]:
             fcard, part, perr = cards / f"{key}.focus-{bid}.md", cards / f"{key}.patch-{bid}.md", cards / f"{key}.errors-{bid}.md"
             fo = _fw_json("csa_docx.answer_blocks", "focus", card_md, "--only", bid, "--out", fcard, "--first-pass")
+            if fo.get("status") == "OK":
+                with run_lock:
+                    print(f"{C['d']}focused card {bid}: {fo.get('words', '?')} words, "
+                          f"{fo.get('bytes', '?')} bytes ({fo.get('reduction_pct', '?')}% smaller){C['0']}")
             perr.write_text(f"Answer only block {bid}. Write only that block, with its ## {bid} heading, to SHEET=.\n", encoding="utf-8")
-            rc = answer([f"ONLY={bid}", f"ANSWER={base}", f"ERRORS={perr}"], out=part,
+            rc = answer([f"ONLY={bid}", f"ANSWER={answer_ref}", f"ERRORS={perr}"], out=part,
                         card=fcard if fo.get("status") == "OK" else card_md, kind="answer part", blocks=[bid], merge=False)
             return bid, rc
 
-        print(f"{C['b']}Answering {len(ids)} blocks one call each ({workers} at a time): {', '.join(ids)}{C['0']}")
-        if sheet.is_file():
-            retired = sheet.with_suffix(".prev.md")
-            try:
-                applied = json.loads(card_md.with_suffix(".manifest.json").read_text(encoding="utf-8")).get("sheet_sha256") == \
-                    hashlib.sha256(sheet.read_bytes()).hexdigest()
-            except (OSError, ValueError):
-                applied = not retired.exists()
-            sheet.replace(retired if applied else sheet.with_suffix(".failed.md"))
-            _fw_json("csa_docx.answer_blocks", "wip-clear", sheet)
-        sheet.write_text("", encoding="utf-8")
-        with ThreadPoolExecutor(max_workers=workers) as ex:
-            results = list(ex.map(one, ids))
-        got = []
-        for bid, rc in results:
+        print(f"{C['b']}{'Resuming' if resume else 'Answering'} {len(content_ids)} blocks one call each "
+              f"({workers} at a time): {', '.join(content_ids)}{C['0']}")
+        got, missing = [], list(content_ids)
+
+        def merge_result(result: tuple[str, int]) -> None:
+            bid, rc = result
             part = cards / f"{key}.patch-{bid}.md"
             if part.is_file() and part.stat().st_size:
                 mg = _fw_json("csa_docx.answer_blocks", "merge", sheet, "--patch", part, "--only", bid)
+                if mg.get("normalized"):
+                    with run_lock:
+                        print(f"{C['y']}normalized focused patch heading to ## {bid}{C['0']}")
                 if mg.get("status") == "OK" and (bid in (mg.get("merged", []) + mg.get("added", []))):
                     got.append(bid)
-        missing = [b for b in ids if b not in got]
+                    if bid in missing:
+                        missing.remove(bid)
+                    if workers == 1:
+                        shutil.copyfile(sheet, base)   # the next block sees completed context, through a safe snapshot
+            if sheet.is_file():
+                pending = missing + (["F1"] if want_frame else [])
+                _fw_json("csa_docx.answer_blocks", "wip-write", sheet, "--card", card_json, "--matrix", matrix,
+                         *(["--hosts", hosts_csv] if hosts_csv.is_file() else []),
+                         "--failed", ",".join(pending), "--codes", "PARTIAL_BLOCKS")
+
+        if workers == 1:                         # local model: do not enqueue work it can only serialise
+            for bid in content_ids:
+                merge_result(one(bid))
+        else:
+            with ThreadPoolExecutor(max_workers=workers) as ex:
+                for result in ex.map(one, content_ids):
+                    merge_result(result)
         print(f"{C['b']}merged {', '.join(got) or 'nothing'}" + (f"; no answer for {', '.join(missing)}" if missing else "") + C['0'])
-        if not got:
-            print(f"{C['y']}No block was answered by the focused calls; asking for the whole sheet once.{C['0']}")
-            return answer([])
-        if json.loads(card_json.read_text(encoding="utf-8")).get("frame") and got:
+        if content_ids and not got:
+            print(f"{C['r']}No block was answered by the focused calls; the partial sheet is kept for the next run.{C['0']}",
+                  file=sys.stderr)
+            return 2
+        if want_frame and (got or "F1" in ids):
             ferr = cards / f"{key}.errors-F1.md"
             ffocus = cards / f"{key}.focus-F1.md"
-            _fw_json("csa_docx.answer_blocks", "focus", card_md, "--only", "F1", "--out", ffocus, "--first-pass")
+            ffo = _fw_json("csa_docx.answer_blocks", "focus", card_md, "--only", "F1", "--out", ffocus, "--first-pass")
+            if ffo.get("status") == "OK":
+                print(f"{C['d']}focused card F1: {ffo.get('words', '?')} words, {ffo.get('bytes', '?')} bytes "
+                      f"({ffo.get('reduction_pct', '?')}% smaller){C['0']}")
             ferr.write_text("Write only the F1 Analysis frame, from the blocks already in ANSWER=: one line per slot naming the "
                             "blocks that answer it, or QUESTION: <question>.\n", encoding="utf-8")
             fpatch = cards / f"{key}.patch-F1.md"
             answer([f"ONLY=F1", f"ANSWER={sheet}", f"ERRORS={ferr}"], out=fpatch,
                    card=ffocus, kind="answer frame", blocks=["F1"])
+            frame_done = sheet.is_file() and bool(re.search(r"(?m)^##\s+F1\b", sheet.read_text(encoding="utf-8")))
+            _fw_json("csa_docx.answer_blocks", "wip-write", sheet, "--card", card_json, "--matrix", matrix,
+                     *(["--hosts", hosts_csv] if hosts_csv.is_file() else []),
+                     "--failed", ",".join(missing + ([] if frame_done else ["F1"])), "--codes", "PARTIAL_BLOCKS")
         return 0
 
     timing: dict = {}
@@ -2934,17 +2979,24 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
         if "*" in redo:
             pass                        # an error that belongs to no block: the fix loop below handles the whole sheet
         elif redo:
-            lines = error_lines(first, redo) + [f"- CHANGED {b}: the evidence for this question changed since the sheet was "
-                                                f"written: answer it again from the card" for b in sorted(wip.get("changed", []))]
-            if block_round(redo, lines, "resume", "Fix these blocks of the kept answer sheet:") != 0:
-                return 2
+            if parallel_blocks() and getattr(a, "headless", False):
+                if parallel_answer(sorted(redo), resume=True) != 0:
+                    return 2
+            else:
+                lines = error_lines(first, redo) + [f"- CHANGED {b}: the evidence for this question changed since the sheet was "
+                                                    f"written: answer it again from the card" for b in sorted(wip.get("changed", []))]
+                if block_round(redo, lines, "resume", "Fix these blocks of the kept answer sheet:") != 0:
+                    return 2
     elif cache.get("status") == "PARTIAL":
         ids = {x.upper() for x in cache["changed"]}
         print(f"{C['b']}Inputs changed for {', '.join(sorted(ids))}; the answer agent rewrites only those blocks.{C['0']}")
         timing["reused"] = "partial"
         shutil.copyfile(sheet, sheet.with_suffix(".prev.md"))      # the applied sheet is the answer this run replaces
         lines = [f"- CHANGED {b}: the evidence for this question changed: answer it again from the card" for b in sorted(ids)]
-        if block_round(ids, lines, "changed", "The evidence changed for these questions:") != 0:
+        if parallel_blocks() and getattr(a, "headless", False):
+            if parallel_answer(sorted(ids), resume=True) != 0:
+                return 2
+        elif block_round(ids, lines, "changed", "The evidence changed for these questions:") != 0:
             return 2
     else:
         timing["reused"] = False

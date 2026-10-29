@@ -228,7 +228,8 @@ HARD_CODES = {"CROSS_PROJECT_ONLY", "NOTE_TOO_LONG", "NOTE_NONE_AND_TEXT", "NOTE
               "PRACTICE_NOT_ADDRESSED", "PRACTICE_ATTRIBUTION_DROPPED", "APPLICATION_ZONE_CLAIM",
               "DRAWBRIDGE_CAUSAL_SCOPE",
               "EXAMPLE_COPIED", "SUMMARY_MISSING", "STORY_MISSING", "SUMMARY_TOO_LONG", "SUMMARY_TOO_MANY_SENTENCES",
-              "SUMMARY_REPEATS_STORY", "STORY_AND_TEXT"}
+              "SUMMARY_REPEATS_STORY", "SUMMARY_STORY_OVERLAP", "SUMMARY_NO_RATING_BASIS", "QUESTION_IN_SUMMARY",
+              "STORY_NO_EVIDENCE_PATH", "STORY_STARTS_WITH_RATING", "STORY_NO_RATING_CONCLUSION", "STORY_AND_TEXT"}
 
 #: Relaxed draft lane (cli.yaml draft_strictness: relaxed, the default for csa answer): the answer's job is to answer the
 #: question from the evidence, so only what makes it wrong or unusable stops it: evidence it cannot cite, a missing or
@@ -238,7 +239,9 @@ HARD_CODES = {"CROSS_PROJECT_ONLY", "NOTE_TOO_LONG", "NOTE_NONE_AND_TEXT", "NOTE
 #: application (IAMPS consumes what this system produces: the text may say so).
 RELAXED_HARD = {"CROSS_PROJECT_ONLY", "QUESTION_MISSING", "EMPTY_ANSWER", "FACT_NO_EVIDENCE", "UNKNOWN_EVIDENCE",
                 "RATING_INVALID", "COLUMNS", "ROW_WIDTH", "NO_ROWS", "BACKGROUND_AS_EVIDENCE",
-                "ZONE_CONTRADICTED", "ISOLATION_WRONG_SIDE", "ATTEMPT_AS_ESTABLISHED"}
+                "ZONE_CONTRADICTED", "ISOLATION_WRONG_SIDE", "ATTEMPT_AS_ESTABLISHED",
+                "SUMMARY_NO_RATING_BASIS", "SUMMARY_STORY_OVERLAP", "QUESTION_IN_SUMMARY",
+                "STORY_NO_EVIDENCE_PATH", "STORY_STARTS_WITH_RATING", "STORY_NO_RATING_CONCLUSION"}
 #: Of those, the ones the document cannot be written around: the answer cannot be rendered, or cites evidence that does
 #: not exist. Any other hard error left after the fix round is applied anyway and listed in RESULT.md.
 FATAL_CODES = {"NO_SHEET", "QUESTION_MISSING", "EMPTY_ANSWER", "FACT_NO_EVIDENCE", "UNKNOWN_EVIDENCE", "RATING_INVALID",
@@ -536,15 +539,13 @@ def read_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
 
 
 _STORY_WORDS = 90
-_RATING_FIRST = re.compile(r"\b(?:Met|Partially Met|Not Met|Not Applicable|meets|does not meet|partially meets)\b", re.I)
+_RATING_ANY = re.compile(r"\b(?:Partially Met|Not Met|Not Applicable|Met|partially meets|does not meet|meets)\b", re.I)
 _ENDPOINT_GAP = re.compile(r"\bunidentified\b|\bnot identified\b|\bzone not recorded\b", re.I)
 
 
 def readability_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
     """Story and narrative readability checks (all warn, never block, the draft lane's relaxed checks):
     READ_LIST: a Story, Text or Summary sentence names more than 3 parts (parts.parts_in on the card's part names).
-    STORY_NO_REASON: a requirement block's Story first sentence contains none of Met, Partially Met, Not Met,
-    Not Applicable, meets, does not meet or partially meets.
     TWO_ROLE_NAME: a sentence contains ", also the " or ", also " followed by a part name, or the full "A, B"
     name of a two-role part.
     STORY_TOO_LONG: a Story is over 90 words.
@@ -627,14 +628,6 @@ def readability_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
             if words > _STORY_WORDS:
                 out.append(_f("WARN", "STORY_TOO_LONG", q["id"],
                               f"Story is {words} words (over {_STORY_WORDS}): keep it under {_STORY_WORDS} words"))
-
-        # STORY_NO_REASON
-        if kind == "requirement" and story_sentences:
-            first = story_sentences[0]
-            if not _RATING_FIRST.search(first):
-                out.append(_f("WARN", "STORY_NO_REASON", q["id"],
-                              "the Story's first sentence should state the rating and its deciding condition "
-                              "(Met / Partially Met / Not Met / Not Applicable): \"" + first[:70] + "...\""))
 
         # READ_LIST, TWO_ROLE_NAME, ENDPOINT_UNDERSTATED
         if kind not in ("requirement", "narrative"):
@@ -1205,6 +1198,31 @@ def _norm(s: str) -> str:
     return " ".join(re.findall(r"[a-z0-9]+", s.lower()))
 
 
+def _rating_pattern(rating: str) -> str:
+    """Phrases the document may use for one controlled rating value."""
+    return {
+        "Met": r"(?:Met|meets)",
+        "Partially Met": r"(?:Partially Met|partially meets)",
+        "Not Met": r"(?:Not Met|does not meet)",
+        "Not Applicable": r"(?:Not Applicable|does not apply)",
+    }.get(rating, re.escape(rating))
+
+
+def _rating_basis(text: str, rating: str) -> bool:
+    """True when a sentence gives the controlled rating followed by its reason."""
+    return bool(text and rating and re.search(rf"\b{_rating_pattern(rating)}\b\s+because\b", text, re.I))
+
+
+def _prose_sentences(text: str) -> list[str]:
+    return [s.strip() for s in re.split(r"(?<=[.!?])\s+|\n+", text or "") if s.strip()]
+
+
+def _summary_story_overlap(summary: str, story: str) -> float:
+    """Containment of the shorter field's meaningful vocabulary in the other field."""
+    a, b = _content(summary), _content(story)
+    return len(a & b) / min(len(a), len(b)) if a and b else 0.0
+
+
 def _sheet_sentences(b: dict) -> list[tuple[str, str]]:
     """(where, text) for every line of a parsed block that can carry a claim into the document."""
     out = [("fact", f["text"]) for f in b["facts"]] + [("bullet", x) for x in b["bullets"]]
@@ -1459,9 +1477,35 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
                 if len(sentences) > 3:
                     findings.append(_f("ERROR", "SUMMARY_TOO_MANY_SENTENCES", qid,
                                        f"Summary has {len(sentences)} sentences; use no more than three"))
+                if summary and ("?" in summary or re.search(r"\bQUESTION\s*:", summary, re.I)):
+                    findings.append(_f("ERROR", "QUESTION_IN_SUMMARY", qid,
+                                       "Current State must explain the rating, not ask a discovery question; keep the "
+                                       "QUESTION: line separate for Discovery Required"))
+                if summary and b.get("rating") and not _rating_basis(sentences[-1] if sentences else summary,
+                                                                     b["rating"]):
+                    findings.append(_f("ERROR", "SUMMARY_NO_RATING_BASIS", qid,
+                                       f"finish Summary with 'The requirement is {b['rating']} because ...' and name "
+                                       "the decisive condition from the requirement"))
                 if summary and story and _norm(summary) == _norm(story):
                     findings.append(_f("ERROR", "SUMMARY_REPEATS_STORY", qid,
                                        "Summary and Story are identical; keep the table concise and put the detail in the story"))
+                elif summary and story and min(len(_content(summary)), len(_content(story))) >= 8 \
+                        and _summary_story_overlap(summary, story) >= 0.85 \
+                        and len(_content(story) - _content(summary)) / len(_content(story)) <= 0.25:
+                    findings.append(_f("ERROR", "SUMMARY_STORY_OVERLAP", qid,
+                                       "Summary and Story substantially repeat the same wording; keep Summary decision-first "
+                                       "and make Story an evidence-first path from how the capability operates to the rating"))
+                story_sentences = _prose_sentences(story)
+                if story and len(story_sentences) < 2:
+                    findings.append(_f("ERROR", "STORY_NO_EVIDENCE_PATH", qid,
+                                       "Story needs at least an observed-current-state sentence and a separate rating conclusion"))
+                if story_sentences and _RATING_ANY.search(story_sentences[0]):
+                    findings.append(_f("ERROR", "STORY_STARTS_WITH_RATING", qid,
+                                       "start Story with how the capability or practice operates; put the rating conclusion last"))
+                if story_sentences and b.get("rating") and not _rating_basis(story_sentences[-1], b["rating"]):
+                    findings.append(_f("ERROR", "STORY_NO_RATING_CONCLUSION", qid,
+                                       f"finish Story with 'The requirement is {b['rating']} because ...' and connect the "
+                                       "observations to the decisive requirement condition"))
         rendered = [("Summary", b.get("summary") or ""), ("Text", b.get("text") or "")] + [("fact", f["text"]) for f in b["facts"]] + \
                    [("bullet", x) for x in b["bullets"]] + [("row", " | ".join(c)) for c in b["rows"][1:]]
         for where, s_ in rendered:
@@ -1652,7 +1696,9 @@ def render_records(sheet: dict[str, dict], card: dict, node: dict, section: str,
                 observed = no_ids(" ".join(b["summary"].split()))
             elif b.get("text"):
                 observed = no_ids(" ".join(b["text"].split()))
-            if b["unknown"]:
+            # Split requirement answers keep discovery questions out of the Current State cell. The Story states
+            # the factual limitation and open_q below sends the question to Discovery Required.
+            if b["unknown"] and not card.get("requirement_stories"):
                 observed += " " + question_lines(b["unknown"])
             if not stories_only:
                 eid = record(f"{q['req_id']} current state and rating", f"{p['table']}-R{req['row']}",

@@ -30,9 +30,19 @@ def _card_parts() -> dict:
 
 
 def _b1_story() -> str:
-    sheet_text = (TETRA_WS / "csa-work/cards/STOR.answer.md").read_text(encoding="utf-8")
-    b1 = sheet_text.split("## B2")[0]
-    return next(l for l in b1.splitlines() if l.startswith("Story:"))[len("Story:"):].strip()
+    """Use the live story when complete; an in-progress block run must not break the framework suite."""
+    sheet = TETRA_WS / "csa-work/cards/STOR.answer.md"
+    if sheet.is_file():
+        b1 = sheet.read_text(encoding="utf-8").split("## B2")[0]
+        story = next((l for l in b1.splitlines() if l.startswith("Story:")), "")
+        if story:
+            return story[len("Story:"):].strip()
+    return (
+        "The SQL Server cluster node (instance S01), the TETRA log server, the RevBroadcast application server "
+        "and the Sepura Radio Manager server hold different parts of the system data, while the OT TETRA Log "
+        "Client Management Server, Management Jump box for TETRA Radio system also provides administration. "
+        "Recovery fitness and the isolation fallback are not established."
+    )
 
 
 def _fixture_sheet(b1_story: str) -> str:
@@ -94,7 +104,16 @@ def test_stor_fixture_gives_read_list_two_role_name_story_too_long_endpoint_unde
 
     card_parts = _card_parts()
     card = _card("", card_parts)
-    story = _b1_story()
+    story = (
+        "The SQL Server cluster node (instance S01), the TETRA log server, the RevBroadcast application server "
+        "and the Sepura Radio Manager server hold different parts of the system data, while the OT TETRA Log "
+        "Client Management Server, Management Jump box for TETRA Radio system also provides administration. "
+        "The Reveloc application / TGOIP server also exchanges data with these parts through several paths. "
+        "The unidentified internal peer at 10.129.11.10 has a zone not recorded, so the boundary behaviour of "
+        "that database path remains unresolved. Recovery fitness, retention and the isolation fallback are not "
+        "established for every store, and the evidence does not show one consistent operating model across the "
+        "parts. The requirement is Partially Met because OT-resident storage exists but recovery evidence is incomplete."
+    )
     sheet_text = _fixture_sheet(story)
     sheet = A.parse(sheet_text)
 
