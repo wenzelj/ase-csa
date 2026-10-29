@@ -5,7 +5,7 @@ OT guidance tests into slots: explicit sub-questions, each fed by an inventory s
 flows). The framework fills every slot it can from the captures, makes each finding citable (one evidence
 matrix row per finding, quoting the capture lines; a NOT_FOUND row for what was searched and not found),
 and puts the frame on the section card. The agent must answer every slot in a `## F1 Analysis frame`
-block: the B blocks that answer it, or an Unknown: line (FRAME_UNCOVERED otherwise).
+block: the B blocks that answer it, or an QUESTION: line (FRAME_UNCOVERED otherwise).
 
 "Likely" notes come from references/signal-signatures.json: what a process usually is and what to
 confirm. They are background, never evidence.
@@ -71,6 +71,19 @@ def frame_for(heading: str) -> dict | None:
             fr["_file"] = f.name
             return fr
     return None
+
+
+def all_frames() -> list[dict]:
+    """Every topic frame profile (references/topic-frames/*.json)."""
+    out = []
+    for f in sorted(FRAMES.glob("*.json")):
+        try:
+            fr = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        fr["_file"] = f.name
+        out.append(fr)
+    return out
 
 
 def _fit(lines: list[str], limit: int = 1150) -> str:
@@ -257,6 +270,11 @@ def build(workspace: Path, heading: str, key: str = "", evidence: bool = True) -
     key = key or fr.get("key", "")
     area, section = fr.get("area", "storage_and_data_transfer"), fr.get("section", heading.lower())
     slots = []
+    try:
+        from csa_docx import evidence_live
+        matrix_rows = evidence_live.get_verified_evidence(work / "evidence-matrix.csv") if evidence else []
+    except Exception:                    # no matrix yet: the slots simply list no candidates
+        matrix_rows = []
     for s in fr["slots"]:
         req = ", ".join(s.get("requirements", [])) or key
         src = s.get("source", {})
@@ -266,16 +284,33 @@ def build(workspace: Path, heading: str, key: str = "", evidence: bool = True) -
         if "flows" in src:
             found += flow_findings(work, src["flows"], req, area, section)
         bind_requirements(s, found)
+        # nothing from the captures binds to this slot: show the matrix rows that may already answer it, so the
+        # question is looked up before it is asked
+        from csa_docx import matrix_candidates
+        cand = matrix_candidates.candidates(matrix_rows, s["question"], s.get("look_for") or s.get("search"), area,
+                                            limit=10) if matrix_rows and not found else []
         slots.append({"id": s["id"], "question": s["question"], "requirements": s.get("requirements", []),
-                      "findings": found, "cross_zone": bool(src.get("flows", {}).get("cross_zone"))})
+                      "findings": found, "matrix": cand, "cross_zone": bool(src.get("flows", {}).get("cross_zone"))})
     res = {"status": "OK", "key": key, "heading": heading, "frame": fr.get("_file", ""), "slots": slots,
            "strict": bool(fr.get("strict")), "zone_conflicts": zone_conflicts(work)}
     if evidence:
         _ensure_evidence(workspace, res)
+        _verified_ids_only(work, res)
     out = work / "topic-frames"
     out.mkdir(parents=True, exist_ok=True)
     (out / f"{key or 'frame'}.json").write_text(json.dumps(res, indent=1, ensure_ascii=False), encoding="utf-8")
     return res
+
+
+def _verified_ids_only(work: Path, res: dict) -> None:
+    """A finding keeps only the IDs get_verified_evidence returns; one left with no ID is not shown (a slot with no findings
+    already tells the answer to state what the matrix rows show and to ask only for what they leave open)."""
+    from csa_docx import evidence_live
+    ok = {str(r["evidence_id"]).upper() for r in evidence_live.get_verified_evidence(Path(work) / "evidence-matrix.csv")}
+    for s in res["slots"]:
+        for f in s["findings"]:
+            f["ids"] = [i for i in f.get("ids", []) if i.upper() in ok]
+        s["findings"] = [f for f in s["findings"] if f["ids"]]
 
 
 def _ensure_evidence(workspace: Path, res: dict) -> None:
@@ -388,7 +423,7 @@ def bind_requirements(slot: dict, findings: list[dict]) -> None:
 
 def must_address(res: dict | None) -> dict[str, list[dict]]:
     """{requirement ID: [{slot, text, ids, direction, tokens, empty}]}: what each requirement's answer must cite, or
-    raise as Unknown. A slot the captures do not answer asks each of its requirements for an Unknown: line (empty)."""
+    raise as Unknown. A slot the captures do not answer asks each of its requirements for an QUESTION: line (empty)."""
     out: dict[str, list[dict]] = {}
     for s in (res or {}).get("slots", []):
         if not s["findings"]:
@@ -449,16 +484,17 @@ def row_disagreements(res: dict | None, rows: list[dict]) -> list[str]:
 
 
 def all_ids(res: dict | None) -> set[str]:
-    return {i for s in (res or {}).get("slots", []) for f in s["findings"] for i in f.get("ids", [])}
+    ids = {i for s in (res or {}).get("slots", []) for f in s["findings"] for i in f.get("ids", [])}
+    return ids | {c["id"] for s in (res or {}).get("slots", []) for c in s.get("matrix", [])}     # shown on the card: citable
 
 
 def card_lines(res: dict) -> list[str]:
     out = ["", "## Analysis frame (built by the framework from the captures)", "",
            "Work through this topic slot by slot before you write. Each finding below is citable by its evidence IDs. "
            "A 'Likely' note is background, not evidence: never state it as a fact, write what it asks you to confirm as an "
-           "Unknown: line. Answer every slot in one extra block at the end of the sheet:", "",
-           "    ## F1 Analysis frame", "    - S1: B1, B4", "    - S9: Unknown: how long the recordings are kept", "",
-           "List the blocks whose text answers the slot, or write Unknown: with what is not known (it becomes Discovery "
+           "QUESTION: line. Answer every slot in one extra block at the end of the sheet:", "",
+           "    ## F1 Analysis frame", "    - S1: B1, B4", "    - S9: QUESTION: how long the recordings are kept", "",
+           "List the blocks whose text answers the slot, or write QUESTION: with what is not known (it becomes Discovery "
            "Required). Every slot needs a line (FRAME_UNCOVERED). Cross-zone data flows must be addressed in a requirement "
            "or the Drawbridge Impact (FLOW_NOT_COVERED).", ""]
     if res.get("zone_conflicts"):
@@ -467,8 +503,13 @@ def card_lines(res: dict) -> list[str]:
     for s in res["slots"]:
         reqs = f" ({', '.join(s['requirements'])})" if s["requirements"] else ""
         out.append(f"### {s['id']} {s['question']}{reqs}")
-        if not s["findings"]:
-            out.append("- nothing in the captures answers this: answer from the evidence pack or write Unknown:")
+        if not s["findings"] and s.get("matrix"):
+            out.append("- the captures bind nothing to this slot, but the evidence matrix already holds rows that may answer it. "
+                       "Read them first: state what they show as Facts (cite the ID) and write QUESTION: only for what they "
+                       "leave open:")
+            out += [f"- {c['claim'][:240]} ({c['id']})" for c in s["matrix"]]
+        elif not s["findings"]:
+            out.append("- nothing in the captures answers this: answer from the evidence pack or write QUESTION:")
         for f in s["findings"][:25]:
             ids = f" ({', '.join(f.get('ids', []))})" if f.get("ids") else " (no citable row: state it only with other evidence)"
             out.append(f"- {f['text']}{ids}")

@@ -1,113 +1,145 @@
 {
- "topic": "Isolation",
- "key": "ISO",
- "area": "isolation_and_resilience",
- "section": "isolation and resilience validation",
- "headings": [
-  "Isolation & Resilience Validation (“Drawbridge”)",
-  "Isolation & Resilience Validation (\"Drawbridge\")",
-  "Isolation and Resilience Validation (Drawbridge)",
-  "Isolation & Resilience Validation",
-  "Isolation (\"Drawbridge\")"
- ],
- "basis": "Scope map 3.12 Must explain; SEP-ISO-01 and 02. The matrix summarises each domain's dependency; each domain's Drawbridge Impact keeps the detail.",
- "slots": [
-  {
-   "id": "S1",
-   "question": "Which directory, time and DNS servers does each host depend on, and are they outside the OT zones?",
-   "requirements": [
-    "SEP-ISO-01"
-   ],
-   "source": {
-    "settings": [
-     "identity.kdc",
-     "time.source",
-     "dns.primary"
-    ]
-   },
-   "search": [
-    "domain controller",
-    "NtpServer"
-   ]
-  },
-  {
-   "id": "S2",
-   "question": "Which patching, monitoring, logging and backup services outside the OT zones does each host depend on?",
-   "requirements": [
-    "SEP-ISO-01"
-   ],
-   "source": {
-    "settings": [
-     "patch.source"
-    ],
-    "flows": {
-     "mechanisms": [
-      "patch management",
-      "monitoring",
-      "log forwarding",
-      "security agent telemetry",
-      "backup agent"
-     ],
-     "status": [
-      "observed",
-      "both"
-     ]
+  "topic": "Isolation",
+  "key": "ISO",
+  "area": "isolation_and_resilience",
+  "section": "isolation and resilience validation",
+  "headings": [
+    "Isolation & Resilience Validation (“Drawbridge”)",
+    "Isolation & Resilience Validation (\"Drawbridge\")",
+    "Isolation and Resilience Validation (Drawbridge)",
+    "Isolation & Resilience Validation",
+    "Isolation (\"Drawbridge\")"
+  ],
+  "basis": "Scope map 3.12 Must explain; SEP-ISO-01 and 02. The matrix summarises each domain's dependency; each domain's Drawbridge Impact keeps the detail.",
+  "slots": [
+    {
+      "id": "S1",
+      "question": "Which directory, time and DNS servers does each host depend on, and are they outside the OT zones?",
+      "requirements": [
+        "SEP-ISO-01"
+      ],
+      "source": {
+        "settings": [
+          "identity.kdc",
+          "time.source",
+          "dns.primary"
+        ]
+      },
+      "search": [
+        "domain controller",
+        "NtpServer"
+      ]
+    },
+    {
+      "id": "S2",
+      "question": "Which patching, monitoring, logging and backup services outside the OT zones does each host depend on?",
+      "requirements": [
+        "SEP-ISO-01"
+      ],
+      "source": {
+        "settings": [
+          "patch.source"
+        ],
+        "flows": {
+          "mechanisms": [
+            "patch management",
+            "monitoring",
+            "log forwarding",
+            "security agent telemetry",
+            "backup agent"
+          ],
+          "status": [
+            "observed",
+            "both"
+          ]
+        }
+      },
+      "search": [
+        "WSUS",
+        "monitoring agent"
+      ],
+      "look_for": [
+        "WSUS",
+        "monitoring",
+        "SCOM",
+        "log forward",
+        "backup",
+        "patch",
+        "outside OT"
+      ]
+    },
+    {
+      "id": "S3",
+      "question": "Which certificates would expire, and which renewals would stop, during a three-month isolation?",
+      "requirements": [
+        "SEP-ISO-01"
+      ],
+      "source": {
+        "settings": [
+          "cert.machine"
+        ]
+      },
+      "search": [
+        "NotAfter"
+      ]
+    },
+    {
+      "id": "S4",
+      "question": "Which application functions keep running inside the zone when IT is cut off, and for how long?",
+      "requirements": [
+        "SEP-ISO-01"
+      ],
+      "source": {},
+      "search": [
+        "isolation",
+        "standalone"
+      ],
+      "look_for": [
+        "isolation",
+        "standalone",
+        "keeps running",
+        "inside OT",
+        "drawbridge"
+      ]
+    },
+    {
+      "id": "S5",
+      "question": "Which manual processes replace the automated IT/OT interactions, and what thresholds trigger isolation?",
+      "requirements": [
+        "SEP-ISO-02"
+      ],
+      "source": {},
+      "search": [
+        "manual process",
+        "threshold"
+      ],
+      "look_for": [
+        "manual process",
+        "manual procedure",
+        "workaround",
+        "fallback procedure",
+        "operating procedure",
+        "manual operation"
+      ]
+    },
+    {
+      "id": "S6",
+      "question": "Is there a documented isolation plan, and has it been tested?",
+      "requirements": [
+        "SEP-ISO-01"
+      ],
+      "source": {},
+      "search": [
+        "DR test"
+      ],
+      "look_for": [
+        "isolation plan",
+        "DR test",
+        "disaster recovery",
+        "tested",
+        "runbook",
+        "failover test"
+      ]
     }
-   },
-   "search": [
-    "WSUS",
-    "monitoring agent"
-   ]
-  },
-  {
-   "id": "S3",
-   "question": "Which certificates would expire, and which renewals would stop, during a three-month isolation?",
-   "requirements": [
-    "SEP-ISO-01"
-   ],
-   "source": {
-    "settings": [
-     "cert.machine"
-    ]
-   },
-   "search": [
-    "NotAfter"
-   ]
-  },
-  {
-   "id": "S4",
-   "question": "Which application functions keep running inside the zone when IT is cut off, and for how long?",
-   "requirements": [
-    "SEP-ISO-01"
-   ],
-   "source": {},
-   "search": [
-    "isolation",
-    "standalone"
-   ]
-  },
-  {
-   "id": "S5",
-   "question": "Which manual processes replace the automated IT/OT interactions, and what thresholds trigger isolation?",
-   "requirements": [
-    "SEP-ISO-02"
-   ],
-   "source": {},
-   "search": [
-    "manual process",
-    "threshold"
-   ]
-  },
-  {
-   "id": "S6",
-   "question": "Is there a documented isolation plan, and has it been tested?",
-   "requirements": [
-    "SEP-ISO-01"
-   ],
-   "source": {},
-   "search": [
-    "DR test"
-   ]
-  }
- ]
+  ]
 }

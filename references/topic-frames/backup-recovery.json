@@ -1,156 +1,180 @@
 {
- "topic": "Backup & Recovery",
- "key": "BAK",
- "area": "backup_and_recovery",
- "section": "backup and recovery",
- "headings": [
-  "Backup & Recovery",
-  "Backup and Recovery"
- ],
- "basis": "Scope map 3.11 Must explain; SEP-BAK-01 and 02.",
- "slots": [
-  {
-   "id": "S1",
-   "question": "What is backed up (databases, hosts, application data) and by which tool?",
-   "requirements": [
-    "SEP-BAK-01"
-   ],
-   "source": {
-    "settings": [
-     "agent.backup",
-     "storage.database"
-    ]
-   },
-   "search": [
-    "Veeam"
-   ]
-  },
-  {
-   "id": "S2",
-   "question": "Which system collects the backups, from which zone, and which side opens the connection?",
-   "requirements": [
-    "SEP-BAK-01"
-   ],
-   "source": {
-    "flows": {
-     "mechanisms": [
-      "backup agent"
-     ],
-     "status": [
-      "observed",
-      "both",
-      "declared"
-     ]
+  "topic": "Backup & Recovery",
+  "key": "BAK",
+  "area": "backup_and_recovery",
+  "section": "backup and recovery",
+  "headings": [
+    "Backup & Recovery",
+    "Backup and Recovery"
+  ],
+  "basis": "Scope map 3.11 Must explain; SEP-BAK-01 and 02.",
+  "slots": [
+    {
+      "id": "S1",
+      "question": "What is backed up (databases, hosts, application data) and by which tool?",
+      "requirements": [
+        "SEP-BAK-01"
+      ],
+      "source": {
+        "settings": [
+          "agent.backup",
+          "storage.database"
+        ]
+      },
+      "search": [
+        "Veeam"
+      ]
+    },
+    {
+      "id": "S2",
+      "question": "Which system collects the backups, from which zone, and which side opens the connection?",
+      "requirements": [
+        "SEP-BAK-01"
+      ],
+      "source": {
+        "flows": {
+          "mechanisms": [
+            "backup agent"
+          ],
+          "status": [
+            "observed",
+            "both",
+            "declared"
+          ]
+        }
+      },
+      "search": [
+        "backup server",
+        "agentService"
+      ],
+      "look_for": [
+        "backup server",
+        "backup agent",
+        "agentService",
+        "backup connection",
+        "PowerProtect",
+        "Veeam"
+      ]
+    },
+    {
+      "id": "S3",
+      "question": "Under whose accounts does backup run, and are they privileged corporate IT accounts?",
+      "requirements": [
+        "SEP-BAK-01"
+      ],
+      "source": {
+        "settings": [
+          "agent.backup_account"
+        ]
+      },
+      "search": [
+        "backup account",
+        "Log on as a service"
+      ]
+    },
+    {
+      "id": "S4",
+      "question": "How often do backups run, where are the copies kept, and do recent jobs succeed?",
+      "requirements": [
+        "SEP-BAK-01"
+      ],
+      "source": {},
+      "search": [
+        "backup job",
+        "retention"
+      ],
+      "look_for": [
+        "backup job",
+        "backup schedule",
+        "retention",
+        "successful backup",
+        "last backup",
+        "copies"
+      ]
+    },
+    {
+      "id": "S5",
+      "question": "Has a restore been proven, and could the system be rebuilt from offline, OT-held, known-good copies alone?",
+      "requirements": [
+        "SEP-BAK-02"
+      ],
+      "source": {},
+      "search": [
+        "restore test",
+        "offline copy"
+      ],
+      "look_for": [
+        "restore test",
+        "restore",
+        "offline copy",
+        "known-good",
+        "rebuild",
+        "recovery test"
+      ]
     }
-   },
-   "search": [
-    "backup server",
-    "agentService"
-   ]
-  },
-  {
-   "id": "S3",
-   "question": "Under whose accounts does backup run, and are they privileged corporate IT accounts?",
-   "requirements": [
-    "SEP-BAK-01"
-   ],
-   "source": {
-    "settings": [
-     "agent.backup_account"
-    ]
-   },
-   "search": [
-    "backup account",
-    "Log on as a service"
-   ]
-  },
-  {
-   "id": "S4",
-   "question": "How often do backups run, where are the copies kept, and do recent jobs succeed?",
-   "requirements": [
-    "SEP-BAK-01"
-   ],
-   "source": {},
-   "search": [
-    "backup job",
-    "retention"
-   ]
-  },
-  {
-   "id": "S5",
-   "question": "Has a restore been proven, and could the system be rebuilt from offline, OT-held, known-good copies alone?",
-   "requirements": [
-    "SEP-BAK-02"
-   ],
-   "source": {},
-   "search": [
-    "restore test",
-    "offline copy"
-   ]
+  ],
+  "practice": {
+    "SEP-BAK-01": {
+      "needs": [
+        {
+          "kind": "document",
+          "examples": [
+            "backup procedure",
+            "backup schedule",
+            "retention policy"
+          ]
+        },
+        {
+          "kind": "process",
+          "examples": [
+            "backup job monitoring",
+            "failed-job action",
+            "retention review"
+          ]
+        },
+        {
+          "kind": "owner",
+          "roles": [
+            "application owner",
+            "backup service owner"
+          ]
+        }
+      ],
+      "minimum_for_met": [
+        "documented"
+      ],
+      "cap_without": "Partially Met"
+    },
+    "SEP-BAK-02": {
+      "needs": [
+        {
+          "kind": "document",
+          "examples": [
+            "restore procedure",
+            "test record"
+          ]
+        },
+        {
+          "kind": "process",
+          "examples": [
+            "test cadence",
+            "result review",
+            "failed-test action"
+          ]
+        },
+        {
+          "kind": "owner",
+          "roles": [
+            "application owner",
+            "backup service owner"
+          ]
+        }
+      ],
+      "minimum_for_met": [
+        "documented",
+        "operational"
+      ],
+      "cap_without": "Partially Met"
+    }
   }
- ],
- "practice": {
-  "SEP-BAK-01": {
-   "needs": [
-    {
-     "kind": "document",
-     "examples": [
-      "backup procedure",
-      "backup schedule",
-      "retention policy"
-     ]
-    },
-    {
-     "kind": "process",
-     "examples": [
-      "backup job monitoring",
-      "failed-job action",
-      "retention review"
-     ]
-    },
-    {
-     "kind": "owner",
-     "roles": [
-      "application owner",
-      "backup service owner"
-     ]
-    }
-   ],
-   "minimum_for_met": [
-    "documented"
-   ],
-   "cap_without": "Partially Met"
-  },
-  "SEP-BAK-02": {
-   "needs": [
-    {
-     "kind": "document",
-     "examples": [
-      "restore procedure",
-      "test record"
-     ]
-    },
-    {
-     "kind": "process",
-     "examples": [
-      "test cadence",
-      "result review",
-      "failed-test action"
-     ]
-    },
-    {
-     "kind": "owner",
-     "roles": [
-      "application owner",
-      "backup service owner"
-     ]
-    }
-   ],
-   "minimum_for_met": [
-    "documented",
-    "operational"
-   ],
-   "cap_without": "Partially Met"
-  }
- }
 }

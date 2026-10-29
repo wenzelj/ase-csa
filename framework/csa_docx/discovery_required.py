@@ -113,8 +113,9 @@ def build(workspace: Path, legacy_docx: Path | None = None) -> dict:
             possibly_answered.append({"dr_id": it["dr_id"], "verdict": look["verdict"], "evidence_ids": look["evidence_ids"]})
             continue
         how = answer_from.get(it["reqs"][0], "") if it["reqs"] else ""
+        owner = ", ".join(look.get("owners") or []) or "To be assigned"       # the gap names who can confirm it
         cells = [it["dr_id"], ", ".join(it["reqs"]), it["text"], it["fact"], _rating_impact(it["reqs"] or ["requirement"]),
-                 "To be assigned", how, "Open"]
+                 owner, how, "Open"]
         rows.append(([_cell(c) for c in cells], _evidence_id(workspace, work, it, look["searched"])))
 
     # Practice questions are already requirement-bound gaps. They remain until an accepted observation answers them.

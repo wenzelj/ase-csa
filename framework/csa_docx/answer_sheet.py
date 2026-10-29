@@ -3,7 +3,7 @@
     ## B1 SEP-TIME-01
     Facts:
     - Every scoped host synchronises from an enterprise NTP server. (E-063) {observed; all 12 hosts}
-    Unknown: whether a fallback source exists during isolation.
+    QUESTION: whether a fallback source exists during isolation.
     Rating: Not Met
     Rating reason: the requirement asks for an OT-resident source; none was evidenced.
 
@@ -37,7 +37,7 @@ import sys
 from pathlib import Path
 
 _BLOCK = re.compile(r"^##\s+([BCF]\d+)\b[^\n]*$", re.M)
-_FIELD = re.compile(r"^(Facts|Summary|Story|Text|Unknown|Rating reason|Rating|Rows|Bullets|Search|Keep|Answer|Dropped|Covers|None):\s*(.*)$", re.I)
+_FIELD = re.compile(r"^(Facts|Summary|Story|Text|Unknown|Question|Rating reason|Rating|Rows|Bullets|Search|Keep|Answer|Dropped|Covers|None):\s*(.*)$", re.I)
 _PFX = r"(?:[a-z0-9][a-z0-9-]*:)?"                # another project's row: utcdtc:E-041 (estate member or system sibling)
 _ID = r"(?:" + _PFX + r"E-\d+|K-[0-9A-F]{6})"
 _FACT = re.compile(r"^[-*]\s+(?P<text>.+?)\s*(?:\((?P<ids>" + _ID + r"(?:\s*,\s*" + _ID + r")*)\))?\s*(?:\{(?P<meta>[^}]*)\})?\s*$")
@@ -65,13 +65,13 @@ def parse(text: str) -> dict[str, dict]:
         b = {"facts": [], "unknown": [], "rating": "", "rating_reason": "", "rows": [], "bullets": [],
              "search": [], "keep": "", "answer": "", "summary": "", "story": "", "text": "",
              "dropped": [], "none": "", "covers": [], "raw": body.strip()}
-        if m.group(1).startswith("F"):          # the analysis frame: one line per slot, blocks or Unknown:
+        if m.group(1).startswith("F"):          # the analysis frame: one line per slot, blocks or QUESTION:
             b["frame"] = {}
             for line in body.splitlines():
                 fm = re.match(r"^\s*[-*]?\s*(S\d+)\s*:\s*(.+?)\s*$", line)
                 if fm:
                     b["frame"][fm.group(1)] = fm.group(2)
-                    u = re.match(r"(?i)unknown:\s*(.+)$", fm.group(2))
+                    u = re.match(r"(?i)(?:unknown|question):\s*(.+)$", fm.group(2))
                     if u:
                         b["unknown"].append(u.group(1).strip())
             out[m.group(1)] = b
@@ -85,6 +85,8 @@ def parse(text: str) -> dict[str, dict]:
             if f:
                 field = f.group(1).lower()
                 val = f.group(2).strip()
+                if field == "question":          # QUESTION: <what to ask to learn the missing fact> is the QUESTION: line
+                    field = "unknown"
                 if field == "unknown" and val:
                     b["unknown"].append(val)
                 elif field == "dropped" and val:
@@ -133,6 +135,7 @@ def parse(text: str) -> dict[str, dict]:
                 b["search"].append(s.lstrip("-* "))
             elif field in ("rating reason",):
                 b["rating_reason"] = (b["rating_reason"] + " " + s).strip()
+        b["unknown"] = [q for u in b["unknown"] for q in split_questions(u)]       # one question per QUESTION: line
         if b["story"] and not b["text"]:
             b["text"] = b["story"]          # existing prose-quality checks apply to the detailed story
         out[m.group(1)] = b
@@ -146,8 +149,8 @@ def load_matrix(path: Path | None) -> dict[str, dict]:
     and system siblings, csa_docx.estate.citable_projects). Keys are upper case."""
     if not path or not Path(path).is_file():
         return {}
-    from csa_docx import modelstore
-    out = {r["evidence_id"].upper(): r for r in modelstore.read_csv(Path(path))}
+    from csa_docx import evidence_live
+    out = {r["evidence_id"].upper(): r for r in evidence_live.get_verified_evidence(Path(path))}
     try:
         from csa_docx.estate import peer_rows
     except ImportError:
@@ -234,11 +237,28 @@ HARD_CODES = {"CROSS_PROJECT_ONLY", "NOTE_TOO_LONG", "NOTE_NONE_AND_TEXT", "NOTE
 #: findings or kept facts silently lost. Wording, naming and style findings are warnings, and so is naming another
 #: application (IAMPS consumes what this system produces: the text may say so).
 RELAXED_HARD = {"CROSS_PROJECT_ONLY", "QUESTION_MISSING", "EMPTY_ANSWER", "FACT_NO_EVIDENCE", "UNKNOWN_EVIDENCE",
-                "RATING_INVALID", "COLUMNS", "ROW_WIDTH", "NO_ROWS", "BACKGROUND_AS_EVIDENCE", "BACKGROUND_MIXED",
-                "BACKGROUND_NOT_ON_CARD", "BACKGROUND_ALONE", "ZONE_CONTRADICTED", "ISOLATION_WRONG_SIDE",
-                "ATTEMPT_AS_ESTABLISHED", "SLOT_NOT_ANSWERED", "CAPTURE_DROPPED", "SUMMARY_MISSING", "STORY_MISSING",
-                "SUMMARY_TOO_LONG", "SUMMARY_TOO_MANY_SENTENCES", "SUMMARY_REPEATS_STORY", "STORY_AND_TEXT",
-                "DRAWBRIDGE_CAUSAL_SCOPE"}
+                "RATING_INVALID", "COLUMNS", "ROW_WIDTH", "NO_ROWS", "BACKGROUND_AS_EVIDENCE",
+                "ZONE_CONTRADICTED", "ISOLATION_WRONG_SIDE", "ATTEMPT_AS_ESTABLISHED"}
+#: Of those, the ones the document cannot be written around: the answer cannot be rendered, or cites evidence that does
+#: not exist. Any other hard error left after the fix round is applied anyway and listed in RESULT.md.
+FATAL_CODES = {"NO_SHEET", "QUESTION_MISSING", "EMPTY_ANSWER", "FACT_NO_EVIDENCE", "UNKNOWN_EVIDENCE", "RATING_INVALID",
+               "COLUMNS", "ROW_WIDTH", "NO_ROWS"}
+
+#: Warnings that mean the text may be wrong or incomplete (a fact lost, misplaced or unsupported, a finding the card
+#: says to address left out), as against wording and layout. They are listed first in RESULT.md, and a block that is
+#: rewritten for any reason is sent its content warnings too.
+CONTENT_CODES = {"PART_MISATTRIBUTED", "PART_NOT_NAMED", "SLOT_NOT_ANSWERED", "SOURCE_DOWNGRADE", "CAPTURE_DROPPED",
+                 "CAPTURE_LEFT_OUT", "EVIDENCE_DROPPED", "SUBJECT_NOT_THIS_SYSTEM", "FLOW_NOT_COVERED",
+                 "FRAME_UNCOVERED", "CITATION_OFF_TOPIC", "GAP_AS_FACT", "UNKNOWN_BUNDLED", "DIGEST_UNUSED", "BASIS_NOT_OBSERVED", "ZONE_CONTRADICTED",
+                 "ATTEMPT_AS_ESTABLISHED", "ISOLATION_WRONG_SIDE",
+                 "PRACTICE_NOT_ADDRESSED", "PRACTICE_ATTRIBUTION_DROPPED", "APPLICATION_ZONE_CLAIM", "QUESTION_BUNDLED",
+                 "CROSS_PROJECT_ONLY", "BACKGROUND_AS_EVIDENCE", "FACT_OFF_TOPIC", "DRAWBRIDGE_FUNCTION_MISSING"}
+
+
+def tier_of(finding: dict) -> str:
+    """blocking (an error), content (a warning about what the text says) or wording (everything else)."""
+    return "blocking" if finding.get("level") == "ERROR" else "content" if finding.get("code") in CONTENT_CODES else "wording"
+
 
 # counts and totals of hosts ("9 of 12", "all 12 captured hosts", "nine hosts", "two RevViewer Jump Hosts"): CSA text
 # names the role groups instead. "stratum 5 hosts" and port numbers are not counts.
@@ -255,7 +275,7 @@ def totals_in(text: str) -> str | None:
 
 def frame_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
     """FRAME_UNCOVERED: every slot of the card's analysis frame needs a line in the F1 block naming an answered
-    block, or Unknown:. FLOW_NOT_COVERED (warning): a cross-zone data flow the frame found is named nowhere."""
+    block, or QUESTION:. FLOW_NOT_COVERED (warning): a cross-zone data flow the frame found is named nowhere."""
     fr = card.get("frame") or {}
     slots = fr.get("slots") or []
     if not slots:
@@ -266,7 +286,7 @@ def frame_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
         slots = []                  # the requirement blocks answer the slots themselves: the F1 block is optional
     elif fb is None:
         return [_f("ERROR", "FRAME_UNCOVERED", None, f"no '## F1 Analysis frame' block: give every slot of the card's analysis "
-                   f"frame ({', '.join(slots)}) a line naming the blocks that answer it, or Unknown: <what is not known>")]
+                   f"frame ({', '.join(slots)}) a line naming the blocks that answer it, or QUESTION: <what is not known>")]
     bad = []
     for s in slots:
         v = (fb.get("frame") or {}).get(s, "")
@@ -282,7 +302,7 @@ def frame_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
             bad.append(f"{s} names no answered block ({v[:40]})")
     if bad:
         out.append(_f("ERROR", "FRAME_UNCOVERED", "F1", "; ".join(bad) + ": name the B blocks that answer each slot, "
-                      "or write Unknown: <what is not known>"))
+                      "or write QUESTION: <what is not known>"))
     out += flow_coverage(sheet, card)
     out += zone_contradictions(sheet, card)
     out += rating_floor(sheet, card)
@@ -372,6 +392,10 @@ def drawbridge_topic_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
     return out
 
 
+from csa_docx.topic_fit import topic_checks  # noqa: E402
+from csa_docx.drawbridge_fit import function_checks  # noqa: E402
+
+
 def part_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
     """The system-part checks (card "parts", from csa-work/parts.json):
     PART_NOT_NAMED (an error when the frame is strict, else a warning): a requirement's Facts name every part the card
@@ -454,7 +478,7 @@ def part_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
             if _HEDGE.search(s):
                 out.append(_f("WARN", "DRAWBRIDGE_HEDGE", qid,
                               "say plainly what stops, what keeps working and what it means for operations; where a "
-                              "path's zone is not recorded, say that once in an Unknown: line instead of \"if\" or \"may\" "
+                              "path's zone is not recorded, say that once in an QUESTION: line instead of \"if\" or \"may\" "
                               f"in the Text: \"{s[:140]}\""))
         texts = [b.get("text") or ""] + [f["text"] for f in b["facts"]]
         # one clause at a time: "its telemetry is not cut, but its paths into OT are lost" says the loss of one thing only
@@ -667,7 +691,7 @@ def readability_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
                     out.append(_f("WARN", "ENDPOINT_UNDERSTATED", q["id"],
                                   "the sentence understates an end the register already names or zones: "
                                   + "; ".join(named[:4]) + " - name it as the register does, or say what is still "
-                                  "unknown in an Unknown: line"))
+                                  "unknown in an QUESTION: line"))
 
     # NARRATIVE_NEW_ENDPOINT: narrative Text names a part no requirement block's Facts mention
     all_facts = " ".join(req_facts_text.values())
@@ -852,7 +876,7 @@ def zone_contradictions(sheet: dict[str, dict], card: dict) -> list[dict]:
 
 def flow_coverage(sheet: dict[str, dict], card: dict) -> list[dict]:
     """FLOW_NOT_COVERED (an error when the frame is "strict", else a warning): every flow that crosses the OT boundary (the frame's coverage targets) is cited in a
-    requirement or narrative block (Drawbridge Impact), or named on an Unknown: line there; a table row alone does not
+    requirement or narrative block (Drawbridge Impact), or named on an QUESTION: line there; a table row alone does not
     cover it. NOT_OT_FLOW_IN_REQUIREMENT (warning): a requirement block cites a flow with no OT end, which is context."""
     fr = card.get("frame") or {}
     kinds = {q["id"]: q["kind"] for q in card.get("questions", [])}
@@ -881,8 +905,8 @@ def flow_coverage(sheet: dict[str, dict], card: dict) -> list[dict]:
 
 def slot_answers(sheet: dict[str, dict], fr: dict, fb: dict | None = None) -> list[dict]:
     """SLOT_NOT_ANSWERED (an error when the frame is "strict", else a warning): each requirement block cites the evidence of every frame finding the card says it must
-    address, or has an Unknown: line naming it (one of its hosts, addresses or evidence IDs). A slot the captures do
-    not answer needs an Unknown: line in the block (or on its F1 line)."""
+    address, or has an QUESTION: line naming it (one of its hosts, addresses or evidence IDs). A slot the captures do
+    not answer needs an QUESTION: line in the block (or on its F1 line)."""
     out = []
     level = "ERROR" if fr.get("strict") else "WARN"      # a frame tuned for its topic ("strict": true) blocks; others warn
     f1 = (fb or {}).get("frame") or {}
@@ -906,9 +930,9 @@ def slot_answers(sheet: dict[str, dict], fr: dict, fb: dict | None = None) -> li
             listed = "; ".join(f"{x['slot']} {x['text'][:110]}" + (f" ({', '.join(x['ids'][:3])})" if x["ids"] else "")
                                for x in miss[:6])
             out.append(_f(level, "SLOT_NOT_ANSWERED", qid,
-                          f"{len(miss)} finding(s) the card lists under 'Must address' are neither cited nor raised as Unknown: "
+                          f"{len(miss)} finding(s) the card lists under 'Must address' are neither cited nor raised as QUESTION: "
                           f"{listed}{' …' if len(miss) > 6 else ''}. Cite each one's evidence in this block, or add an "
-                          "Unknown: line naming it"))
+                          "QUESTION: line naming it"))
     return out
 
 
@@ -986,7 +1010,23 @@ def table_covers(claim: str, card: dict | None) -> bool:
     hosts = set(_HOSTTOKEN.findall(claim or ""))
     about = hosts & row_hosts
     given = (hosts - about) | set(_IPV4.findall(claim or ""))
-    return bool(about) and bool(given & values) and not (hosts - row_hosts - values)
+    if about and given & values and not (hosts - row_hosts - values):
+        return True
+    # a setting stated for hosts: "Fallback time peer on A, B and C: None". It is covered when every host is a table row
+    # and the value is in those rows' cells or in the table's common line ("operate at stratum 5").
+    m = re.match(r"^[^:]+?\s+on\s+(?P<hosts>[^:]+):\s*(?P<value>[^:]+?)\s*$", (claim or "").strip())
+    if not m:
+        return False
+    named = set(_HOSTTOKEN.findall(m["hosts"]))
+    if not named or named - row_hosts:
+        return False
+    value = re.sub(r"\s*\([^)]*\)", "", m["value"]).strip().lower()
+    if not value:
+        return False
+    cells = " | ".join(c for t in tables for r in t.get("rows", []) if named & {h.rstrip("\u2020\u2021") for h in r.get("hosts", [])}
+                       for c in r.get("cells", []))
+    common = " ".join(t.get("common", "") for t in tables)
+    return any(re.search(rf"(?<![\w.]){re.escape(value)}(?![\w])", s.lower()) for s in (cells, common))
 
 
 def regression(old: dict[str, dict], new: dict[str, dict], matrix: dict[str, dict] | None = None,
@@ -1002,9 +1042,13 @@ def regression(old: dict[str, dict], new: dict[str, dict], matrix: dict[str, dic
             continue
         o_ids, n_ids = block_ids(ob), block_ids(nb)
         dropped = sorted(o_ids - n_ids)
-        if dropped:
+        # a captured setting the role table states is not lost by moving out of the prose or the rows
+        in_table = {i for i in dropped if source_class(matrix.get(i)) == "capture"
+                    and matrix.get(i, {}).get("status") == "VERIFIED" and table_covers(matrix.get(i, {}).get("claim", ""), card)}
+        if dropped and set(dropped) - in_table:
+            gone = [i for i in dropped if i not in in_table]
             out.append(_f("WARN", "EVIDENCE_DROPPED", qid,
-                          f"{len(dropped)} evidence ID(s) cited before are no longer cited: {', '.join(dropped[:8])}"))
+                          f"{len(gone)} evidence ID(s) cited before are no longer cited: {', '.join(gone[:8])}"))
         if len(nb["rows"]) < len(ob["rows"]):
             out.append(_f("WARN", "ROWS_DROPPED", qid,
                           f"the table has {len(nb['rows']) - 1} row(s), the answer it replaces had {len(ob['rows']) - 1}"))
@@ -1035,9 +1079,9 @@ def regression(old: dict[str, dict], new: dict[str, dict], matrix: dict[str, dic
                           f"the fact it supports, or add 'Dropped: {lost[0]} <why it no longer applies>'"
                           + (f". The fact was: \"{said[0][:200]}\"" if said else "")))
         cap = lambda ids: sum(1 for i in ids if source_class(matrix.get(i)) == "capture")
-        if matrix and cap(n_ids) < cap(o_ids):
+        if matrix and cap(n_ids) < cap(o_ids - in_table):
             out.append(_f("WARN", "SOURCE_DOWNGRADE", qid,
-                          f"capture-sourced citations fell from {cap(o_ids)} to {cap(n_ids)}: facts that were observed in the "
+                          f"capture-sourced citations fell from {cap(o_ids - in_table)} to {cap(n_ids)}: facts that were observed in the "
                           "captures are now supported by documents or the previous assessment"))
     return out
 
@@ -1295,11 +1339,20 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
             if q["kind"] in ("requirement", "narrative", "findings", "note") and _IP.search(fact["text"]):
                 findings.append(_f("WARN", "IP_IN_PROSE", qid, f"address in a prose fact: name the host if it has a name; an address alone is right only where no host name is known: {fact['text'][:80]}"))
         findings += _background_checks(qid, q, b, background)
+        for f_ in b["facts"]:
+            if q["kind"] in ("requirement", "narrative", "findings", "note") and _GAP_AS_FACT.search(f_["text"]):
+                findings.append(_f("WARN", "GAP_AS_FACT", qid, "the Fact only says the evidence does not answer something: "
+                                   "write it as a QUESTION: line that would obtain the answer, and keep the Facts for what the "
+                                   f"evidence does show: {f_['text'][:110]}"))
         for u in b["unknown"]:
+            if bundled_unsplit(u):
+                findings.append(_f("WARN", "QUESTION_BUNDLED", qid, "one QUESTION: line asks more than one thing and leans on "
+                                   "words like \"it\" or \"those\": write one self-contained QUESTION: line per question, "
+                                   f"naming what each is about: {u[:110]}"))
             n = len(_QWORD.findall(_QRELATIVE.sub(" ", u)))
             if n >= 3:
-                findings.append(_f("ERROR", "UNKNOWN_BUNDLED", qid, f"one Unknown: line holds {n} questions: write one "
-                                   f"Unknown: line per question, so each becomes its own Discovery Required item: {u[:90]}"))
+                findings.append(_f("ERROR", "UNKNOWN_BUNDLED", qid, f"one QUESTION: line holds {n} questions: write one "
+                                   f"QUESTION: line per question, so each becomes its own Discovery Required item: {u[:90]}"))
         if q["kind"] in ("requirement", "narrative", "findings", "note"):
             # no semicolons in anything that becomes document prose: Text, the facts it is built from, bullets
             for where, s in [("Summary", b.get("summary") or ""), ("Text", b.get("text") or "")] + [("fact", f["text"]) for f in b["facts"]] + \
@@ -1471,6 +1524,8 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
     findings += practice_checks(sheet, card)
     findings += subject_checks(sheet, card)
     findings += drawbridge_topic_checks(sheet, card)
+    findings += topic_checks(sheet, card, matrix, _f)
+    findings += function_checks(sheet, card, _f)
     findings += example_checks({k: v for k, v in sheet.items() if not k.startswith("F")})
     for qid in sheet:
         if qid not in qs and not qid.startswith("F"):
@@ -1481,6 +1536,8 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
             if x["level"] == "ERROR" and x["code"] not in hard:
                 x["level"] = "WARN"
     errors = [x for x in findings if x["level"] == "ERROR"]
+    for x in findings:
+        x["tier"] = tier_of(x)
     status = "NEEDS_SEARCH" if searches and not errors else "ERROR" if errors else "OK"
     return {"status": status, "errors": len(errors), "warnings": len(findings) - len(errors),
             "findings": findings, "searches": searches}
@@ -1580,7 +1637,7 @@ def render_records(sheet: dict[str, dict], card: dict, node: dict, section: str,
             continue
         p = parts[q["part"]] if q.get("part") is not None and q["part"] < len(parts) else {}
         facts = [f"- [{q['id']}] {f['text']} ({', '.join(f['ids'])}) {{basis: {f['basis']}; scope: {f['scope'] or 'see evidence'}}}"
-                 for f in b["facts"]] + [f"- Unknown: {u}" for u in b["unknown"][:1]]
+                 for f in b["facts"]] + [f"- QUESTION: {u}" for u in b["unknown"][:1]]
         ids = sorted({i for f in b["facts"] for i in f["ids"] if _EID.fullmatch(i)})
         bg = sorted({i for f in b["facts"] for i in f["ids"] if _KID.fullmatch(i)})
         why = (f"Evidence {', '.join(ids)}." if ids else "No evidence row; see the open question.") + (
@@ -1595,8 +1652,8 @@ def render_records(sheet: dict[str, dict], card: dict, node: dict, section: str,
                 observed = no_ids(" ".join(b["summary"].split()))
             elif b.get("text"):
                 observed = no_ids(" ".join(b["text"].split()))
-            elif b["unknown"]:
-                observed += f" Not established: {b['unknown'][0].rstrip('.')}."
+            if b["unknown"]:
+                observed += " " + question_lines(b["unknown"])
             if not stories_only:
                 eid = record(f"{q['req_id']} current state and rating", f"{p['table']}-R{req['row']}",
                              (p.get("row_texts") or [""] * req["row"])[req["row"] - 2] if len(p.get("row_texts", [])) >= req["row"] - 1 else q["req_id"],
@@ -1628,8 +1685,8 @@ def render_records(sheet: dict[str, dict], card: dict, node: dict, section: str,
             text = " ".join(_sentence(f) for f in b["facts"])
             if b.get("text"):
                 text = "\n".join(no_ids(" ".join(par.split())) for par in b["text"].split("\n\n") if par.strip())
-            elif b["unknown"]:
-                text += f" Not established: {b['unknown'][0].rstrip('.')}."
+            if b["unknown"]:
+                text += " " + question_lines(b["unknown"])
             if not text.strip():
                 continue
             eid = record(f"{p.get('facet') or node['title']}", p.get("pid", node["hid"] + "-P1"), p.get("current", ""),
@@ -1836,7 +1893,7 @@ def _lead_words(s: str) -> set[str]:
 
 
 def unknown_leads(sheet: dict[str, dict], matrix: dict[str, dict], limit: int = 4) -> list[dict]:
-    """Matrix rows that may already answer an Unknown: line: [{question, unknown, rows: [{id, status, claim}]}].
+    """Matrix rows that may already answer an QUESTION: line: [{question, unknown, rows: [{id, status, claim}]}].
     A row is a lead when it is not cited in the block and either names the same host or address as the Unknown and
     shares a content word with it, or shares at least three content words with it. A NOT_FOUND row counts: it is the
     evidenced "no such record", which is a finding the block can state. Nothing here is inferred; the rows are only
@@ -1866,17 +1923,17 @@ def unknown_leads(sheet: dict[str, dict], matrix: dict[str, dict], limit: int = 
 
 
 def leads_text(leads: list[dict]) -> str:
-    lines = ["Evidence rows that may already answer an Unknown: line. Read each row. If it answers the question, state "
-             "what it shows as a fact, cite its E- ID with its basis, and keep an Unknown: line only for the part it "
+    lines = ["Evidence rows that may already answer an QUESTION: line. Read each row. If it answers the question, state "
+             "what it shows as a fact, cite its E- ID with its basis, and keep an QUESTION: line only for the part it "
              "does not answer (say what the row states is missing, e.g. a name that was not captured). A NOT_FOUND row "
-             "is an evidenced absence: state it as one. If a row does not answer, leave the Unknown: line as it is. "
+             "is an evidenced absence: state it as one. If a row does not answer, leave the QUESTION: line as it is. "
              "When a row says what a source describes the subject as, state that as a documented fact in the source's "
-             "own words (\"described in the earlier assessment as ...\") and keep the Unknown: only for what the row "
+             "own words (\"described in the earlier assessment as ...\") and keep the QUESTION: only for what the row "
              "says was not captured. "
              "Do not carry a count or total of hosts from a row (\"twelve hosts\", \"eleven hosts\"): name the role groups or "
              "the hosts instead (NO_TOTALS). Change nothing else in the sheet.", ""]
     for l in leads:
-        lines.append(f"- {l['question']} Unknown: {l['unknown']}")
+        lines.append(f"- {l['question']} QUESTION: {l['unknown']}")
         lines += [f"  - {r['id']} {r['status']}: {r['claim']}" for r in l["rows"]]
     return "\n".join(lines) + "\n"
 
@@ -1901,6 +1958,106 @@ def sheet_hash_drift(sheet_path: Path) -> dict | None:
               "the document was last written from the recorded sheet")
 
 
+_WHO_CONFIRMS = re.compile(r",?\s+(?:and|which|who)\s+(?:the\s+)?[^,?]{0,80}?\s*(?:could|can|would)\s+(?:confirm|answer|say|provide)(?:\s+(?:it|this|that))?\s*$", re.I)
+
+
+#: Where one QUESTION: line holds two questions: "What is the zone of X, and what data does it read?". Split at a comma
+#: and a question word or auxiliary ("..., and is it ..."), at "and" and a question word, at a semicolon or a second
+#: sentence. A relative ("hosts that are in OT and are not patched") has no comma before "and", so it is left whole.
+_Q_SPLIT = re.compile(
+    r"\?\s+(?=[A-Z])|;\s+|\.\s+(?=Also:?\s)|\s+Also:\s+"
+    r"|,\s+and\s+(?=(?:what|which|who|whom|how|when|where|why|whether|is|are|was|were|does|do|did|can|could|would|will|has|have)\b)"
+    r"|\s+and\s+(?=(?:what|which|who|whom|how|when|where|why)\b)", re.I)
+
+
+#: A Fact that only says a source does not answer something ("The discovery captures and the supplied documents do not
+#: answer which time connections were observed"): the gap is a question to ask, so it is a QUESTION: line.
+_GAP_AS_FACT = re.compile(
+    r"\b(?:captures?|documents?|evidence|sources?|matrix|index|records?)\b[^.]{0,80}?\b(?:do|does|did)\s+not\s+(?:answer|say|state|show|establish|record)\b"
+    r"[^.]{0,40}?\b(?:which|what|whether|who|how|when|where)\b", re.I)
+
+
+_ANAPHOR = re.compile(r"\b(?:it|its|they|them|their|those|these|that|this|such|the same|there)\b", re.I)
+
+
+def _question_parts(u: str) -> list[str]:
+    parts = [x.strip() for x in _Q_SPLIT.split(" ".join((u or "").split())) if x and x.strip()]
+    out: list[str] = []
+    for x in parts:
+        if out and len(x.split()) < 3:
+            out[-1] = f"{out[-1]} {x}"
+        else:
+            out.append(x)
+    return out or [u]
+
+
+def split_questions(u: str) -> list[str]:
+    """One question per entry. A line that holds two questions is split, unless a later part leans on the first ("what
+    data does it read", "those connections"): cut off, it would no longer say what it asks about. Such a line stays
+    whole and is reported by QUESTION_BUNDLED, so the answer agent writes two self-contained questions."""
+    parts = _question_parts(u)
+    return [u] if any(_ANAPHOR.search(x) for x in parts[1:]) else parts
+
+
+def bundled_unsplit(u: str) -> bool:
+    """True for a QUESTION: line that holds several questions but could not be split safely."""
+    return len(_question_parts(u)) > 1 and len(split_questions(u)) == 1
+
+
+def as_question(u: str) -> str:
+    """A gap written as a statement or a clause becomes a question: 'the zone of X is not recorded' -> 'What is the zone of
+    X?'. A line already written as a question is only tidied. The 'who could confirm it' tail is not part of the question."""
+    u = _WHO_CONFIRMS.sub("", " ".join(u.split()).rstrip(".?! "))
+    m = re.match(r"(?i)the\s+(.+?)\s+(?:is|are|was|were)\s+(?:not|never)\s+(?:recorded|known|established|identified|captured)$", u)
+    if m:
+        u = f"what is the {m[1]}"
+    return (u[:1].upper() + u[1:]).rstrip(".?! ") + "?"
+
+
+def question_lines(unknown: list[str]) -> str:
+    """What the document shows for a gap the evidence does not answer: each as 'QUESTION: <question>?'."""
+    return " ".join("QUESTION: " + as_question(u) for u in unknown[:3] if u.strip())
+
+
+def carry_forward(text: str, card: dict) -> tuple[str, list[str]]:
+    """Deterministic carry-forward: a capture-backed fact the card's "Facts to keep" lists for a block, that the sheet
+    neither cites anywhere nor names on a 'Dropped:' line, is put back as a Facts line (its own wording and evidence).
+    The model never has to repair a lost fact, and a re-answer cannot thin out the evidence. Returns (text, [IDs])."""
+    sheet = parse(text)
+    cited = set().union(*(block_ids(b) for b in sheet.values())) if sheet else set()
+    dropped = dropped_ids(sheet)
+    lines = text.split("\n")
+    marks = [(m.group(1), m.start()) for m in _BLOCK.finditer(text)]
+    back: dict[str, list[str]] = {}
+    for k in card.get("keep", []):
+        b = sheet.get(k["question"])
+        if b is None or b.get("keep"):
+            continue
+        caps = {i.upper() for i in k["capture_ids"]}
+        if caps & (cited | dropped):
+            continue
+        ids = ", ".join(k.get("evidence_ids") or k["capture_ids"])
+        back.setdefault(k["question"], []).append(f"- {k['fact'].strip()} ({ids}) {{observed}}")
+        cited |= caps
+    restored: list[str] = []
+    for qid, new in back.items():
+        head = [i for i, l in enumerate(lines) if re.match(rf"^##\s+{qid}\b", l)][0]
+        end = next((i for i in range(head + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
+        facts = [i for i in range(head + 1, end) if re.match(r"(?i)^facts:", lines[i].strip())]
+        if facts:
+            at = facts[0]
+            j = at + 1
+            while j < end and (lines[j].strip().startswith(("-", "*")) or not lines[j].strip()):
+                if lines[j].strip():
+                    at = j
+                j += 1
+            lines[at + 1:at + 1] = new
+        else:
+            lines[end:end] = ["Facts:"] + new
+        restored += [i for l in new for i in _EID.findall(l)]
+    return "\n".join(lines), restored
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("action", choices=["validate", "parse", "render", "leads"])
@@ -1918,6 +2075,19 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--stories-only", action="store_true",
                     help="render only requirement-story title/body records")
     a = ap.parse_args(argv)
+    if a.action == "validate" and a.draft:
+        txt = a.sheet.read_text(encoding="utf-8")
+        fixed, restored = carry_forward(txt, json.loads(a.card.read_text(encoding="utf-8")))
+        if restored:
+            a.sheet.write_text(fixed, encoding="utf-8")
+            print(f"carried forward {len(restored)} capture fact(s) the answer dropped: {', '.join(restored[:12])}", file=sys.stderr)
+        from csa_docx.sheet_fixes import normalise
+        fixed, notes = normalise(a.sheet.read_text(encoding="utf-8"), json.loads(a.card.read_text(encoding="utf-8")),
+                                 load_matrix(a.matrix))
+        if notes:
+            a.sheet.write_text(fixed, encoding="utf-8")
+            for n in notes:
+                print(f"fixed without the model: {n}", file=sys.stderr)
     sheet = parse(a.sheet.read_text(encoding="utf-8"))
     if a.action == "parse":
         print(json.dumps(sheet, indent=1))

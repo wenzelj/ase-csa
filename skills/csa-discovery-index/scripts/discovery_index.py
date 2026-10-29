@@ -48,7 +48,7 @@ import index_aliases  # noqa: E402
 import index_cites  # noqa: E402
 import index_entities  # noqa: E402
 
-SCHEMA_VERSION = 2   # 2: entities and aliases tables, overlapping chunks
+SCHEMA_VERSION = 3   # 3: porter-stemmed text index (restore = restored = restores), prefix terms (restor*); 2: entities and aliases tables, overlapping chunks
 FRAMEWORK_DIR = Path(__file__).resolve().parents[3]  # .agents
 BASE_DIR = FRAMEWORK_DIR.parent
 INDEX_NAME = "discovery-index.sqlite"
@@ -389,7 +389,7 @@ def has_fts5(con):
 def init_db(con):
     con.executescript(SCHEMA)
     if has_fts5(con):
-        con.execute("CREATE VIRTUAL TABLE IF NOT EXISTS chunks USING fts5(content, tokenize='unicode61')")
+        con.execute("CREATE VIRTUAL TABLE IF NOT EXISTS chunks USING fts5(content, tokenize='porter unicode61')")
         fts = "1"
     else:
         con.execute("CREATE TABLE IF NOT EXISTS chunks(rowid INTEGER PRIMARY KEY, content TEXT)")
@@ -397,6 +397,7 @@ def init_db(con):
     con.executescript(index_aliases.SCHEMA)
     con.execute("INSERT OR REPLACE INTO meta VALUES('fts5', ?)", (fts,))
     con.execute("INSERT OR REPLACE INTO meta VALUES('schema_version', ?)", (str(SCHEMA_VERSION),))
+    con.execute("INSERT OR REPLACE INTO meta VALUES('tokenizer', ?)", ("porter",))
 
 
 # --------------------------------------------------------------------------- build
@@ -919,10 +920,24 @@ def _limit(args):
     return args.limit if args.limit is not None else (25 if getattr(args, "brief", False) else 20)
 
 
+def _term(t):
+    """One FTS term: quoted, and a trailing * left outside the quotes so it is a prefix search (restor*)."""
+    base = t.strip('"')
+    star = base.endswith("*") and len(base) > 2
+    base = base.rstrip("*")
+    return '"' + base.replace('"', '""') + '"' + ("*" if star else "")
+
+
+def loose(word):
+    """How a query word is found in a line of text now that the index stems words: a long plain word is matched by its
+    stem-sized start (restored -> resto, vulnerabilities -> vulnerabilit), a short word or a host or address exactly."""
+    w = word.lower().rstrip("*")
+    return w[:max(4, len(w) - 3)] if len(w) >= 6 and w.isalpha() else w
+
+
 def fts_query(terms, any_mode):
     toks = [t for t in re.findall(r'"[^"]+"|\S+', terms)]
-    quoted = ['"' + t.strip('"').replace('"', '""') + '"' for t in toks]
-    return (" OR " if any_mode else " AND ").join(quoted), [t.strip('"').lower() for t in toks]
+    return (" OR " if any_mode else " AND ").join(_term(t) for t in toks), [t.strip('"').rstrip("*").lower() for t in toks]
 
 
 def unseen_hits(cited, file_id, hits):
@@ -973,10 +988,9 @@ def fts_expanded(terms, any_mode, expansions):
     parts, all_words = [], list(words)
     for t in toks:
         base = t.strip('"')
-        alts = [base] + expansions.get(base.lower(), [])
+        alts = [base] + expansions.get(base.lower().rstrip("*"), [])
         all_words += [a.lower() for a in alts[1:]]
-        parts.append("(" + " OR ".join('"' + a.replace('"', '""') + '"' for a in alts) + ")" if len(alts) > 1
-                     else '"' + base.replace('"', '""') + '"')
+        parts.append("(" + " OR ".join(_term(a) for a in alts) + ")" if len(alts) > 1 else _term(base))
     return (" OR " if any_mode else " AND ").join(parts), words, all_words
 
 
@@ -1010,12 +1024,12 @@ def search_core(con, meta, args):
             m = LINE_TAG.match(line)
             n, line = (int(m.group(1)), line[m.end():]) if m else (r["line_start"] + off, line)
             low = line.lower()
-            if any(w in low for w in words):
+            if any(w in low for w in [loose(x) for x in words]):
                 hits.append((n, line.rstrip()))
         hits = unseen_hits(cited, r["file_id"], hits)     # an overlapped line is cited once
         if not hits:
             continue
-        via = bool(expansions) and not any(w in h[1].lower() for h in hits for w in orig_words)
+        via = bool(expansions) and not any(loose(w) in h[1].lower() for h in hits for w in orig_words)
         per_file[r["file_id"]] = per_file.get(r["file_id"], 0) + 1
         nums = [h[0] for h in hits[:8]]
         excerpt = " | ".join(h[1].strip() for h in hits[:8])

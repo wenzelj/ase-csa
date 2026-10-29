@@ -28,6 +28,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -698,7 +699,7 @@ def cmd_status(a):
         dr = draft_run_state(p, visible) if project_stage(p) == "draft" else None
         if dr:
             st["draft_run"] = dr
-            if dr.get("status") in ("FAILED", "NO_SHEET", "INTERRUPTED", "TIMED_OUT"):
+            if dr.get("status") in ("FAILED", "NO_SHEET", "INTERRUPTED", "TIMED_OUT", "STALLED"):
                 st["stage"] = f"draft {dr['status']} ({dr.get('detail') or 'no detail'})"
                 st["next"] = f"csa answer {visible}"
             elif dr.get("status") == "RUNNING":
@@ -2210,11 +2211,13 @@ def task_cli(verb: str) -> str | None:
     return {k.strip(): v.strip() for k, v in pairs}.get(verb)
 
 
-LAST_MESSAGE: Path | None = None
+_TL = threading.local()
+LAST_MESSAGE: Path | None = None     # per thread: see _TL (parallel answer blocks)
 
 
 def sheet_from_last_message(sheet: Path) -> bool:
     """The agent answered in its final reply instead of writing SHEET: keep that reply as the sheet (from '## B1' on)."""
+    LAST_MESSAGE = getattr(_TL, "last", None)
     if sheet.is_file() or not LAST_MESSAGE or not LAST_MESSAGE.is_file():
         return False
     text = LAST_MESSAGE.read_text(encoding="utf-8", errors="replace")
@@ -2252,6 +2255,24 @@ def repeated_repair_action(signature: tuple, previous: tuple | None, current_cli
 
 
 def launch(p: dict, r: dict, args: list[str], a) -> int:
+    """Run one model call (``_launch``); for an answer or draft call, say where its time went (csa_docx.call_timing)."""
+    began = time.time()
+    _TL.steps = None
+    try:
+        return _launch(p, r, args, a)
+    finally:
+        if r.get("verb") in ("answer", "draft") and not getattr(a, "print", False):
+            try:
+                sys.path.insert(0, str(FRAMEWORK))
+                from csa_docx import call_timing
+                _TL.steps = call_timing.summarise(began - 5)
+                if _TL.steps:
+                    print(f"{C['d']}{call_timing.line(_TL.steps)}{C['0']}", file=sys.stderr, flush=True)
+            except Exception:                   # timing is a report; it never decides whether a call worked
+                _TL.steps = None
+
+
+def _launch(p: dict, r: dict, args: list[str], a) -> int:
     cli = getattr(a, "cli", None) or os.environ.get("CSA_CLI") or task_cli(r.get("verb", "")) or settings().get("default_cli", "codex")
     mode = "headless" if getattr(a, "headless", False) else "interactive"
     if mode == "interactive" and not getattr(a, "print", False) and not (sys.stdin.isatty() and sys.stdout.isatty()):
@@ -2266,10 +2287,9 @@ def launch(p: dict, r: dict, args: list[str], a) -> int:
         return 0
     if not tmpl:
         die(f"no '{cli}_{mode}' command in .agents/cli.yaml")
-    global LAST_MESSAGE
-    LAST_MESSAGE = None
+    LAST_MESSAGE = _TL.last = None
     if "{last}" in tmpl:                 # codex exec --output-last-message: the agent's final reply, kept for a fallback
-        LAST_MESSAGE = STATE_DIR / "tmp" / f"last-{os.getpid()}-{int(time.time())}.md"
+        LAST_MESSAGE = _TL.last = STATE_DIR / "tmp" / f"last-{os.getpid()}-{threading.get_ident()}-{time.time_ns()}.md"
         LAST_MESSAGE.parent.mkdir(parents=True, exist_ok=True)
     argv = [prompt if t == "{prompt}" else str(LAST_MESSAGE) if t == "{last}" else t for t in shlex.split(tmpl)]
     if not shutil.which(argv[0]):
@@ -2281,36 +2301,58 @@ def launch(p: dict, r: dict, args: list[str], a) -> int:
 
     # Answer runs can involve several model passes. Keep each pass bounded and make a quiet/stalled call visible.
     # The caller still validates any sheet written before a timeout or non-zero exit.
+    # A headless call never reads our stdin (codex exec waits on it when it is an open pipe), and a call that shows no
+    # sign of life (no CPU, no connection to its model) for answer_stall_minutes is stopped and started again.
     timeout_min = float(settings().get("answer_call_timeout_minutes", 45) or 0)
     heartbeat_min = float(settings().get("answer_heartbeat_minutes", 10) or 0)
-    proc = subprocess.Popen(argv, cwd=str(ROOT))
-    began, next_beat = time.time(), time.time() + heartbeat_min * 60 if heartbeat_min else float("inf")
-    try:
-        while True:
-            try:
-                return proc.wait(timeout=30)
-            except subprocess.TimeoutExpired:
-                elapsed = time.time() - began
-                if time.time() >= next_beat:
-                    print(f"{C['y']}CSA {r.get('verb')} model call is still running after {elapsed / 60:.1f} min "
-                          f"({cli}, {mode}).{C['0']}", file=sys.stderr, flush=True)
-                    next_beat = time.time() + heartbeat_min * 60
-                if timeout_min and elapsed >= timeout_min * 60:
-                    print(f"{C['r']}CSA {r.get('verb')} model call timed out after {timeout_min:g} min; "
-                          f"any sheet it wrote will still be validated.{C['0']}", file=sys.stderr, flush=True)
-                    proc.terminate()
-                    try:
-                        proc.wait(timeout=10)
-                    except subprocess.TimeoutExpired:
-                        proc.kill(); proc.wait()
-                    return 124
-    except KeyboardInterrupt:
+    stall_min = float(settings().get("answer_stall_minutes", 3) or 0)
+    restarts = int(float(settings().get("answer_stall_restarts", 1) or 0))
+    sys.path.insert(0, str(FRAMEWORK))
+    from csa_docx.proc_watch import Watch
+
+    def stop(proc) -> None:
         proc.terminate()
         try:
             proc.wait(timeout=10)
         except subprocess.TimeoutExpired:
             proc.kill(); proc.wait()
-        raise
+
+    for attempt in range(restarts + 1):
+        proc = subprocess.Popen(argv, cwd=str(ROOT), stdin=subprocess.DEVNULL if mode == "headless" else None)
+        began, next_beat = time.time(), time.time() + heartbeat_min * 60 if heartbeat_min else float("inf")
+        watch = Watch(proc.pid, stall_min * 60) if stall_min else None
+        stalled = False
+        try:
+            while True:
+                try:
+                    return proc.wait(timeout=30)
+                except subprocess.TimeoutExpired:
+                    elapsed = time.time() - began
+                    if watch and watch.stalled():
+                        stalled = True
+                        break
+                    if time.time() >= next_beat:
+                        print(f"{C['y']}CSA {r.get('verb')} model call is still running after {elapsed / 60:.1f} min "
+                              f"({cli}, {mode}).{C['0']}", file=sys.stderr, flush=True)
+                        next_beat = time.time() + heartbeat_min * 60
+                    if timeout_min and elapsed >= timeout_min * 60:
+                        print(f"{C['r']}CSA {r.get('verb')} model call timed out after {timeout_min:g} min; "
+                              f"any sheet it wrote will still be validated.{C['0']}", file=sys.stderr, flush=True)
+                        stop(proc)
+                        return 124
+        except KeyboardInterrupt:
+            stop(proc)
+            raise
+        stop(proc)                                  # stalled: no CPU and no connection for stall_min minutes
+        if attempt < restarts:
+            print(f"{C['y']}CSA {r.get('verb')} model call ({cli}) showed no sign of life for {stall_min:g} min (no CPU, no "
+                  f"connection to the model); stopped it and starting it again ({attempt + 1} of {restarts}).{C['0']}",
+                  file=sys.stderr, flush=True)
+        else:
+            print(f"{C['r']}CSA {r.get('verb')} model call ({cli}) stalled again; giving up on it. Check that the model "
+                  f"server is reachable, then run the same command again: the saved sheet and work in progress are kept.{C['0']}",
+                  file=sys.stderr, flush=True)
+    return 125
 
 
 def tracked_revision_count(docx: Path) -> int:
@@ -2406,6 +2448,33 @@ def _writer_needed(p: dict, cf: Path, sec: str, label: str | None) -> tuple[bool
         return writer_needed_from(json.loads(r.stdout).get("findings", []))
     except ValueError:
         return True, "check-change gave no result"
+
+
+def _write_answer_result(path, number, outcome, res, fixes, sheet, note):
+    """One readable RESULT file per answer run: the outcome, why, and what is left, so a run never fails only in a log."""
+    lines = [f"# csa answer {number}: {outcome}", "", note, "", f"Fix rounds used: {fixes}", f"Sheet: {sheet}", ""]
+    errs_ = [f for f in res.get("findings", []) if f.get("level") == "ERROR"]
+    if errs_:
+        lines += [f"## ERROR ({len(errs_)})", ""] + [f"- {f['code']} {f.get('question') or ''}: {f['message'][:300]}" for f in errs_] + [""]
+    warns_ = [f for f in res.get("findings", []) if f.get("level") == "WARN"]
+    content_ = [f for f in warns_ if f.get("tier") == "content"]
+    if content_:                        # the text may be wrong or incomplete here: every one is listed
+        lines += [f"## CHECK THESE ({len(content_)}): the text may be wrong or incomplete", ""]
+        lines += [f"- {f['code']} {f.get('question') or ''}: {f['message'][:300]}" for f in content_[:40]] + [""]
+    warns_ = [f for f in warns_ if f.get("tier") != "content"]
+    if warns_:                          # wording and layout: one line per warning code, with the blocks it touches and one example
+        by: dict = {}
+        for f in warns_:
+            by.setdefault(f["code"], []).append(f)
+        lines += [f"## WORDING ({len(warns_)} in {len(by)} kinds)", ""]
+        for code, fs in sorted(by.items(), key=lambda kv: -len(kv[1])):
+            blocks = ", ".join(sorted({str(f.get("question") or "-") for f in fs}))
+            lines.append(f"- {code} x{len(fs)} ({blocks}): {fs[0]['message'][:220]}")
+        lines.append("")
+    try:
+        Path(path).write_text("\n".join(lines), encoding="utf-8")
+    except OSError:
+        pass
 
 
 def _record_author_run(p: dict, args: list[str], **data) -> None:
@@ -2535,11 +2604,18 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
     track_draft_run = draft and not getattr(a, "print", False)
     run_state = {"terminal": not track_draft_run, "phase": "STARTING", "blocks": "", "detail": "", "model": ""}
 
+    run_lock = threading.RLock()
+
     def draft_run(status: str, detail: str, phase: str, blocks: set[str] | list[str] | tuple[str, ...] = (),
                   *, terminal: bool = False, model: str = "") -> None:
         """Persist the current draft attempt before another expensive or failure-prone step."""
         if not track_draft_run:
             return
+        with run_lock:
+            _draft_run(status, detail, phase, blocks, terminal=terminal, model=model)
+
+    def _draft_run(status: str, detail: str, phase: str, blocks: set[str] | list[str] | tuple[str, ...] = (),
+                   *, terminal: bool = False, model: str = "") -> None:
         block_text = ",".join(sorted(blocks)) if not isinstance(blocks, str) else blocks
         if terminal and not block_text:
             block_text = str(run_state.get("blocks", ""))
@@ -2575,8 +2651,29 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
             die(f"the section card could not be built: {out.get('message', out)}")
         print(f"{C['b']}Card {card_md.name}: {len(out['questions'])} question(s), about {out['tokens']} tokens.{C['0']}")
 
+    held_dir = work / "held-from-model"
+
+    def release_held() -> None:
+        """Put back what hold_old_sheets set aside (also after a run that died before it could)."""
+        if not held_dir.is_dir():
+            return
+        for f in held_dir.iterdir():
+            f.replace(cards / f.name)
+        held_dir.rmdir()
+
+    def hold_old_sheets() -> None:
+        """The model answers from the card. The earlier answers of this subsection (the previous sheet, the failed one, every
+        backup) and the last result report are set aside while it works, so it cannot copy a citation the card no longer
+        offers. The checks still compare against them: they come back before the sheet is checked."""
+        release_held()
+        old = [f for f in cards.glob(f"{key}.answer.*.md")] + [f for f in [cards / f"{key}.RESULT.md"] if f.is_file()]
+        if old:
+            held_dir.mkdir(exist_ok=True)
+            for f in old:
+                f.replace(held_dir / f.name)
+
     def answer(extra: list[str], out: Path | None = None, card: Path | None = None, kind: str = "answer",
-               blocks: list[str] | None = None) -> int:
+               blocks: list[str] | None = None, merge: bool = True) -> int:
         """One model pass. ``out`` is a patch sheet (a block round: only the listed blocks, merged by the framework);
         ``card`` a focused card for that round."""
         out = out or sheet
@@ -2605,15 +2702,21 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
                       or settings().get("default_cli", "codex"))
         draft_run("RUNNING", f"model pass {kind}", "REPAIRING" if kind != "answer" else "GENERATING",
                   blocks or ["all"], model=chosen_cli)
-        rc = launch(p, agent(verb), [number, f"CARD={card or card_md}", f"SHEET={out}", *extra], run_a)
+        hold_old_sheets()
+        try:
+            rc = launch(p, agent(verb), [number, f"CARD={card or card_md}", f"SHEET={out}", *extra], run_a)
+        finally:
+            release_held()
         sheet_from_last_message(out)
         took = round(time.time() - t0, 1)
-        timing["answer_s"] = round(timing.get("answer_s", 0) + took, 1)
-        timing.setdefault("rounds", []).append({"kind": kind, "blocks": blocks or ["all"], "seconds": took,
-                                                "rc": rc, "cli": chosen_cli})
+        with run_lock:
+            timing["answer_s"] = round(timing.get("answer_s", 0) + took, 1)
+            timing.setdefault("rounds", []).append({"kind": kind, "blocks": blocks or ["all"], "seconds": took,
+                                                    "rc": rc, "cli": chosen_cli,
+                                                    **({"steps": getattr(_TL, "steps", None)} if getattr(_TL, "steps", None) else {})})
         # A focused agent occasionally edits ANSWER= directly instead of writing SHEET=. Capture that output before
         # interpreting its exit code; it is still a candidate and must pass the same deterministic validator.
-        wrote_in_place = capture_focused_answer(out, sheet, snap)
+        wrote_in_place = capture_focused_answer(out, sheet, snap) if merge else False
         if wrote_in_place:
             print(f"{C['y']}The {verb} agent changed {sheet.name} itself; only the requested blocks are kept.{C['0']}")
         if rc != 0:
@@ -2626,9 +2729,11 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
             else:
                 print(f"{C['r']}The {verb} agent exited with code {rc} and wrote no new {out.name}; nothing was applied."
                       f"{C['0']}", file=sys.stderr)
-                draft_run("TIMED_OUT" if rc == 124 else "FAILED", f"model pass {kind} exited {rc} and wrote no output",
+                draft_run("TIMED_OUT" if rc == 124 else "STALLED" if rc == 125 else "FAILED", f"model pass {kind} exited {rc} and wrote no output",
                           "MODEL", blocks or ["all"], terminal=True, model=chosen_cli)
                 return rc
+        if out != sheet and not merge:   # a parallel first pass: the caller merges the patches one after another
+            return 0
         if out != sheet:                 # the framework, not the model, puts the rewritten blocks into the sheet
             mg = _fw_json("csa_docx.answer_blocks", "merge", sheet, "--patch", out, "--only", ",".join(blocks or []))
             if mg.get("status") != "OK":
@@ -2668,7 +2773,11 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
     def error_lines(res: dict, only: set[str] | None = None) -> list[str]:
         blocking = [f for f in res.get("findings", []) if f.get("level") == "ERROR"
                     and (only is None or (f.get("question") or "").upper() in only or not f.get("question"))]
-        return [f"- {f['level']} {f['code']} {f.get('question') or ''}: {f['message']}" for f in blocking]
+        lines = [f"- {f['level']} {f['code']} {f.get('question') or ''}: {f['message']}" for f in blocking]
+        if only is not None:            # a block that is rewritten anyway is sent its content warnings: fix them in the same call
+            lines += [f"- CHECK {f['code']} {f.get('question')}: {f['message']}" for f in res.get("findings", [])
+                      if f.get("tier") == "content" and (f.get("question") or "").upper() in only]
+        return lines
 
     def error_signature(result: dict) -> tuple[tuple[str, str, str], ...]:
         """Stable signature for detecting a repair that made no progress."""
@@ -2695,6 +2804,69 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
                         "--new-ids", ",".join(sorted((_matrix_ids(work) - before) | lead_ids)), *(["--draft"] if draft else []), *(["--relaxed"] if draft else []),
                         *(["--previous", sheet.with_suffix(".prev.md")] if sheet.with_suffix(".prev.md").is_file() else []))
 
+    def parallel_blocks() -> list[str]:
+        """The blocks to answer one call each (cli.yaml answer_by_block: true), from the card; [] means one call."""
+        if str(settings().get("answer_by_block", "false")).strip().lower() not in ("1", "true", "yes", "on"):
+            return []
+        try:
+            ids = [q["id"].upper() for q in json.loads(card_json.read_text(encoding="utf-8")).get("questions", [])]
+        except (OSError, ValueError, KeyError):
+            return []
+        return ids if len(ids) >= 3 else []
+
+    def parallel_answer(ids: list[str]) -> int:
+        """First answer, one focused call per block (its own evidence only), then the analysis frame from the merged
+        blocks. Calls run one at a time unless cli.yaml answer_by_block_workers > 1. The framework merges the
+        patches; a block a call did not return stays missing and goes through the normal fix round."""
+        from concurrent.futures import ThreadPoolExecutor
+        base = cards / f"{key}.answer-base.md"
+        base.write_text("(no blocks yet: each block is answered separately and merged by the framework)\n", encoding="utf-8")
+        workers = max(1, int(settings().get("answer_by_block_workers", 1) or 1))
+
+        def one(bid: str) -> tuple[str, int]:
+            fcard, part, perr = cards / f"{key}.focus-{bid}.md", cards / f"{key}.patch-{bid}.md", cards / f"{key}.errors-{bid}.md"
+            fo = _fw_json("csa_docx.answer_blocks", "focus", card_md, "--only", bid, "--out", fcard, "--first-pass")
+            perr.write_text(f"Answer only block {bid}. Write only that block, with its ## {bid} heading, to SHEET=.\n", encoding="utf-8")
+            rc = answer([f"ONLY={bid}", f"ANSWER={base}", f"ERRORS={perr}"], out=part,
+                        card=fcard if fo.get("status") == "OK" else card_md, kind="answer part", blocks=[bid], merge=False)
+            return bid, rc
+
+        print(f"{C['b']}Answering {len(ids)} blocks one call each ({workers} at a time): {', '.join(ids)}{C['0']}")
+        if sheet.is_file():
+            retired = sheet.with_suffix(".prev.md")
+            try:
+                applied = json.loads(card_md.with_suffix(".manifest.json").read_text(encoding="utf-8")).get("sheet_sha256") == \
+                    hashlib.sha256(sheet.read_bytes()).hexdigest()
+            except (OSError, ValueError):
+                applied = not retired.exists()
+            sheet.replace(retired if applied else sheet.with_suffix(".failed.md"))
+            _fw_json("csa_docx.answer_blocks", "wip-clear", sheet)
+        sheet.write_text("", encoding="utf-8")
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            results = list(ex.map(one, ids))
+        got = []
+        for bid, rc in results:
+            part = cards / f"{key}.patch-{bid}.md"
+            if part.is_file() and part.stat().st_size:
+                mg = _fw_json("csa_docx.answer_blocks", "merge", sheet, "--patch", part, "--only", bid)
+                if mg.get("status") == "OK" and (bid in (mg.get("merged", []) + mg.get("added", []))):
+                    got.append(bid)
+        missing = [b for b in ids if b not in got]
+        print(f"{C['b']}merged {', '.join(got) or 'nothing'}" + (f"; no answer for {', '.join(missing)}" if missing else "") + C['0'])
+        if not got:
+            print(f"{C['y']}No block was answered by the focused calls; asking for the whole sheet once.{C['0']}")
+            return answer([])
+        if json.loads(card_json.read_text(encoding="utf-8")).get("frame") and got:
+            ferr = cards / f"{key}.errors-F1.md"
+            ffocus = cards / f"{key}.focus-F1.md"
+            _fw_json("csa_docx.answer_blocks", "focus", card_md, "--only", "F1", "--out", ffocus, "--first-pass")
+            ferr.write_text("Write only the F1 Analysis frame, from the blocks already in ANSWER=: one line per slot naming the "
+                            "blocks that answer it, or QUESTION: <question>.\n", encoding="utf-8")
+            fpatch = cards / f"{key}.patch-F1.md"
+            answer([f"ONLY=F1", f"ANSWER={sheet}", f"ERRORS={ferr}"], out=fpatch,
+                   card=ffocus, kind="answer frame", blocks=["F1"])
+        return 0
+
     timing: dict = {}
     verb = "draft" if draft else "answer"
     patch = cards / f"{key}.patch.md"
@@ -2720,13 +2892,36 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
     fix_max = int(settings().get("answer_fix_rounds", 3) or 3)
     cache = {"status": "NONE", "changed": []}
     wip = {"status": "NONE", "changed": [], "failed": []}
-    if not getattr(a, "fresh", False):
+    only_blocks = {b.strip().upper() for b in str(getattr(a, "blocks", "") or "").split(",") if b.strip()}
+    if only_blocks and sheet.is_file():
+        pass                                            # rewrite just these blocks: no cache or resume decision
+    elif getattr(a, "keep_sheet", False) and sheet.is_file():
+        cache = {"status": "REUSE", "changed": []}      # a hand-edited sheet is the answer; the checks below still run
+    elif not getattr(a, "fresh", False):
         cache = _fw_json("csa_docx.answer_cache", "check", sheet, "--card", card_json, "--matrix", matrix,
                          *(["--hosts", hosts_csv] if hosts_csv.is_file() else []), "--json")
         if cache.get("status") != "REUSE":
             wip = _fw_json("csa_docx.answer_blocks", "wip-check", sheet, "--card", card_json, "--matrix", matrix,
                            *(["--hosts", hosts_csv] if hosts_csv.is_file() else []))
-    if cache.get("status") == "REUSE":
+    if only_blocks and sheet.is_file():
+        timing["reused"] = "blocks"
+        first = check()
+        known = {q for q in only_blocks if q in {x["id"].upper() for x in json.loads(card_json.read_text(encoding="utf-8"))["questions"]}}
+        if not known:
+            die(f"--blocks {','.join(sorted(only_blocks))}: none of these is a block of {key} "
+                f"(see {card_md.name}); nothing was changed")
+        lines = error_lines(first, known) + [
+            f"- KEEP {b}: copy every line of {b} from ANSWER= exactly as it is, and change only what the lines above name. "
+            f"Keep every open question of {b} that is not listed as ANSWERED above as a QUESTION: line: split a line that asks "
+            f"several things into one self-contained QUESTION: line per question, and never turn a question into a Fact saying the "
+            f"evidence does not answer it"
+            for b in sorted(known)] + resolved_lines([r for r in getattr(a, "resolved", []) if r.get("qid", "").upper() in known])
+        if str(getattr(a, "note", "") or "").strip():
+            lines.append(f"- NOTE: {a.note.strip()}")
+        print(f"{C['b']}Rewriting only {', '.join(sorted(known))}; every other block is kept.{C['0']}")
+        if block_round(known, lines, "blocks", "Fix these blocks of the answer sheet:") != 0:
+            return 2
+    elif cache.get("status") == "REUSE":
         print(f"{C['b']}Reusing {sheet} (inputs unchanged){C['0']}")
         timing["reused"] = True
     elif wip.get("status") == "RESUME":
@@ -2753,7 +2948,10 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
             return 2
     else:
         timing["reused"] = False
-        if answer([]) != 0:
+        if parallel_blocks() and getattr(a, "headless", False):
+            if parallel_answer(parallel_blocks()) != 0:
+                return 2
+        elif answer([]) != 0:
             return 2
     res2, searched, fixes, resent = check(), False, 0, False
     previous_signature: tuple[tuple[str, str, str], ...] | None = None
@@ -2789,12 +2987,12 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
                              [f"- SEARCH {q}: the results of your Search: line are now in the card's evidence pack for {q}; "
                               f"answer the block from them (or Unknown:) and drop the Search: line" for q in res2.get("searches", {})],
                              "search", "Your searches were run:")
-        elif fixes < fix_max:
+        elif fixes < fix_max and time.time() - started < int(settings().get("answer_budget_s", 1200) or 1200):
             fixes += 1
-            lines = error_lines(res2)
+            lines = error_lines(res2, bad - {"*"} if bad - {"*"} else None)
             left = len(res2.get("findings", [])) - len(lines)
             if left:
-                lines.append(f"- ({left} warning(s) left out: they do not block the sheet; change nothing else)")
+                lines.append(f"- ({left} other warning(s) left out: they do not block the sheet; change nothing else)")
             if res2.get("status") == "NEEDS_SEARCH":
                 lines.append("- ERROR SEARCH_USED: the one search round is used; answer with the evidence on the card, or Unknown:")
                 bad |= {q.upper() for q in res2.get("searches", {})}
@@ -2817,14 +3015,27 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
                 draft_run("NO_SHEET" if codes == ["NO_SHEET"] else "FAILED", ", ".join(codes), "VALIDATING",
                           bad - {"*"}, terminal=True,
                           model=repair_cli_override or getattr(a, "cli", None) or settings().get("default_cli", ""))
-            die(f"the answer sheet still fails after {fixes} fix round(s); nothing was applied. The sheet is kept: the next "
-                f"run rewrites only {', '.join(sorted(bad - {'*'})) or 'what fails'}. Sheet: {sheet}")
+            hard = sorted({f["code"] for f in res2.get("findings", []) if f.get("level") == "ERROR"})
+            fatal = sorted(set(hard) & {"NO_SHEET", "QUESTION_MISSING", "EMPTY_ANSWER", "FACT_NO_EVIDENCE", "UNKNOWN_EVIDENCE",
+                                        "RATING_INVALID", "COLUMNS", "ROW_WIDTH", "NO_ROWS"})
+            if fatal:
+                _write_answer_result(cards / f"{key}.RESULT.md", number, "NOT APPLIED", res2, fixes, sheet,
+                                     "the sheet cannot be written into the document: " + ", ".join(fatal))
+                die(f"NOT APPLIED: the answer sheet cannot be written into the document ({', '.join(fatal)}) after {fixes} "
+                    f"fix round(s). The sheet is kept: the next run rewrites only {', '.join(sorted(bad - {'*'})) or 'what fails'}. "
+                    f"Details: {cards / (key + '.RESULT.md')}")
+            # not fatal: the best sheet so far goes into the document and the open checks are listed, not hidden
+            _write_answer_result(cards / f"{key}.RESULT.md", number, "APPLIED WITH OPEN CHECKS", res2, fixes, sheet,
+                                 "these checks still fail after the fix round; the answer is applied as written")
+            print(f"{C['y']}APPLIED WITH OPEN CHECKS: {', '.join(hard)} still fail after {fixes} fix round(s). The answer is "
+                  f"written as it stands. Details: {cards / (key + '.RESULT.md')}{C['0']}", file=sys.stderr)
+            break
         if rc != 0:
             latest = check()
             keep_wip(latest)
             bad_latest = answer_blocks_failing(latest)
             codes = sorted({f["code"] for f in latest.get("findings", []) if f.get("level") == "ERROR"})
-            draft_run("TIMED_OUT" if rc == 124 else "FAILED",
+            draft_run("TIMED_OUT" if rc == 124 else "STALLED" if rc == 125 else "FAILED",
                       f"model exit {rc}; {', '.join(codes) or 'no valid answer sheet'}", "VALIDATING",
                       bad_latest - {"*"}, terminal=True,
                       model=repair_cli_override or getattr(a, "cli", None) or settings().get("default_cli", ""))
@@ -2832,10 +3043,34 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
         res2 = check()
     _fw_json("csa_docx.answer_blocks", "wip-clear", sheet)
     patch.unlink(missing_ok=True)
+    content_blocks = {str(f.get("question") or "").upper() for f in res2.get("findings", [])
+                      if f.get("tier") == "content"} - {""}
+    if (content_blocks and str(settings().get("answer_repair_content", "false")).strip().lower() in ("1", "true", "yes", "on")
+            and time.time() - started < int(settings().get("answer_budget_s", 1200) or 1200)):
+        # off by default (cli.yaml answer_repair_content): one call for the blocks whose text may be wrong or incomplete,
+        # kept only if the sheet still passes and has no more content warnings than before
+        before_n = sum(1 for f in res2.get("findings", []) if f.get("tier") == "content")
+        keep_c = sheet.with_suffix(".content-from.md")
+        shutil.copyfile(sheet, keep_c)
+        print(f"{C['b']}{before_n} content warning(s) in {', '.join(sorted(content_blocks))}; one repair call for those blocks.{C['0']}")
+        rc_c = block_round(content_blocks, error_lines(res2, content_blocks), "content",
+                           "Check these statements in the answer sheet against the evidence and fix what is wrong or missing:")
+        res_c = check() if rc_c == 0 else {"status": "ERROR", "findings": []}
+        after_n = sum(1 for f in res_c.get("findings", []) if f.get("tier") == "content")
+        if rc_c == 0 and res_c.get("status") == "OK" and after_n <= before_n:
+            res2 = res_c
+            print(f"{C['b']}Content warnings: {before_n} before, {after_n} after.{C['0']}")
+        else:
+            shutil.copyfile(keep_c, sheet)
+            print(f"{C['y']}The content repair did not give a better valid sheet; the earlier sheet is kept.{C['0']}")
+        keep_c.unlink(missing_ok=True)
     if errs.is_file():                  # the sheet passes now: an old errors file would only mislead
         errs.unlink(missing_ok=True)
-    if not getattr(a, "no_resolve", False):
-        # an Unknown: line the matrix may already answer: show the agent those rows once and keep the result only if it passes
+    if (not getattr(a, "no_resolve", False) and str(settings().get("answer_resolve_leads", "false")).strip().lower() in ("1", "true", "yes", "on")
+            and time.time() - started < int(settings().get("answer_budget_s", 1200) or 1200) // 2):
+        # off by default (cli.yaml answer_resolve_leads): it cost minutes and rarely closed a QUESTION: line;
+        # `csa resolve-gaps` is the framework's route for that.
+        # an QUESTION: line the matrix may already answer: show the agent those rows once and keep the result only if it passes
         found = _fw_json("csa_docx.answer_sheet", "leads", sheet, "--card", card_json, "--matrix", matrix)
         if found.get("leads"):
             leads_md = cards / f"{key}.leads.md"
@@ -2873,11 +3108,18 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
             patch.unlink(missing_ok=True)
     warns = [f for f in res2.get("findings", []) if f.get("level") == "WARN"]
     if draft and warns:
-        print(f"{C['y']}{len(warns)} warning(s) (not blocking in the draft lane):{C['0']}")
-        for f in warns[:8]:
-            print(f"  {f['code']} {f.get('question') or ''}: {f['message'][:110]}")
-    _fw_json("csa_docx.answer_cache", "write", sheet, "--card", card_json, "--matrix", matrix,
-             *(["--hosts", hosts_csv] if hosts_csv.is_file() else []), "--json")
+        kinds: dict = {}
+        for f in warns:
+            kinds.setdefault(f["code"], []).append(f)
+        print(f"{C['y']}{len(warns)} warning(s) in {len(kinds)} kinds (not blocking in the draft lane; "
+              f"all in {key}.RESULT.md):{C['0']}")
+        for code, fs in sorted(kinds.items(), key=lambda kv: -len(kv[1]))[:8]:
+            print(f"  {code} x{len(fs)}: {fs[0]['message'][:110]}")
+    if res2.get("status") == "OK":      # a sheet applied with open checks is not cached: the next run tries it again
+        _write_answer_result(cards / f"{key}.RESULT.md", number, "APPLIED" + (f" WITH {len(warns)} WARNING(S)" if warns else ""),
+                             res2, fixes, sheet, "every blocking check passes")
+        _fw_json("csa_docx.answer_cache", "write", sheet, "--card", card_json, "--matrix", matrix,
+                 *(["--hosts", hosts_csv] if hosts_csv.is_file() else []), "--json")
     _fw_json("csa_docx.fact_store", "add", work, sheet, "--card", card_json)
     if getattr(a, "check_answers", False) and not draft:
         # advisory: a second look at whether each block answers its question; never a gate
@@ -2924,7 +3166,9 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
                   model=repair_cli_override or getattr(a, "cli", None) or settings().get("default_cli", ""))
         rc = _draft_write(p, a, card_json, docx, cf, cf_new, out, timing, started)
         if rc == 0:
-            draft_run("OK", f"{out.get('records', 0)} part(s) written", "APPLIED", terminal=True)
+            open_codes = sorted({f["code"] for f in res2.get("findings", []) if f.get("level") == "ERROR"}) if res2.get("status") != "OK" else []
+            draft_run("OK", f"{out.get('records', 0)} part(s) written" + (f"; OPEN CHECKS: {', '.join(open_codes)} (see {key}.RESULT.md)" if open_codes else ""),
+                      "APPLIED", terminal=True)
         else:
             draft_run("FAILED", f"document write exited {rc}", "APPLYING", terminal=True)
         return rc
@@ -2959,6 +3203,9 @@ def _draft_write(p: dict, a, card_json: Path, docx, cf: Path, cf_new: bool, out:
         if td.get("rows") or td.get("comments"):
             print(f"{C['d']}tidied: {td.get('rows', 0)} old table row(s) removed, "
                   f"{len(td.get('comments') or [])} answered reviewer comment(s) removed{C['0']}")
+    cq = _fw_json("csa_docx.draft_lane", "colour-questions", "--docx", docx)
+    if cq.get("questions"):
+        print(f"{C['d']}{cq['questions']} QUESTION: line(s) shown in red{C['0']}")
     tt = _place_topic_table(p, docx, c.get("title", ""), c.get("key", ""))
     if tt:
         print(f"{C['d']}{tt}{C['0']}")
@@ -3169,6 +3416,32 @@ def _latest_gap_check(p: dict, section: str = "") -> dict:
     return record
 
 
+def answered_blocks(questions: list[dict], verified: set[str] | None = None) -> dict[str, dict]:
+    """The sections whose answer a settled question changes, from a gap-check record: {key: {number, title, blocks, resolved}}.
+    Only a question of an answer-sheet block (B1, B2 ...) changes the sheet; a figure gap (F03 ...) does not. ``resolved`` is
+    one {qid, text, ids} per answered question: the block's repair is told which question the evidence now answers. A record
+    lists the question's candidate rows beside the rows that answer it: with ``verified`` given, only verified evidence is
+    named, and a question left with none is not treated as answered."""
+    out: dict[str, dict] = {}
+    for q in questions:
+        if q.get("verdict") != "ANSWERED" or not re.fullmatch(r"B\d+", str(q.get("qid") or "")):
+            continue
+        ids = q.get("evidence_ids") or []
+        ids = [i for i in (list(ids) if isinstance(ids, (list, tuple)) else [ids]) if verified is None or str(i).upper() in verified]
+        if verified is not None and not ids:
+            continue
+        s = out.setdefault(q["key"], {"number": q["number"], "title": q["title"], "blocks": set(), "resolved": []})
+        s["blocks"].add(q["qid"])
+        s["resolved"].append({"qid": q["qid"], "text": q.get("text", ""), "ids": ids})
+    return out
+
+
+def resolved_lines(resolved: list[dict]) -> list[str]:
+    """The repair lines for the questions the evidence now answers (from the gap record, not written by hand)."""
+    return [f"- ANSWERED {r['qid']}: \"{r['text']}\" is now answered by {', '.join(r['ids'])}: state what those rows show as Facts "
+            f"(cite the IDs) and remove that QUESTION: line" for r in resolved if r.get("ids")]
+
+
 def cmd_resolve_gaps(a):
     """Search open questions, have the evidence agent settle source hits, then answer affected subsections again."""
     p = project(a.project); banner(p)
@@ -3195,10 +3468,10 @@ def cmd_resolve_gaps(a):
 
     print(f"{C['b']}2/3 verify the open questions against the updated evidence matrix{C['0']}", flush=True)
     final = _gap_sweep(p, a.section)
-    sections: dict[str, dict] = {}
-    for q in final.get("questions", []):
-        if q.get("verdict") == "ANSWERED":
-            sections.setdefault(q["key"], q)
+    sys.path.insert(0, str(FRAMEWORK))
+    from csa_docx import evidence_live
+    ok = {str(r["evidence_id"]).upper() for r in evidence_live.get_verified_evidence(local_path(p["work_dir"]) / "evidence-matrix.csv")}
+    sections = answered_blocks(final.get("questions", []), ok)
     if not sections:
         unresolved = sum(q.get("verdict") != "ANSWERED" for q in final.get("questions", []))
         print(f"No question was resolved by evidence; {unresolved} remain open. The working document was not changed.")
@@ -3207,11 +3480,12 @@ def cmd_resolve_gaps(a):
     stage = project_stage(p)
     print(f"{C['b']}3/3 update {len(sections)} affected subsection answer(s) through the {stage} pipeline{C['0']}")
     failed: list[str] = []
-    for q in sections.values():
+    for key, q in sections.items():
         number = q["number"]
-        print(f"{C['b']}== {number} {q['title']} ({q['key']}){C['0']}")
+        print(f"{C['b']}== {number} {q['title']} ({key}): rewriting {', '.join(sorted(q['blocks']))} only{C['0']}")
         ns = argparse.Namespace(**{**vars(a), "verb": "answer" if stage == "draft" else "author",
-                                   "args": [number], "fresh": True, "no_apply": False, "no_resolve": False})
+                                   "args": [number], "fresh": False, "keep_sheet": True, "blocks": ",".join(sorted(q["blocks"])),
+                                   "resolved": q["resolved"], "no_apply": False, "no_resolve": False})
         try:
             rc = _author_cards(p, ns, draft=stage == "draft")
         except SystemExit:
@@ -5068,6 +5342,14 @@ def main(argv=None) -> int:
                        help="author: the old change-authoring agent path instead of card -> answer agent -> render")
         s.add_argument("--fresh", action="store_true",
                        help="author --cards: ignore a saved answer sheet and always run the answer agent")
+        s.add_argument("--blocks", default="",
+                       help="author --cards: rewrite only these blocks of the saved answer sheet (B1 or B1,B3) with a focused card "
+                            "and the checks' findings for them; every other block is kept as it is")
+        s.add_argument("--note", default="",
+                       help="author --cards --blocks: one more instruction for the rewrite of those blocks (what to state, ask or keep)")
+        s.add_argument("--keep-sheet", action="store_true",
+                       help="author --cards: the saved answer sheet was edited by hand; check it and write it, no model call "
+                            "unless a blocking check fails (then only the failing blocks are rewritten)")
         s.add_argument("--check-answers", action="store_true",
                        help="author --cards: an advisory answer check after the sheet passes (shown in the author report)")
         s.add_argument("--no-resolve", action="store_true",

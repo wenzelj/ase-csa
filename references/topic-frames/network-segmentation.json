@@ -1,117 +1,144 @@
 {
- "topic": "Network / Segmentation",
- "key": "NET",
- "area": "network_segmentation",
- "section": "network and segmentation",
- "headings": [
-  "Network / Segmentation",
-  "Network and Segmentation",
-  "Network Segmentation"
- ],
- "basis": "Scope map 3.6 Must explain; SEP-NET-01, 02 and 03.",
- "slots": [
-  {
-   "id": "S1",
-   "question": "Which zones and subnets do the system's hosts sit in, behind which gateways?",
-   "requirements": [
-    "SEP-NET-01"
-   ],
-   "source": {
-    "settings": [
-     "net.zone",
-     "net.address",
-     "net.gateway"
-    ]
-   },
-   "search": [
-    "Get-NetIPConfiguration"
-   ]
-  },
-  {
-   "id": "S2",
-   "question": "Which connections cross zones, between which hosts, on which ports, and are they in the flow map?",
-   "requirements": [
-    "SEP-NET-02"
-   ],
-   "source": {
-    "flows": {
-     "cross_zone": [
-      "yes"
-     ],
-     "status": [
-      "observed",
-      "both",
-      "declared",
-      "attempted"
-     ]
+  "topic": "Network / Segmentation",
+  "key": "NET",
+  "area": "network_segmentation",
+  "section": "network and segmentation",
+  "headings": [
+    "Network / Segmentation",
+    "Network and Segmentation",
+    "Network Segmentation"
+  ],
+  "basis": "Scope map 3.6 Must explain; SEP-NET-01, 02 and 03.",
+  "slots": [
+    {
+      "id": "S1",
+      "question": "Which zones and subnets do the system's hosts sit in, behind which gateways?",
+      "requirements": [
+        "SEP-NET-01"
+      ],
+      "source": {
+        "settings": [
+          "net.zone",
+          "net.address",
+          "net.gateway"
+        ]
+      },
+      "search": [
+        "Get-NetIPConfiguration"
+      ]
+    },
+    {
+      "id": "S2",
+      "question": "Which connections cross zones, between which hosts, on which ports, and are they in the flow map?",
+      "requirements": [
+        "SEP-NET-02"
+      ],
+      "source": {
+        "flows": {
+          "cross_zone": [
+            "yes"
+          ],
+          "status": [
+            "observed",
+            "both",
+            "declared",
+            "attempted"
+          ]
+        }
+      },
+      "search": [
+        "Get-NetTCPConnection",
+        "flow map"
+      ],
+      "look_for": [
+        "cross zone",
+        "flow map",
+        "zone boundary",
+        "connection between zones"
+      ]
+    },
+    {
+      "id": "S3",
+      "question": "Which connections go to addresses whose zone is not recorded, and which zone are those addresses in?",
+      "requirements": [
+        "SEP-NET-01",
+        "SEP-NET-02"
+      ],
+      "source": {
+        "flows": {
+          "cross_zone": [
+            "unknown"
+          ],
+          "status": [
+            "observed",
+            "both"
+          ]
+        }
+      },
+      "search": [
+        "unknown zone",
+        "subnet"
+      ],
+      "look_for": [
+        "unknown zone",
+        "zone not recorded",
+        "subnet",
+        "zone of"
+      ]
+    },
+    {
+      "id": "S4",
+      "question": "Which general-purpose IT services reach into the OT hosts (patching, monitoring, telemetry, directory)?",
+      "requirements": [
+        "SEP-NET-03"
+      ],
+      "source": {
+        "flows": {
+          "mechanisms": [
+            "patch management",
+            "monitoring",
+            "log forwarding",
+            "security agent telemetry",
+            "directory (SYSVOL, Group Policy)",
+            "management",
+            "directory (RPC)"
+          ],
+          "status": [
+            "observed",
+            "both"
+          ]
+        }
+      },
+      "search": [
+        "CcmExec",
+        "HealthService"
+      ],
+      "look_for": [
+        "patching",
+        "monitoring",
+        "telemetry",
+        "directory",
+        "IT service",
+        "reach into OT"
+      ]
+    },
+    {
+      "id": "S5",
+      "question": "Which VLANs, conduits and target security levels are defined for these zones?",
+      "requirements": [
+        "SEP-NET-01"
+      ],
+      "source": {},
+      "search": [
+        "VLAN"
+      ],
+      "look_for": [
+        "VLAN",
+        "conduit",
+        "security level",
+        "segmentation",
+        "target security level"
+      ]
     }
-   },
-   "search": [
-    "Get-NetTCPConnection",
-    "flow map"
-   ]
-  },
-  {
-   "id": "S3",
-   "question": "Which connections go to addresses whose zone is not recorded, and which zone are those addresses in?",
-   "requirements": [
-    "SEP-NET-01",
-    "SEP-NET-02"
-   ],
-   "source": {
-    "flows": {
-     "cross_zone": [
-      "unknown"
-     ],
-     "status": [
-      "observed",
-      "both"
-     ]
-    }
-   },
-   "search": [
-    "unknown zone",
-    "subnet"
-   ]
-  },
-  {
-   "id": "S4",
-   "question": "Which general-purpose IT services reach into the OT hosts (patching, monitoring, telemetry, directory)?",
-   "requirements": [
-    "SEP-NET-03"
-   ],
-   "source": {
-    "flows": {
-     "mechanisms": [
-      "patch management",
-      "monitoring",
-      "log forwarding",
-      "security agent telemetry",
-      "directory (SYSVOL, Group Policy)",
-      "management",
-      "directory (RPC)"
-     ],
-     "status": [
-      "observed",
-      "both"
-     ]
-    }
-   },
-   "search": [
-    "CcmExec",
-    "HealthService"
-   ]
-  },
-  {
-   "id": "S5",
-   "question": "Which VLANs, conduits and target security levels are defined for these zones?",
-   "requirements": [
-    "SEP-NET-01"
-   ],
-   "source": {},
-   "search": [
-    "VLAN"
-   ]
-  }
- ]
+  ]
 }

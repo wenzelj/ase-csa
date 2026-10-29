@@ -110,9 +110,9 @@ Requirement IDs and wording come from the OT35 checklist in the CSA template. **
 
 ### 3.4 Time Synchronisation
 - **Requirements:** SEP-TIME-01 time from an OT-resident authoritative source, independent of the IT domain hierarchy.
-- **Must explain:** Where each host takes its time from, what hierarchy sits above that source, and how fast drift becomes a problem if the source is lost. Say whether the application keeps its own time or relies on Windows time, and which records (logs, events, recordings) depend on the clocks agreeing.
-- **Owns:** each host's time source and hierarchy, stratum, drift, and behaviour without the source.
-- **Not here:** log integrity as a monitoring control goes to 3.9 (keep only the time dependency here).
+- **Must explain:** Where each host takes its time from and whether that source is in OT or in IT (the assessment boundary ends at IT, so a source in the IT domain answers whether time is given from OT), and how fast drift becomes a problem if the source is lost. Say whether the application keeps its own time or relies on Windows time, and which records (logs, events, recordings) depend on the clocks agreeing.
+- **Owns:** each host's time source, stratum, drift, and behaviour without the source.
+- **Not here:** log integrity as a monitoring control goes to 3.9 (keep only the time dependency here). What an IT time source gets its time from (PDC emulator, external NTP, GPS clock) is outside the OT boundary: do not ask or assess it.
 - **Legacy headings:** Time Synchronization, Time Synchronisation
 - **Signal terms:** ntp, sntp, w32time, time source, time sync, time synchronisation, time synchronization, stratum, clock, drift, pdc emulator, gps clock, ptp
 

@@ -55,3 +55,17 @@ def read(matrix: Path, drop_rejected: bool = False) -> list[dict]:
     with matrix.open(encoding="utf-8-sig", newline="") as fh:
         rows = apply(list(csv.DictReader(fh)), matrix)
     return [r for r in rows if r.get("review_state") != "rejected"] if drop_rejected else rows
+
+
+def is_verified(r: dict) -> bool:
+    """Verified evidence: status VERIFIED, with proof (the source check found the excerpt in the cited source, or a named person
+    reviewed it), and not rejected. A NOT_FOUND, CONFLICTING, UNCONFIRMED or INFERRED row, a row nobody has checked and a rejected
+    row are not."""
+    return r.get("status") == "VERIFIED" and str(r.get("review_state") or "").lower() in ("reviewed", "accepted")
+
+
+def get_verified_evidence(matrix: Path) -> list[dict]:
+    """The evidence rows an answer may use, and nothing else. A project whose rows have never been reviewed has no proof to
+    ask for, so its rows are returned as they are."""
+    rows = read(matrix)
+    return [r for r in rows if is_verified(r)] if any(is_verified(r) for r in rows) else rows

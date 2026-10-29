@@ -513,7 +513,7 @@ def next_id_number(body):
 
 # --------------------------------------------------------------------------- source check
 AUTO_REVIEWER = "csa source check (automated)"
-_FILE_RE = re.compile(r"[\w.\-]+\.(?:txt|csv|xlsx|docx|pdf|md|log|json|xml|ps1)\b", re.I)   # pdf: the index reads PDFs (pdftotext)
+_FILE_RE = re.compile(r"(?:[\w.\-]|\([\w.\- ]*\))+\.(?:txt|csv|xlsx|docx|pdf|md|log|json|xml|ps1)\b", re.I)   # pdf: the index reads PDFs (pdftotext)
 _CAPTURE_RE = re.compile(r"([A-Za-z0-9]+)_(\d{8}T\d{6}Z)")
 
 

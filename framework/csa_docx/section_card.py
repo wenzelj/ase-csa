@@ -156,7 +156,7 @@ def _role_table_lines(ts) -> list[str]:
            "(NO_TOTALS). Use it in the Current State and Drawbridge Impact text, citing the evidence rows for the same facts.",
            "", topic_markdown(ts)]
     if t.get("gaps"):
-        out += ["", "Already raised as Discovery Required by the framework (do not write these as Unknown: lines):"]
+        out += ["", "Already raised as Discovery Required by the framework (do not write these as QUESTION: lines):"]
         out += [f"- {g['dr_id']}: {g['text']}" for g in t["gaps"]]
     return out
 
@@ -286,8 +286,9 @@ def _file_rows(work: Path, rel: str, encoding: str = "utf-8") -> list[dict]:
 
 
 def _matrix_rows(workspace: Path) -> list[dict]:
+    """The evidence the card may offer: verified evidence only (evidence_live.get_verified_evidence)."""
     from csa_docx import evidence_live
-    return evidence_live.read(Path(workspace) / "csa-work" / "evidence-matrix.csv")
+    return evidence_live.get_verified_evidence(Path(workspace) / "csa-work" / "evidence-matrix.csv")
 
 
 def _rejected(workspace: Path) -> set[str]:
@@ -356,6 +357,7 @@ def evidence_pack(node: dict, qs: list[dict], workspace: Path | None, extra_sear
     except ImportError:
         gap_lookup = None
     rows = _matrix_rows(workspace)
+    offered = {r["evidence_id"].upper() for r in rows}
     rejected = _rejected(workspace)
     cache: dict = {}
     topic = _norm(node["title"])
@@ -377,6 +379,8 @@ def evidence_pack(node: dict, qs: list[dict], workspace: Path | None, extra_sear
             for m in _matrix(workspace, query):
                 if m["evidence_id"].upper() in rejected or m["evidence_id"] in scored or m["evidence_id"].upper() in skip:
                     continue
+                if m["evidence_id"].upper() not in offered:
+                    continue           # the lookup also returns searches that found nothing, disagreements and unread candidates
                 if m.get("score", 0) < 0.4 and query not in (extra_searches or {}).get(q["id"], []):
                     continue
                 scored[m["evidence_id"]] = (_STATUS_RANK.get(m.get("status", ""), 5) + 1, -int(10 * m.get("score", 0)), m)
@@ -445,11 +449,12 @@ def facts_to_keep(node: dict, workspace: Path | None) -> list[dict]:
             continue
         caps = sorted(i for i in f.get("evidence_ids", []) if (rows.get(i.upper()) or {}).get("status") == "VERIFIED"
                       and source_class(rows.get(i.upper())) == "capture" and i.upper() not in rejected)
-        if not caps or any(i.upper() not in rows for i in f.get("evidence_ids", [])):
+        if not caps:                 # a fact keeps the evidence that is verified; with none of its capture rows left it is not carried
             continue
         k = (f.get("question", ""), tuple(caps))
         if k not in latest or f.get("added", "") >= latest[k].get("added", ""):
-            latest[k] = {"question": f.get("question", ""), "fact": f["fact"], "evidence_ids": f["evidence_ids"],
+            latest[k] = {"question": f.get("question", ""), "fact": f["fact"],
+                         "evidence_ids": [i for i in f["evidence_ids"] if i.upper() in rows],
                          "capture_ids": caps, "added": f.get("added", ""), "kind": f.get("kind", "fact")}
     # a capture set already covered by a newer fact of the same question is not asked for twice
     out = sorted(latest.values(), key=lambda x: (x["question"], x["added"]), reverse=True)
@@ -560,6 +565,9 @@ def _established(node: dict, qs: list[dict], pack: dict, workspace: Path | None)
         if not found:
             continue
         out[q["id"]] = [{k: f[k] for k in ("fact", "evidence_ids", "section", "question", "basis")} for f in found]
+        for f in out[q["id"]]:                      # a fact keeps only the evidence IDs the card may offer
+            f["evidence_ids"] = [i for i in f["evidence_ids"] if i.upper() in rows]
+        out[q["id"]] = [f for f in out[q["id"]] if f["evidence_ids"]]
         have = {r["id"].upper() for r in pack[q["id"]]["rows"]}
         for f in found:
             for eid in f["evidence_ids"]:
@@ -861,7 +869,39 @@ def _dns_order_candidates(workspace: Path, rows: list[dict]) -> list[dict]:
     return out
 
 
-def drawbridge_function_lines(node: dict, qs: list[dict], workspace: Path | None) -> dict[str, list[str]]:
+# one line of the Drawbridge guidance above, read back as data (the checks need the list of functions to cover)
+def _established_effect(fn: dict, cand: dict, iso: dict, pnames: dict, domain: dict) -> dict:
+    """What the flows establish for one function in one domain: the parts that deliver it (by the words of its name, what
+    delivers it and what it depends on), and of their paths in the isolation digest those whose mechanism belongs to the
+    domain, split into cut, may be cut (a far end with no zone recorded) and kept (both ends inside OT)."""
+    from csa_docx import scope_map
+    toks = {w for w in re.findall(r"[a-z0-9]+(?:[./][a-z0-9]+)*", " ".join(str(fn.get(k) or "") for k in ("function", "delivered_by")).lower())
+            if len(w) >= 4}                 # what the function is and what delivers it; its dependencies name other parts
+    pids = [pid for pid, ns in cand.items() if toks & ns]
+    out = {"parts": [pnames.get(p, p) for p in pids], "cut": [], "may_cut": [], "kept": []}
+    for key in ("cut", "may_cut", "kept"):
+        for pid in pids:
+            for it in iso.get(pid, {}).get(key, []):
+                if scope_map.dependency_matches(it["mechanism"], domain):
+                    text = f"{it['mechanism']} between the {pnames.get(pid, pid)} and the {it['other']}"
+                    if text not in out[key]:
+                        out[key].append(text)
+    if not pids:
+        line = "    The flows establish: no part that delivers this function was identified, so nothing is established."
+    else:
+        def show(xs: list[str]) -> str:
+            return "; ".join(xs[:6]) + (f" and {len(xs) - 6} more" if len(xs) > 6 else "") if xs else "none"
+        line = (f"    The flows establish (parts: {', '.join(out['parts'][:4])}): cut: {show(out['cut'])}. May be cut (zone not recorded): "
+                f"{show(out['may_cut'])}. Stays inside OT: {show(out['kept'])}.")
+    out["line"] = line
+    return out
+
+
+_FN_LINE = re.compile(r"^\s*Function with an explicit (?P<domain>.+?) dependency to assess: (?P<function>.+?): recorded dependency: "
+                      r"(?P<dependency>.*?) \(matched: (?P<matched>[^)]*)\)\s*$")
+
+
+def drawbridge_function_lines(node: dict, qs: list[dict], workspace: Path | None, sink: dict | None = None) -> dict[str, list[str]]:
     """Domain-specific function prompts for Drawbridge Impact.
 
     Every requirement-domain card receives only functions whose declared dependencies explicitly match that
@@ -882,16 +922,17 @@ def drawbridge_function_lines(node: dict, qs: list[dict], workspace: Path | None
     whole_system = domain["key"] == "3.12"
     iso: dict[str, dict] = {}
     cand: dict[str, set[str]] = {}
-    if whole_system:
+    pnames: dict[str, str] = {}
+    if True:                      # the parts and their isolation digest: 3.12 writes the whole-system view, a domain card the paths of its domain
         from csa_docx import parts as parts_mod
         from csa_docx.parts import is_label
         try:
             doc = parts_mod.assemble(Path(workspace) / "csa-work")
         except (OSError, ValueError, KeyError):
+            doc = {}
+        if not doc.get("parts") and whole_system:
             return {}
-        if not doc.get("parts"):
-            return {}
-        iso = parts_mod.isolation(Path(workspace) / "csa-work", doc)
+        iso = parts_mod.isolation(Path(workspace) / "csa-work", doc) if doc.get("parts") else {}
         generic = {"server", "servers", "host", "group", "availability", "cluster", "application",
                    "applications", "general", "purpose", "management", "system", "node", "controller",
                    "services", "service", "data", "other", "internal", "peers", "not", "identified",
@@ -902,7 +943,8 @@ def drawbridge_function_lines(node: dict, qs: list[dict], workspace: Path | None
             return {w for w in re.findall(r"[a-z0-9]+(?:[./][a-z0-9]+)*", (s or "").lower())
                     if len(w) >= 4 and not w.isdigit() and w not in generic}
 
-        for part in doc["parts"]:
+        for part in doc.get("parts", []):
+            pnames[part["id"]] = part["name"]
             if part["id"] not in iso:
                 continue
             names = {part["name"]} | set(part.get("aliases") or []) | set(parts_mod.short_names(part["name"]))
@@ -926,18 +968,27 @@ def drawbridge_function_lines(node: dict, qs: list[dict], workspace: Path | None
                     f"  Function with an explicit {domain['title']} dependency to assess: {fn['function']}: "
                     f"recorded dependency: {dependency} (matched: {', '.join(matched)})"
                 )
+                est = _established_effect(fn, cand, iso, pnames, domain)
+                lines.append(est["line"])
+                if sink is not None:
+                    sink.setdefault(q["id"], []).append({"domain": domain["title"], "function": fn["function"], "dependency": dependency,
+                                                         "matched": ", ".join(matched), **{k: est[k] for k in ("parts", "cut", "may_cut", "kept")}})
             if lines:
                 lines.append(
                     f"  Write only consequences caused by loss or unavailability of {domain['title']}. A function stops "
                     "only where this section's evidence establishes that its matched dependency is unavailable during "
-                    "isolation. Do not import an outcome caused by another domain. If the behaviour is not established, "
-                    "record it as Unknown."
+                    "isolation. Start each Drawbridge sentence with the cause in this domain's terms (\"With the storage and "
+                    "transfer path cut, ...\"). Keep every evidence fact in Facts: facts about another domain's path stay "
+                    "in Facts and are left out of the Drawbridge Text. Do not import an outcome caused by another domain. "
+                    "If the behaviour is not established, write a QUESTION: line asking what would establish it. "
+                    "Under each function, \"The flows establish\" gives what the framework worked out from the flows for this "
+                    "domain's paths: what is cut, what may be cut (zone not recorded) and what stays inside OT."
                 )
             else:
                 lines.append(
                     f"  No function in the system model declares an explicit {domain['title']} dependency. Do not infer "
                     "one from shared servers or from a whole-system isolation outcome. Use this section's evidence or "
-                    "record the function-level impact as Unknown."
+                    "write a QUESTION: line asking for the function-level impact."
                 )
             out[q["id"]] = lines
             continue
@@ -1017,7 +1068,7 @@ def must_address_lines(items: list[dict]) -> list[str]:
     if not items:
         return []
     out = ["  Must address (from the analysis frame): cite each finding's evidence in this block, or write an "
-           "Unknown: line that names it (SLOT_NOT_ANSWERED):"]
+           "QUESTION: line that names it (SLOT_NOT_ANSWERED):"]
     for x in items:
         ids = f" ({', '.join(x['ids'])})" if x["ids"] else ""
         out.append(f"  - {x['slot']}: {'Unknown unless the evidence pack answers it: ' if x['empty'] else ''}"
@@ -1182,7 +1233,8 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
         practice_view = practice_mod.card_view(Path(workspace) / "csa-work", node.get("key", ""))
     lines = [f"# Card: {node['title']} (key {node['key']}, section {node['number']})", "",
              f"Kind: {node['kind']}", "", "## Questions", ""]
-    db_lines = drawbridge_function_lines(node, qs, workspace)
+    db_functions: dict[str, list[dict]] = {}
+    db_lines = drawbridge_function_lines(node, qs, workspace, db_functions)
     for q in qs:
         lines.append(f"- {q['id']} {q['text']}")
         if q.get("columns"):
@@ -1333,7 +1385,8 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
             "ratings": spec.get("ratings") or doc_spec.DEFAULT_RATINGS, "kinds": kinds, "host_register": reg,
             "role_table": rtable, "role_tables": rtables or [], "frame": frame, "disagree": disagree,
             "parts": {k: v for k, v in pview.items() if k != "lines"} if pview else None,
-            "practice": practice_view, "requirement_stories": requirement_stories}
+            "practice": practice_view, "requirement_stories": requirement_stories,
+            "drawbridge_functions": {k: v for k, v in db_functions.items() if v}}
 
 
 def main(argv: list[str] | None = None) -> int:

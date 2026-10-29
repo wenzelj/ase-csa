@@ -110,3 +110,112 @@ def test_hits_that_are_not_about_the_gap_are_not_added_to_the_matrix(tmp_path, m
     monkeypatch.setattr(gl, "_run", run)
     res = gl.lookup_gap(tmp_path, "DR-DNS-02", "Confirm the network zone of the domain controllers used as resolvers")
     assert res["verdict"] == "NOT_FOUND" and not [c for c in calls if "append" in c]
+
+
+# ---- stronger answer-seeking: owners, kinds of gap, vocabulary-led queries, spelling
+
+def test_the_gap_names_who_can_confirm_it_and_is_classified():
+    t = "what retention policy applies to the backup copies, which the application owner or backup service owner could confirm."
+    assert gl.owners_in(t) == ["application owner", "backup service owner"]
+    assert gl.classify_gap(t) == "document"                  # the question asks for a policy; the owners are who to ask
+    assert gl.classify_gap("which accounts administer the boundary firewalls.") == "owner"
+    assert gl.classify_gap("whether a fallback restore procedure exists for isolation events") == "document"
+    assert gl.classify_gap("which time servers the captured hosts use, which the network owner could confirm.") == "system"
+    assert gl.owners_in("what role MOTPRDREV101 performs") == []
+
+
+def test_owner_and_document_gaps_are_searched_in_documents_only():
+    q = gl.queries("what retention policy applies to the backup copies", "document", ["backup job", "retention"])
+    assert q and all(path_like in gl._DOC_EXTS for _, path_like in q)
+    system = gl.queries("which time servers the captured hosts use", "system", ["time source", "time server"])
+    assert ("time server", None) in system
+
+
+def test_queries_lead_with_the_sections_vocabulary_and_both_spellings():
+    q = [t for t, _ in gl.queries("how are the hosts synchronised to the time source", "system", ["time source", "synchronise"])]
+    assert "time source" in q[:2] and "synchronise" in q and "synchronize" in q
+    assert gl.spelling_variant("synchronise") == "synchronize" and gl.spelling_variant("organization") == "organisation"
+    assert gl.spelling_variant("source") is None
+
+
+def test_with_section_vocabulary_a_hit_must_use_it_not_share_two_common_words():
+    gap = "which time connections were observed to which servers"
+    vocab = ["time source", "time server"]
+    assert not gl.relevant("Next Run Time: N/A | Connections: 0 | servers", gap, vocab)
+    assert gl.relevant("Time source on MKYPRDOPS110: MOTPRDSRV122", gap, vocab)
+
+
+def test_a_gap_that_needs_a_person_is_looked_up_in_documents_and_says_so(tmp_path, monkeypatch):
+    run, calls = _fake_run([], [], [])
+    monkeypatch.setattr(gl, "_run", run)
+    res = gl.lookup_gap(tmp_path, "DR-BAK-01", "what retention policy applies to the backup copies, which the backup service owner could confirm.")
+    assert res["kind"] == "document" and res["owners"] == ["backup service owner"]
+    assert "documents only" in res["searched"] and "policy, procedure or test" in res["searched"]
+    searches = [c for c in calls if "search" in c]
+    assert searches and all(any(e in c for e in gl._DOC_EXTS) for c in searches)
+
+
+def test_the_most_specific_phrase_leads_and_generic_ones_are_not_searched():
+    vocab = ["backup server", "retention", "host name", "zone", "security level", "IP address"]
+    assert gl._phrases("what retention policy applies to the backup copies", vocab)[0] == "retention"
+    assert gl._phrases("what Security Level Target is assigned to each security zone", vocab)[0] == "security level"
+    assert not set(gl._phrases("which host name and zone and IP address", vocab)) & {"host name", "zone", "IP address"}
+
+
+def test_a_gap_that_names_a_host_is_answered_only_by_something_about_that_host():
+    gap = "IPTPRDLIC201: not in the discovery captures, so its time source is not known"
+    vocab = ["time source", "time peer", "synchronis"]
+    assert not gl.relevant("TaskName : ForceSynchronizeTime | Description : This task performs time synchronization.", gap, vocab)
+    assert not gl.relevant("MOTPRDREV101 time source ROTPRDSRV122", gap, vocab)
+    assert gl.relevant("IPTPRDLIC201 time source is IPTPRDSRV224", gap, vocab)
+
+
+def test_the_scheduled_task_inventory_is_searched_only_for_gaps_about_tasks(tmp_path, monkeypatch):
+    task_hit = dict(HIT, rel_path="REVELOC_discovery_ROKPRDOPS110_20260607/66_scheduled_tasks.txt",
+                    evidence_excerpt="TaskName : ForceSynchronizeTime | Description : This task performs time synchronization.")
+    run, _ = _fake_run([], [task_hit], ["E-100"])
+    monkeypatch.setattr(gl, "_run", run)
+    assert gl.lookup_gap(tmp_path, "DR-TIME-01", "which time servers synchronise the hosts")["verdict"] == "NOT_FOUND"
+    run, _ = _fake_run([], [task_hit], ["E-101"])
+    monkeypatch.setattr(gl, "_run", run)
+    assert gl.lookup_gap(tmp_path, "DR-TIME-02", "which scheduled task synchronises the time on the hosts")["verdict"] == "CANDIDATES"
+
+
+def _confirm_setup(tmp_path, monkeypatch, with_verified):
+    work = tmp_path / "csa-work"
+    work.mkdir()
+    (work / "evidence-matrix.csv").write_text(
+        "evidence_id,csa_area,question,claim,status,source_title,source_version,section,page_or_location,evidence_excerpt,"
+        "inference_reason,confidence,gap_or_action,review_state\n"
+        "E-006,ops,q,Citrix is the vendor route,VERIFIED,x,,,,y,,high,,pending\n"
+        "E-052,gap_lookup,q,Possible answer to DR-X-01: noise,UNCONFIRMED,x,,,,y,,low,found,pending\n", encoding="utf-8")
+    if with_verified:
+        (work / "evidence-reviews.jsonl").write_text(json.dumps({"evidence_id": "E-006", "state": "reviewed", "by": "t", "at": "x", "note": ""}) + "\n")
+    calls = []
+
+    def run(cmd):
+        calls.append(cmd)
+        if "append" in cmd:
+            return {"status": "APPENDED", "written": [{"evidence_id": "E-100"}]}
+        return {"status": "OK", "matches": [], "results": []}
+    monkeypatch.setattr(gl, "_run", run)
+    return calls
+
+
+def _claim(calls):
+    appended = [c for c in calls if "append" in c][0]
+    return json.loads(appended[appended.index("--row-json") + 1])["claim"]
+
+
+def test_a_not_found_record_names_the_verified_rows_that_bear_on_the_question(tmp_path, monkeypatch):
+    calls = _confirm_setup(tmp_path, monkeypatch, with_verified=True)
+    gl.confirm_gap(tmp_path, "DR-X-01", "Which vendors support it, and how", ["E-006", "E-052"], ask="ask the vendor")
+    claim = _claim(calls)
+    assert claim.startswith("No evidence answers all of: Which vendors support it, and how.")
+    assert "E-006" in claim and "E-052" not in claim                      # an unverified candidate is never named
+
+
+def test_a_not_found_record_with_no_verified_row_keeps_the_plain_sentence(tmp_path, monkeypatch):
+    calls = _confirm_setup(tmp_path, monkeypatch, with_verified=True)
+    gl.confirm_gap(tmp_path, "DR-X-01", "Where is the gateway", ["E-052"], ask="ask")
+    assert _claim(calls) == "No evidence in the matrix or the discovery index answers: Where is the gateway"

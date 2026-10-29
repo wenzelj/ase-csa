@@ -1,82 +1,105 @@
 {
- "topic": "Infrastructure Dependencies",
- "key": "INFRA",
- "area": "infrastructure_dependencies",
- "section": "infrastructure dependencies",
- "headings": [
-  "Infrastructure Dependencies (Virtualisation / Hardware)",
-  "Infrastructure Dependencies (Virtualisation and Hardware)",
-  "Infrastructure Dependencies (Virtualization / Hardware)"
- ],
- "basis": "Scope map 3.15 Must explain; SEP-INFRA-01.",
- "slots": [
-  {
-   "id": "S1",
-   "question": "Which hosts are virtual machines and which are physical servers, and on which hypervisor or hardware?",
-   "requirements": [
-    "SEP-INFRA-01"
-   ],
-   "source": {
-    "settings": [
-     "platform.hardware",
-     "agent.virtualisation_tools"
-    ]
-   },
-   "search": [
-    "VMware",
-    "Hyper-V"
-   ]
-  },
-  {
-   "id": "S2",
-   "question": "Which operating systems do the platforms carry, and when does their support end?",
-   "requirements": [
-    "SEP-INFRA-01"
-   ],
-   "source": {
-    "settings": [
-     "platform.os",
-     "platform.support"
-    ]
-   },
-   "search": [
-    "OSVersion",
-    "end of support"
-   ]
-  },
-  {
-   "id": "S3",
-   "question": "Which vCenter, hypervisor cluster and storage host the virtual machines, and are they in OT or IT?",
-   "requirements": [
-    "SEP-INFRA-01"
-   ],
-   "source": {},
-   "search": [
-    "VMware Tools"
-   ]
-  },
-  {
-   "id": "S4",
-   "question": "Who manages the hypervisors and hardware (iDRAC, vCenter), with which accounts, and are those privileged corporate IT accounts?",
-   "requirements": [
-    "SEP-INFRA-01"
-   ],
-   "source": {},
-   "search": [
-    "vSphere"
-   ]
-  },
-  {
-   "id": "S5",
-   "question": "What does the platform depend on IT for to keep running (vCenter, storage, backup, licensing)?",
-   "requirements": [
-    "SEP-INFRA-01"
-   ],
-   "source": {},
-   "search": [
-    "licence server",
-    "licensing"
-   ]
-  }
- ]
+  "topic": "Infrastructure Dependencies",
+  "key": "INFRA",
+  "area": "infrastructure_dependencies",
+  "section": "infrastructure dependencies",
+  "headings": [
+    "Infrastructure Dependencies (Virtualisation / Hardware)",
+    "Infrastructure Dependencies (Virtualisation and Hardware)",
+    "Infrastructure Dependencies (Virtualization / Hardware)"
+  ],
+  "basis": "Scope map 3.15 Must explain; SEP-INFRA-01.",
+  "slots": [
+    {
+      "id": "S1",
+      "question": "Which hosts are virtual machines and which are physical servers, and on which hypervisor or hardware?",
+      "requirements": [
+        "SEP-INFRA-01"
+      ],
+      "source": {
+        "settings": [
+          "platform.hardware",
+          "agent.virtualisation_tools"
+        ]
+      },
+      "search": [
+        "VMware",
+        "Hyper-V"
+      ]
+    },
+    {
+      "id": "S2",
+      "question": "Which operating systems do the platforms carry, and when does their support end?",
+      "requirements": [
+        "SEP-INFRA-01"
+      ],
+      "source": {
+        "settings": [
+          "platform.os",
+          "platform.support"
+        ]
+      },
+      "search": [
+        "OSVersion",
+        "end of support"
+      ]
+    },
+    {
+      "id": "S3",
+      "question": "Which vCenter, hypervisor cluster and storage host the virtual machines, and are they in OT or IT?",
+      "requirements": [
+        "SEP-INFRA-01"
+      ],
+      "source": {},
+      "search": [
+        "VMware Tools"
+      ],
+      "look_for": [
+        "vCenter",
+        "hypervisor",
+        "ESXi",
+        "datastore",
+        "VMware",
+        "virtual machine host"
+      ]
+    },
+    {
+      "id": "S4",
+      "question": "Who manages the hypervisors and hardware (iDRAC, vCenter), with which accounts, and are those privileged corporate IT accounts?",
+      "requirements": [
+        "SEP-INFRA-01"
+      ],
+      "source": {},
+      "search": [
+        "vSphere"
+      ],
+      "look_for": [
+        "iDRAC",
+        "vSphere",
+        "hypervisor management",
+        "hardware management",
+        "administered by"
+      ]
+    },
+    {
+      "id": "S5",
+      "question": "What does the platform depend on IT for to keep running (vCenter, storage, backup, licensing)?",
+      "requirements": [
+        "SEP-INFRA-01"
+      ],
+      "source": {},
+      "search": [
+        "licence server",
+        "licensing"
+      ],
+      "look_for": [
+        "licence",
+        "license",
+        "vCenter",
+        "backup",
+        "storage",
+        "depends on IT"
+      ]
+    }
+  ]
 }

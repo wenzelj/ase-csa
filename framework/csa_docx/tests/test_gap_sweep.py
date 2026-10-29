@@ -140,3 +140,17 @@ def test_csa_has_gap_check_and_resolve_commands():
     assert r.returncode == 0 and "open question" in r.stdout
     r = subprocess.run([sys.executable, str(csa), "resolve-gaps", "--help"], capture_output=True, text=True)
     assert r.returncode == 0 and "resolve-gaps" in r.stdout and "section" in r.stdout
+
+
+def test_the_run_report_counts_what_the_lookup_did():
+    results = [
+        {"verdict": "NOT_FOUND", "evidence_ids": [], "kind": "document", "owners": ["backup service owner"], "related": [], "searches": 12},
+        {"verdict": "NOT_FOUND", "evidence_ids": [], "kind": "document", "owners": ["backup service owner", "application owner"], "related": ["E-1"], "searches": 12},
+        {"verdict": "CANDIDATES", "evidence_ids": ["E-9", "E-10"], "kind": "system", "owners": [], "related": [], "searches": 4},
+    ]
+    s = gs.summarise(results)
+    assert s["gaps"] == 3 and s["by_kind"] == {"document": 2, "system": 1} and s["searches"] == 28
+    assert s["candidates_to_read"] == 2 and s["gaps_with_related_rows"] == 1
+    assert s["to_ask"] == {"backup service owner": 2, "application owner": 1}
+    text = " ".join(gs.report_lines(s))
+    assert "3 open question(s)" in text and "28 search(es)" in text and "backup service owner (2)" in text

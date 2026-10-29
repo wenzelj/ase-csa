@@ -151,3 +151,40 @@ def test_cited_file_check_finds_spaced_names_and_documents_cited_next_to_a_captu
     assert missing == []
     missing, _ = em._cited_file_exists(con, "revloc-tetra/Missing Page-000000.pdf")
     assert missing == ["Page-000000.pdf"]
+
+
+def _bracket_index(path: Path):
+    """A workbook whose file name holds brackets, and a document with a bracketed word in its name."""
+    con = _index(path)
+    for fid, rel, text in ((5, "01 Current State AS Built/revloc-tetra/Asset Inventory(OU_Computer_Inventory).csv",
+                            "IPTPRDLIC201,No,Yes,10.89.165.226,Ipswich,License Server"),
+                           (6, "01 Current State AS Built/revloc-tetra/Plan (v2).docx", "Remote access to ROTPRDREV102 is only available via ROKPRDOPS110")):
+        con.execute("insert into files values (?, ?, null, 0)", (fid, rel))
+        con.execute("insert into chunk_map values (?, ?, 1)", (fid, fid))
+        con.execute("insert into chunks_content values (?, ?)", (fid, text))
+    con.commit()
+    return con
+
+
+def test_a_file_name_with_brackets_is_a_file_name():
+    names = em._FILE_RE.findall("01 Current State AS Built/revloc-tetra/Asset Inventory(OU_Computer_Inventory).csv")
+    assert names == ["Inventory(OU_Computer_Inventory).csv"]
+    assert em._FILE_RE.findall("a.csv (x.txt)") == ["a.csv", "x.txt"]            # a bracket that wraps a name is not part of it
+    assert em._FILE_RE.findall("(see a.txt)") == ["a.txt"]
+    assert em._FILE_RE.findall("REVELOC_discovery_HOSTA01_20260605T010203Z: 03_time_status.txt") == ["03_time_status.txt"]
+
+
+def test_source_check_reads_a_source_whose_name_has_brackets(tmp_path):
+    con = _bracket_index(tmp_path / "i.sqlite")
+    row = _row(source_title="01 Current State AS Built/revloc-tetra/Asset Inventory(OU_Computer_Inventory).csv",
+               evidence_excerpt="IPTPRDLIC201,No,Yes,10.89.165.226,Ipswich,License Server")
+    assert em.source_check(row, con)["verdict"] == "SOURCE_OK"
+    assert em.source_check(dict(row, evidence_excerpt="IPTPRDLIC201,No,Yes,10.1.1.1"), con)["verdict"] == "SOURCE_MISMATCH"
+    plan = _row(source_title="revloc-tetra/Plan (v2).docx", evidence_excerpt="Remote access to ROTPRDREV102 is only available via ROKPRDOPS110")
+    assert em.source_check(plan, con)["verdict"] == "SOURCE_OK"
+
+
+def test_a_bracketed_name_for_a_file_that_is_not_indexed_is_not_found_not_unnamed(tmp_path):
+    con = _bracket_index(tmp_path / "i.sqlite")
+    row = _row(source_title="revloc-tetra/Missing(Sheet1).csv")
+    assert em.source_check(row, con)["verdict"] == "SOURCE_NOT_FOUND"

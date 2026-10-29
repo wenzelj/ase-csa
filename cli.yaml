@@ -64,10 +64,23 @@ claude_fleet: claude -p {prompt}
 hermes_fleet: hermes chat -q {prompt}
 
 # csa answer: fix rounds after the first answer. Each rewrites only the blocks that fail; the framework merges them.
-answer_fix_rounds: 3
+answer_fix_rounds: 1
+answer_budget_s: 1200
 # Each answer/draft model pass reports a heartbeat and is stopped before a dead session can consume hours. A sheet
 # written before a timeout is still validated and can continue through the repair loop.
 answer_heartbeat_minutes: 10
 answer_call_timeout_minutes: 45
 # If a focused repair returns the same blocking signature, use this already-configured CLI for subsequent repairs.
 answer_repair_cli: evo
+answer_resolve_leads: false
+# csa answer: after the sheet passes, one more call for the blocks whose text may be wrong or incomplete (content warnings,
+# listed first in RESULT.md). Kept only if the sheet still passes with no more content warnings. Off: it costs a call.
+answer_repair_content: false
+# csa answer: a model call with no CPU use and no connection to its model for this many minutes is stopped and started again
+# (answer_stall_restarts times); 0 turns the check off. The 45-minute call timeout still applies.
+answer_stall_minutes: 3
+answer_stall_restarts: 1
+# csa answer: one focused model call per block (its own evidence only) instead of one call for the whole card.
+# Calls run one after another; answer_by_block_workers > 1 runs that many at once if the model server allows it.
+answer_by_block: false
+answer_by_block_workers: 1

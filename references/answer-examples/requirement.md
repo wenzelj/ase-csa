@@ -3,7 +3,7 @@ Facts:
 - Every captured host synchronises from one of three enterprise time servers. (E-0063) {observed; all 12 captured hosts}
 - No time source inside the OT environment was found in the captures. (E-0112) {observed; all 12 captured hosts}
 - Two hosts also list a public internet time server as a second peer that is not in use. (E-0061) {observed; HOSTLOG02, HOSTAPP37}
-Unknown: whether any host keeps a usable clock when the enterprise time servers cannot be reached.
+QUESTION: Does any host keep a usable clock when the enterprise time servers cannot be reached?
 Summary: The captured hosts depend on enterprise time servers and no OT-resident source was identified. A usable fallback during isolation was not established.
 Story: Every captured role group synchronises from enterprise time servers. Two application roles also hold an unused public time peer, but the captures establish neither an OT-resident source nor a usable clock fallback when enterprise services are unavailable.
 Rating: Not Met

@@ -139,23 +139,75 @@ def _group_unknowns(items: list[tuple[str, str]]) -> list[tuple[str, str]]:
     return merged
 
 
+def _section_order(number: str, title: str) -> tuple:
+    """Section number as numbers (3.4 before 3.11); a card with none sorts last, by title."""
+    nums = [int(x) for x in re.findall(r"\d+", number or "")]
+    return (0, nums) if nums else (1, [], title)
+
+
+def merge_across_sections(groups: list[dict]) -> int:
+    """Merge a question that is already asked. ``groups`` is [{"label", "items": [(qid, text)]}] in section order. A question whose
+    every (what is asked, endpoint) pair was raised before, or whose content words are exactly those of an earlier question
+    (a fallback *backup* procedure is not a fallback *restore* procedure), is taken out of its list and noted under the first
+    one ("also raised in ..."): by block when it is the same section, by section and block otherwise. Returns how many were
+    merged. The sections' own sheets and documents are untouched: each reads in its own topic."""
+    from .matrix_candidates import words
+    from .sheet_fixes import question_keys
+    seen: list[dict] = []                      # {"keys", "words", "item", "group"}
+    merged = 0
+    for gi, g in enumerate(groups):
+        keep = []
+        for qid, text in g["items"]:
+            keys, ws = question_keys(text), words(text)
+            first = next((s for s in seen if (keys and keys <= s["keys"]) or (len(ws) >= 4 and ws == s["words"])), None)
+            if first is None and keys:         # covered by several earlier questions together
+                hit = [s for s in seen if keys & s["keys"]]
+                if hit and keys <= set().union(*(s["keys"] for s in hit)):
+                    first = hit[0]
+            if first is not None:
+                where = f"[{qid}]" if first["group"] == gi else f"{g['label']} [{qid}]"
+                if where not in first["item"]["also"]:
+                    first["item"]["also"].append(where)
+                merged += 1
+                continue
+            item = {"qid": qid, "text": text, "also": []}
+            keep.append(item)
+            seen.append({"keys": keys, "words": ws, "item": item, "group": gi})
+        g["kept"] = keep
+    return merged
+
+
 def open_questions(work: Path) -> dict:
-    """Every Unknown: line of every answered card, one list per card, in csa-work/draft/open-questions.md."""
+    """Every QUESTION: line of every answered card in csa-work/draft/open-questions.md, one list per card in section order. A question
+    that an earlier section already asks is listed once, under that section, with where else it is raised."""
     from .answer_sheet import parse
     cards = Path(work) / "cards"
-    lines, total = [f"# Open questions (draft lane, {datetime.now():%Y-%m-%d %H:%M})", "",
-                    "Built from the `Unknown:` lines of every answered card. These feed Discovery Required.", ""], 0
+    groups = []
     for sheet in sorted(cards.glob("*.answer.md")):
         card_json = sheet.with_name(sheet.name[: -len(".answer.md")] + ".json")
-        title = sheet.name[: -len(".answer.md")]
+        title, order = sheet.name[: -len(".answer.md")], _section_order("", sheet.name)
         if card_json.is_file():
             c = json.loads(card_json.read_text(encoding="utf-8"))
             title = f"{c.get('number', '')} {c.get('title', '')} ({c.get('key', title)})".strip()
+            order = _section_order(c.get("number", ""), c.get("title", ""))
         items = [(qid, u) for qid, b in parse(sheet.read_text(encoding="utf-8")).items() for u in b["unknown"]]
         if items:
-            grouped = _group_unknowns(items)
-            lines += [f"## {title}", ""] + [f"- [{qid}] {u}" for qid, u in grouped] + [""]
-            total += len(grouped)
+            groups.append({"label": title, "order": order, "items": _group_unknowns(items)})
+    groups.sort(key=lambda g: g["order"])
+    merged = merge_across_sections(groups)
+    lines, total = [f"# Open questions (draft lane, {datetime.now():%Y-%m-%d %H:%M})", "",
+                    "Built from the `QUESTION:` lines of every answered card. A question another section also asks is listed once, "
+                    "under the first section, with where else it is raised. These feed Discovery Required.", ""], 0
+    for g in groups:
+        if not g["kept"]:
+            continue
+        lines += [f"## {g['label']}", ""]
+        for it in g["kept"]:
+            lines.append(f"- [{it['qid']}] {it['text']}")
+            if it["also"]:
+                lines.append(f"  also raised in: {'; '.join(it['also'])}")
+            total += 1
+        lines.append("")
     from csa_docx.figures.work import load_gaps
     for key, gaps in load_gaps(Path(work)).items():           # what the CSA figures need but the evidence lacks
         if gaps:
@@ -169,7 +221,7 @@ def open_questions(work: Path) -> dict:
     out = Path(work) / "draft" / "open-questions.md"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text("\n".join(lines), encoding="utf-8")
-    return {"status": "OK", "file": str(out), "open": total}
+    return {"status": "OK", "file": str(out), "open": total, "merged_across_sections": merged}
 
 
 _TR = re.compile(r"<w:tr[ >].*?</w:tr>", re.S)
@@ -256,12 +308,63 @@ def tidy(docx: Path, card: dict, sheet_text: str) -> dict:
     return {"status": "OK", "rows": removed, "comments": sorted(ids)}
 
 
+_RUN = re.compile(r"<w:r(?P<ra>\s[^>]*)?>(?P<rpr><w:rPr>.*?</w:rPr>)?<w:t(?P<ta>\s[^>]*)?>(?P<t>[^<]*)</w:t></w:r>", re.S)
+_AFTER_COLOR = ("w:spacing", "w:w", "w:kern", "w:position", "w:sz", "w:szCs", "w:highlight", "w:u", "w:effect", "w:bdr",
+                "w:shd", "w:fitText", "w:vertAlign", "w:rtl", "w:cs", "w:em", "w:lang", "w:eastAsianLayout", "w:specVanish")
+QUESTION_RED = "FF0000"
+
+
+def _red(rpr: str) -> str:
+    """A run's properties with a red colour (replacing any other colour), in schema order."""
+    rpr = re.sub(r"<w:color\b[^>]*/>", "", rpr or "<w:rPr></w:rPr>")
+    tag = f'<w:color w:val="{QUESTION_RED}"/>'
+    m = re.search(r"<(?:" + "|".join(re.escape(t) for t in _AFTER_COLOR) + r")\b", rpr)
+    return rpr[:m.start()] + tag + rpr[m.start():] if m else rpr.replace("</w:rPr>", tag + "</w:rPr>")
+
+
+def colour_questions(docx: Path) -> dict:
+    """Show every 'QUESTION: ...?' the draft lane wrote in red, so a gap stands out in the document. The sentence
+    is split out of its run (same properties, red colour); a run already red is left alone, so this can run again."""
+    docx = Path(docx)
+    with zipfile.ZipFile(docx) as z:
+        parts = {n: z.read(n) for n in z.namelist()}
+        infos = {i.filename: i for i in z.infolist()}
+    xml = parts["word/document.xml"].decode("utf-8")
+    count = 0
+
+    def split(m):
+        nonlocal count
+        text = m["t"]
+        if "QUESTION:" not in text or (m["rpr"] and QUESTION_RED in m["rpr"]):
+            return m[0]
+        ra, rpr = m["ra"] or "", m["rpr"] or ""
+
+        def run(t, props):
+            return f'<w:r{ra}>{props}<w:t xml:space="preserve">{t}</w:t></w:r>' if t else ""
+        out, pos = [], 0
+        for q in re.finditer(r"QUESTION:[^?]*\??", text):
+            out += [run(text[pos:q.start()], rpr), run(q[0], _red(rpr))]
+            pos = q.end()
+            count += 1
+        return "".join(out) + run(text[pos:], rpr)
+
+    new = _RUN.sub(split, xml)
+    if count:
+        parts["word/document.xml"] = new.encode("utf-8")
+        tmp = docx.with_suffix(".tmp.docx")
+        with zipfile.ZipFile(tmp, "w") as z:
+            for n, data in parts.items():
+                z.writestr(infos[n], data)
+        tmp.replace(docx)
+    return {"status": "OK", "questions": count}
+
+
 def record_run(work: Path, key: str, number: str, title: str, status: str, detail: str = "", phase: str = "",
                blocks: str = "", elapsed_s: float | None = None, model: str = "", sheet_hash: str = "") -> dict:
     """Keep the latest draft-lane attempt in ``runs.json``.
 
     RUNNING/READY describe an in-flight or deliberately unapplied answer. OK is the only state that means the
-    current sheet reached the document. FAILED, NO_SHEET, INTERRUPTED and TIMED_OUT are terminal failures and keep
+    current sheet reached the document. FAILED, NO_SHEET, INTERRUPTED, TIMED_OUT and STALLED are terminal failures and keep
     ``last_ok`` so status can distinguish the latest attempt from the text still present in Word.
     """
     f = Path(work) / "draft" / "runs.json"
@@ -271,7 +374,7 @@ def record_run(work: Path, key: str, number: str, title: str, status: str, detai
         runs = {}
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     r = runs.setdefault(key, {})
-    terminal = status in {"OK", "READY", "FAILED", "NO_SHEET", "INTERRUPTED", "TIMED_OUT"}
+    terminal = status in {"OK", "READY", "FAILED", "NO_SHEET", "INTERRUPTED", "TIMED_OUT", "STALLED"}
     if terminal:
         model = model or str(r.get("model", ""))
         blocks = blocks or str(r.get("blocks", ""))
@@ -298,7 +401,7 @@ def failed_runs(work: Path) -> list[str]:
         return []
     out = []
     for key, r in sorted(runs.items(), key=lambda kv: kv[1].get("number", "")):
-        if r.get("status") in ("FAILED", "NO_SHEET", "INTERRUPTED", "TIMED_OUT"):
+        if r.get("status") in ("FAILED", "NO_SHEET", "INTERRUPTED", "TIMED_OUT", "STALLED"):
             since = f"text is from the run of {r['last_ok']}" if r.get("last_ok") else "no run has been applied yet"
             elapsed = f", {r['elapsed_s'] / 60:.1f} min" if r.get("elapsed_s") is not None else ""
             phase = f", phase {r['phase']}" if r.get("phase") else ""
@@ -326,6 +429,7 @@ def main(argv: list[str] | None = None) -> int:
         s.add_argument(f"--{k}", default="")
     s.add_argument("--elapsed-s", type=float)
     s = sub.add_parser("failed-runs"); s.add_argument("--work-dir", type=Path, required=True)
+    s = sub.add_parser("colour-questions"); s.add_argument("--docx", type=Path, required=True)
     s = sub.add_parser("tidy"); s.add_argument("--docx", type=Path, required=True)
     s.add_argument("--card", type=Path, required=True); s.add_argument("--sheet", type=Path, required=True)
     a = ap.parse_args(argv)
@@ -343,6 +447,8 @@ def main(argv: list[str] | None = None) -> int:
                              a.elapsed_s, a.model, a.sheet_hash)
         elif a.cmd == "failed-runs":
             out = {"status": "OK", "failed": failed_runs(a.work_dir)}
+        elif a.cmd == "colour-questions":
+            out = colour_questions(a.docx)
         elif a.cmd == "tidy":
             out = tidy(a.docx, json.loads(a.card.read_text(encoding="utf-8")), a.sheet.read_text(encoding="utf-8"))
         else:

@@ -1,91 +1,112 @@
 {
- "topic": "Internet & SMTP",
- "key": "INET",
- "area": "internet_and_smtp",
- "section": "internet access and communications",
- "headings": [
-  "Internet Access & Communications (Proxy / SMTP)",
-  "Internet Access and Communications (Proxy / SMTP)",
-  "Internet & SMTP",
-  "Internet Access & Communications"
- ],
- "basis": "Scope map 3.17 Must explain; SEP-INET-01 and 02.",
- "slots": [
-  {
-   "id": "S1",
-   "question": "How is each host set to reach the web (proxy or direct)?",
-   "requirements": [
-    "SEP-INET-01"
-   ],
-   "source": {
-    "settings": [
-     "transfer.proxy"
-    ]
-   },
-   "search": [
-    "ProxyServer",
-    "WinHTTP"
-   ]
-  },
-  {
-   "id": "S2",
-   "question": "Which hosts reached internet addresses directly, for what, on which ports?",
-   "requirements": [
-    "SEP-INET-01"
-   ],
-   "source": {
-    "flows": {
-     "dst_zones": [
-      "Internet"
-     ],
-     "status": [
-      "observed",
-      "both",
-      "declared",
-      "attempted"
-     ]
+  "topic": "Internet & SMTP",
+  "key": "INET",
+  "area": "internet_and_smtp",
+  "section": "internet access and communications",
+  "headings": [
+    "Internet Access & Communications (Proxy / SMTP)",
+    "Internet Access and Communications (Proxy / SMTP)",
+    "Internet & SMTP",
+    "Internet Access & Communications"
+  ],
+  "basis": "Scope map 3.17 Must explain; SEP-INET-01 and 02.",
+  "slots": [
+    {
+      "id": "S1",
+      "question": "How is each host set to reach the web (proxy or direct)?",
+      "requirements": [
+        "SEP-INET-01"
+      ],
+      "source": {
+        "settings": [
+          "transfer.proxy"
+        ]
+      },
+      "search": [
+        "ProxyServer",
+        "WinHTTP"
+      ]
+    },
+    {
+      "id": "S2",
+      "question": "Which hosts reached internet addresses directly, for what, on which ports?",
+      "requirements": [
+        "SEP-INET-01"
+      ],
+      "source": {
+        "flows": {
+          "dst_zones": [
+            "Internet"
+          ],
+          "status": [
+            "observed",
+            "both",
+            "declared",
+            "attempted"
+          ]
+        }
+      },
+      "search": [
+        "internet access",
+        "443"
+      ],
+      "look_for": [
+        "internet",
+        "outbound",
+        "443",
+        "public address",
+        "direct internet"
+      ]
+    },
+    {
+      "id": "S3",
+      "question": "Which hosts send email, through which relay, and is it an IT relay?",
+      "requirements": [
+        "SEP-INET-02"
+      ],
+      "source": {
+        "flows": {
+          "mechanisms": [
+            "mail"
+          ],
+          "status": [
+            "observed",
+            "both",
+            "declared"
+          ]
+        }
+      },
+      "search": [
+        "SMTP",
+        "relay"
+      ],
+      "look_for": [
+        "SMTP",
+        "mail relay",
+        "email",
+        "port 25",
+        "exchange"
+      ]
+    },
+    {
+      "id": "S4",
+      "question": "What stops working if direct internet and the IT mail relay are closed?",
+      "requirements": [
+        "SEP-INET-01",
+        "SEP-INET-02"
+      ],
+      "source": {},
+      "search": [
+        "mail relay",
+        "smtp port 25"
+      ],
+      "look_for": [
+        "mail relay",
+        "email alert",
+        "internet access",
+        "SMTP",
+        "proxy"
+      ]
     }
-   },
-   "search": [
-    "internet access",
-    "443"
-   ]
-  },
-  {
-   "id": "S3",
-   "question": "Which hosts send email, through which relay, and is it an IT relay?",
-   "requirements": [
-    "SEP-INET-02"
-   ],
-   "source": {
-    "flows": {
-     "mechanisms": [
-      "mail"
-     ],
-     "status": [
-      "observed",
-      "both",
-      "declared"
-     ]
-    }
-   },
-   "search": [
-    "SMTP",
-    "relay"
-   ]
-  },
-  {
-   "id": "S4",
-   "question": "What stops working if direct internet and the IT mail relay are closed?",
-   "requirements": [
-    "SEP-INET-01",
-    "SEP-INET-02"
-   ],
-   "source": {},
-   "search": [
-    "mail relay",
-    "smtp port 25"
-   ]
-  }
- ]
+  ]
 }

@@ -1,125 +1,207 @@
 {
- "topic": "Vendor Access",
- "key": "SUPPLY",
- "area": "vendor_access",
- "section": "supply chain and vendor access",
- "headings": [
-  "Supply Chain & Third-Party / Vendor Access",
-  "Supply Chain and Third-Party / Vendor Access",
-  "Supply Chain & Third Party / Vendor Access",
-  "Vendor Access"
- ],
- "basis": "Scope map 3.16 Must explain; SEP-SUPPLY-01.",
- "slots": [
-  {
-   "id": "S1",
-   "question": "Which remote control or remote support tools are installed, and on which hosts?",
-   "requirements": [
-    "SEP-SUPPLY-01"
-   ],
-   "source": {
-    "settings": [
-     "agent.remote_support"
-    ]
-   },
-   "search": [
-    "VNC"
-   ]
-  },
-  {
-   "id": "S2",
-   "question": "Which enabled local accounts could belong to vendors or be shared?",
-   "requirements": [
-    "SEP-SUPPLY-01"
-   ],
-   "source": {
-    "settings": [
-     "identity.local_users"
-    ]
-   },
-   "search": [
-    "Get-LocalUser",
-    "Enabled"
-   ]
-  },
-  {
-   "id": "S3",
-   "question": "Which remote administration connections reach the system from outside its zones?",
-   "requirements": [
-    "SEP-SUPPLY-01"
-   ],
-   "source": {
-    "flows": {
-     "mechanisms": [
-      "remote administration"
-     ],
-     "status": [
-      "observed",
-      "both",
-      "declared"
-     ]
-    }
-   },
-   "search": [
-    "remote access",
-    "VPN"
-   ]
-  },
-  {
-   "id": "S4",
-   "question": "Which vendors support the system, and how does their access work (route, approval, monitoring)?",
-   "requirements": [
-    "SEP-SUPPLY-01"
-   ],
-   "source": {},
-   "search": [
-    "vendor support",
-    "remote support"
-   ]
-  },
-  {
-   "id": "S5",
-   "question": "Is there any vendor path that bypasses the internal admin route, or any direct OT-to-internet connection?",
-   "requirements": [
-    "SEP-SUPPLY-01"
-   ],
-   "source": {},
-   "search": [
-    "direct internet",
-    "vendor remote"
-   ]
-  }
- ],
- "practice": {
-  "SEP-SUPPLY-01": {
-   "needs": [
+  "topic": "Vendor Access",
+  "key": "SUPPLY",
+  "area": "vendor_access",
+  "section": "supply chain and vendor access",
+  "headings": [
+    "Supply Chain & Third-Party / Vendor Access",
+    "Supply Chain and Third-Party / Vendor Access",
+    "Supply Chain & Third Party / Vendor Access",
+    "Vendor Access"
+  ],
+  "basis": "Scope map 3.16 Must explain; SEP-SUPPLY-01.",
+  "slots": [
     {
-     "kind": "document",
-     "examples": [
-      "vendor access procedure",
-      "remote support approval process"
-     ]
+      "id": "S1",
+      "question": "Which remote control or remote support tools are installed, and on which hosts?",
+      "requirements": [
+        "SEP-SUPPLY-01"
+      ],
+      "source": {
+        "settings": [
+          "agent.remote_support"
+        ]
+      },
+      "search": [
+        "VNC"
+      ]
     },
     {
-     "kind": "process",
-     "examples": [
-      "vendor request approval",
-      "session monitoring",
-      "access review"
-     ]
+      "id": "S2",
+      "question": "Which enabled local accounts could belong to vendors or be shared?",
+      "requirements": [
+        "SEP-SUPPLY-01"
+      ],
+      "source": {
+        "settings": [
+          "identity.local_users"
+        ]
+      },
+      "search": [
+        "Get-LocalUser",
+        "Enabled"
+      ]
     },
     {
-     "kind": "owner",
-     "roles": [
-      "system owner",
-      "security officer"
-     ]
+      "id": "S3",
+      "question": "Which remote administration connections reach the system from outside its zones?",
+      "requirements": [
+        "SEP-SUPPLY-01"
+      ],
+      "source": {
+        "flows": {
+          "mechanisms": [
+            "remote administration"
+          ],
+          "status": [
+            "observed",
+            "both",
+            "declared"
+          ]
+        }
+      },
+      "search": [
+        "remote access",
+        "VPN"
+      ],
+      "look_for": [
+        "remote access",
+        "VPN",
+        "vendor",
+        "TeamViewer",
+        "remote support",
+        "external"
+      ]
+    },
+    {
+      "id": "S4",
+      "question": "Which vendors and third parties support the system?",
+      "requirements": [
+        "SEP-SUPPLY-01"
+      ],
+      "source": {},
+      "search": [
+        "vendor support",
+        "third party"
+      ],
+      "look_for": [
+        "vendor",
+        "third party",
+        "third-party",
+        "supplier",
+        "support agreement",
+        "contract"
+      ]
+    },
+    {
+      "id": "S5",
+      "question": "Is there any vendor path that bypasses the internal admin route, or any direct OT-to-internet connection?",
+      "requirements": [
+        "SEP-SUPPLY-01"
+      ],
+      "source": {},
+      "search": [
+        "direct internet",
+        "vendor remote"
+      ],
+      "look_for": [
+        "bypass",
+        "direct internet",
+        "vendor remote",
+        "cellular",
+        "modem",
+        "direct connection"
+      ]
+    },
+    {
+      "id": "S6",
+      "question": "Which path or conduit gives vendors access to the system?",
+      "requirements": [
+        "SEP-SUPPLY-01"
+      ],
+      "source": {},
+      "search": [
+        "Citrix",
+        "remote access"
+      ],
+      "look_for": [
+        "Citrix",
+        "VDI",
+        "remote access",
+        "VPN",
+        "jump host",
+        "vendor route"
+      ]
+    },
+    {
+      "id": "S7",
+      "question": "Who approves a vendor's access, and how is it requested?",
+      "requirements": [
+        "SEP-SUPPLY-01"
+      ],
+      "source": {},
+      "search": [
+        "approval",
+        "access request"
+      ],
+      "look_for": [
+        "approval",
+        "approve",
+        "access request",
+        "change request",
+        "vendor access procedure"
+      ]
+    },
+    {
+      "id": "S8",
+      "question": "How is vendor access monitored or recorded?",
+      "requirements": [
+        "SEP-SUPPLY-01"
+      ],
+      "source": {},
+      "search": [
+        "session recording",
+        "monitoring"
+      ],
+      "look_for": [
+        "session",
+        "recording",
+        "monitor",
+        "audit log",
+        "privileged access"
+      ]
     }
-   ],
-   "minimum_for_met": [
-    "documented"
-   ],
-   "cap_without": "Partially Met"
+  ],
+  "practice": {
+    "SEP-SUPPLY-01": {
+      "needs": [
+        {
+          "kind": "document",
+          "examples": [
+            "vendor access procedure",
+            "remote support approval process"
+          ]
+        },
+        {
+          "kind": "process",
+          "examples": [
+            "vendor request approval",
+            "session monitoring",
+            "access review"
+          ]
+        },
+        {
+          "kind": "owner",
+          "roles": [
+            "system owner",
+            "security officer"
+          ]
+        }
+      ],
+      "minimum_for_met": [
+        "documented"
+      ],
+      "cap_without": "Partially Met"
+    }
   }
- }
 }

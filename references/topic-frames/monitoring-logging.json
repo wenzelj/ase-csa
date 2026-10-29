@@ -1,115 +1,140 @@
 {
- "topic": "Monitoring & Logging",
- "key": "MON",
- "area": "monitoring_and_logging",
- "section": "monitoring and logging",
- "headings": [
-  "Monitoring & Logging",
-  "Monitoring and Logging"
- ],
- "basis": "Scope map 3.9 Must explain; ACSC/CISA OT principles (know who accesses OT data, segregate OT); SEP-MON-01 to 03.",
- "slots": [
-  {
-   "id": "S1",
-   "question": "Which monitoring, logging and endpoint agents run on each host?",
-   "requirements": [
-    "SEP-MON-02"
-   ],
-   "source": {
-    "settings": [
-     "agent.edr",
-     "agent.antivirus",
-     "agent.log_forwarding",
-     "agent.monitoring",
-     "agent.security_telemetry"
-    ]
-   },
-   "search": [
-    "HealthService",
-    "splunkd"
-   ]
-  },
-  {
-   "id": "S2",
-   "question": "Where do the logs, events and telemetry go, which side opens the connection, and is the destination inside OT?",
-   "requirements": [
-    "SEP-MON-01"
-   ],
-   "source": {
-    "flows": {
-     "mechanisms": [
-      "log forwarding",
-      "monitoring",
-      "security agent telemetry"
-     ],
-     "status": [
-      "observed",
-      "both",
-      "declared"
-     ]
+  "topic": "Monitoring & Logging",
+  "key": "MON",
+  "area": "monitoring_and_logging",
+  "section": "monitoring and logging",
+  "headings": [
+    "Monitoring & Logging",
+    "Monitoring and Logging"
+  ],
+  "basis": "Scope map 3.9 Must explain; ACSC/CISA OT principles (know who accesses OT data, segregate OT); SEP-MON-01 to 03.",
+  "slots": [
+    {
+      "id": "S1",
+      "question": "Which monitoring, logging and endpoint agents run on each host?",
+      "requirements": [
+        "SEP-MON-02"
+      ],
+      "source": {
+        "settings": [
+          "agent.edr",
+          "agent.antivirus",
+          "agent.log_forwarding",
+          "agent.monitoring",
+          "agent.security_telemetry"
+        ]
+      },
+      "search": [
+        "HealthService",
+        "splunkd"
+      ]
+    },
+    {
+      "id": "S2",
+      "question": "Where do the logs, events and telemetry go, which side opens the connection, and is the destination inside OT?",
+      "requirements": [
+        "SEP-MON-01"
+      ],
+      "source": {
+        "flows": {
+          "mechanisms": [
+            "log forwarding",
+            "monitoring",
+            "security agent telemetry"
+          ],
+          "status": [
+            "observed",
+            "both",
+            "declared"
+          ]
+        }
+      },
+      "search": [
+        "syslog",
+        "forwarder"
+      ],
+      "look_for": [
+        "syslog",
+        "forwarder",
+        "log forwarding",
+        "telemetry",
+        "SIEM",
+        "Splunk",
+        "SCOM"
+      ]
+    },
+    {
+      "id": "S3",
+      "question": "Which logs and records does the application itself produce (event, call and position records, recordings), and where are they kept?",
+      "requirements": [
+        "SEP-MON-03"
+      ],
+      "source": {},
+      "search": [
+        "event log",
+        "call record"
+      ],
+      "look_for": [
+        "event log",
+        "call record",
+        "audit",
+        "position record",
+        "application log",
+        "SDS"
+      ]
+    },
+    {
+      "id": "S4",
+      "question": "Are log sources, retention and tamper protection defined, and is coverage verified across all vital hosts?",
+      "requirements": [
+        "SEP-MON-02",
+        "SEP-MON-03"
+      ],
+      "source": {
+        "settings": [
+          "agent.patch_management"
+        ]
+      },
+      "search": [
+        "log retention",
+        "audit policy"
+      ]
+    },
+    {
+      "id": "S5",
+      "question": "What monitoring visibility is lost when OT is isolated from IT?",
+      "requirements": [
+        "SEP-MON-01"
+      ],
+      "source": {
+        "flows": {
+          "mechanisms": [
+            "log forwarding",
+            "monitoring",
+            "security agent telemetry"
+          ],
+          "cross_zone": [
+            "yes",
+            "unknown"
+          ],
+          "status": [
+            "observed",
+            "both"
+          ]
+        }
+      },
+      "search": [
+        "monitoring",
+        "SCOM"
+      ],
+      "look_for": [
+        "monitoring",
+        "SCOM",
+        "visibility",
+        "alert",
+        "telemetry",
+        "IT monitoring"
+      ]
     }
-   },
-   "search": [
-    "syslog",
-    "forwarder"
-   ]
-  },
-  {
-   "id": "S3",
-   "question": "Which logs and records does the application itself produce (event, call and position records, recordings), and where are they kept?",
-   "requirements": [
-    "SEP-MON-03"
-   ],
-   "source": {},
-   "search": [
-    "event log",
-    "call record"
-   ]
-  },
-  {
-   "id": "S4",
-   "question": "Are log sources, retention and tamper protection defined, and is coverage verified across all vital hosts?",
-   "requirements": [
-    "SEP-MON-02",
-    "SEP-MON-03"
-   ],
-   "source": {
-    "settings": [
-     "agent.patch_management"
-    ]
-   },
-   "search": [
-    "log retention",
-    "audit policy"
-   ]
-  },
-  {
-   "id": "S5",
-   "question": "What monitoring visibility is lost when OT is isolated from IT?",
-   "requirements": [
-    "SEP-MON-01"
-   ],
-   "source": {
-    "flows": {
-     "mechanisms": [
-      "log forwarding",
-      "monitoring",
-      "security agent telemetry"
-     ],
-     "cross_zone": [
-      "yes",
-      "unknown"
-     ],
-     "status": [
-      "observed",
-      "both"
-     ]
-    }
-   },
-   "search": [
-    "monitoring",
-    "SCOM"
-   ]
-  }
- ]
+  ]
 }

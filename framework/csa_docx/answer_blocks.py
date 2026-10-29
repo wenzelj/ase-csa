@@ -108,7 +108,7 @@ def failing(findings: list[dict], level: str = "ERROR") -> set[str]:
 
 # ---------------------------------------------------------------- focused card for a fix round
 
-def focus(card_md: str, only: set[str]) -> str:
+def focus(card_md: str, only: set[str], first_pass: bool = False) -> str:
     """The card with the evidence pack cut to the blocks being rewritten. Everything else (questions, host register,
     analysis frame, rules, examples) stays: the agent needs it to write a block that fits the rest of the sheet."""
     only = {x.upper() for x in only}
@@ -123,8 +123,12 @@ def focus(card_md: str, only: set[str]) -> str:
             skip = bool(m) and m.group(1).upper() not in only
         if not skip:
             out.append(line)
-    note = ("> Fix round: rewrite only " + ", ".join(sorted(only, key=_order)) +
-            ". The evidence pack below holds only those blocks; the other blocks already pass and are not shown.\n\n")
+    if first_pass:
+        note = ("> Answer only " + ", ".join(sorted(only, key=_order)) + ": write just that block to SHEET=. The evidence "
+                "pack below holds only that block; the other blocks are answered separately and merged by the framework.\n\n")
+    else:
+        note = ("> Fix round: rewrite only " + ", ".join(sorted(only, key=_order)) +
+                ". The evidence pack below holds only those blocks; the other blocks already pass and are not shown.\n\n")
     text = "".join(out)
     first = text.find("\n## ")
     return text[: first + 1] + note + text[first + 1:] if first >= 0 else note + text
@@ -189,6 +193,7 @@ def main(argv: list[str] | None = None) -> int:
     f.add_argument("card", type=Path)
     f.add_argument("--only", required=True)
     f.add_argument("--out", type=Path, required=True)
+    f.add_argument("--first-pass", action="store_true", help="the first answer of one block, not a fix round")
     for name in ("wip-check", "wip-write", "wip-clear"):
         s = sub.add_parser(name)
         s.add_argument("sheet", type=Path)
@@ -209,7 +214,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"status": "OK", **res}))
         return 0
     if a.cmd == "focus":
-        a.out.write_text(focus(a.card.read_text(encoding="utf-8"), only), encoding="utf-8")
+        a.out.write_text(focus(a.card.read_text(encoding="utf-8"), only, a.first_pass), encoding="utf-8")
         print(json.dumps({"status": "OK", "out": str(a.out)}))
         return 0
     if a.cmd == "wip-clear":

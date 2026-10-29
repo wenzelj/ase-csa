@@ -1,90 +1,117 @@
 {
- "topic": "DNS",
- "key": "DNS",
- "area": "dns",
- "section": "dns and name resolution",
- "headings": [
-  "DNS",
-  "DNS / Name Resolution",
-  "Name Resolution",
-  "DNS and Name Resolution"
- ],
- "basis": "Scope map 3.5 Must explain; SEP-DNS-01.",
- "slots": [
-  {
-   "id": "S1",
-   "question": "Which DNS servers does each host ask first and second, and are they in IT or OT?",
-   "requirements": [
-    "SEP-DNS-01"
-   ],
-   "source": {
-    "settings": [
-     "dns.primary",
-     "dns.secondary"
-    ]
-   },
-   "search": [
-    "DnsClientServerAddress",
-    "Get-DnsClientServerAddress"
-   ]
-  },
-  {
-   "id": "S2",
-   "question": "Which name resolution connections were seen, to which servers?",
-   "requirements": [
-    "SEP-DNS-01"
-   ],
-   "source": {
-    "flows": {
-     "mechanisms": [
-      "name resolution"
-     ],
-     "status": [
-      "observed",
-      "both",
-      "declared"
-     ]
+  "topic": "DNS",
+  "key": "DNS",
+  "area": "dns",
+  "section": "dns and name resolution",
+  "headings": [
+    "DNS",
+    "DNS / Name Resolution",
+    "Name Resolution",
+    "DNS and Name Resolution"
+  ],
+  "basis": "Scope map 3.5 Must explain; SEP-DNS-01.",
+  "slots": [
+    {
+      "id": "S1",
+      "question": "Which DNS servers does each host ask first and second, and are they in IT or OT?",
+      "requirements": [
+        "SEP-DNS-01"
+      ],
+      "source": {
+        "settings": [
+          "dns.primary",
+          "dns.secondary"
+        ]
+      },
+      "search": [
+        "DnsClientServerAddress",
+        "Get-DnsClientServerAddress"
+      ]
+    },
+    {
+      "id": "S2",
+      "question": "Which name resolution connections were seen, to which servers?",
+      "requirements": [
+        "SEP-DNS-01"
+      ],
+      "source": {
+        "flows": {
+          "mechanisms": [
+            "name resolution"
+          ],
+          "status": [
+            "observed",
+            "both",
+            "declared"
+          ]
+        }
+      },
+      "search": [
+        "port 53",
+        "DNS query"
+      ],
+      "look_for": [
+        "port 53",
+        "DNS query",
+        "name resolution",
+        "resolver",
+        "DNS server"
+      ]
+    },
+    {
+      "id": "S3",
+      "question": "Which zones must resolve for the system to work (the AD domain, mail, application names), and where are they hosted?",
+      "requirements": [
+        "SEP-DNS-01"
+      ],
+      "source": {},
+      "search": [
+        "DNS zone"
+      ],
+      "look_for": [
+        "DNS zone",
+        "forward lookup",
+        "name resolution",
+        "zone transfer"
+      ]
+    },
+    {
+      "id": "S4",
+      "question": "Do the application's own connections use host names or IP addresses (configuration, flow map)?",
+      "requirements": [
+        "SEP-DNS-01"
+      ],
+      "source": {},
+      "search": [
+        "hosts file",
+        "FQDN"
+      ],
+      "look_for": [
+        "FQDN",
+        "hosts file",
+        "connection string",
+        "SQL listener",
+        "listener name"
+      ]
+    },
+    {
+      "id": "S5",
+      "question": "What fails when IT DNS is unreachable, and is there a hosts-file or local resolver fallback that has been tested?",
+      "requirements": [
+        "SEP-DNS-01"
+      ],
+      "source": {},
+      "search": [
+        "etc\\hosts",
+        "DNS fallback"
+      ],
+      "look_for": [
+        "hosts file",
+        "DNS fallback",
+        "local resolver",
+        "cached",
+        "name resolution"
+      ]
     }
-   },
-   "search": [
-    "port 53",
-    "DNS query"
-   ]
-  },
-  {
-   "id": "S3",
-   "question": "Which zones must resolve for the system to work (the AD domain, mail, application names), and where are they hosted?",
-   "requirements": [
-    "SEP-DNS-01"
-   ],
-   "source": {},
-   "search": [
-    "DNS zone"
-   ]
-  },
-  {
-   "id": "S4",
-   "question": "Do the application's own connections use host names or IP addresses (configuration, flow map)?",
-   "requirements": [
-    "SEP-DNS-01"
-   ],
-   "source": {},
-   "search": [
-    "hosts file",
-    "FQDN"
-   ]
-  },
-  {
-   "id": "S5",
-   "question": "What fails when IT DNS is unreachable, and is there a hosts-file or local resolver fallback that has been tested?",
-   "requirements": [
-    "SEP-DNS-01"
-   ],
-   "source": {},
-   "search": [
-    "etc\\hosts",
-    "DNS fallback"
-   ]
-  }
- ]
+  ]
 }
