@@ -73,7 +73,7 @@ def test_refresh_retires_removed_and_superseded_and_lists_changed(tmp_path):
                        "E-003,a,q,Doc says y.,VERIFIED,src/gone.pdf,y,,pending"])
     (tmp_path / "intake").mkdir()
     (tmp_path / "intake" / "latest.json").write_text(json.dumps({"id": "r1", "added": [], "changed": [],
-        "removed": [{"rel_path": "src/gone.pdf", "source_class": "other"}]}), encoding="utf-8")
+        "removed": ["src/gone.pdf"]}), encoding="utf-8")
     res = evidence_refresh.run(tmp_path)
     assert {r["evidence_id"] for r in res["rejected"]} == {"E-001", "E-003"}
     assert [r["evidence_id"] for r in res["recheck"]] == ["E-002"]

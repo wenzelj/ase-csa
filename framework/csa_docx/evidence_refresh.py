@@ -61,9 +61,18 @@ def run(work_dir: Path, dry_run: bool = False) -> dict:
     em = _em() if con is not None else None
     for kind in ("changed", "removed"):
         for f in rec.get(kind) or []:
-            rel = f.get("rel_path") or ""
+            # discovery_index records removed files as path strings because no
+            # live file metadata remains. Added/changed entries are mappings.
+            # Accept both shapes so older and current intake records refresh.
+            if isinstance(f, str):
+                rel, source_class = f, ""
+            elif isinstance(f, dict):
+                rel = f.get("rel_path") or ""
+                source_class = f.get("source_class") or ""
+            else:
+                continue
             name = Path(rel).name
-            if not name or (f.get("source_class") == "capture"):
+            if not name or source_class == "capture":
                 continue
             for r in rows:
                 if r.get("status") != "VERIFIED" or r["evidence_id"] in reject or not _cites(r, name):
