@@ -25,6 +25,7 @@ import json
 import os
 import re
 import shlex
+import signal
 import shutil
 import subprocess
 import sys
@@ -311,6 +312,47 @@ if not (sys.stdout.isatty() and sys.stderr.isatty()) or os.environ.get("NO_COLOR
 def die(msg: str, code: int = 1):
     print(f"{C['r']}csa: {msg}{C['0']}", file=sys.stderr)
     sys.exit(code)
+
+
+def _terminal_run_state() -> str:
+    """The run state for a draft attempt the operator ends: a model that wrote no sheet already ended as a
+    terminal FAILED/TIMED_OUT/STALLED run, so those are kept; only a run still in flight becomes INTERRUPTED."""
+    import os
+    state = Path(os.environ["CSA_RUN_STATE_FILE"])
+    try:
+        runs = json.loads(state.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    r = runs.get(os.environ.get("CSA_RUN_STATE_KEY", ""), {})
+    st = r.get("status", "")
+    if st in ("RUNNING", "READY"):
+        return "INTERRUPTED"
+    return st
+
+
+def _finalize_interrupted_run(signum: int, frame) -> NoReturn:
+    """SIGTERM/SIGHUP during an active answer/draft run (installed only while one is active, and only by the
+    command process): record the run terminal so `csa status` does not say to wait for a process that is gone,
+    then exit non-zero. atexit (Ctrl+C, plain exit) already covers those; this handler only records INTERRUPTED
+    and never replaces a terminal state recorded by the run itself."""
+    import os
+    signal.signal(signum, signal.SIG_DFL)
+    try:
+        st = _terminal_run_state()
+        if st == "INTERRUPTED":
+            sys.path.insert(0, str(FRAMEWORK))
+            from csa_docx import draft_lane
+            detail = os.environ.get("CSA_RUN_DETAIL", "") or "terminated before the answer reached the document"
+            draft_lane.record_run(Path(os.environ["CSA_RUN_STATE_DIR"]), os.environ["CSA_RUN_STATE_KEY"],
+                                 os.environ.get("CSA_RUN_STATE_NUMBER", ""), os.environ.get("CSA_RUN_STATE_TITLE", ""),
+                                 "INTERRUPTED", f"{detail} ({signal.Signals(signum).name})",
+                                 os.environ.get("CSA_PHASE", ""), os.environ.get("CSA_BLOCKS", ""),
+                                 model=os.environ.get("CSA_MODEL", ""))
+    except Exception:
+        pass
+    print(f"csa: {signal.Signals(signum).name} during an answer/draft run; the run was recorded as INTERRUPTED.",
+          file=sys.stderr, flush=True)
+    os._exit(128 + signum)
 
 
 # ---------------------------------------------------------------- flat YAML
@@ -2709,6 +2751,9 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
         model = model or str(run_state.get("model", ""))
         previous_phase = str(run_state.get("phase", ""))
         sheet_hash = hashlib.sha256(sheet.read_bytes()).hexdigest()[:16] if sheet.is_file() else ""
+        # the SIGTERM/SIGHUP handler (installed once below) reads these, so it can record the run itself;
+        # the child process the model call runs gets them through its environment and never installs a handler
+        os.environ.update({"CSA_PHASE": phase, "CSA_BLOCKS": block_text, "CSA_RUN_DETAIL": detail, "CSA_MODEL": model})
         _fw_json("csa_docx.draft_lane", "run", "--work-dir", work, "--key", key, "--number", number,
                  "--title", res.get("title", ""), "--status", status, "--detail", detail,
                  "--phase", phase, "--blocks", block_text, "--elapsed-s", round(time.time() - started, 1),
@@ -2723,8 +2768,24 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
                       run_state["phase"], run_state["blocks"], terminal=True)
 
     if track_draft_run:
+        os.environ.update({"CSA_RUN_STATE_FILE": str(work / "draft" / "runs.json"),
+                           "CSA_RUN_STATE_DIR": str(work),
+                           "CSA_RUN_STATE_KEY": key,
+                           "CSA_RUN_STATE_NUMBER": number,
+                           "CSA_RUN_STATE_TITLE": res.get("title", "")})
         atexit.register(abandoned_run)
         draft_run("RUNNING", "building the section card", "CARD")
+        # A SIGTERM (e.g. an outer supervisor stopping the job) does not run atexit, so the run would stay
+        # RUNNING in runs.json and `csa status` would keep saying to wait. The handler only records the run
+        # terminal (INTERRUPTED) and exits; it resets the signal to default first so a second signal still kills,
+        # it never replaces a state the run recorded itself (OK/READY/FAILED/NO_SHEET/TIMED_OUT/STALLED), and
+        # Ctrl+C is untouched (SIGINT keeps its default KeyboardInterrupt behaviour, and atexit still finalises).
+        if threading.main_thread() is threading.current_thread():
+            signal.signal(signal.SIGTERM, _finalize_interrupted_run)
+            signal.signal(signal.SIGHUP, _finalize_interrupted_run)
+        else:                                   # answer() can run on a worker thread; signal.signal is main-thread only,
+            print(f"{C['y']}the run state can be finalised by a signal only in the main thread; it will be left "
+                  f"as RUNNING if this process is signalled{C['0']}", file=sys.stderr, flush=True)
     repair_cli_override: str | None = None
 
     def build(searches: list[tuple[str, str]] = ()) -> None:
