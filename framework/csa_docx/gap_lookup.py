@@ -14,7 +14,9 @@ evidence does not answer it. This runs the framework's own lookups in the usual 
   (sources need review), NOT_FOUND (complete search found nothing), or INCOMPLETE (the evidence matrix lookup
   is unavailable, or a named entity's own searches failed or reached the 50-result limit without yielding a
   relevant lead); saturation of generic queries, the candidate cap and the matrix 40-row cap are
-  informational notes, not verdict blockers. Similarity and evidence routing notes alone never answer a question.
+  informational notes, not verdict blockers. A question's coverage is the coverage of its named entities: a
+  named entity whose own searches completed with zero relevant hits is a normal scoped miss, never a verdict
+  blocker. Similarity and evidence routing notes alone never answer a question.
 
 After reading what was found, a person or the evidence agent settles it one of two ways:
   * it answers the question: record a VERIFIED row that states the answer and restate the gap;
