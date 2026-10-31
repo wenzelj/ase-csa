@@ -3,6 +3,7 @@
 import * as React from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
+import { terminalReason } from "../components/DraftLane";
 import { DraftLane } from "../components/DraftLane";
 import type { DraftSnapshot, ReviewJob } from "../types";
 // vitest types are resolved by the test runner; a minimal fallback keeps `tsc` happy when the
@@ -105,6 +106,8 @@ let JOB_STATE: Record<string, ReviewJob> = {};
   return json({});
 };
 
+
+
 function render() {
   const el = makeElement("div");
   el.ownerDocument = documentStub;
@@ -151,6 +154,67 @@ it("shows a failed answer job after reload without polling it", async () => {
   expect(jobsListCalls).toBeGreaterThanOrEqual(1);
   expect(timers.size).toBe(0);
   await act(async () => { root.unmount(); });
+});
+
+// --- terminalReason: concise, actionable failure reasons ---------------------------------
+function makeJob(overrides: Partial<ReviewJob>): ReviewJob {
+  return {
+    id: "test", project_key: "reveloc", operation: "answer", state: "failed",
+    created_at: "2026-10-31T11:30:00Z", started_at: null, finished_at: null,
+    exit_code: 1, stdout_tail: "", stderr_tail: "", message: undefined,
+    ...overrides,
+  } as ReviewJob;
+}
+
+it("extracts the Error: line from stderr for a Word -1708 failure", () => {
+  const job = makeJob({
+    state: "failed",
+    stdout_tail: "CSA_PHASE CARD: reading the evidence\nCSA_PHASE GENERATING: answer draft",
+    stderr_tail: "\u001b[1mProject: rev\u001b[0m\n\u001b[34mcsa: answer 3.1 starting\u001b[0m\nError: Word automation failed: -1708",
+    message: undefined,
+  });
+  expect(terminalReason(job)).toBe("Error: Word automation failed: -1708");
+});
+
+it("keeps multi-line guidance when the Error: line is followed by a fix", () => {
+  const job = makeJob({
+    state: "failed",
+    stderr_tail: "csa: answer 3.1 starting\nError: Word automation failed: -1708\nClose Word, then re-run csa answer 3.1 --cli gpt",
+    message: undefined,
+  });
+  const reason = terminalReason(job);
+  expect(reason.includes("Error: Word automation failed: -1708")).toBe(true);
+  expect(reason.includes("Close Word, then re-run csa answer 3.1 --cli gpt")).toBe(true);
+});
+
+it("prefers job.message over log tails", () => {
+  const job = makeJob({
+    state: "interrupted",
+    stdout_tail: "CSA_PHASE CARD: reading the evidence",
+    stderr_tail: "",
+    message: "The evidence workspace restarted before this job completed.",
+  });
+  expect(terminalReason(job)).toBe("The evidence workspace restarted before this job completed.");
+});
+
+it("falls back to the last stdout line when there is no message or Error line", () => {
+  const job = makeJob({
+    state: "failed",
+    stdout_tail: "CSA_PHASE CARD: reading the evidence\nCSA_PHASE GENERATING: answer draft\nmodel exited without writing an answer sheet",
+    stderr_tail: "",
+    message: undefined,
+  });
+  expect(terminalReason(job)).toBe("model exited without writing an answer sheet");
+});
+
+it("returns an empty string when there is no message and no log output", () => {
+  const job = makeJob({
+    state: "failed",
+    stdout_tail: "",
+    stderr_tail: "",
+    message: undefined,
+  });
+  expect(terminalReason(job)).toBe("");
 });
 
 console.log("draftLaneJobs recovery tests passed");

@@ -18,6 +18,35 @@ function phase(job: ReviewJob): string {
   return `${labels[key] || key} — ${detail}`;
 }
 
+function stripAnsi(value: string): string {
+  return value.replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "").replace(/\u001b[@-Z\\^_]/g, "").replace(/[\u0007\u009b]/g, "");
+}
+export function terminalReason(job: ReviewJob): string {
+  const clean = (value?: string | null) => stripAnsi(value || "").replace(/\s+\n/g, "\n").trim();
+  const message = clean(job.message);
+  if (message) return message;
+  const streams = [job.stderr_tail, job.stdout_tail].map(clean).filter(Boolean);
+  for (const stream of streams) {
+    const lines = stream.split("\n").map(l => l.trimEnd());
+    const meaningfulIdx = lines.map((l, i) => (l && (l.includes("csa:") || l.includes("Error:")) ? i : -1)).filter(i => i >= 0);
+    if (meaningfulIdx.length) {
+      const lastIdx = meaningfulIdx.at(-1)!;
+      // Include the actionable line plus any following guidance lines (until blank or end)
+      const parts: string[] = [];
+      for (let i = lastIdx; i < lines.length; i++) {
+        if (!lines[i]) break;
+        parts.push(lines[i]);
+      }
+      return parts.join("\n");
+    }
+  }
+  for (const stream of streams) {
+    const lines = stream.split("\n").map(l => l.trimEnd()).filter(Boolean);
+    if (lines.length) return lines.at(-1)!;
+  }
+  return "";
+}
+
 export function DraftLane({ system, focus = "", investigate }: { system: string; focus?: string; investigate: (query: string) => void }) {
   const [snap, setSnap] = useState<DraftSnapshot | null>(null); const [job, setJob] = useState<ReviewJob | null>(null);
   const [error, setError] = useState(""); const [cli, setCli] = useState(rememberedAgentCli()); const [fresh, setFresh] = useState(false);
@@ -71,6 +100,7 @@ export function DraftLane({ system, focus = "", investigate }: { system: string;
   const rows = snap.sections.filter(r => !onlyOpen || r.state === "stale" || r.state === "not-answered");
   const args = (job as (ReviewJob & { display_args?: string[] }) | null)?.display_args || [];
   const jobTarget = job?.operation === "answer" ? args.filter(a => !a.startsWith("-") && a !== "answer")[0] || "" : "";
+  const jobReason = job ? terminalReason(job) : "";
 
   return <section className="page draft-page">
     <header className="page-heading draft-heading">
@@ -87,7 +117,7 @@ export function DraftLane({ system, focus = "", investigate }: { system: string;
     <div className="draft-counts">{(["current", "stale", "answered", "not-answered"] as const).map(k => <div key={k} className={`draft-count draft-${k}`}><strong>{counts[k] || 0}</strong><span>{STATE_LABEL[k]}</span></div>)}<div className="draft-count"><strong>{snap.open_questions.total}</strong><span>Open questions</span></div></div>
 
     {error && <p className="desk-error" role="alert">{error}</p>}
-    {job && <div className={`draft-job draft-job-${job.state}`} role="status"><div><b>{OP_LABEL[job.operation] || job.operation}{jobTarget ? ` ${jobTarget}` : ""}</b><span>{running ? (job.operation === "answer" || job.operation === "refresh_draft" ? phase(job) : "Running…") : job.state === "succeeded" ? "Done" : `Stopped: ${job.state}`}</span></div><div className="draft-job-buttons"><button className="quiet" onClick={() => setShowLog(!showLog)}>{showLog ? "Hide output" : "Show output"}</button>{running && <button className="quiet" onClick={() => void cancelJob(system, job.id)}>Cancel</button>}</div>{showLog && <pre>{(job.stdout_tail || "") + (job.stderr_tail ? "\n" + job.stderr_tail : "") || job.message || "Waiting for output…"}</pre>}</div>}
+    {job && <div className={`draft-job draft-job-${job.state}`} role="status"><div><b>{OP_LABEL[job.operation] || job.operation}{jobTarget ? ` ${jobTarget}` : ""}</b><span>{running ? (job.operation === "answer" || job.operation === "refresh_draft" ? phase(job) : "Running…") : job.state === "succeeded" ? "Done" : <span>Stopped: {job.state}{jobReason && <> — {jobReason}</>}</span>}</span></div><div className="draft-job-buttons"><button className="quiet" onClick={() => setShowLog(!showLog)}>{showLog ? "Hide output" : "Show output"}</button>{running && <button className="quiet" onClick={() => void cancelJob(system, job.id)}>Cancel</button>}</div>{showLog && <pre>{(job.stdout_tail || "") + (job.stderr_tail ? "\n" + job.stderr_tail : "") || job.message || "Waiting for output…"}</pre>}</div>}
     {snap.spec_error && <p className="desk-error">Section list unavailable: {snap.spec_error}</p>}
 
     <section className="decision-desk draft-desk"><header><div><h2>Subsections</h2><p>Answer one subsection at a time. A subsection with unaccepted tracked changes is refused until you accept or reject them in Word.</p></div><label className="draft-check"><input type="checkbox" checked={onlyOpen} onChange={e => setOnlyOpen(e.target.checked)} /> Only what needs an answer</label></header>
