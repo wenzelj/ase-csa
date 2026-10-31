@@ -103,14 +103,18 @@ def test_a_terminal_lead_is_not_offered_again_and_the_scope_is_reported(tmp_path
     assert incomplete["verdict"] == "INCOMPLETE" and "no index built" in incomplete["searched"]
 
 
-def test_index_result_limit_is_reported_as_incomplete(tmp_path, monkeypatch):
+def test_index_result_limit_is_a_note_when_the_leads_stay(tmp_path, monkeypatch):
+    ws = _workspace(tmp_path)
     many_hits = [dict(HIT, rel_path=f"RevLoc/source-{n}.xlsx", source_title=f"RevLoc/source-{n}.xlsx")
                  for n in range(50)]
     run, _ = _fake_run([], many_hits, [f"E-{n}" for n in range(50)])
     monkeypatch.setattr(gl, "_run", run)
-    result = gl.lookup_gap(tmp_path, "DR-OPS-B1", "Role of the jump hosts")
-    assert result["verdict"] == "INCOMPLETE"
-    assert any("50-result limit" in reason for reason in result["coverage"]["incomplete_reasons"])
+    result = gl.lookup_gap(ws, "DR-OPS-B1", "Role of MKYPRDOPS110 and the RevViewer jump hosts")
+    assert result["verdict"] == "CANDIDATES"
+    assert result["lead_ids"]
+    assert any("50-result limit" in note or "candidate limit retained 8" in note
+               for note in result["coverage"]["notes"])
+    assert result["coverage"]["incomplete_reasons"] == []
 
 
 def test_only_source_checked_verified_rows_answer_and_related_rows_stay_separate(tmp_path, monkeypatch):
@@ -345,3 +349,117 @@ def test_confirm_rejects_a_lead_from_older_question_words(tmp_path, monkeypatch)
     import pytest
     with pytest.raises(ValueError, match="different question words"):
         gl.confirm_gap(ws, "DR-X-01", "Where is the gateway", [lead_id], searched="saved scope", ask="ask")
+
+
+# ---- S471: coverage failures only when a named entity's own searches miss
+
+def _smart_run(by_query, matrix_matches=None):
+    def run(cmd):
+        if "lookup" in cmd:
+            return {"status": "OK", "matches": list(matrix_matches or [])}
+        if "search" in cmd:
+            terms = cmd[cmd.index("search") + 1]
+            return {"status": "OK", "results": by_query.get(terms, [])}
+        return None
+    return run
+
+
+SAT = [{"rel_path": f"s/{i}.txt", "page_or_location": f"line {i + 1}", "source_title": f"s/{i}.txt",
+        "source_version": "", "evidence_excerpt": "time source is a domain controller"} for i in range(50)]
+
+HOST_H = {"rel_path": "cap/ROTPRDLOG101/62_gpresult.html", "page_or_location": "line 5",
+          "source_title": "cap/ROTPRDLOG101/62_gpresult.html", "source_version": "capture z",
+          "evidence_excerpt": "ROTPRDLOG101: ntpserver = 10.40.0.5 (time source)"}
+
+_TETRA = "ROTPRDLOG101: not in the discovery captures, so its time source is not known"
+
+
+def test_generic_saturation_does_not_block_a_host_question(tmp_path, monkeypatch):
+    ws = _workspace(tmp_path)
+    monkeypatch.setattr(gl, "_run", _smart_run({"time source": SAT}))
+    res = gl.lookup_gap(ws, "DR-TIME-F03", _TETRA)
+    assert res["verdict"] == "NOT_FOUND"                        # entity searches completed, zero hits -> scoped miss
+    assert res["coverage"]["index_complete"] is True
+    assert res["coverage"]["incomplete_reasons"] == []
+    assert any("50-result limit" in n for n in res["coverage"]["notes"])
+
+
+def test_entity_hit_with_saturated_generic_queries_is_candidates(tmp_path, monkeypatch):
+    ws = _workspace(tmp_path)
+    monkeypatch.setattr(gl, "_run", _smart_run({"ROTPRDLOG101 time": [HOST_H], "time source": SAT}))
+    res = gl.lookup_gap(ws, "DR-TIME-F03", _TETRA)
+    assert res["verdict"] == "CANDIDATES" and res["lead_ids"]
+    assert any("50-result limit" in n for n in res["coverage"]["notes"])
+    assert res["coverage"]["incomplete_reasons"] == []
+
+
+def test_saturated_entity_search_without_a_relevant_lead_stays_incomplete(tmp_path, monkeypatch):
+    ws = _workspace(tmp_path)
+    monkeypatch.setattr(gl, "_run", _smart_run({"ROTPRDLOG101": SAT, "ROTPRDLOG101 discovery": SAT,
+                                                "ROTPRDLOG101 time": SAT, "time source": SAT}))
+    res = gl.lookup_gap(ws, "DR-TIME-F03", _TETRA)
+    assert res["verdict"] == "INCOMPLETE"
+    assert any("ROTPRDLOG101" in reason for reason in res["coverage"]["incomplete_reasons"])
+    assert res["lead_ids"] == []
+
+
+def test_matrix_truncation_alone_is_a_note_not_incomplete(tmp_path, monkeypatch):
+    ws = _workspace(tmp_path)
+    rows = [{"evidence_id": f"E-{i:03d}", "status": "VERIFIED", "review_state": "reviewed",
+             "score": 0.9, "coverage": 1.0, "gap_or_action": ""} for i in range(40)]
+    monkeypatch.setattr(gl, "_run", _smart_run({}, matrix_matches=rows))
+    res = gl.lookup_gap(ws, "DR-TIME-F03", _TETRA)
+    assert res["verdict"] == "NOT_FOUND"
+    assert any("40-result limit" in n for n in res["coverage"]["notes"])
+    assert res["coverage"]["incomplete_reasons"] == []
+
+
+def test_failed_generic_search_is_a_note_not_incomplete(tmp_path, monkeypatch):
+    ws = _workspace(tmp_path)
+
+    def run(cmd):
+        if "lookup" in cmd:
+            return {"status": "OK", "matches": []}
+        if "search" in cmd:
+            terms = cmd[cmd.index("search") + 1]
+            if terms.startswith("ROTPRDLOG101"):
+                return {"status": "OK", "results": []}
+            return {"status": "ERROR"}
+        return None
+    monkeypatch.setattr(gl, "_run", run)
+    res = gl.lookup_gap(ws, "DR-TIME-F03", _TETRA)
+    assert res["verdict"] == "NOT_FOUND"
+    assert any("search failed" in n for n in res["coverage"]["notes"])
+    assert res["coverage"]["incomplete_reasons"] == []
+
+
+def test_candidate_limit_and_query_limit_are_notes(tmp_path, monkeypatch):
+    ws = _workspace(tmp_path)
+    hits = [dict(HOST_H, rel_path=f"cap/ROTPRDLOG101/{n}.txt", source_title=f"cap/ROTPRDLOG101/{n}.txt",
+                 evidence_excerpt=f"ROTPRDLOG101 time source setting {n}") for n in range(9)]
+    monkeypatch.setattr(gl, "_run", _smart_run({"ROTPRDLOG101 time": hits}))
+    res = gl.lookup_gap(ws, "DR-TIME-F03", _TETRA)
+    assert res["verdict"] == "CANDIDATES"
+    assert any("candidate limit retained 8" in n for n in res["coverage"]["notes"])
+    assert res["coverage"]["incomplete_reasons"] == []
+    monkeypatch.setattr(gl, "_MAX_QUERIES", 2)
+    again = gl.lookup_gap(ws, "DR-TIME-F03", _TETRA)
+    assert any("query limit omitted" in n for n in again["coverage"]["notes"])
+
+
+def test_hard_failed_entity_search_without_a_lead_stays_incomplete(tmp_path, monkeypatch):
+    ws = _workspace(tmp_path)
+
+    def run(cmd):
+        if "lookup" in cmd:
+            return {"status": "OK", "matches": []}
+        if "search" in cmd:
+            terms = cmd[cmd.index("search") + 1]
+            if terms.startswith("ROTPRDLOG101"):
+                return {"status": "ERROR"}
+            return {"status": "OK", "results": []}
+        return None
+    monkeypatch.setattr(gl, "_run", run)
+    res = gl.lookup_gap(ws, "DR-TIME-F03", _TETRA)
+    assert res["verdict"] == "INCOMPLETE"
+    assert any("ROTPRDLOG101" in reason for reason in res["coverage"]["incomplete_reasons"])

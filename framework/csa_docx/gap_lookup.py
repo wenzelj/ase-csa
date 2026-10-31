@@ -11,8 +11,10 @@ evidence does not answer it. This runs the framework's own lookups in the usual 
    source-checked VERIFIED evidence row exists.
 
   Verdicts: ANSWERED (an explicit complete-resolution record matches the exact question), CANDIDATES
-  (sources need review), NOT_FOUND (complete search found nothing), or INCOMPLETE (one or more required
-  searches failed or were truncated). Similarity and evidence routing notes alone never answer a question.
+  (sources need review), NOT_FOUND (complete search found nothing), or INCOMPLETE (the evidence matrix lookup
+  is unavailable, or a named entity's own searches failed or reached the 50-result limit without yielding a
+  relevant lead); saturation of generic queries, the candidate cap and the matrix 40-row cap are
+  informational notes, not verdict blockers. Similarity and evidence routing notes alone never answer a question.
 
 After reading what was found, a person or the evidence agent settles it one of two ways:
   * it answers the question: record a VERIFIED row that states the answer and restate the gap;
@@ -28,7 +30,7 @@ from __future__ import annotations
 
 import argparse
 import csv
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import datetime as dt
 import fcntl
 import hashlib
@@ -80,6 +82,7 @@ class IndexStatus:
     """Boolean-compatible completion state with reasons for an incomplete index pass."""
     complete: bool
     failures: list[str]
+    notes: list[str] = field(default_factory=list)
 
     def __bool__(self) -> bool:
         return self.complete
@@ -494,23 +497,33 @@ def _index_stage(workspace: Path, text: str, exclude: tuple[str, ...], kind: str
     structured, structured_complete = structured_host_hits(workspace, dr_id, text, kind, vocab)
     if structured_complete:
         return structured, ["structured host settings"], IndexStatus(True, [])
-    hits, seen, ran, failures = [], set(), [], []
+    hits, seen, ran, notes = [], set(), [], []
+    entities = [e for e in hosts_in(text) + ips_in(text)]
+    failed_entities: dict[str, list[str]] = {}
+    saturated_entities: dict[str, list[str]] = {}
     query_list = queries(text, kind, vocab)
     all_queries = queries(text, kind, vocab, cap=False)
     if len(query_list) < len(all_queries):
-        failures.append(f"query limit omitted {len(all_queries) - len(query_list)} searches")
+        notes.append(f"query limit omitted {len(all_queries) - len(query_list)} searches")
     for terms, path_like in query_list:
         cmd = [sys.executable, str(INDEX_SCRIPT), "--workspace", str(workspace), "search", terms, "--limit", "50", "--per-file", "1"]
         if path_like:
             cmd += ["--path-like", path_like]
+        ent = next((e for e in entities if terms == e or terms.startswith(e + " ")), None)
         res = _run(cmd)
         if not res or res.get("status") != "OK":
-            failures.append(f"search failed: {terms}")
+            if ent is None:
+                notes.append(f"search failed: {terms}")
+            else:
+                failed_entities.setdefault(ent, []).append(terms)
             continue
         ran.append(terms + (f" [{path_like}]" if path_like else ""))
         search_hits = res.get("results", [])
         if len(search_hits) >= 50:
-            failures.append(f"search reached 50-result limit: {terms}")
+            if ent:
+                saturated_entities.setdefault(ent, []).append(terms)
+            else:
+                notes.append(f"search reached 50-result limit: {terms}")
         for h in search_hits:
             rel = h.get("rel_path", "")
             key = (rel, h.get("page_or_location"))
@@ -522,11 +535,23 @@ def _index_stage(workspace: Path, text: str, exclude: tuple[str, ...], kind: str
                 continue
             seen.add(key)
             hits.append(h)
+    # A named entity whose searches completed with zero relevant hits is a scoped miss; only an entity whose
+    # own searches failed or saturated AND that yielded no relevant lead makes the question incomplete.
+    failures = [f"{ent}: searches {', '.join(sorted(set(terms)))} failed or reached the 50-result limit "
+                f"and yielded no relevant lead"
+                for ent, terms in sorted({**failed_entities, **saturated_entities}.items())
+                if not any(ent.lower() in str(h.get("evidence_excerpt", "")).lower() for h in hits)]
     ranked = rank_hits(hits, text, vocab, limit=len(hits) or _MAX_CANDIDATES)
     if len(ranked) > _MAX_CANDIDATES:
-        failures.append(f"candidate limit retained {_MAX_CANDIDATES} of {len(ranked)} relevant sources")
+        notes.append(f"candidate limit retained {_MAX_CANDIDATES} of {len(ranked)} relevant sources")
+    # a saturated entity search that did yield leads is covered, so the saturation is only a note
+    covered = {e.lower() for e in entities
+               if any(e.lower() in str(h.get("evidence_excerpt", "")).lower() for h in hits)}
+    for ent in sorted(set(saturated_entities) & covered):
+        notes.append(f"search reached 50-result limit: {', '.join(sorted(set(saturated_entities[ent])))} "
+                     f"(this entity did yield leads, so coverage holds)")
     combined = structured + [h for h in ranked if h not in structured]
-    return combined[:_MAX_CANDIDATES], ran, IndexStatus(not failures, failures)
+    return combined[:_MAX_CANDIDATES], ran, IndexStatus(not failures, failures, notes)
 
 
 def lookup_gap(workspace: Path, dr_id: str, text: str, *, exclude: tuple[str, ...] = ()) -> dict:
@@ -550,6 +575,7 @@ def lookup_gap(workspace: Path, dr_id: str, text: str, *, exclude: tuple[str, ..
                                else _index_stage(workspace, text, exclude, kind, vocab, dr_id))
     index_complete = bool(index_status)
     index_failures = index_status.failures if isinstance(index_status, IndexStatus) else []
+    index_notes = index_status.notes if isinstance(index_status, IndexStatus) else []
     lead_ids: list[str] = []
     if hits:
         from csa_docx import leads
@@ -561,11 +587,12 @@ def lookup_gap(workspace: Path, dr_id: str, text: str, *, exclude: tuple[str, ..
                         and not any(e.lower() in str(_claim_for_id(workspace, eid)).lower()
                                     for eid in [*answer_ids, *related])]
     incomplete_reasons = list(index_failures)
-    if matrix_state in ("NO_MATRIX", "MATRIX_TRUNCATED"):
-        incomplete_reasons.append("evidence matrix lookup unavailable" if matrix_state == "NO_MATRIX"
-                                  else "evidence matrix lookup reached 40-result limit")
+    if matrix_state == "NO_MATRIX":
+        incomplete_reasons.append("evidence matrix lookup unavailable")
+    elif matrix_state == "MATRIX_TRUNCATED":
+        index_notes.append("evidence matrix lookup reached 40-result limit (related context only)")
     if missing_entities:
-        incomplete_reasons.append("named entities not matched: " + ", ".join(missing_entities))
+        index_notes.append("no relevant lead matched: " + ", ".join(missing_entities))
     incomplete = bool(incomplete_reasons)
     verdict = ("ANSWERED" if matrix_state == "ANSWERED" and not incomplete else
                "INCOMPLETE" if incomplete else "CANDIDATES" if lead_ids else "NOT_FOUND")
@@ -581,8 +608,10 @@ def lookup_gap(workspace: Path, dr_id: str, text: str, *, exclude: tuple[str, ..
     return {"verdict": verdict, "answer_evidence_ids": answer_ids, "related_evidence_ids": related,
             "lead_ids": lead_ids, "evidence_ids": answer_ids, "matrix": answer_ids, "index": lead_ids,
             "related": related, "kind": kind, "owners": owners, "queries": ran, "searched": scope,
+            "notes": index_notes,
             "coverage": {"matrix": matrix_state, "index_complete": index_complete,
-                         "index_failures": index_failures, "incomplete_reasons": incomplete_reasons}}
+                         "index_failures": index_failures, "incomplete_reasons": incomplete_reasons,
+                         "notes": index_notes}}
 
 
 def _claim_for_id(workspace: Path, evidence_id: str) -> str:
