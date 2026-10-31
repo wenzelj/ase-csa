@@ -1,4 +1,5 @@
 """Gap check: every open question in draft/open-questions.md is looked up in the matrix and the index."""
+import csv
 import json
 
 from csa_docx import gap_lookup as gl
@@ -205,9 +206,9 @@ def test_duplicate_block_lines_get_unique_ids_and_are_searched_separately(tmp_pa
     assert [q["dr_id"] for q in result["questions"]] == [first_id, second_id]
     assert [q["verdict"] for q in result["questions"]] == ["NOT_FOUND", "NOT_FOUND"]
     assert seen == [(first_id, "first question"), (second_id, "second question")]
-    # the lead for "first question" is still an active question, so it is not retired
-    assert result["retired_lead_ids"] == []
-    assert [r["lead_id"] for r in leads.open_leads(ws)] == [lead_id]
+    # "first question" now closes NOT_FOUND in this run, so its lead is drained; it stays open for a still-open question
+    assert result["retired_lead_ids"] == [] and result["drained_lead_ids"] == [lead_id]
+    assert [r["lead_id"] for r in leads.open_leads(ws)] == []
 
 
 def test_csa_has_gap_check_and_resolve_commands():
@@ -233,3 +234,46 @@ def test_the_run_report_counts_what_the_lookup_did():
     assert s["to_ask"] == {"backup service owner": 2, "application owner": 1}
     text = " ".join(gs.report_lines(s))
     assert "3 open question(s)" in text and "28 search(es)" in text and "backup service owner (2)" in text
+
+
+def test_sweep_drains_open_leads_of_questions_it_closes(tmp_path, monkeypatch):
+    ws = _workspace(tmp_path)
+    source = ws / "csa-work" / "draft" / "open-questions.md"
+    source.write_text("## 3.11 Backup & Recovery (BAK)\n\n"
+                      "- [DR-BAK-N1] which backup product serves the site\n"
+                      "- [DR-BAK-A1] which host runs the agent\n"
+                      "- [DR-BAK-C1] where the target volume lives\n", encoding="utf-8")
+    not_found = "DR-BAK-N1"
+    answered = "DR-BAK-A1"
+    candidates = "DR-BAK-C1"
+    nf_lead = leads.add_leads(ws, not_found, "N1", "which backup product serves the site", [HIT])[0]
+    a_lead = leads.add_leads(ws, answered, "A1", "which host runs the agent", [dict(HIT, page_or_location="line 41")])[0]
+    c_lead = leads.add_leads(ws, candidates, "C1", "where the target volume lives", [dict(HIT, page_or_location="line 42")])[0]
+    # VERIFIED row that explicitly answers the second question
+    matrix = ws / "csa-work" / "evidence-matrix.csv"
+    with matrix.open("w", encoding="utf-8", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(["evidence_id", "status", "gap_or_action"])
+        w.writerow(["E-001", "VERIFIED", f"Answers {answered}"])
+    (ws / "csa-work" / "evidence-reviews.jsonl").write_text('{"evidence_id": "E-001", "state": "reviewed"}\n', encoding="utf-8")
+    res = gl.resolve_gap(ws, answered, "which host runs the agent", ["E-001"], by="tester")
+    assert res["status"] == "OK"
+    monkeypatch.setattr(gs.gap_lookup, "lookup_gap", lambda workspace, dr_id, text, exclude=():
+                        {"verdict": "ANSWERED" if dr_id == answered else "CANDIDATES" if dr_id == candidates else "NOT_FOUND",
+                         "answer_evidence_ids": ["E-001"] if dr_id == answered else [],
+                         "related_evidence_ids": [], "lead_ids": [c_lead] if dr_id == candidates else [],
+                         "searched": "evidence matrix; discovery index (documents only, since it is about a policy; 3 searches: a; b; c)"})
+    result = gs.sweep(ws, "BAK")
+    by_state = {r["lead_id"]: r["state"] for r in leads._overlay(*leads._records(ws)[:2])}
+    assert by_state == {nf_lead: "not_an_answer", a_lead: "retired", c_lead: "open"}
+    assert sorted(result["drained_lead_ids"]) == sorted([nf_lead, a_lead])
+    assert result["retired_lead_ids"] == []
+    cand = next(q for q in result["questions"] if q["dr_id"] == candidates)
+    assert cand["verdict"] == "CANDIDATES" and cand["lead_ids"] == [c_lead]
+    # append-only: the lead file was never rewritten, only reviews were appended
+    assert len((ws / "csa-work" / "intake" / "leads.jsonl").read_text().splitlines()) == 3
+    reviews = (ws / "csa-work" / "intake" / "leads-reviews.jsonl").read_text().splitlines()
+    assert len(reviews) == 2
+    # the swept question left no evidence-matrix rows behind (append-only confirm path untouched)
+    with matrix.open(encoding="utf-8") as fh:
+        assert [r for r in csv.reader(fh)] == [["evidence_id", "status", "gap_or_action"], ["E-001", "VERIFIED", "Answers DR-BAK-A1"]]

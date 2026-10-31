@@ -117,6 +117,31 @@ def _retire_absent(workspace: Path, questions: list[dict], section_key: str | No
     return ids
 
 
+def _drain_closed_leads(workspace: Path, results: list[dict]) -> list[str]:
+    """Terminalise the open leads of the questions this run closed: NOT_FOUND leaves are not an answer and
+    ANSWERED leaves are superseded by the explicit resolution. Only leads of the run's own questions, and only
+    through the append-only review log — no lead row is deleted and no evidence-matrix row is written."""
+    from csa_docx import leads
+    closed: dict[str, dict] = {}
+    for r in results:
+        if r["verdict"] in ("NOT_FOUND", "ANSWERED"):
+            closed[r["dr_id"]] = r
+    rows = leads.open_leads(workspace)
+    for dr_id, q in closed.items():
+        ids = [r["lead_id"] for r in rows if r.get("dr_id") == dr_id]
+        if not ids:
+            continue
+        if q["verdict"] == "NOT_FOUND":
+            note = "question closed NOT_FOUND by fresh gap-check; saved scope supersedes earlier candidate: " \
+                   + q.get("searched", "")[:200]
+            leads.review(workspace, ids, "not_an_answer", "gap sweep", note)
+        else:
+            note = "question closed ANSWERED by fresh gap-check; answered by " + \
+                   (", ".join(q.get("answer_evidence_ids") or []) or "saved resolution record")
+            leads.review(workspace, ids, "retired", "gap sweep", note)
+    return sorted({r["lead_id"] for r in rows if r.get("dr_id") in closed})
+
+
 def refresh_derived_questions(workspace: Path, project_key: str, docx: Path) -> dict:
     """Refresh capture-derived gap stores and the consolidated question file; never alter the DOCX."""
     workspace = Path(workspace)
@@ -172,6 +197,7 @@ def sweep(workspace: Path, section_key: str | None = None, *, refresh_derived: b
                         "searches": len(res.get("queries", [])),
                         "coverage": res.get("coverage", {}), "incomplete": res.get("verdict") == "INCOMPLETE"})
     retired = _retire_absent(workspace, qs, section_key) if safe_retirement else []
+    drained = _drain_closed_leads(workspace, results) if safe_retirement else []
     affected: dict[str, dict] = {}
     for r in results:
         if r["verdict"] not in ("ANSWERED", "CANDIDATES"):
@@ -184,6 +210,7 @@ def sweep(workspace: Path, section_key: str | None = None, *, refresh_derived: b
     record = {"schema_version": 4, "input_complete": safe_retirement, "input_warnings": input_warnings,
               "checked_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", stamp), "section": section_key or "",
               "questions": results, "affected": list(affected.values()), "retired_lead_ids": retired,
+              "drained_lead_ids": drained,
               "summary": summarise(results)}
     folder = work / "intake"
     folder.mkdir(parents=True, exist_ok=True)
