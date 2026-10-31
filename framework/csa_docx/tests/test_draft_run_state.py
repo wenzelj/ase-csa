@@ -108,6 +108,38 @@ def test_sighup_in_repairing_records_interrupted(tmp_path):
     assert "SIGHUP" in rec["detail"]
 
 
+def test_sigterm_in_leads_pass_keeps_checkpoint_and_interrupted_run(tmp_path):
+    """SIGTERM during the leads pass (after a validated base sheet was saved) records the run as INTERRUPTED
+    in the LEADS phase and leaves the validated base sheet and the leads checkpoint in place, so the next
+    ordinary answer resumes the focused block rather than answering the whole section again."""
+    from csa_docx import answer_blocks as ab
+
+    cards = tmp_path / "cards"
+    cards.mkdir()
+    sheet = cards / "DNS.answer.md"
+    base = sheet.with_suffix(".resolved-from.md")
+    sheet.write_text("## B1 DNS\nUnknown: owner to confirm.\n\n## B3 Drawbridge Impact\nUnknown: clock hold\n",
+                     encoding="utf-8")
+    base.write_text(sheet.read_text(encoding="utf-8"), encoding="utf-8")
+    fp = {"questions": {"B1": "a", "B3": "c"}, "matrix": "m", "hosts": "h"}
+    cp = ab.leads_write(sheet, fp, ["B3"], ["E-002"])
+    assert ab.leads_check(sheet, base, fp)["status"] == "RESUME"
+
+    draft_lane.record_run(tmp_path, "DNS", "3.5", "DNS", "RUNNING", "leads pass B3", "LEADS", "B3", model="evo")
+    run_state = dict(_state(tmp_path, "LEADS", "B3", "leads pass B3"))
+    p, out, err = _terminate(tmp_path, run_state, signal.SIGTERM)
+    assert p.returncode != 0, (p.returncode, out, err)
+    rec = json.loads((tmp_path / "draft" / "runs.json").read_text())["DNS"]
+    assert rec["status"] == "INTERRUPTED"
+    assert rec["phase"] == "LEADS" and rec["blocks"] == "B3"
+    assert "SIGTERM" in rec["detail"]
+    assert len(draft_lane.failed_runs(tmp_path)) == 1 and "INTERRUPTED" in draft_lane.failed_runs(tmp_path)[0]
+    # the resumable state survives the signal: base sheet, patch and errors are intact, checkpoint still resumes
+    assert base.is_file() and base.read_text(encoding="utf-8") == sheet.read_text(encoding="utf-8")
+    assert cp.is_file()
+    assert ab.leads_check(sheet, base, fp)["status"] == "RESUME"
+
+
 def test_handler_keeps_terminal_state_and_is_idempotent(tmp_path):
     draft_lane.record_run(tmp_path, "DNS", "3.5", "DNS", "FAILED", "model pass answer exited 1 and wrote no output",
                           "MODEL", "B3", model="evo")

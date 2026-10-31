@@ -420,6 +420,60 @@ def wip_clear(sheet: Path) -> None:
     wip_path(sheet).unlink(missing_ok=True)
 
 
+# ---------------------------------------------------------------- leads checkpoint
+
+def leads_path(sheet: Path) -> Path:
+    sheet = Path(sheet)
+    name = sheet.name[: -len(".answer.md")] if sheet.name.endswith(".answer.md") else sheet.stem
+    return sheet.with_name(f"{name}.leads-checkpoint.json")
+
+
+def leads_write(sheet: Path, fp: dict, blocks: list[str], lead_ids: list[str]) -> Path:
+    """The validated base sheet about to go through the evidence-leads pass, so a run stopped during that pass
+    can resume the focused leads block(s) instead of answering the whole section again."""
+    from csa_docx import answer_cache
+    path = leads_path(sheet)
+    data = {"fingerprint": fp, "sheet_sha256": answer_cache._file_sha(Path(sheet)),
+            "blocks": sorted(set(blocks), key=_order), "lead_ids": sorted(set(lead_ids)),
+            "written": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+    return path
+
+
+def leads_check(sheet: Path, base_sheet: Path, fp: dict) -> dict:
+    """RESUME (the interrupted leads pass: the validated base sheet is still intact, only the focused leads
+    block(s) go through the pass again), STALE (the card, matrix or host inputs changed: rebuild from scratch)
+    or NONE (no interrupted leads pass to resume)."""
+    from csa_docx import answer_cache
+    sheet, base = Path(sheet), Path(base_sheet)
+    path = leads_path(sheet)
+    if not path.is_file():
+        return {"status": "NONE", "blocks": [], "lead_ids": [], "written": ""}
+    try:
+        saved = json.loads(path.read_text(encoding="utf-8"))
+        old = saved["fingerprint"]
+    except (OSError, ValueError, KeyError):
+        return {"status": "NONE", "blocks": [], "lead_ids": [], "written": ""}
+    if not base.is_file() or answer_cache._file_sha(base) != saved.get("sheet_sha256"):
+        return {"status": "STALE", "blocks": [], "lead_ids": [], "written": "",
+                "reason": "the validated base sheet is not the one the leads pass started from"}
+    old_q, new_q = old.get("questions", {}), fp.get("questions", {})
+    if set(old_q) != set(new_q):
+        return {"status": "STALE", "blocks": [], "lead_ids": [], "written": "", "reason": "the card's questions changed"}
+    if old.get("hosts", "") != fp.get("hosts", ""):
+        return {"status": "STALE", "blocks": [], "lead_ids": [], "written": "", "reason": "hosts.csv changed"}
+    if old.get("matrix", "") != fp.get("matrix", ""):
+        return {"status": "STALE", "blocks": [], "lead_ids": [], "written": "", "reason": "the evidence matrix changed"}
+    return {"status": "RESUME", "blocks": saved.get("blocks", []), "lead_ids": saved.get("lead_ids", []),
+            "written": saved.get("written", "")}
+
+
+def leads_clear(sheet: Path) -> None:
+    leads_path(sheet).unlink(missing_ok=True)
+
+
 # ---------------------------------------------------------------- cli
 
 def main(argv: list[str] | None = None) -> int:
@@ -435,7 +489,7 @@ def main(argv: list[str] | None = None) -> int:
     f.add_argument("--only", required=True)
     f.add_argument("--out", type=Path, required=True)
     f.add_argument("--first-pass", action="store_true", help="the first answer of one block, not a fix round")
-    for name in ("wip-check", "wip-write", "wip-clear"):
+    for name in ("wip-check", "wip-write", "wip-clear", "leads-check", "leads-write", "leads-clear"):
         s = sub.add_parser(name)
         s.add_argument("sheet", type=Path)
         s.add_argument("--card", type=Path)
@@ -464,11 +518,23 @@ def main(argv: list[str] | None = None) -> int:
         wip_clear(a.sheet)
         print(json.dumps({"status": "OK"}))
         return 0
+    if a.cmd == "leads-clear":
+        leads_clear(a.sheet)
+        print(json.dumps({"status": "OK"}))
+        return 0
     from csa_docx import answer_cache
     fp = answer_cache.fingerprint(a.card, a.matrix, a.hosts)
     if a.cmd == "wip-write":
         p = wip_write(a.sheet, fp, [x for x in a.failed.split(",") if x], [x for x in a.codes.split(",") if x])
         print(json.dumps({"status": "OK", "wip": str(p)}))
+        return 0
+    if a.cmd == "leads-write":
+        p = leads_write(a.sheet, fp, [x for x in a.failed.split(",") if x], [x for x in a.codes.split(",") if x])
+        print(json.dumps({"status": "OK", "checkpoint": str(p)}))
+        return 0
+    if a.cmd == "leads-check":
+        base = Path(a.sheet).with_suffix(".resolved-from.md")
+        print(json.dumps(leads_check(a.sheet, base, fp)))
         return 0
     print(json.dumps(wip_check(a.sheet, fp)))
     return 0

@@ -348,6 +348,8 @@ def _finalize_interrupted_run(signum: int, frame) -> NoReturn:
                                  "INTERRUPTED", f"{detail} ({signal.Signals(signum).name})",
                                  os.environ.get("CSA_PHASE", ""), os.environ.get("CSA_BLOCKS", ""),
                                  model=os.environ.get("CSA_MODEL", ""))
+            # the checkpoint of a validated base sheet about to go through the leads pass is kept, so the
+            # next ordinary `csa answer N` resumes that focused block instead of answering the section again
     except Exception:
         pass
     print(f"csa: {signal.Signals(signum).name} during an answer/draft run; the run was recorded as INTERRUPTED.",
@@ -3119,6 +3121,24 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
     elif cache.get("status") == "REUSE":
         print(f"{C['b']}Reusing {sheet} (inputs unchanged){C['0']}")
         timing["reused"] = True
+    elif (not getattr(a, "fresh", False)
+            and not getattr(a, "no_resolve", False)
+            and str(settings().get("answer_resolve_leads", "false")).strip().lower() in ("1", "true", "yes", "on")
+            and (leads := _fw_json("csa_docx.answer_blocks", "leads-check", sheet, "--card", card_json,
+                                   "--matrix", matrix,
+                                   *(["--hosts", hosts_csv] if hosts_csv.is_file() else []))).get("status") == "RESUME"):
+        # the last run validated the whole answer and stopped in the optional leads pass: resume that focused
+        # block from the validated base sheet instead of generating the whole answer again
+        timing["reused"] = "leads-resumed"
+        print(f"{C['b']}The last run stopped in the evidence-leads pass after a valid answer; "
+              f"resuming {', '.join(leads['blocks'])} only (no full answer).{C['0']}")
+        first = check()
+        if first.get("status") != "OK":
+            _fw_json("csa_docx.answer_blocks", "leads-clear", sheet)
+            keep_wip(first)
+            print(f"{C['y']}The kept sheet no longer passes; rebuilding the answer from scratch.{C['0']}")
+            if answer([]) != 0:
+                return 2
     elif wip.get("status") == "RESUME":
         # the last run stopped on a few blocks: check the kept sheet and rewrite only what fails or what changed
         timing["reused"] = "resumed"
@@ -3268,46 +3288,70 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
         keep_c.unlink(missing_ok=True)
     if errs.is_file():                  # the sheet passes now: an old errors file would only mislead
         errs.unlink(missing_ok=True)
-    if (not getattr(a, "no_resolve", False) and str(settings().get("answer_resolve_leads", "false")).strip().lower() in ("1", "true", "yes", "on")
-            and time.time() - started < int(settings().get("answer_budget_s", 1200) or 1200) // 2):
+    def _record_leads_failure(res_l: dict, lead_blocks: set[str]) -> None:
+        """The leads repair failed: the validated base sheet is back, and the run says where it stopped honestly."""
+        if track_draft_run:
+            draft_run("FAILED", f"the leads pass did not give a valid sheet; the validated sheet was kept for "
+                                f"{', '.join(sorted(lead_blocks))}", "LEADS", lead_blocks, terminal=True)
+
+    def _leads_pass() -> int | None:
         # off by default (cli.yaml answer_resolve_leads): it cost minutes and rarely closed a QUESTION: line;
         # `csa resolve-gaps` is the framework's route for that.
         # an QUESTION: line the matrix may already answer: show the agent those rows once and keep the result only if it passes
         found = _fw_json("csa_docx.answer_sheet", "leads", sheet, "--card", card_json, "--matrix", matrix)
-        if found.get("leads"):
-            leads_md = cards / f"{key}.leads.md"
-            leads_md.write_text(found["text"], encoding="utf-8")
-            lead_ids |= {r["id"] for l in found["leads"] for r in l["rows"]}
-            lead_blocks = {str(l.get("question") or "").upper() for l in found["leads"]} - {""}
-            keep_sheet = sheet.with_suffix(".resolved-from.md")
-            shutil.copyfile(sheet, keep_sheet)
-            print(f"{C['b']}{len(found['leads'])} Unknown: line(s) have evidence rows that may answer them; "
-                  f"asking the {verb} agent to use them in {', '.join(sorted(lead_blocks))} (once).{C['0']}")
-            rc_l = (block_round(lead_blocks, [found["text"]], "leads", "Evidence rows that may answer your Unknown: lines:")
-                    if lead_blocks else answer([f"ERRORS={leads_md}"], kind="leads"))
-            res_l = check() if rc_l == 0 else {"status": "ERROR", "findings": []}
-            if rc_l == 0 and res_l.get("status") != "OK":      # one targeted fix round for the leads pass
-                bad_l = answer_blocks_failing(res_l)
-                if "*" not in bad_l and bad_l:
-                    print(f"{C['y']}The resolve pass has problems in {', '.join(sorted(bad_l))}; one fix round.{C['0']}")
-                    rc_l = block_round(bad_l, error_lines(res_l), "leads fix",
-                                       "Fix these in the answer sheet; keep the evidence you added from the leads:")
-                    res_l = check() if rc_l == 0 else {"status": "ERROR", "findings": []}
-            errs.unlink(missing_ok=True) if res_l.get("status") == "OK" else None
-            if res_l.get("status") != "OK":
-                if sheet.is_file():
-                    shutil.copyfile(sheet, sheet.with_suffix(".leads-rejected.md"))
-                for f in [f for f in res_l.get("findings", []) if f.get("level") == "ERROR"][:6]:
-                    print(f"  {f['code']} {f.get('question') or ''}: {f['message'][:200]}", file=sys.stderr)
-            if rc_l == 0 and res_l.get("status") == "OK":
-                res2 = check()
-                n_after = len(_fw_json("csa_docx.answer_sheet", "leads", sheet, "--card", card_json, "--matrix", matrix).get("leads", []))
-                print(f"{C['b']}Unknown: lines with evidence leads: {len(found['leads'])} before, {n_after} after.{C['0']}")
-            else:
-                shutil.copyfile(keep_sheet, sheet)
-                print(f"{C['y']}The resolve pass did not give a valid sheet; the earlier sheet is kept.{C['0']}")
-            keep_sheet.unlink(missing_ok=True)
-            patch.unlink(missing_ok=True)
+        if not found.get("leads"):
+            _fw_json("csa_docx.answer_blocks", "leads-clear", sheet)
+            return None
+        leads_md = cards / f"{key}.leads.md"
+        leads_md.write_text(found["text"], encoding="utf-8")
+        lead_ids |= {r["id"] for l in found["leads"] for r in l["rows"]}
+        lead_blocks = {str(l.get("question") or "").upper() for l in found["leads"]} - {""}
+        keep_sheet = sheet.with_suffix(".resolved-from.md")
+        shutil.copyfile(sheet, keep_sheet)
+        print(f"{C['b']}{len(found['leads'])} Unknown: line(s) have evidence rows that may answer them; "
+              f"asking the {verb} agent to use them in {', '.join(sorted(lead_blocks))} (once).{C['0']}")
+        # the checkpoint is written before the model call, so a run stopped in the pass can resume the focused
+        # block(s) from the validated sheet instead of answering the section again
+        _fw_json("csa_docx.answer_blocks", "leads-write", sheet, "--card", card_json, "--matrix", matrix,
+                 *(["--hosts", hosts_csv] if hosts_csv.is_file() else []),
+                 "--failed", ",".join(sorted(lead_blocks)), "--codes", ",".join(sorted(lead_ids)))
+        rc_l = (block_round(lead_blocks, [found["text"]], "leads", "Evidence rows that may answer your Unknown: lines:")
+                if lead_blocks else answer([f"ERRORS={leads_md}"], kind="leads"))
+        res_l = check() if rc_l == 0 else {"status": "ERROR", "findings": []}
+        if rc_l == 0 and res_l.get("status") != "OK":      # one targeted fix round for the leads pass
+            bad_l = answer_blocks_failing(res_l)
+            if "*" not in bad_l and bad_l:
+                print(f"{C['y']}The resolve pass has problems in {', '.join(sorted(bad_l))}; one fix round.{C['0']}")
+                rc_l = block_round(bad_l, error_lines(res_l), "leads fix",
+                                   "Fix these in the answer sheet; keep the evidence you added from the leads:")
+                res_l = check() if rc_l == 0 else {"status": "ERROR", "findings": []}
+        if res_l.get("status") == "OK":
+            errs.unlink(missing_ok=True)
+        if res_l.get("status") != "OK":
+            if sheet.is_file():
+                shutil.copyfile(sheet, sheet.with_suffix(".leads-rejected.md"))
+            for f in [f for f in res_l.get("findings", []) if f.get("level") == "ERROR"][:6]:
+                print(f"  {f['code']} {f.get('question') or ''}: {f['message'][:200]}", file=sys.stderr)
+        if rc_l == 0 and res_l.get("status") == "OK":
+            n_after = len(_fw_json("csa_docx.answer_sheet", "leads", sheet, "--card", card_json,
+                                  "--matrix", matrix).get("leads", []))
+            print(f"{C['b']}Unknown: lines with evidence leads: {len(found['leads'])} before, {n_after} after.{C['0']}")
+        else:
+            shutil.copyfile(keep_sheet, sheet)
+            print(f"{C['y']}The resolve pass did not give a valid sheet; the earlier sheet is kept.{C['0']}")
+            _record_leads_failure(res_l, lead_blocks)
+        keep_sheet.unlink(missing_ok=True)
+        patch.unlink(missing_ok=True)
+        _fw_json("csa_docx.answer_blocks", "leads-clear", sheet)
+        return res_l
+
+    if (not getattr(a, "no_resolve", False) and str(settings().get("answer_resolve_leads", "false")).strip().lower() in ("1", "true", "yes", "on")
+            and res2.get("status") == "OK"
+            and time.time() - started < int(settings().get("answer_budget_s", 1200) or 1200) // 2):
+        # only a validated base sheet goes through the leads pass; a sheet still being fixed is not interrupted work
+        res_l_main = _leads_pass()
+        if res_l_main is not None and res_l_main.get("status") == "OK":
+            res2 = check()
     warns = [f for f in res2.get("findings", []) if f.get("level") == "WARN"]
     if draft and warns:
         kinds: dict = {}

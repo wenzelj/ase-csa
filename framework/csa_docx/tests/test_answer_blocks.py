@@ -188,6 +188,39 @@ def test_wip_roundtrip(tmp_path):
     assert ab.wip_check(sheet, fp)["status"] == "NONE"
 
 
+def test_leads_checkpoint_roundtrip_and_invalidation(tmp_path):
+    """An interrupted leads pass resumes (same card, matrix, hosts, base sheet) and rebuilds from scratch
+    when any of those inputs changed or the base sheet is missing."""
+    sheet = tmp_path / "TIME.answer.md"
+    base = sheet.with_suffix(".resolved-from.md")
+    sheet.write_text(BASE, encoding="utf-8")
+    base.write_text(BASE, encoding="utf-8")
+    fp = {"questions": {"B1": "a", "B2": "b", "B3": "c"}, "matrix": "m", "hosts": "h"}
+    assert ab.leads_check(sheet, base, fp)["status"] == "NONE"
+
+    p = ab.leads_write(sheet, fp, ["B3"], ["E-002", "E-001"])
+    data = json.loads(p.read_text(encoding="utf-8"))
+    assert data["blocks"] == ["B3"] and data["lead_ids"] == ["E-001", "E-002"]
+
+    r = ab.leads_check(sheet, base, fp)
+    assert r["status"] == "RESUME" and r["blocks"] == ["B3"] and r["lead_ids"] == ["E-001", "E-002"]
+
+    # --fresh: the caller skips leads-check; the checkpoint must be clearable by hand
+    ab.leads_clear(sheet)
+    assert ab.leads_check(sheet, base, fp)["status"] == "NONE"
+
+    # invalidation: a card with a different question set, a new matrix or host register, and a missing
+    # or modified base sheet each rebuild from scratch
+    ab.leads_write(sheet, fp, ["B3"], ["E-001"])
+    assert ab.leads_check(sheet, base, {"questions": {"B1": "a", "B2": "b"}, "matrix": "m", "hosts": "h"})["status"] == "STALE"
+    assert ab.leads_check(sheet, base, {**fp, "matrix": "m2"})["status"] == "STALE"
+    assert ab.leads_check(sheet, base, {**fp, "hosts": "h2"})["status"] == "STALE"
+    base.write_text("## B1 changed\n", encoding="utf-8")
+    assert ab.leads_check(sheet, base, fp)["status"] == "STALE"
+    base.unlink()
+    assert ab.leads_check(sheet, base, fp)["status"] == "STALE"
+
+
 def test_unknown_evidence_wip_is_regenerated_from_verified_card(tmp_path):
     sheet = tmp_path / "MGT.answer.md"
     sheet.write_text(BASE, encoding="utf-8")
