@@ -481,6 +481,32 @@ def load_gaps(work_dir: Path) -> dict:
         return {}
 
 
+def refresh_saved(work_dir: Path) -> list[dict]:
+    """Rebuild saved role tables and gap records from current host settings without touching the DOCX."""
+    work_dir = Path(work_dir)
+    folder = work_dir / "topic-tables"
+    out: list[dict] = []
+    for path in sorted(folder.glob("*.json")) if folder.is_dir() else []:
+        if path.name == "gaps.json":
+            continue
+        try:
+            old = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            out.append({"key": path.stem, "status": "ERROR", "message": "saved table is not valid JSON"})
+            continue
+        heading, key = str(old.get("heading") or ""), str(old.get("key") or path.stem)
+        if not heading:
+            out.append({"key": key, "status": "ERROR", "message": "saved table has no heading"})
+            continue
+        tables = build_all(work_dir, heading, key)
+        current = tables[0] if tables else {"status": "ERROR", "message": "table build returned no result"}
+        if current.get("status") == "OK":
+            save(work_dir, current)
+        out.append({"key": key, "status": current.get("status", "ERROR"),
+                    "gaps": len(current.get("gaps", [])), "message": current.get("message", "")})
+    return out
+
+
 def all_gaps(work_dir: Path) -> list[dict]:
     return [g for gs in load_gaps(work_dir).values() for g in gs]
 

@@ -61,16 +61,18 @@ export function EvidenceIntake({ system, draftStage, refreshKey, openEvidence, w
 
   if (!snap) return <section className="page draft-page intake-page">{error ? <div className="desk-error" role="alert">{error}</div> : <div className="loading"><span /><strong>Reading what came in…</strong></div>}</section>;
 
-  const { steps, next, busy } = deriveIntakeSteps(snap, job);
+  const { steps, next, busy, canResolve } = deriveIntakeSteps(snap, job);
   const running = !!job && !TERMINAL.includes(job.state);
   const rec = snap.intake;
   const questions = (snap.gap_check?.questions || []).filter(q => !onlyFound || q.verdict !== "NOT_FOUND");
   const files: IntakeFile[] = rec ? [...rec.added, ...rec.changed] : [];
+  const resolveAction = <span className="intake-action"><select value={cli} onChange={e => setCli(e.target.value)} disabled={busy} aria-label="Agent for evidence settlement">{AGENT_CLIS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}</select><button onClick={() => void run("resolve_gaps", { cli })} disabled={busy || !canResolve}>Resolve and update answers</button></span>;
   const action = (key: StepKey) => ({
     ingest: <button onClick={() => void run("ingest")} disabled={busy}>Ingest new data</button>,
     documents: <span className="intake-action"><select value={cli} onChange={e => setCli(e.target.value)} disabled={busy} aria-label="Agent for evidence intake">{AGENT_CLIS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}</select><button onClick={() => void run("intake", { cli })} disabled={busy || !rec}>Run the evidence agent</button></span>,
     gaps: <button onClick={() => void run("gap_check")} disabled={busy}>Check open questions</button>,
-    settle: <span className="intake-action"><select value={cli} onChange={e => setCli(e.target.value)} disabled={busy} aria-label="Agent for evidence settlement">{AGENT_CLIS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}</select><button onClick={() => void run("resolve_gaps", { cli })} disabled={busy || !snap.open_leads.length}>Resolve and update answers</button></span>, use: null,
+    settle: snap.open_leads.length ? resolveAction : null,
+    use: !snap.open_leads.length && (snap.gap_check?.affected.length || 0) ? resolveAction : null,
   })[key];
 
   return <section className="page draft-page intake-page">

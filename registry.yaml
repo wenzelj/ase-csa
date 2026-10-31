@@ -156,7 +156,7 @@ agents:
     arg: GAP_CHECK
     inputs: GAP_CHECK=latest, MODE=SETTLE
     locks: none
-    instruction: Settlement mode - read the schema-2 gap-check record, adjudicate each saved lead against its original source without rerunning lookup, append source-checked VERIFIED evidence or record the saved scoped NOT_FOUND outcome, and review the exact lead IDs.
+    instruction: Settlement mode - read the schema-4 gap-check record, adjudicate each CANDIDATES result and its saved leads against the original source without rerunning lookup, append source-checked VERIFIED evidence or record the saved scoped NOT_FOUND outcome, and review the exact lead IDs. Leave INCOMPLETE results untouched.
     skill: csa-gap-settlement-agent
     summary: Settle Evidence intake leads from their original sources before affected subsections are answered again.
 

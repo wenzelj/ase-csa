@@ -10,6 +10,7 @@ OPEN = """# Open questions (draft lane, 2026-10-10 20:56)
 ## 3.11 Backup & Recovery (BAK)
 
 - [B1] the exact backup product and service could be confirmed by the backup owner.
+- [B1] where the backup target volume for ROKPRDOPS116 lives
 
 ## 3.17 Internet Access & Communications (Proxy / SMTP) (INET)
 
@@ -32,12 +33,46 @@ OPEN = """# Open questions (draft lane, 2026-10-10 20:56)
 def test_parse_open_questions():
     qs = gs.parse_open_questions(OPEN)
     got = [(q["number"], q["key"], q["qid"], q["dr_id"]) for q in qs]
-    assert got == [("3.11", "BAK", "B1", "DR-BAK-B1"), ("3.17", "INET", "B2", "DR-INET-B2"),
-                   ("2.1", "EXECUTIVE_SUMMARY", "B1", "DR-EXECUTIVE_SUMMARY-B1"),
+    assert got == [("3.11", "BAK", "B1", gs._generated_dr_id("DR-BAK-B1", "the exact backup product and service could be confirmed by the backup owner.")),
+                   ("3.11", "BAK", "B1", gs._generated_dr_id("DR-BAK-B1", "where the backup target volume for ROKPRDOPS116 lives")),
+                   ("3.17", "INET", "B2", gs._generated_dr_id("DR-INET-B2", "which hosts actually send SMTP alerts.")),
+                   ("2.1", "EXECUTIVE_SUMMARY", "B1", gs._generated_dr_id("DR-EXECUTIVE_SUMMARY-B1", "whether ROKPRDOPS112 is in scope.")),
                    ("2.1", "EXECUTIVE_SUMMARY", "F01", "DR-EXECUTIVE_SUMMARY-F01"),
                    ("3.4", "FIGURE-3.4", "F01", "DR-TIME-F01")]
-    assert qs[1]["title"] == "Internet Access & Communications (Proxy / SMTP)"
-    assert qs[3]["text"] == "MOTPRDLOG103: role not recorded"
+    # qid stays the bare block token (the answer sheet and answered_blocks match B1, B2 ...)
+    assert [q["qid"] for q in qs] == ["B1", "B1", "B2", "B1", "F01", "F01"]
+    assert [q["dr_id"] for q in gs.parse_open_questions(OPEN)] != [q["dr_id"] for q in qs][:0]
+    assert qs[1]["title"] == "Backup & Recovery"
+    assert qs[4]["text"] == "MOTPRDLOG103: role not recorded"
+
+
+def test_parse_dedupes_explicit_dr_brackets():
+    text = ("## 3.11 Backup & Recovery (BAK)\n\n"
+            "- [DR-BAK-B1] first question\n- [DR-BAK-B1] second question\n")
+    ids = [q["dr_id"] for q in gs.parse_open_questions(text)]
+    assert ids == ["DR-BAK-B1", gs._generated_dr_id("DR-BAK-B1", "second question")]
+
+
+def test_generated_question_ids_survive_reordering_and_change_when_words_change():
+    heading = "## 3.11 Backup & Recovery (BAK)\n\n"
+    first = gs.parse_open_questions(heading + "- [B1] first question\n- [B1] second question\n")
+    reordered = gs.parse_open_questions(heading + "- [B1] second question\n- [B1] first question\n")
+    assert {q["text"]: q["dr_id"] for q in first} == {q["text"]: q["dr_id"] for q in reordered}
+    changed = gs.parse_open_questions(heading + "- [B1] first question changed\n")[0]
+    assert changed["dr_id"] != first[0]["dr_id"]
+
+
+def test_role_table_lines_parse_with_own_ids():
+    text = ("## 3.4 Time Synchronisation (TIME)\n\n"
+            "- [B1] first\n\n"
+            "## Role table for Time Synchronisation\n\n"
+            "- [DR-TIME-T01] capture host A\n- [DR-TIME-T02] capture host B\n")
+    qs = gs.parse_open_questions(text)
+    assert [(q["key"], q["qid"], q["dr_id"]) for q in qs] == [
+        ("TIME", "B1", gs._generated_dr_id("DR-TIME-B1", "first")),
+        ("ROLETABLE-3.4", "T01", "DR-TIME-T01"),
+        ("ROLETABLE-3.4", "T02", "DR-TIME-T02")]
+    assert gs._safe_for_retirement(text, qs) is True
 
 
 def test_parse_skips_malformed():
@@ -58,7 +93,7 @@ def test_sweep_writes_affected_sections(tmp_path, monkeypatch):
     ws = _workspace(tmp_path)
 
     def lookup(workspace, dr_id, text, exclude=()):
-        if dr_id == "DR-BAK-B1":
+        if text.startswith("the exact backup product"):
             return {"verdict": "CANDIDATES", "answer_evidence_ids": [], "related_evidence_ids": [], "lead_ids": ["L-000510"], "searched": "x"}
         if dr_id == "DR-EXECUTIVE_SUMMARY-F01":
             return {"verdict": "ANSWERED", "answer_evidence_ids": ["E-495"], "related_evidence_ids": [], "lead_ids": [], "searched": "x"}
@@ -69,12 +104,12 @@ def test_sweep_writes_affected_sections(tmp_path, monkeypatch):
         {"number": "3.11", "key": "BAK", "title": "Backup & Recovery", "answered": 0, "candidates": 1},
         {"number": "2.1", "key": "EXECUTIVE_SUMMARY", "title": "Executive Summary", "answered": 1, "candidates": 0}]
     saved = json.loads((ws / "csa-work" / "intake" / "gap-check-latest.json").read_text(encoding="utf-8"))
-    assert saved == res and saved["schema_version"] == 2 and len(saved["questions"]) == 5 and saved["checked_at"]
-    candidate = next(q for q in saved["questions"] if q["dr_id"] == "DR-BAK-B1")
+    assert saved == res and saved["schema_version"] == 4 and len(saved["questions"]) == 6 and saved["checked_at"]
+    candidate = next(q for q in saved["questions"] if q["text"].startswith("the exact backup product"))
     assert candidate["lead_ids"] == ["L-000510"] and candidate["evidence_ids"] == []
-    assert {q["dr_id"]: q["verdict"] for q in saved["questions"]}["DR-INET-B2"] == "NOT_FOUND"
+    assert next(q for q in saved["questions"] if q["key"] == "INET")["verdict"] == "NOT_FOUND"
     only = gs.sweep(ws, section_key="BAK")
-    assert [q["dr_id"] for q in only["questions"]] == ["DR-BAK-B1"]
+    assert [q["dr_id"] for q in only["questions"]] == [q["dr_id"] for q in gs.parse_open_questions(OPEN)[:2]]
 
 
 HIT = {"rel_path": "src/IS-REVELOC.pdf", "page_or_location": "line 40", "source_title": "src/IS-REVELOC.pdf",
@@ -118,7 +153,8 @@ def test_sweep_skips_terminal_leads(tmp_path, monkeypatch):
 
 def test_sweep_carries_open_lead_by_exact_dr_id(tmp_path, monkeypatch):
     ws = _workspace(tmp_path)
-    lead_id = leads.add_leads(ws, "DR-BAK-B1", "B1", "the exact backup product", [HIT])[0]
+    dr_id = gs.parse_open_questions(OPEN)[0]["dr_id"]
+    lead_id = leads.add_leads(ws, dr_id, "B1", "the exact backup product", [HIT])[0]
     monkeypatch.setattr(gs.gap_lookup, "lookup_gap", lambda *args, **kwargs:
                         {"verdict": "CANDIDATES", "answer_evidence_ids": [], "related_evidence_ids": [],
                          "lead_ids": [lead_id], "searched": "x"})
@@ -126,7 +162,8 @@ def test_sweep_carries_open_lead_by_exact_dr_id(tmp_path, monkeypatch):
     assert result["questions"][0]["verdict"] == "CANDIDATES"
     assert result["questions"][0]["lead_ids"] == [lead_id]
     assert result["questions"][0]["evidence_ids"] == []
-    assert result["affected"][0]["candidates"] == 1
+    assert result["affected"][0] == {"number": "3.11", "key": "BAK", "title": "Backup & Recovery",
+                                  "answered": 0, "candidates": 2}
 
 
 def test_successful_scoped_sweep_retires_only_absent_questions_in_that_section(tmp_path, monkeypatch):
@@ -150,6 +187,26 @@ def test_missing_or_malformed_question_input_never_retires_leads(tmp_path, monke
     assert [r["lead_id"] for r in leads.open_leads(ws)] == [lead_id]
     source.unlink()
     assert gs.sweep(ws)["retired_lead_ids"] == []
+    assert [r["lead_id"] for r in leads.open_leads(ws)] == [lead_id]
+
+
+def test_duplicate_block_lines_get_unique_ids_and_are_searched_separately(tmp_path, monkeypatch):
+    ws = _workspace(tmp_path)
+    first_id = gs._generated_dr_id("DR-BAK-B1", "first question")
+    second_id = gs._generated_dr_id("DR-BAK-B1", "second question")
+    lead_id = leads.add_leads(ws, first_id, "B1", "first question", [HIT])[0]
+    source = ws / "csa-work" / "draft" / "open-questions.md"
+    source.write_text("## 3.11 Backup & Recovery (BAK)\n\n- [B1] first question\n- [B1] second question\n", encoding="utf-8")
+    seen = []
+    monkeypatch.setattr(gs.gap_lookup, "lookup_gap", lambda workspace, dr_id, text, exclude=():
+                        (seen.append((dr_id, text)), {"verdict": "NOT_FOUND", "answer_evidence_ids": [],
+                         "related_evidence_ids": [], "lead_ids": [], "searched": "x"})[1])
+    result = gs.sweep(ws, "BAK")
+    assert [q["dr_id"] for q in result["questions"]] == [first_id, second_id]
+    assert [q["verdict"] for q in result["questions"]] == ["NOT_FOUND", "NOT_FOUND"]
+    assert seen == [(first_id, "first question"), (second_id, "second question")]
+    # the lead for "first question" is still an active question, so it is not retired
+    assert result["retired_lead_ids"] == []
     assert [r["lead_id"] for r in leads.open_leads(ws)] == [lead_id]
 
 

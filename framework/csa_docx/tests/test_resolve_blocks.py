@@ -37,10 +37,22 @@ def test_only_verified_evidence_is_named_and_a_question_with_none_is_not_answere
     assert list(res) == ["DNS"] and res["DNS"]["resolved"][0]["ids"] == ["E-1"]
 
 
-def test_saved_schema_one_gap_check_requires_a_fresh_sweep(tmp_path):
+def test_no_answer_block_message_reports_answered_figure_questions_truthfully():
+    message = ns["no_answer_block_message"](Q[1:3])
+    assert message == ("1 question resolved by evidence, but none maps to an answer-sheet block; "
+                       "1 remain open. The working document was not changed.")
+
+
+def test_no_answer_block_message_reports_when_nothing_resolved():
+    message = ns["no_answer_block_message"]([Q[2]])
+    assert message == "No question was resolved by evidence; 1 remain open. The working document was not changed."
+
+
+def test_saved_pre_stable_identity_gap_check_requires_a_fresh_sweep(tmp_path):
     work = tmp_path / "csa-work"
     (work / "intake").mkdir(parents=True)
-    (work / "intake" / "gap-check-latest.json").write_text(json.dumps({"questions": []}), encoding="utf-8")
+    (work / "intake" / "gap-check-latest.json").write_text(
+        json.dumps({"schema_version": 3, "questions": []}), encoding="utf-8")
     local = {"json": json, "re": re, "local_path": Path, "resolve_target": lambda *a: {"status": "OK", "key": ""}}
     local["die"] = lambda message: (_ for _ in ()).throw(RuntimeError(message))
     start = SRC.index("def _latest_gap_check")
@@ -49,6 +61,6 @@ def test_saved_schema_one_gap_check_requires_a_fresh_sweep(tmp_path):
     try:
         local["_latest_gap_check"]({"work_dir": str(work)}, "")
     except RuntimeError as exc:
-        assert "schema 1" in str(exc) and "csa gap-check" in str(exc)
+        assert "stable question identities" in str(exc) and "csa gap-check" in str(exc)
     else:
-        raise AssertionError("schema-1 record was accepted")
+        raise AssertionError("pre-stable-identity record was accepted")

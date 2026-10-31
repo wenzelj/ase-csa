@@ -33,6 +33,11 @@ assert(deriveIntakeSteps(evidenced, null).steps[0].detail === "Complete · Index
 assert(deriveIntakeSteps(evidenced, null).steps[1].detail === "Complete · Documents processed", "completed evidence intake does not present old row counts as outstanding");
 const oldCheck = { ...evidenced, gap_check: { schema_version: 2, checked_at: "2026-10-11T00:00:00Z", section: "", questions: [], affected: [] } };
 assert(deriveIntakeSteps(oldCheck, null).next === "gaps", "gap check older than the intake: gaps current");
+const recentLegacyCheck = { ...evidenced, gap_check: { schema_version: 3, checked_at: "2026-10-12T05:00:00Z", section: "", questions: [], affected: [{ number: "3.11", key: "BAK", title: "Backup", answered: 0, candidates: 1 }] },
+  open_leads: [{ lead_id: "L-000510", dr_id: "DR-BAK-B1", qid: "B1", question: "q", source_title: "a.txt", source_ref: "a.txt", rel_path: "a.txt", source_version: "v1", source_class: "other", page_or_location: "line 1", excerpt: "source excerpt", found_at: "2026-10-12T04:00:00Z", state: "open" as const }] };
+const recentLegacySteps = deriveIntakeSteps(recentLegacyCheck, null);
+assert(recentLegacySteps.next === "gaps" && !recentLegacySteps.canResolve, "recent legacy gap check must be rerun before resolve");
+assert(recentLegacySteps.steps[2].detail.includes("older format"), "legacy gap check explains why it must be rerun");
 
 // A completed agent run may legitimately add no rows when every statement was already recorded.
 const noRowsNeeded = { ...fresh, agent_summary: { path: "summary.md", text: "# Intake", modified_at: "2026-10-12T04:00:00Z" } };
@@ -44,15 +49,17 @@ const completedSteps = deriveIntakeSteps(completedLargeRun, null).steps;
 assert(!completedSteps[0].detail.includes("1 new") && !completedSteps[1].detail.includes("33"), "completed steps hide historical ingest and evidence counts");
 
 // One lead to settle.
-const settle = { ...evidenced, gap_check: { schema_version: 2, checked_at: "2026-10-12T05:00:00Z", section: "", questions: [], affected: [{ number: "3.11", key: "BAK", title: "Backup", answered: 0, candidates: 1 }] },
+const settle = { ...evidenced, gap_check: { schema_version: 4, checked_at: "2026-10-12T05:00:00Z", section: "", questions: [], affected: [{ number: "3.11", key: "BAK", title: "Backup", answered: 0, candidates: 1 }] },
   open_leads: [{ lead_id: "L-000510", dr_id: "DR-BAK-B1", qid: "B1", question: "q", source_title: "a.txt", source_ref: "a.txt", rel_path: "a.txt", source_version: "v1", source_class: "other", page_or_location: "line 1", excerpt: "source excerpt", found_at: "2026-10-12T04:00:00Z", state: "open" as const }] };
 const settleSteps = deriveIntakeSteps(settle, null);
 assert(settleSteps.next === "settle" && settleSteps.steps[3].detail === "1 lead to settle", "one lead: settle current with count");
+assert(settleSteps.canResolve, "schema-4 gap check with an open lead can resolve");
 
 // Settled, affected sections remain: use it.
 const use = { ...settle, open_leads: [], gap_check: { ...settle.gap_check, affected: [settle.gap_check.affected[0], { number: "2.1", key: "EXECUTIVE_SUMMARY", title: "Executive Summary", answered: 1, candidates: 0 }] } };
 const useSteps = deriveIntakeSteps(use, null);
 assert(useSteps.next === "use" && useSteps.steps[4].detail === "2 subsections can be answered again", "settled: use current with count");
+assert(useSteps.canResolve, "schema-4 direct answers can update the document without open leads");
 
 // A running job blocks its step and makes the page busy.
 const busy = deriveIntakeSteps(fresh, job("intake"));
@@ -78,6 +85,7 @@ assert(settleTarget(null, { gap_or_action: "Answers DR-BAK-B1" }, "tetra") === n
 // Coming back to the page picks up an evidence job that is still running.
 const jobs = [job("answer"), job("ingest", "succeeded"), { ...job("gap_check"), id: "g1", created_at: "2026-10-12T04:00:00Z" }];
 assert(resumableJob(jobs)?.id === "g1", "the running gap check is resumed");
+assert(resumableJob([{ ...job("resolve_gaps"), id: "r1" }])?.id === "r1", "the running resolve job is resumed");
 assert(resumableJob([job("ingest", "failed"), job("answer")]) === null, "finished or unrelated jobs are not resumed");
 
 console.log("intake step fixtures passed");

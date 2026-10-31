@@ -81,6 +81,33 @@ def test_refresh_retires_removed_and_superseded_and_lists_changed(tmp_path):
     assert (tmp_path / "intake" / "refresh-latest.json").is_file()
 
 
+def test_refresh_removal_matches_exact_source_not_same_basename(tmp_path):
+    con = sqlite3.connect(tmp_path / "discovery-index.sqlite")
+    con.execute("create table captures(capture_id, folder, host, collector, capture_utc, archived, superseded_by, file_count)")
+    con.commit(); con.close()
+    _matrix(tmp_path, ["E-001,a,q,First source.,VERIFIED,source-a/inventory.xlsx,x,,pending",
+                       "E-002,a,q,Second source.,VERIFIED,source-b/inventory.xlsx,x,,pending"])
+    (tmp_path / "intake").mkdir()
+    (tmp_path / "intake" / "latest.json").write_text(json.dumps({
+        "id": "r1", "added": [], "changed": [], "removed": ["source-a/inventory.xlsx"]}), encoding="utf-8")
+    res = evidence_refresh.run(tmp_path)
+    assert [r["evidence_id"] for r in res["rejected"]] == ["E-001"]
+    assert evidence_live.rejected(tmp_path / "evidence-matrix.csv") == {"E-001"}
+
+
+def test_refresh_retires_removed_capture_file(tmp_path):
+    con = sqlite3.connect(tmp_path / "discovery-index.sqlite")
+    con.execute("create table captures(capture_id, folder, host, collector, capture_utc, archived, superseded_by, file_count)")
+    con.commit(); con.close()
+    cap = "X_discovery_H1_20260101T000000Z"
+    _matrix(tmp_path, [f"E-001,a,q,H1 fact.,VERIFIED,{cap}: 32.txt,x,,pending"])
+    (tmp_path / "intake").mkdir()
+    (tmp_path / "intake" / "latest.json").write_text(json.dumps({
+        "id": "r1", "added": [], "changed": [], "removed": [f"src/{cap}/32.txt"]}), encoding="utf-8")
+    res = evidence_refresh.run(tmp_path)
+    assert [r["evidence_id"] for r in res["rejected"]] == ["E-001"]
+
+
 def test_graph_store_refuses_a_second_node_for_a_host():
     sys.path.insert(0, str(SCRIPTS))
     from graph_store import host_key

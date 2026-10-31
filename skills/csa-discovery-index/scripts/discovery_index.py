@@ -30,6 +30,7 @@ Always pass --project <key> (from csa-context/PROJECTS.yaml) or --workspace <pro
 import argparse
 import csv
 import hashlib
+import html
 import io
 import json
 import os
@@ -48,7 +49,7 @@ import index_aliases  # noqa: E402
 import index_cites  # noqa: E402
 import index_entities  # noqa: E402
 
-SCHEMA_VERSION = 3   # 3: porter-stemmed text index (restore = restored = restores), prefix terms (restor*); 2: entities and aliases tables, overlapping chunks
+SCHEMA_VERSION = 5   # 5: complete Open XML stories and uncapped spreadsheet rows; 4: lossless line-preserving HTML/XML
 FRAMEWORK_DIR = Path(__file__).resolve().parents[3]  # .agents
 BASE_DIR = FRAMEWORK_DIR.parent
 INDEX_NAME = "discovery-index.sqlite"
@@ -82,17 +83,16 @@ SKIP_DIRS = {".git", "__MACOSX", ".pytest_cache", "__pycache__", "csa-work", "cs
 SKIP_FILES = {".DS_Store", "Thumbs.db"}
 BINARY_EXT = {".dll", ".exe", ".dat", ".w001", ".zip", ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico",
               ".svg", ".msi", ".cab", ".pdb", ".sys", ".bin", ".iso", ".7z", ".gz", ".tar", ".lnk",
-              ".mp4", ".mov", ".vsdx", ".pptx", ".xls", ".doc", ".db", ".sqlite", ".pyc", ".bak"}
-# Large renderings that duplicate a text equivalent in the same capture.
-SKIP_NAME_RE = re.compile(r"(gpresult\.html|gpresult\.xml|_logs_dns_ntp_auth\.xml)$", re.I)
+              ".mp4", ".mov", ".vsdx", ".xls", ".doc", ".db", ".sqlite", ".pyc", ".bak"}
+DOCUMENT_EXT = {".txt", ".log", ".csv", ".xml", ".html", ".htm", ".pdf", ".docx", ".pptx", ".xlsx",
+                ".doc", ".xls", ".vsdx", ".png", ".jpg", ".jpeg", ".svg"}
 MAX_TEXT_BYTES = 8 * 1024 * 1024
 MAX_CSV_BYTES = 64 * 1024 * 1024
-SPARSE_XML_BYTES = 1024 * 1024      # larger XML: index only the structural (non-repeating) elements
-SPARSE_TAG_REPEAT = 200
 LINE_TAG = re.compile(r"^@(\d+)\| ")
+MARKUP_TAG_RE = re.compile(r"<[^>]*>")
+QUOTED_ATTR_RE = re.compile(r"(['\"])(.*?)\1")
 CHUNK_LINES = 30
 CHUNK_OVERLAP = 5      # lines two neighbouring chunks share, so a fact is found with the host line above it
-MAX_ROWS_PER_FILE = 20000
 MAX_ENTITIES_PER_FILE = 5000
 MAX_EXCERPT = 1200
 
@@ -303,26 +303,58 @@ def xlsx_sheets(path):
                         val = "".join(x.text or "" for x in c.iter(XNS + "t"))
                     else:
                         val = v.text if v is not None and v.text is not None else ""
+                    formula = c.find(XNS + "f")
+                    if not val and formula is not None and formula.text:
+                        val = "=" + formula.text
                     if val != "":
                         vals[col_index(c.get("r"))] = val
                 if vals:
                     width = max(vals) + 1
                     grid.append((int(row.get("r") or len(grid) + 1), [vals.get(i, "") for i in range(width)]))
-                if len(grid) >= MAX_ROWS_PER_FILE:
-                    break
             yield s.get("name"), grid
 
 
+def _openxml_part_text(data, text_tag):
+    """Visible text from one Open XML part, with paragraph boundaries retained."""
+    root = ET.fromstring(data)
+    out = []
+    for elem in root.iter():
+        tag = elem.tag.rsplit("}", 1)[-1]
+        if tag in (text_tag, "text") and elem.text:
+            out.append(elem.text)
+        elif tag in ("tab", "br", "cr"):
+            out.append("\t" if tag == "tab" else "\n")
+        elif tag in ("p", "tr") and out and not out[-1].endswith("\n"):
+            out.append("\n")
+    return "".join(out).strip()
+
+
 def docx_text(path):
+    """Text from the main story and the auxiliary Word stories that can hold evidence."""
     with zipfile.ZipFile(path) as z:
-        xml = z.read("word/document.xml").decode("utf-8", "replace")
-    paras = []
-    for p in re.split(r"</w:p>", xml):
-        t = "".join(re.findall(r"<w:t[^>]*>([^<]*)</w:t>", p))
-        if t.strip():
-            paras.append(t)
-    import html
-    return "\n".join(html.unescape(x) for x in paras)
+        names = [n for n in z.namelist() if re.fullmatch(
+            r"word/(?:document|header\d+|footer\d+|footnotes|endnotes|comments)\.xml", n)]
+        names.sort(key=lambda n: (n != "word/document.xml", n))
+        parts = []
+        for name in names:
+            text = _openxml_part_text(z.read(name), "t")
+            if text:
+                parts.append(f"[{name}]\n{text}")
+        return "\n".join(parts)
+
+
+def pptx_text(path):
+    """Text from slides, speaker notes and comments in an Open XML presentation."""
+    with zipfile.ZipFile(path) as z:
+        names = [n for n in z.namelist() if re.fullmatch(
+            r"ppt/(?:slides/slide\d+|notesSlides/notesSlide\d+|comments/comment\d+)\.xml", n)]
+        names.sort()
+        parts = []
+        for name in names:
+            text = _openxml_part_text(z.read(name), "t")
+            if text:
+                parts.append(f"[{name}]\n{text}")
+        return "\n".join(parts)
 
 
 def pdf_text(path):
@@ -438,24 +470,32 @@ def drop_content(con, file_id):
     con.execute("DELETE FROM entities WHERE file_id=?", (file_id,))
 
 
-def add_sparse(con, file_id, numbered):
-    """numbered: [(line_no, text)] - non-contiguous lines; each stored as '@<n>| text'."""
-    for s in range(0, len(numbered), CHUNK_LINES - CHUNK_OVERLAP):
-        part = numbered[s:s + CHUNK_LINES]
-        cur = con.execute("INSERT INTO chunks(content) VALUES(?)", ("\n".join(f"@{n}| {t}" for n, t in part),))
-        con.execute("INSERT INTO chunk_map VALUES(?,?,?,?)", (cur.lastrowid, file_id, part[0][0], part[-1][0]))
-        if s + CHUNK_LINES >= len(numbered):
-            break
+def markup_text(text):
+    """Make HTML/XML searchable without dropping content or changing source line numbers.
 
+    Each physical source line produces exactly one output line. Element names, attribute
+    names/values and text are retained, while markup punctuation is replaced with spaces.
+    Repeated unescaping exposes GPResult's embedded, escaped EventXml payload.
+    """
+    out = []
+    for source_line in text.splitlines():
+        line = source_line
+        for _ in range(3):
+            decoded = html.unescape(line)
+            if decoded == line:
+                break
+            line = decoded
 
-def sparse_xml(lines):
-    tags = [re.match(r"\s*<([A-Za-z_][\w.:-]*)", l) for l in lines]
-    freq = {}
-    for m in tags:
-        if m:
-            freq[m.group(1)] = freq.get(m.group(1), 0) + 1
-    return [(i + 1, l.strip()) for i, (l, m) in enumerate(zip(lines, tags))
-            if l.strip() and m and freq[m.group(1)] <= SPARSE_TAG_REPEAT]
+        def tag_text(match):
+            body = match.group(0)[1:-1].strip()
+            if not body or body.startswith(("/", "!", "?")):
+                return " "
+            body = body.rstrip("/").strip()
+            body = QUOTED_ATTR_RE.sub(lambda m: m.group(2), body)
+            return f" {body} "
+
+        out.append(re.sub(r"\s+", " ", MARKUP_TAG_RE.sub(tag_text, line)).strip())
+    return "\n".join(out)
 
 
 def add_entities(con, file_id, lines):
@@ -502,8 +542,6 @@ def add_rows(con, file_id, tname, blocks):
     for b, (fmt, rows) in enumerate(blocks, start=1):
         add_row_entities(con, file_id, tname, rows)
         for line_no, data in rows:
-            if n >= MAX_ROWS_PER_FILE:
-                return n
             con.execute("INSERT INTO rows VALUES(?,?,?,?,?,?)",
                         (file_id, tname, fmt, b, line_no,
                          json.dumps({k: v for k, v in data.items() if v not in ("", None)}, ensure_ascii=False)))
@@ -531,6 +569,12 @@ def index_file(con, file_id, path, ext, fname):
             return "skipped", "docx has no text"
         add_text(con, file_id, t)
         return "indexed", "docx text"
+    if ext == ".pptx":
+        t = pptx_text(path)
+        if not (t or "").strip():
+            return "skipped", "pptx has no extractable text"
+        add_text(con, file_id, t)
+        return "indexed", "pptx slide, notes and comment text"
     if ext == ".pdf":
         t = pdf_text(path)
         if t is None:
@@ -543,11 +587,8 @@ def index_file(con, file_id, path, ext, fname):
     text = decode(raw)
     if text is None:
         return "skipped", "binary content"
-    if ext == ".xml" and len(raw) > SPARSE_XML_BYTES:
-        lines = text.splitlines()
-        kept = sparse_xml(lines)
-        add_sparse(con, file_id, kept)
-        return "indexed", f"large xml: {len(kept)} structural lines of {len(lines)} (repeating elements not indexed)"
+    if ext in (".xml", ".html", ".htm"):
+        text = markup_text(text)
     lines = add_text(con, file_id, text)
     if ext == ".csv":
         blocks = parse_csv_text(text)
@@ -556,12 +597,24 @@ def index_file(con, file_id, path, ext, fname):
     else:
         blocks = []
     n = add_rows(con, file_id, tname, blocks) if blocks else 0
-    return "indexed", f"text lines={len(lines)} rows={n}"
+    kind = ext.lstrip(".") if ext in (".xml", ".html", ".htm") else "text"
+    return "indexed", f"{kind} lines={len(lines)} rows={n}"
 
 
 def cmd_build(args, project, root):
     work_dir = remap(project["work_dir"], project)
     final_db = Path(args.db) if args.db else work_dir / INDEX_NAME
+    # Resolve and validate every configured source before touching either a staged or live index.  A disconnected
+    # share must never look like an intentional removal of the whole evidence set.
+    if args.source:
+        sources = [Path(s).expanduser() for s in args.source]
+    else:
+        sources = [remap(project["default_source_set"], project)]
+        sources += [remap(x.strip(), project) for x in project.get("index_extra_sources", "").split(";") if x.strip()]
+    missing = [str(s) for s in sources if not s.is_dir()]
+    if missing:
+        fail("SOURCE_NOT_AVAILABLE", "one or more configured evidence source folders are missing or not directories; "
+             "the live index was not changed", sources=missing)
     if args.stage_dir:
         db_path = Path(args.stage_dir).expanduser() / f"{project['key']}-{INDEX_NAME}"
         db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -576,7 +629,8 @@ def cmd_build(args, project, root):
         if old.exists():
             try:
                 pc = sqlite3.connect(f"file:{old}?mode=ro", uri=True)
-                previous = {r: (sha, size) for r, sha, size in pc.execute("SELECT rel_path, sha1, size FROM files")}
+                previous = {r: (sha, size, status, reason) for r, sha, size, status, reason in
+                            pc.execute("SELECT rel_path, sha1, size, status, reason FROM files")}
                 pc.close()
             except sqlite3.Error:
                 previous = {}
@@ -585,12 +639,11 @@ def cmd_build(args, project, root):
     # Default: the project's discovery data (default_source_set) plus any extra evidence folders
     # listed in PROJECTS.yaml as index_extra_sources ("path; path"). Not the whole parent folder,
     # which also holds CSA documents that must not be indexed as evidence.
-    if args.source:
-        sources = [Path(s).expanduser() for s in args.source]
-    else:
-        sources = [remap(project["default_source_set"], project)]
-        sources += [remap(x.strip(), project) for x in project.get("index_extra_sources", "").split(";") if x.strip()]
     con = sqlite3.connect(str(db_path))
+    try:
+        old_schema = int((con.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone() or (0,))[0])
+    except (sqlite3.Error, TypeError, ValueError):
+        old_schema = 0
     con.execute("PRAGMA journal_mode=OFF" if args.stage_dir else "PRAGMA journal_mode=DELETE")
     con.execute("PRAGMA synchronous=OFF")
     init_db(con)
@@ -631,24 +684,34 @@ def cmd_build(args, project, root):
                         capture_ids[folder] = cap_id
                 host = cap[1] if cap else None
                 sclass = "capture" if cap else ("derived" if derived else "other")
-                prev = con.execute("SELECT file_id, size, mtime, status, reason FROM files WHERE rel_path=?", (rel,)).fetchone()
+                prev = con.execute("SELECT file_id, size, mtime, status, reason, sha1 FROM files WHERE rel_path=?", (rel,)).fetchone()
                 retry_pdf = (ext == ".pdf" and prev and prev[3] in ("skipped", "error") and
                              prev[4] in ("pdf (pdftotext not available)", "pdf text extraction failed"))
-                if prev and prev[1] == st.st_size and abs((prev[2] or 0) - st.st_mtime) < 1 and not retry_pdf:
+                retry_markup = (ext in (".xml", ".html", ".htm") and prev and
+                                (prev[3] in ("skipped", "error") or (prev[4] or "").startswith("large xml:")))
+                retry_office = old_schema < 5 and ext in (".docx", ".pptx", ".xlsx")
+                same_metadata = prev and prev[1] == st.st_size and abs((prev[2] or 0) - st.st_mtime) < 0.000001
+                content_sha = None
+                if same_metadata and (prev[5] or ext in DOCUMENT_EXT):
+                    h = hashlib.sha1()
+                    with open(path, "rb") as fh:
+                        for blk in iter(lambda: fh.read(1 << 20), b""):
+                            h.update(blk)
+                    content_sha = h.hexdigest()
+                same_content = same_metadata and (content_sha is None or (prev[5] and content_sha == prev[5]))
+                if (same_content and not retry_pdf and not retry_markup and not retry_office):
                     stats[prev[3]] = stats.get(prev[3], 0) + 1
                     continue
                 if prev:
                     drop_content(con, prev[0])
                     con.execute("DELETE FROM files WHERE file_id=?", (prev[0],))
-                status, reason, sha, dup = None, None, None, None
+                status, reason, sha, dup = None, None, content_sha, None
                 if ext in BINARY_EXT:
                     status, reason = "skipped", f"binary type {ext}"
                     if ext == ".zip":
                         reason = "zip (extracted alongside)" if path.with_suffix("").is_dir() else "zip (NOT extracted - contents not indexed)"
-                elif SKIP_NAME_RE.search(fname):
-                    status, reason = "skipped", "rendering duplicated by a text file in the same capture"
                 elif st.st_size > (MAX_CSV_BYTES if ext == ".csv" else 64 * 1024 * 1024 if ext == ".xml" else MAX_TEXT_BYTES) \
-                        and ext not in (".xlsx", ".docx", ".pdf"):
+                        and ext not in (".xlsx", ".docx", ".pdf", ".xml", ".html", ".htm"):
                     status, reason = "skipped", f"too large ({st.st_size} bytes)"
                 elif st.st_size == 0:
                     status, reason = "skipped", "empty"
@@ -657,11 +720,12 @@ def cmd_build(args, project, root):
                     (rel, cap_id, host, ext, st.st_size, st.st_mtime, sclass, archived))
                 fid = cur.lastrowid
                 if status is None:
-                    h = hashlib.sha1()
-                    with open(path, "rb") as fh:
-                        for blk in iter(lambda: fh.read(1 << 20), b""):
-                            h.update(blk)
-                    sha = h.hexdigest()
+                    if sha is None:
+                        h = hashlib.sha1()
+                        with open(path, "rb") as fh:
+                            for blk in iter(lambda: fh.read(1 << 20), b""):
+                                h.update(blk)
+                        sha = h.hexdigest()
                     d = con.execute("SELECT file_id FROM files WHERE sha1=? AND status='indexed' AND file_id<>? LIMIT 1", (sha, fid)).fetchone()
                     if d:
                         status, reason, dup = "duplicate", "identical content indexed elsewhere", d[0]
@@ -673,7 +737,7 @@ def cmd_build(args, project, root):
                             status, reason = "error", f"{type(e).__name__}: {e}"[:300]
                 con.execute("UPDATE files SET sha1=?, status=?, reason=?, dup_of=? WHERE file_id=?", (sha, status, reason, dup, fid))
                 stats[status] = stats.get(status, 0) + 1
-                shas[rel] = (sha, st.st_size)
+                shas[rel] = (sha, st.st_size, status, reason)
                 changes["changed" if prev else "added"].append(dict(
                     rel_path=rel, ext=ext, status=status, reason=reason, source_class=sclass, host=host))
                 if sum(stats.values()) % 200 == 0:
@@ -816,8 +880,33 @@ def unreadable(f):
     """A document the index could not read and a person can supply in another format. Capture artefacts
     (DLLs, renderings, extracted zips) and empty files are not documents to ask for."""
     reason = f.get("reason") or ""
-    return (f.get("source_class") != "capture" and f.get("status") in ("skipped", "error") and reason != "empty"
+    return ((f.get("source_class") != "capture" or f.get("ext") in DOCUMENT_EXT)
+            and f.get("status") in ("skipped", "error") and reason != "empty"
             and not reason.startswith(("zip (extracted", "rendering duplicated")))
+
+
+def intake_report_missing(folder, record):
+    """Files a completed intake report must account for by exact indexed path.
+
+    Capture artefacts are handled as a set by graph sync and the host-profile workflow.  Stand-alone documents have
+    no other deterministic consumer, so a free-form marker cannot silently mark them read without naming them.
+    """
+    if not isinstance(record, dict) or not record.get("id"):
+        return []
+    report = Path(folder) / f"{record['id']}.evidence.md"
+    try:
+        text = report.read_text(encoding="utf-8")
+    except OSError:
+        missing = [f.get("rel_path") for f in (record.get("added", []) + record.get("changed", []))
+                   if isinstance(f, dict) and f.get("source_class") != "capture" and f.get("rel_path")]
+        return missing or [str(report)]
+    if not text.strip():
+        return [str(report)]
+    required = {f.get("rel_path") for f in (record.get("added", []) + record.get("changed", []))
+                if isinstance(f, dict) and f.get("source_class") != "capture" and f.get("rel_path")}
+    required.update(f.get("rel_path") for f in record.get("unreadable", [])
+                    if isinstance(f, dict) and f.get("rel_path"))
+    return sorted(p for p in required if p not in text)
 
 
 def write_intake(work_dir, changes, built_at, last_id):
@@ -832,7 +921,7 @@ def write_intake(work_dir, changes, built_at, last_id):
         prev = json.loads((folder / "latest.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         prev = None
-    if isinstance(prev, dict) and prev.get("id") and not (folder / f"{prev['id']}.evidence.md").exists():
+    if isinstance(prev, dict) and prev.get("id") and intake_report_missing(folder, prev):
         # The evidence agent has not read the previous intake yet: carry its files forward so none is lost.
         listed = {f["rel_path"] for f in added + changed} | set(changes["removed"])
         added += [f for f in prev.get("added", []) if f["rel_path"] not in listed]

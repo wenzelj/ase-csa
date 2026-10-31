@@ -11,6 +11,7 @@ csa-work/intake/gap-check-<UTC>.json and gap-check-latest.json for the Evidence 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -21,7 +22,21 @@ from csa_docx import gap_lookup
 
 _SECTION = re.compile(r"^##\s+(\d+(?:\.\d+)*)\s+(.*?)\s+\(([A-Z0-9_]+)\)\s*$")
 _FIGURE = re.compile(r"^##\s+Figure for\s+(\d+(?:\.\d+)*)\s+(.*?)\s*$")
+_ROLE = re.compile(r"^##\s+Role table for\s+(.*?)\s*$")
 _BULLET = re.compile(r"^\s*-\s+\[([A-Za-z0-9_.-]+)\]\s+(.+?)\s*$")
+
+
+def question_fingerprint(text: str) -> str:
+    """Content identity for a question, independent of its position in the question file."""
+    normal = re.sub(r"\s+", " ", text or "").strip().casefold()
+    return "sha256:" + hashlib.sha256(normal.encode("utf-8")).hexdigest()
+
+
+def _generated_dr_id(base_id: str, text: str) -> str:
+    """A readable, position-independent DR id. Rewording creates a new question identity."""
+    return f"{base_id}-Q{question_fingerprint(text).split(':', 1)[1][:12].upper()}"
+
+
 def parse_open_questions(text: str) -> list[dict]:
     """[{number, title, key, qid, dr_id, text}] from open-questions.md. A figure heading takes the key of the section
     with the same number (FIGURE-<number> when there is none). Lines outside a recognised heading, and bullets without
@@ -33,14 +48,24 @@ def parse_open_questions(text: str) -> list[dict]:
             keys.setdefault(m.group(1), (m.group(3), m.group(2)))
     out: list[dict] = []
     current: tuple[str, str, str] | None = None        # (number, title, key)
+    used: set[str] = set()
     for line in text.splitlines():
         if line.startswith("## "):
-            m, f = _SECTION.match(line), _FIGURE.match(line)
+            m, f, rt = _SECTION.match(line), _FIGURE.match(line), _ROLE.match(line)
             if m:
                 current = (m.group(1), m.group(2), m.group(3))
             elif f:
                 key, title = keys.get(f.group(1), (f"FIGURE-{f.group(1)}", f.group(2)))
                 current = (f.group(1), title, key)
+            elif rt:
+                # role-table capture gaps carry their own DR id (DR-<key>-Tnn); the section number
+                # is only a display nicety, so an unknown table falls back to the table title
+                cur = None
+                for number, (_, title) in keys.items():
+                    if title and title.split(" & ")[0].lower() == rt.group(1).lower():
+                        cur = (number, title, f"ROLETABLE-{number}")
+                        break
+                current = cur or ("", rt.group(1), "ROLETABLE")
             else:
                 current = None
             continue
@@ -49,20 +74,34 @@ def parse_open_questions(text: str) -> list[dict]:
             continue
         bracket, body = b.group(1), b.group(2)
         number, title, key = current
-        if bracket.upper().startswith("DR-"):
-            dr_id, qid = bracket, bracket.rsplit("-", 1)[-1]
+        explicit = bracket.upper().startswith("DR-")
+        if explicit:
+            base_id, qid = bracket, bracket.rsplit("-", 1)[-1]
         else:
-            dr_id, qid = f"DR-{key}-{bracket}", bracket
-        out.append({"number": number, "title": title, "key": key, "qid": qid, "dr_id": dr_id, "text": body})
+            base_id, qid = f"DR-{key}-{bracket}", bracket
+        # Generated IDs include the question fingerprint, so reordering other QUESTION lines cannot
+        # attach an old settlement to different words. Explicit DR IDs remain authoritative; only a
+        # malformed duplicate explicit ID receives the same content-derived disambiguator.
+        dr_id = base_id if explicit and base_id not in used else _generated_dr_id(base_id, body)
+        if dr_id in used:  # identical duplicate line: retain a unique parse result and flag it below
+            dr_id = f"{dr_id}-DUP"
+        used.add(dr_id)
+        out.append({"number": number, "title": title, "key": key, "qid": qid, "dr_id": dr_id,
+                    "question_fingerprint": question_fingerprint(body), "text": body})
     return out
 
 
 def _safe_for_retirement(text: str, questions: list[dict]) -> bool:
-    """Retirement is allowed only when the question file was present, non-empty and parsed completely."""
+    """Only retire after every question line parsed and every parsed DR ID is unambiguous.
+    parse_open_questions gives each line a unique DR id (a block can hold several questions), so
+    the only failure left here is a question file with unparseable or malformed list lines."""
     if not text.strip() or not questions:
         return False
-    bracket_bullets = sum(1 for line in text.splitlines() if line.lstrip().startswith("- ["))
-    return bracket_bullets == len(questions)
+    bullets = [line for line in text.splitlines() if line.lstrip().startswith("- ")]
+    if len(bullets) != len(questions):
+        return False
+    ids = [q["dr_id"] for q in questions]
+    return len(ids) == len(set(ids))
 
 
 def _retire_absent(workspace: Path, questions: list[dict], section_key: str | None) -> list[str]:
@@ -78,10 +117,33 @@ def _retire_absent(workspace: Path, questions: list[dict], section_key: str | No
     return ids
 
 
-def sweep(workspace: Path, section_key: str | None = None) -> dict:
+def refresh_derived_questions(workspace: Path, project_key: str, docx: Path) -> dict:
+    """Refresh capture-derived gap stores and the consolidated question file; never alter the DOCX."""
+    workspace = Path(workspace)
+    work = workspace / "csa-work"
+    from csa_docx import draft_lane, topic_tables
+    tables = topic_tables.refresh_saved(work)
+    errors = [r for r in tables if r.get("status") not in ("OK", "NO_PROFILE", "EMPTY")]
+    if errors:
+        raise RuntimeError("role-table gap refresh failed: " + "; ".join(
+            f"{r.get('key')}: {r.get('message') or r.get('status')}" for r in errors))
+    from csa_docx.figures import work as figure_work
+    from csa_docx.techdiagram.cli import _network
+    ctx = figure_work.open_ctx(project_key, work, Path(docx), _network(work))
+    figures = figure_work.refresh_gap_records(ctx)
+    questions = draft_lane.open_questions(work)
+    return {"topic_tables": tables, "figures": figures, "questions": questions}
+
+
+def sweep(workspace: Path, section_key: str | None = None, *, refresh_derived: bool = False,
+          project_key: str = "", docx: Path | None = None) -> dict:
     """Look up every open question (or one section's); write intake/gap-check-<ts>.json and gap-check-latest.json."""
     workspace = Path(workspace)
     work = workspace / "csa-work"
+    if refresh_derived:
+        if not project_key or not docx:
+            raise ValueError("refreshing derived questions requires project_key and docx")
+        refresh_derived_questions(workspace, project_key, Path(docx))
     source = work / "draft" / "open-questions.md"
     source_text = source.read_text(encoding="utf-8") if source.is_file() else ""
     all_questions = parse_open_questions(source_text)
@@ -91,7 +153,15 @@ def sweep(workspace: Path, section_key: str | None = None) -> dict:
         qs = [q for q in qs if q["key"] == section_key]
     results = []
     for q in qs:
-        res = gap_lookup.lookup_gap(workspace, q["dr_id"], q["text"])
+        duplicate_id = sum(1 for candidate in all_questions if candidate["dr_id"] == q["dr_id"]) > 1
+        if duplicate_id or not safe_retirement:
+            reason = "duplicate DR id" if duplicate_id else "question file contains unparsed or malformed question lines"
+            res = {"verdict": "INCOMPLETE", "answer_evidence_ids": [], "related_evidence_ids": [],
+                   "lead_ids": [], "kind": "system", "owners": [], "queries": [],
+                   "searched": f"not searched: {reason}",
+                   "coverage": {"incomplete_reasons": [reason]}}
+        else:
+            res = gap_lookup.lookup_gap(workspace, q["dr_id"], q["text"])
         answers = list(dict.fromkeys(res.get("answer_evidence_ids", res.get("evidence_ids", []))))[:gap_lookup._MAX_CANDIDATES]
         related = list(dict.fromkeys(res.get("related_evidence_ids", res.get("related", []))))[:gap_lookup._MAX_CANDIDATES]
         lead_ids = list(dict.fromkeys(res.get("lead_ids", res.get("index", []))))[:gap_lookup._MAX_CANDIDATES]
@@ -99,7 +169,8 @@ def sweep(workspace: Path, section_key: str | None = None) -> dict:
                         "related_evidence_ids": related, "lead_ids": lead_ids, "evidence_ids": answers,
                         "kind": res.get("kind", ""), "owners": res.get("owners", []), "related": related,
                         "queries": res.get("queries", []), "searched": res.get("searched", ""),
-                        "searches": len(res.get("queries", []))})
+                        "searches": len(res.get("queries", [])),
+                        "coverage": res.get("coverage", {}), "incomplete": res.get("verdict") == "INCOMPLETE"})
     retired = _retire_absent(workspace, qs, section_key) if safe_retirement else []
     affected: dict[str, dict] = {}
     for r in results:
@@ -109,7 +180,9 @@ def sweep(workspace: Path, section_key: str | None = None) -> dict:
                                            "answered": 0, "candidates": 0})
         a["answered" if r["verdict"] == "ANSWERED" else "candidates"] += 1
     stamp = time.gmtime()
-    record = {"schema_version": 2, "checked_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", stamp), "section": section_key or "",
+    input_warnings = [] if safe_retirement else ["question file is empty, malformed, contains unparsed list items, or reuses a DR id"]
+    record = {"schema_version": 4, "input_complete": safe_retirement, "input_warnings": input_warnings,
+              "checked_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", stamp), "section": section_key or "",
               "questions": results, "affected": list(affected.values()), "retired_lead_ids": retired,
               "summary": summarise(results)}
     folder = work / "intake"
@@ -128,6 +201,7 @@ def summarise(results: list[dict]) -> dict:
     ask = collections.Counter(o for r in results if r["verdict"] == "NOT_FOUND" for o in r.get("owners", []))
     return {"gaps": len(results), "by_kind": dict(collections.Counter(r.get("kind") or "system" for r in results)),
             "by_verdict": dict(verdicts), "searches": sum(r.get("searches", 0) for r in results),
+            "incomplete": verdicts.get("INCOMPLETE", 0),
             "candidates_to_read": sum(len(r.get("lead_ids", [])) for r in results if r["verdict"] == "CANDIDATES"),
             "gaps_with_related_rows": sum(1 for r in results if r.get("related")),
             "to_ask": dict(ask.most_common(6))}
@@ -140,26 +214,35 @@ def report_lines(summary: dict) -> list[str]:
     lines = [f"{s['gaps']} open question(s): {k}.", f"Result: {v}.",
              f"{s['searches']} search(es) run; {s['candidates_to_read']} candidate(s) to read (at most {gap_lookup._MAX_CANDIDATES} per question); "
              f"{s['gaps_with_related_rows']} question(s) with related matrix rows to read."]
+    if s.get("incomplete"):
+        lines.append(f"{s['incomplete']} question(s) have incomplete checks and remain open; see coverage.incomplete_reasons.")
     if s["to_ask"]:
         lines.append("Still open, to ask: " + "; ".join(f"{o} ({n})" for o, n in s["to_ask"].items()) + ".")
     return lines
 
 
-_LABEL = {"ANSWERED": "answered", "CANDIDATES": "possible answer found", "NOT_FOUND": "not found"}
+_LABEL = {"ANSWERED": "answered", "CANDIDATES": "possible answer found", "NOT_FOUND": "not found", "INCOMPLETE": "search incomplete"}
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Check every open question against the evidence matrix and the index.")
     ap.add_argument("--workspace", type=Path, required=True)
     ap.add_argument("--section", default="", help="only this section's questions (stamp key, e.g. BAK)")
+    ap.add_argument("--refresh-derived", action="store_true")
+    ap.add_argument("--project-key", default="")
+    ap.add_argument("--docx", type=Path)
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
-    res = sweep(a.workspace, a.section or None)
+    res = sweep(a.workspace, a.section or None, refresh_derived=a.refresh_derived,
+                project_key=a.project_key, docx=a.docx)
     if a.json:
         print(json.dumps(res, ensure_ascii=False))
         return 0
     if not res["questions"]:
-        print("No open questions (csa-work/draft/open-questions.md is missing or empty).")
+        if res.get("input_complete"):
+            print("No open questions (csa-work/draft/open-questions.md is missing or empty).")
+        else:
+            print("No parseable open questions; checks are incomplete. Review input_warnings in gap-check-latest.json.")
         return 0
     for q in res["questions"]:
         ids = ", ".join(q.get("lead_ids", []) if q["verdict"] == "CANDIDATES" else q.get("answer_evidence_ids", []))

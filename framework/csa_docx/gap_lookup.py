@@ -10,8 +10,9 @@ evidence does not answer it. This runs the framework's own lookups in the usual 
    is never evidence and cannot answer the question until its original source has been read and a
    source-checked VERIFIED evidence row exists.
 
-Verdicts: ANSWERED (the matrix already answers it), CANDIDATES (something was found, so the gap is not
-yet a gap), NOT_FOUND (nothing; `searched` says exactly what was looked in, for the NOT_FOUND row).
+  Verdicts: ANSWERED (an explicit complete-resolution record matches the exact question), CANDIDATES
+  (sources need review), NOT_FOUND (complete search found nothing), or INCOMPLETE (one or more required
+  searches failed or were truncated). Similarity and evidence routing notes alone never answer a question.
 
 After reading what was found, a person or the evidence agent settles it one of two ways:
   * it answers the question: record a VERIFIED row that states the answer and restate the gap;
@@ -26,8 +27,15 @@ After reading what was found, a person or the evidence agent settles it one of t
 from __future__ import annotations
 
 import argparse
+import csv
+from dataclasses import dataclass
+import datetime as dt
+import fcntl
+import hashlib
 import json
+import os
 import re
+import sqlite3
 import subprocess
 import sys
 from itertools import combinations
@@ -53,10 +61,105 @@ _NOISE_PATHS = ("89_output_file_inventory", ".ps1", "preflight")
 # scheduled-tasks inventory, none was an answer (a time-sync task is not the time source)
 _NOISE_UNLESS = {"66_scheduled_tasks": re.compile(r"\b(?:tasks?|schedul\w*|jobs?|backup|patch\w*|maintenance)\b", re.I),
                  "74_application_events": re.compile(r"\b(?:events?|errors?|logs?|crash\w*|fail\w*)\b", re.I)}
-_DOC_EXTS = (".docx", ".xlsx", ".pdf", ".csv")       # the documents the index holds; the other files are captures
-_MAX_QUERIES = 12
-_MAX_CANDIDATES = 8          # candidates kept per gap: the settle step reads these, so a gap never brings 84 of them
+_DOC_EXTS = (".docx", ".xlsx", ".pdf", ".csv", ".pptx")
+_MAX_QUERIES = 128
+_MAX_CANDIDATES = 8
 _MIN_TOPIC_COVERAGE = 0.5   # share of the gap's topic words a hit must contain when no host ties it to the gap
+
+_HOST_SETTING_TOPICS = {
+    "TIME": {"time"}, "DNS": {"dns"}, "BAK": {"agents", "storage"},
+    "MON": {"agents"}, "VULN": {"agents"}, "MGT": {"admin"}, "ID": {"identity"},
+    "PATCH": {"patch", "agents"}, "PERIM": {"firewall"}, "PKI": {"certificates"},
+    "NET": {"network"}, "GEN": {"platform", "network"}, "STOR": {"storage", "transfer"},
+    "INET": {"transfer"}, "INFRA": {"platform"},
+}
+
+
+@dataclass(frozen=True)
+class IndexStatus:
+    """Boolean-compatible completion state with reasons for an incomplete index pass."""
+    complete: bool
+    failures: list[str]
+
+    def __bool__(self) -> bool:
+        return self.complete
+
+
+def question_fingerprint(text: str) -> str:
+    """Question identity used by explicit resolution records; position and DR id are deliberately excluded."""
+    normal = re.sub(r"\s+", " ", text or "").strip().casefold()
+    return "sha256:" + hashlib.sha256(normal.encode("utf-8")).hexdigest()
+
+
+def _resolution_paths(workspace: Path) -> tuple[Path, Path]:
+    intake = Path(workspace) / "csa-work" / "intake"
+    return intake / "gap-resolutions.jsonl", intake / ".gap-resolutions.lock"
+
+
+def _read_resolutions(workspace: Path) -> list[dict]:
+    path, _ = _resolution_paths(workspace)
+    if not path.is_file():
+        return []
+    out = []
+    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError as error:
+            raise ValueError(f"malformed gap resolution at {path}:{number}: {error}") from error
+        if isinstance(row, dict):
+            out.append(row)
+    return out
+
+
+def resolved_answer_ids(workspace: Path, dr_id: str, text: str) -> list[str]:
+    """Verified IDs from the latest explicit complete-resolution decision for these exact question words."""
+    fp = question_fingerprint(text)
+    matches = [r for r in _read_resolutions(workspace)
+               if r.get("dr_id") == dr_id and r.get("question_fingerprint") == fp]
+    if not matches or matches[-1].get("state") != "answered":
+        return []
+    from csa_docx import evidence_live
+    matrix = Path(workspace) / "csa-work" / "evidence-matrix.csv"
+    verified = {str(r.get("evidence_id", "")).upper() for r in evidence_live.read(matrix)
+                if evidence_live.is_verified(r)}
+    return [str(i).upper() for i in matches[-1].get("evidence_ids", []) if str(i).upper() in verified]
+
+
+def resolve_gap(workspace: Path, dr_id: str, text: str, evidence_ids: list[str], *, by: str) -> dict:
+    """Record the semantic decision that VERIFIED rows collectively answer every part of one exact question."""
+    workspace = Path(workspace)
+    ids = list(dict.fromkeys(str(i).upper() for i in evidence_ids if str(i).strip()))
+    if not ids:
+        raise ValueError("at least one evidence ID is required")
+    from csa_docx import evidence_live
+    matrix = workspace / "csa-work" / "evidence-matrix.csv"
+    rows = {str(r.get("evidence_id", "")).upper(): r for r in evidence_live.read(matrix)
+            if evidence_live.is_verified(r)}
+    bad = [i for i in ids if i not in rows]
+    if bad:
+        raise ValueError("resolution evidence is missing or not source-checked VERIFIED: " + ", ".join(bad))
+    unlinked = [i for i in ids if not re.search(
+        rf"\b(?:Supports|Answers)\s+{re.escape(dr_id)}\b", rows[i].get("gap_or_action", ""), re.I)]
+    if unlinked:
+        raise ValueError("resolution evidence is not explicitly linked to this question: " + ", ".join(unlinked))
+    path, lock_path = _resolution_paths(workspace)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    record = {"at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+              "by": by.strip() or "gap settlement", "dr_id": dr_id, "question": text,
+              "question_fingerprint": question_fingerprint(text), "state": "answered", "evidence_ids": ids}
+    with lock_path.open("a", encoding="utf-8") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            with path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+                fh.flush()
+                os.fsync(fh.fileno())
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+    return {"status": "OK", "dr_id": dr_id, "question_fingerprint": record["question_fingerprint"],
+            "answer_evidence_ids": ids}
 
 
 def _loose(word: str) -> str:
@@ -209,6 +312,10 @@ def hosts_in(text: str) -> list[str]:
     return list(dict.fromkeys(_HOST.findall(text or "")))
 
 
+def ips_in(text: str) -> list[str]:
+    return list(dict.fromkeys(re.findall(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", text or "")))
+
+
 def topic_words(text: str, limit: int = 6) -> list[str]:
     words = [w.lower() for w in _WORD.findall(_HOST.sub(" ", text or ""))]
     return list(dict.fromkeys(w for w in words if w not in _STOP))[:limit]
@@ -234,17 +341,19 @@ def _phrases(text: str, vocab: list[str] | None) -> list[str]:
     return [p for _, _, p in scored[:4]]
 
 
-def queries(text: str, kind: str = "system", vocab: list[str] | None = None) -> list[tuple[str, str | None]]:
+def queries(text: str, kind: str = "system", vocab: list[str] | None = None, *, cap: bool = True) -> list[tuple[str, str | None]]:
     """(search terms, path-like filter) pairs. Hosts: the host alone in workbooks and documents, then host plus a topic
     word in the captures. The section's own vocabulary phrases that the gap is about come first (and their other spelling:
     synchronise and synchronize). No host and no vocabulary: pairs of the leading topic words. An owner or document gap is
     searched in documents only."""
-    hosts, words = hosts_in(text), topic_words(text)
+    hosts, ips, words = hosts_in(text), ips_in(text), topic_words(text)
     out: list[tuple[str, str | None]] = []
-    for h in hosts[:4]:
+    for h in hosts:
         out += [(h, ".xlsx"), (h, ".docx")]
         if kind == "system":
             out += [(f"{h} {w}", None) for w in words[:3]]
+    for ip in ips:
+        out += [(ip, None), (ip, ".xlsx"), (ip, ".docx"), (ip, ".pdf"), (ip, ".csv"), (ip, ".pptx")]
     terms = list(_phrases(text, vocab))
     if not terms and not hosts:
         if len(words) >= 2:
@@ -260,13 +369,19 @@ def queries(text: str, kind: str = "system", vocab: list[str] | None = None) -> 
             out.append((term, None))
         else:
             out += [(term, ext) for ext in _DOC_EXTS]
-    return out[:_MAX_QUERIES]
+    # Do not truncate entity coverage.  Topic queries may be capped after every named entity is included.
+    entity_queries = [q for q in out if q[0] in hosts or q[0] in ips or any(q[0].startswith(e + " ") for e in hosts)]
+    tail = [q for q in out if q not in entity_queries]
+    if not cap:
+        return list(dict.fromkeys(entity_queries + tail))
+    return list(dict.fromkeys(entity_queries + tail[:max(0, _MAX_QUERIES - len(entity_queries))]))
 
 
-def _matrix_stage(workspace: Path, text: str) -> tuple[str, list[str], list[str]]:
+def _matrix_stage(workspace: Path, dr_id: str, text: str) -> tuple[str, list[str], list[str]]:
     res = _run([sys.executable, str(MATRIX_SCRIPT), "--workspace", str(workspace), "lookup", text, "--limit", "40"])
     if not res or res.get("status") != "OK":
         return "NO_MATRIX", [], []
+    matrix_truncated = len(res.get("matches", [])) >= 40
     kept = []
     for m in res.get("matches", []):
         if m.get("review_state") == "rejected" or m.get("status") == "NOT_FOUND" or m.get("csa_area") == "gap_lookup":
@@ -275,11 +390,17 @@ def _matrix_stage(workspace: Path, text: str) -> tuple[str, list[str], list[str]
             continue
         kept.append(m)
     ranked = sorted((m for m in kept if m.get("score", 0) >= _MIN_MATRIX_SCORE), key=lambda m: -m.get("score", 0))
-    answers = [m["evidence_id"] for m in ranked
-               if m.get("status") == "VERIFIED" and str(m.get("review_state") or "").lower() in ("reviewed", "accepted")
-               and m.get("score", 0) >= _ANSWER_SCORE and m.get("coverage", 0) >= _ANSWER_COVERAGE][:_MAX_CANDIDATES]
-    related = [m["evidence_id"] for m in ranked if m["evidence_id"] not in answers][:_MAX_CANDIDATES]
-    return ("ANSWERED" if answers else "NONE"), answers, related
+    # Similarity and an ``Answers DR-...`` note are related context only. A question is closed only by
+    # an explicit resolution record for these exact words, whose evidence IDs are still VERIFIED.
+    answers = resolved_answer_ids(workspace, dr_id, text)
+    related = [m["evidence_id"] for m in ranked if m["evidence_id"].upper() not in answers][:_MAX_CANDIDATES]
+    return ("ANSWERED" if answers else "MATRIX_TRUNCATED" if matrix_truncated else "NONE"), answers, related
+
+
+def _qid_from_dr_id(dr_id: str) -> str:
+    """The answer-sheet block token from legacy, explicit, or content-addressed DR IDs."""
+    match = re.search(r"-([BFT]\d+)(?:-Q[0-9A-F]{12})?(?:-DUP)?$", dr_id or "", re.I)
+    return match.group(1).upper() if match else (dr_id or "").rsplit("-", 1)[-1]
 
 
 def hit_score(excerpt: str, source: str, text: str, vocab: list[str] | None = None) -> float:
@@ -307,19 +428,90 @@ def rank_hits(hits: list[dict], text: str, vocab: list[str] | None = None, limit
     return [h for s, _, h in scored if s > 0][:limit]
 
 
+def _indexed_rel_path(workspace: Path, source: str) -> str:
+    """Resolve a host-setting capture citation to the exact discovery-index relative path."""
+    suffix = re.sub(r"\s+line\s+\d+\s*$", "", source or "").replace("\\", "/")
+    db = Path(workspace) / "csa-work" / "discovery-index.sqlite"
+    if not suffix or not db.is_file():
+        return suffix
+    try:
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        try:
+            row = con.execute("SELECT rel_path FROM files WHERE rel_path LIKE ? AND status='indexed' "
+                              "ORDER BY archived, length(rel_path) LIMIT 1", (f"%{suffix}",)).fetchone()
+            return row[0] if row else suffix
+        finally:
+            con.close()
+    except sqlite3.Error:
+        return suffix
+
+
+def structured_host_hits(workspace: Path, dr_id: str, text: str, kind: str,
+                         vocab: list[str] | None = None) -> tuple[list[dict], bool]:
+    """Exact capture-backed host settings for a system question, one ranked source per named host first."""
+    hosts = hosts_in(text)
+    key_match = re.match(r"(?i)DR-([A-Z0-9]+)-", dr_id or "")
+    topics = _HOST_SETTING_TOPICS.get(key_match.group(1).upper(), set()) if key_match else set()
+    path = Path(workspace) / "csa-work" / "hosts" / "host_settings.csv"
+    if kind != "system" or not hosts or not topics or not path.is_file():
+        return [], False
+    grouped: dict[tuple[str, str], list[dict]] = {}
+    with path.open(encoding="utf-8-sig", newline="") as fh:
+        for row in csv.DictReader(fh):
+            host = str(row.get("host") or "").upper()
+            if host not in hosts or str(row.get("topic") or "") not in topics:
+                continue
+            statement = f"{host}: {row.get('attribute', '').replace('.', ' ')} = {row.get('value', '')}. {row.get('excerpt', '')}"
+            if not relevant(statement, text, vocab):
+                continue
+            source = str(row.get("source") or "")
+            grouped.setdefault((host, source), []).append(row)
+    hits: list[dict] = []
+    for (host, source), rows in grouped.items():
+        rel = _indexed_rel_path(workspace, source)
+        line = re.search(r"\bline\s+(\d+)\s*$", source)
+        capture = str(rows[0].get("capture") or "")
+        facts = "; ".join(f"{r.get('attribute')} = {r.get('value')}" for r in rows)
+        excerpts = list(dict.fromkeys(str(r.get("excerpt") or "").strip() for r in rows if str(r.get("excerpt") or "").strip()))
+        hits.append({"rel_path": rel, "page_or_location": f"line {line.group(1)}" if line else Path(rel).name,
+                     "source_title": f"{capture}: {Path(rel).name}", "source_ref": f"{capture}: {Path(rel).name}",
+                     "source_version": "capture " + (capture.rsplit("_", 1)[-1] if "_" in capture else capture),
+                     "source_class": "capture", "evidence_excerpt": f"{host}: {facts}. " + " | ".join(excerpts)})
+    ranked = rank_hits(hits, text, vocab, limit=len(hits) or _MAX_CANDIDATES)
+    # Preserve entity coverage before filling the remaining candidate slots by score.
+    selected: list[dict] = []
+    for host in hosts:
+        hit = next((h for h in ranked if host.lower() in h.get("evidence_excerpt", "").lower()), None)
+        if hit and hit not in selected:
+            selected.append(hit)
+    selected.extend(h for h in ranked if h not in selected and len(selected) < _MAX_CANDIDATES)
+    covered = {h for h in hosts if any(h.lower() in x.get("evidence_excerpt", "").lower() for x in selected)}
+    return selected[:_MAX_CANDIDATES], set(hosts) <= covered
+
+
 def _index_stage(workspace: Path, text: str, exclude: tuple[str, ...], kind: str = "system",
-                 vocab: list[str] | None = None) -> tuple[list[dict], list[str], bool]:
-    hits, seen, ran, has_index = [], set(), [], True
-    for terms, path_like in queries(text, kind, vocab):
-        cmd = [sys.executable, str(INDEX_SCRIPT), "--workspace", str(workspace), "search", terms, "--limit", "5", "--per-file", "1"]
+                 vocab: list[str] | None = None, dr_id: str = "") -> tuple[list[dict], list[str], IndexStatus]:
+    structured, structured_complete = structured_host_hits(workspace, dr_id, text, kind, vocab)
+    if structured_complete:
+        return structured, ["structured host settings"], IndexStatus(True, [])
+    hits, seen, ran, failures = [], set(), [], []
+    query_list = queries(text, kind, vocab)
+    all_queries = queries(text, kind, vocab, cap=False)
+    if len(query_list) < len(all_queries):
+        failures.append(f"query limit omitted {len(all_queries) - len(query_list)} searches")
+    for terms, path_like in query_list:
+        cmd = [sys.executable, str(INDEX_SCRIPT), "--workspace", str(workspace), "search", terms, "--limit", "50", "--per-file", "1"]
         if path_like:
             cmd += ["--path-like", path_like]
         res = _run(cmd)
         if not res or res.get("status") != "OK":
-            has_index = False
-            break
+            failures.append(f"search failed: {terms}")
+            continue
         ran.append(terms + (f" [{path_like}]" if path_like else ""))
-        for h in res.get("results", []):
+        search_hits = res.get("results", [])
+        if len(search_hits) >= 50:
+            failures.append(f"search reached 50-result limit: {terms}")
+        for h in search_hits:
             rel = h.get("rel_path", "")
             key = (rel, h.get("page_or_location"))
             if key in seen or any(n in rel for n in _NOISE_PATHS) or any(e and e in rel for e in exclude):
@@ -330,15 +522,20 @@ def _index_stage(workspace: Path, text: str, exclude: tuple[str, ...], kind: str
                 continue
             seen.add(key)
             hits.append(h)
-    return rank_hits(hits, text, vocab), ran, has_index
+    ranked = rank_hits(hits, text, vocab, limit=len(hits) or _MAX_CANDIDATES)
+    if len(ranked) > _MAX_CANDIDATES:
+        failures.append(f"candidate limit retained {_MAX_CANDIDATES} of {len(ranked)} relevant sources")
+    combined = structured + [h for h in ranked if h not in structured]
+    return combined[:_MAX_CANDIDATES], ran, IndexStatus(not failures, failures)
 
 
 def lookup_gap(workspace: Path, dr_id: str, text: str, *, exclude: tuple[str, ...] = ()) -> dict:
     """Search the matrix, then the index; index hits become leads, never evidence."""
     workspace = Path(workspace)
-    kind, owners = classify_gap(text), owners_in(text)
-    text = strip_confirmers(text) or text
-    matrix_state, answer_ids, related = _matrix_stage(workspace, text)
+    original_text = text
+    kind, owners = classify_gap(original_text), owners_in(original_text)
+    matrix_state, answer_ids, related = _matrix_stage(workspace, dr_id, original_text)
+    text = strip_confirmers(original_text) or original_text
     vocab, area = section_vocabulary(dr_id)          # the topic's own words find "Time source on X" for "time connections"
     if vocab:
         from csa_docx import evidence_live, matrix_candidates
@@ -349,21 +546,52 @@ def lookup_gap(workspace: Path, dr_id: str, text: str, *, exclude: tuple[str, ..
         related = list(dict.fromkeys([*related, *[c["id"] for c in near if c["id"] not in answer_ids]]))[:_MAX_CANDIDATES]
     if matrix_state == "ANSWERED" and not answer_ids:
         matrix_state = "NONE"
-    hits, ran, has_index = ([], [], True) if matrix_state == "ANSWERED" else _index_stage(workspace, text, exclude, kind, vocab)
+    hits, ran, index_status = (([], [], IndexStatus(True, [])) if matrix_state == "ANSWERED"
+                               else _index_stage(workspace, text, exclude, kind, vocab, dr_id))
+    index_complete = bool(index_status)
+    index_failures = index_status.failures if isinstance(index_status, IndexStatus) else []
     lead_ids: list[str] = []
     if hits:
         from csa_docx import leads
-        added = leads.add_leads(workspace, dr_id, dr_id.rsplit("-", 1)[-1], text, hits)
+        added = leads.add_leads(workspace, dr_id, _qid_from_dr_id(dr_id), text, hits)
         open_ids = {r["lead_id"] for r in leads.open_leads(workspace, dr_id)}
         lead_ids = [lead_id for lead_id in added if lead_id in open_ids]
-    verdict = "ANSWERED" if matrix_state == "ANSWERED" else "CANDIDATES" if lead_ids else "NOT_FOUND"
+    missing_entities = [e for e in hosts_in(text) + ips_in(text)
+                        if not any(e.lower() in str(h.get("evidence_excerpt", "")).lower() for h in hits)
+                        and not any(e.lower() in str(_claim_for_id(workspace, eid)).lower()
+                                    for eid in [*answer_ids, *related])]
+    incomplete_reasons = list(index_failures)
+    if matrix_state in ("NO_MATRIX", "MATRIX_TRUNCATED"):
+        incomplete_reasons.append("evidence matrix lookup unavailable" if matrix_state == "NO_MATRIX"
+                                  else "evidence matrix lookup reached 40-result limit")
+    if missing_entities:
+        incomplete_reasons.append("named entities not matched: " + ", ".join(missing_entities))
+    incomplete = bool(incomplete_reasons)
+    verdict = ("ANSWERED" if matrix_state == "ANSWERED" and not incomplete else
+               "INCOMPLETE" if incomplete else "CANDIDATES" if lead_ids else "NOT_FOUND")
     where = "documents only, since " + ("a person has to confirm it" if kind == "owner" else "it is about a policy, procedure or test") \
         if kind != "system" else "all sources"
-    scope = ("evidence matrix" + ("" if matrix_state != "NO_MATRIX" else " (none)")
-             + "; discovery index" + (f" ({where}; {len(ran)} searches: {'; '.join(ran)})" if has_index else " (no index built)"))
+    index_note = (f" ({where}; {len(ran)} searches: {'; '.join(ran)})" if index_complete else
+                  " (no index built)" if not ran else " (incomplete)")
+    scope = ("evidence matrix" + (" (none)" if matrix_state == "NO_MATRIX"
+                                  else " (truncated)" if matrix_state == "MATRIX_TRUNCATED" else "")
+             + "; discovery index" + index_note)
+    if incomplete:
+        scope += "; incomplete coverage (" + "; ".join(incomplete_reasons) + ")"
     return {"verdict": verdict, "answer_evidence_ids": answer_ids, "related_evidence_ids": related,
             "lead_ids": lead_ids, "evidence_ids": answer_ids, "matrix": answer_ids, "index": lead_ids,
-            "related": related, "kind": kind, "owners": owners, "queries": ran, "searched": scope}
+            "related": related, "kind": kind, "owners": owners, "queries": ran, "searched": scope,
+            "coverage": {"matrix": matrix_state, "index_complete": index_complete,
+                         "index_failures": index_failures, "incomplete_reasons": incomplete_reasons}}
+
+
+def _claim_for_id(workspace: Path, evidence_id: str) -> str:
+    try:
+        from csa_docx import modelstore
+        rows = modelstore.read_csv(Path(workspace) / "csa-work" / "evidence-matrix.csv")
+        return next((r.get("claim", "") for r in rows if r.get("evidence_id") == evidence_id), "")
+    except Exception:
+        return ""
 
 
 def confirm_gap(workspace: Path, dr_id: str, text: str, lead_ids: list[str], *, searched: str, ask: str,
@@ -379,10 +607,14 @@ def confirm_gap(workspace: Path, dr_id: str, text: str, lead_ids: list[str], *, 
     ids = list(dict.fromkeys(i.upper() for i in lead_ids))
     missing = [i for i in ids if i not in saved]
     wrong = [i for i in ids if i in saved and saved[i].get("dr_id") != dr_id]
+    expected_fp = leads._fingerprint(strip_confirmers(text) or text, dr_id)
+    stale = [i for i in ids if i in saved and saved[i].get("question_fingerprint") != expected_fp]
     if missing:
         raise ValueError("unknown lead ID(s): " + ", ".join(missing))
     if wrong:
         raise ValueError(f"lead ID(s) do not belong to {dr_id}: " + ", ".join(wrong))
+    if stale:
+        raise ValueError("lead ID(s) belong to different question words: " + ", ".join(stale))
     if not searched.strip():
         raise ValueError("saved search scope is required")
     from csa_docx import evidence_live
@@ -411,13 +643,15 @@ def confirm_gap(workspace: Path, dr_id: str, text: str, lead_ids: list[str], *, 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Search the evidence matrix and the discovery index for a gap.")
-    ap.add_argument("action", choices=["check", "confirm"])
+    ap.add_argument("action", choices=["check", "confirm", "resolve"])
     ap.add_argument("--workspace", type=Path, required=True)
     ap.add_argument("--dr", default="")
     ap.add_argument("--text", default="")
     ap.add_argument("--leads", default="", help="confirm: exact saved lead IDs read and judged not to answer it")
     ap.add_argument("--searched", default="", help="confirm: exact saved search scope from the gap-check record")
     ap.add_argument("--related-evidence", default="", help="confirm: related source-checked evidence IDs from the saved record")
+    ap.add_argument("--evidence", default="", help="resolve: VERIFIED evidence IDs that collectively answer the whole question")
+    ap.add_argument("--by", default="csa-evidence-investigator", help="resolve: reviewer/agent recording the complete answer")
     ap.add_argument("--ask", default="Confirm with the site team or the application owner", help="confirm: who to ask")
     ap.add_argument("--legacy-docx", type=Path)
     a = ap.parse_args(argv)
@@ -426,6 +660,10 @@ def main(argv: list[str] | None = None) -> int:
         ap.error("check and confirm need --dr and --text")
     if a.action == "check":
         print(json.dumps(lookup_gap(a.workspace, a.dr, a.text, exclude=exclude), ensure_ascii=False))
+        return 0
+    if a.action == "resolve":
+        evidence_ids = [x.strip() for x in a.evidence.split(",") if x.strip()]
+        print(json.dumps(resolve_gap(a.workspace, a.dr, a.text, evidence_ids, by=a.by), ensure_ascii=False))
         return 0
     lead_ids = [x.strip() for x in a.leads.split(",") if x.strip()]
     related = [x.strip() for x in a.related_evidence.split(",") if x.strip()]

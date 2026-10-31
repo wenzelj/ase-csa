@@ -60,7 +60,7 @@ Stop after reporting the rows per requirement and the Discovery Required items.
 
 `csa intake` (the Evidence intake page, step 2) runs this mode with `INTAKE=latest`, meaning `WORK_DIR/intake/latest.json`, the record `csa ingest` writes of what the last index build brought in. Your job is to turn what the new documents state into evidence. Never infer: every row quotes its source.
 
-1. Read the record. It also lists files from earlier intakes no agent has read yet (`carried_from`). Work only on `added` and `changed` files whose `status` is `indexed`. Skip host captures (`source_class` `capture`): graph sync already profiles them. List every file in `unreadable` in your summary with the format to ask for (for example "supply REVELOC.doc as .docx or PDF"). Never write rows from a file you could not read.
+1. Read the record. It also lists files from earlier intakes no agent has read yet (`carried_from`). Work on `added` and `changed` files whose `status` is `indexed`. Graph sync profiles only a defined subset of host-capture facts (host role/application matches, non-Windows services, listeners and sampled connections, configured DNS and time sources); do not assume it converted every other capture file into evidence. Review newly indexed capture content for material current-state facts outside that subset. List every file in `unreadable` in your summary with the format to ask for (for example "supply REVELOC.doc as .docx or PDF"). Never write rows from a file you could not read.
 1b. Read `WORK_DIR/intake/refresh-latest.json` (written by `csa ingest`). Each `recheck` row cites a changed file (or an older capture) whose current text no longer holds its quote. Re-read that place in the file: when the file still states the fact, append it again with the current quote and reject the old row (`evidence_matrix.py review <id> --state rejected --by csa-evidence-investigator --note "re-quoted as <new id>"`); when the file no longer states it, reject the old row with a note saying what the file says now. Rows in `rejected` are already retired (their file was removed, or a newer capture replaced them): do not write them again.
 2. Read each file's indexed text (`csa -p <key> index search "<terms>" --path-like "<file name>"`, or the raw file when it is a document). Before adding anything, check what the matrix already holds (`python3 .agents/skills/csa-evidence-matrix/scripts/evidence_matrix.py --workspace WORKSPACE lookup "<claim>"`) so you add only what is new.
 3. Write one atomic claim per row in plain Australian English, with no semicolons. A host is named exactly as the source writes it. `status` is `VERIFIED` with an exact quote in `evidence_excerpt` (join separate quoted lines with ` | `), `source_title` is the file's path under its source folder (for example `revloc-tetra/IS-REVELOC-111026-234101.pdf`) and `page_or_location` says where in the file. The subject of the claim is the system, never the document ("ROTPRDREV101 is the physical REVELOC server at Rockhampton", not "The page lists...").
@@ -68,7 +68,7 @@ Stop after reporting the rows per requirement and the Discovery Required items.
 5. Use existing `csa_area` names (`evidence_matrix.py stats`). Use `--allow-new-area` only for an area name another project already uses (`operations_and_support`, `availability_and_resilience`, `integrations_and_dependencies`, `infrastructure_and_hosting`, `security_posture`).
 6. Write the rows to a JSON file and run `python3 .agents/skills/csa-evidence-matrix/scripts/evidence_matrix.py --workspace WORKSPACE append --agent csa-evidence-investigator --context "intake <record id>" --rows-file <file> --dry-run`. Fix every rejected row (the source check proves each quote is in the cited file), then run it again without `--dry-run`.
 7. Graph: for each new host, service, firewall or external system the new rows name, add a node with `python3 .agents/skills/csa-evidence-matrix/scripts/graph_store.py --workspace WORKSPACE append-node`, and add an edge with `append-edge` only for a relationship a row states (for example a SIP trunk, a database hosted on cluster nodes, traffic passing a firewall). Every node and edge cites the new evidence IDs. Check `get-node`/`list` first so you do not add a node the graph already has: there is one node per host, and `append-node` refuses a second node for a host name the graph already holds (use the existing node_id for edges). Label a host node with the host name first, as `NAME (what it is, site)`: graph sync then puts it in the host register as a peer to classify, so it names links and appears in the host list. Finish with `graph_store.py verify`.
-8. Write `WORK_DIR/intake/<record id>.evidence.md` (the record's `id`): the rows added (ID, one line each), the conflicts, the graph items added, the unreadable files to request, and any file you read that added nothing new. Do not change the working DOCX. Stop there: the person checks the open questions next (`csa gap-check`).
+8. Write `WORK_DIR/intake/<record id>.evidence.md` (the record's `id`): the rows added (ID, one line each), the conflicts, the graph items added, the unreadable files to request, and any file you read that added nothing new. Name every stand-alone `added` or `changed` document and every unreadable file by its exact `rel_path` from the intake record. The framework does not mark an intake complete while one of those paths is absent. Do not change the working DOCX. Stop there: the person checks the open questions next (`csa gap-check`).
 
 ## Settlement mode (MODE=SETTLE)
 
@@ -76,9 +76,11 @@ Stop after reporting the rows per requirement and the Discovery Required items.
 `WORK_DIR/intake/gap-check-latest.json`. Your job is to settle every `CANDIDATES` result from its original source. A
 search hit is only a lead: never promote it merely because its words overlap the question.
 
-1. Read the schema-2 `GAP_CHECK`, `WORK_DIR/draft/open-questions.md`, and the exact `lead_ids` named in each result through
+1. Read the schema-4 `GAP_CHECK`, `WORK_DIR/draft/open-questions.md`, and the exact `lead_ids` named in each result through
    `python3 -m csa_docx.leads list --workspace WORKSPACE --dr <DR-id>`. Work only on the questions and saved search scope
-   in this gap-check record. Never rerun gap lookup or create fresh leads during settlement.
+   in this gap-check record. Never rerun gap lookup or create fresh leads during settlement. `INCOMPLETE` results are not
+   settlement candidates: do not confirm them as NOT_FOUND and do not retire their leads. Keep them open and report
+   `coverage.incomplete_reasons` so the index, matrix, or question IDs can be corrected.
 2. For each question, check existing source-checked VERIFIED matrix rows first. INFERRED and CONFLICTING rows are related
    context but cannot satisfy `answer_evidence_ids`. If existing VERIFIED evidence answers the precise question for the
    correct host, scope and date, resolve the lead to those E-IDs.
@@ -86,9 +88,14 @@ search hit is only a lead: never promote it merely because its words overlap the
    Use its durable `source_ref`, `rel_path` and `page_or_location` with `csa index search --path-like`, or open the indexed
    source. Do not rely on the lead's truncated excerpt alone.
 4. When a source directly answers the question, append one or more atomic VERIFIED rows through
-   `evidence_matrix.py append`. Use `gap_or_action: Answers <DR-id>`. The automated source check must approve every
-   VERIFIED row. Only after the E-ID exists, run `python3 -m csa_docx.leads review ... --state resolved --evidence E-...`.
-   If a run stopped after the matrix append, reuse the duplicate E-ID on retry and then resolve the lead.
+   `evidence_matrix.py append`. Use `gap_or_action: Supports <DR-id>`; that note is routing metadata and never closes the
+   question by itself. The automated source check must approve every VERIFIED row. Only after the E-ID exists, run
+   `python3 -m csa_docx.leads review ... --state resolved --evidence E-...`. If a run stopped after the matrix append,
+   reuse the duplicate E-ID on retry and then resolve the lead.
+4a. After all saved leads are judged, close a question only when the source-checked VERIFIED rows collectively answer
+   every part of its exact wording. Record that separate completeness decision with
+   `python3 -m csa_docx.gap_lookup resolve --workspace WORKSPACE --dr <DR-id> --text "<exact GAP_CHECK text>" --evidence E-...,E-... --by csa-evidence-investigator`.
+   Do not run `resolve` for a partial answer. Preserve the remaining question and report which part is still open.
 5. When deciding evidence requires reasoning from verified facts, append an INFERRED row with the reasoning and leave
    it pending for human review. It may inform the next answer but must not be described as directly observed.
 6. If a lead's source does not answer its exact question, leave every real evidence row untouched. When no retained or

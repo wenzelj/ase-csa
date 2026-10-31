@@ -28,7 +28,7 @@ csa sync --codex-prompts  # wrapper skills, /csa-* slash commands, AGENTS.md (re
 Draft lane (before V1; a project's `stage:` in PROJECTS.yaml, default `draft`):
 
 ```text
-csa ingest                 new data in: discovery index (new/changed files) -> graph sync (matrix rows, hosts, links) -> stale list
+csa ingest                 new data in: discovery index -> graph sync; defers stale results while stand-alone documents still need `csa intake`
 csa answer 3.4             card -> one agent call (answer + prose) -> written into the DOCX as plain text -> logged
 csa stale                  answered subsections whose evidence changed (no model)
 csa refresh-draft          answer every stale subsection again

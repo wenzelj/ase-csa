@@ -178,6 +178,20 @@ def last_refresh(work: Path) -> dict | None:
         return None
 
 
+def refresh_gap_records(ctx: Ctx) -> list[dict]:
+    """Refresh saved figure gaps from current evidence without changing a figure or the working DOCX."""
+    existing = set(load_gaps(ctx.work))
+    out: list[dict] = []
+    for row in ctx.rows:
+        key = row["key"]
+        if key not in existing and not B.path(ctx.work, key).is_file():
+            continue
+        current = figure(ctx, key, save=False, png=False)
+        save_gaps(ctx.work, key, row, current["brief"])
+        out.append({"key": key, "status": "OK", "gaps": len(current["brief"].get("gaps", []))})
+    return out
+
+
 AGENT_FILES = {"design": "design.md", "review": "review.md", "build": "build-report.md"}
 
 

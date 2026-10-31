@@ -1417,6 +1417,14 @@ def _after_agent(p: dict, verb: str, args: list[str], started: float, a) -> int:
     """Change the document straight after the agent that wrote the change: an author run's change file
     is applied, a writer's section file is placed. `--no-apply` stops after the agent."""
     if verb in ("intake", "settle"):           # the agent wrote rows and graph nodes: bring hosts, graph and links in step
+        if verb == "intake":
+            pending = intake_pending(p)
+            if pending:
+                print(f"{C['r']}Evidence intake is incomplete: its report does not account for "
+                      f"{len(pending)} document(s).{C['0']}", file=sys.stderr)
+                for path in pending[:20]:
+                    print(f"  {path}", file=sys.stderr)
+                return 1
         gs = SKILLS / "csa-evidence-matrix" / "scripts" / "graph_sync.py"
         print(f"{C['b']}Graph and host sync after the evidence agent ...{C['0']}", flush=True)
         if subprocess.call([framework_python(), str(gs), "--workspace", _ws(p), "--no-captures"], stdout=subprocess.DEVNULL) != 0:
@@ -3412,7 +3420,11 @@ def cmd_gap_check(a):
     """Check every open question (draft/open-questions.md) against the evidence matrix and the discovery index.
     What the index finds is stored as append-only leads to settle (no model)."""
     p = project(a.project); banner(p)
-    argv = [framework_python(), "-m", "csa_docx.gap_sweep", "--workspace", str(local_path(p["project_root"]))]
+    docx = working_docx(p)
+    if not docx:
+        die("no working DOCX")
+    argv = [framework_python(), "-m", "csa_docx.gap_sweep", "--workspace", str(local_path(p["project_root"])),
+            "--refresh-derived", "--project-key", p["key"], "--docx", str(docx)]
     if a.section:
         key = a.section if re.fullmatch(r"[A-Z][A-Z0-9_]*", a.section) else None
         if not key:
@@ -3428,7 +3440,11 @@ def cmd_gap_check(a):
 
 def _gap_sweep(p: dict, section: str = "") -> dict:
     """Run the deterministic question lookup and return its JSON record."""
-    argv = [framework_python(), "-m", "csa_docx.gap_sweep", "--workspace", str(local_path(p["project_root"])), "--json"]
+    docx = working_docx(p)
+    if not docx:
+        die("no working DOCX")
+    argv = [framework_python(), "-m", "csa_docx.gap_sweep", "--workspace", str(local_path(p["project_root"])), "--json",
+            "--refresh-derived", "--project-key", p["key"], "--docx", str(docx)]
     if section:
         key = section if re.fullmatch(r"[A-Z][A-Z0-9_]*", section) else None
         if not key:
@@ -3455,8 +3471,9 @@ def _latest_gap_check(p: dict, section: str = "") -> dict:
         record = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as error:
         die(f"cannot read {path}: {error}")
-    if record.get("schema_version") != 2:
-        die("saved gap check uses schema 1; rerun `csa gap-check` to create a schema-2 record with separate evidence and lead IDs")
+    if record.get("schema_version") != 4:
+        die("saved gap check predates stable question identities and explicit answer resolutions; "
+            "rerun `csa gap-check` to create a schema-4 record")
     wanted = ""
     if section:
         wanted = section if re.fullmatch(r"[A-Z][A-Z0-9_]*", section) else ""
@@ -3496,6 +3513,17 @@ def resolved_lines(resolved: list[dict]) -> list[str]:
             f"(cite the IDs) and remove that QUESTION: line" for r in resolved if r.get("ids")]
 
 
+def no_answer_block_message(questions: list[dict]) -> str:
+    """Explain why resolve-gaps made no document edit without hiding answered figure or role-table questions."""
+    answered = sum(q.get("verdict") == "ANSWERED" for q in questions)
+    unresolved = len(questions) - answered
+    if answered:
+        noun = "question" if answered == 1 else "questions"
+        return (f"{answered} {noun} resolved by evidence, but none maps to an answer-sheet block; "
+                f"{unresolved} remain open. The working document was not changed.")
+    return f"No question was resolved by evidence; {unresolved} remain open. The working document was not changed."
+
+
 def cmd_resolve_gaps(a):
     """Search open questions, have the evidence agent settle source hits, then answer affected subsections again."""
     p = project(a.project); banner(p)
@@ -3506,6 +3534,9 @@ def cmd_resolve_gaps(a):
         print(f"{C['b']}Checking open questions against the evidence matrix and index before settlement ...{C['0']}", flush=True)
         first = _gap_sweep(p, a.section)
     candidates = [q for q in first.get("questions", []) if q.get("verdict") == "CANDIDATES"]
+    incomplete = [q for q in first.get("questions", []) if q.get("verdict") == "INCOMPLETE"]
+    if incomplete:
+        print(f"{C['y']}{len(incomplete)} question(s) have incomplete checks and remain open; see coverage details in gap-check-latest.json.{C['0']}", flush=True)
     if candidates:
         record = local_path(p["work_dir"]) / "intake" / "gap-check-latest.json"
         print(f"{C['b']}1/3 settle {len(candidates)} open question(s) from their cited sources{C['0']}", flush=True)
@@ -3527,8 +3558,7 @@ def cmd_resolve_gaps(a):
     ok = {str(r["evidence_id"]).upper() for r in evidence_live.get_verified_evidence(local_path(p["work_dir"]) / "evidence-matrix.csv")}
     sections = answered_blocks(final.get("questions", []), ok)
     if not sections:
-        unresolved = sum(q.get("verdict") != "ANSWERED" for q in final.get("questions", []))
-        print(f"No question was resolved by evidence; {unresolved} remain open. The working document was not changed.")
+        print(no_answer_block_message(final.get("questions", [])))
         return 0
 
     stage = project_stage(p)
@@ -3603,6 +3633,33 @@ def cmd_shared(a):
     return 0
 
 
+def intake_pending(p: dict) -> list[str]:
+    """Stand-alone source documents not named in the latest intake report (exact paths, not basename guesses)."""
+    folder = local_path(p["work_dir"]) / "intake"
+    latest = folder / "latest.json"
+    if not latest.is_file():
+        return []
+    report_path = None
+    try:
+        rec = json.loads(latest.read_text(encoding="utf-8"))
+        report_path = folder / f"{rec['id']}.evidence.md"
+        report = report_path.read_text(encoding="utf-8")
+    except (OSError, ValueError, KeyError):
+        report = ""
+        try:
+            rec = json.loads(latest.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return [str(latest)]
+    required = {f.get("rel_path") for f in (rec.get("added", []) + rec.get("changed", []))
+                if isinstance(f, dict) and f.get("source_class") != "capture" and f.get("rel_path")}
+    required.update(f.get("rel_path") for f in rec.get("unreadable", [])
+                    if isinstance(f, dict) and f.get("rel_path"))
+    missing = sorted(path for path in required if path not in report)
+    if not report.strip() and report_path:
+        missing.append(str(report_path))
+    return missing
+
+
 def cmd_ingest(a):
     """New data in: discovery index (only new or changed files), graph sync (captures -> matrix rows, nodes,
     edges, host register), evidence refresh (rows on removed files or older captures retired, rows on changed
@@ -3638,6 +3695,15 @@ def cmd_ingest(a):
                         "--project", str(p.get("key") or "")], cwd=str(FRAMEWORK), env=_fw_env(), stdout=subprocess.DEVNULL) != 0:
         print(f"{C['y']}system model not rebuilt (csa model build shows why){C['0']}")
     print(f"{C['b']}6/6 stale subsections{C['0']}")
+    pending = intake_pending(p)
+    if pending:
+        print(f"{C['y']}{len(pending)} new or changed document(s) are indexed but not yet recorded as evidence. "
+              f"Run `csa -p {p['key']} intake` before relying on the stale-section result.{C['0']}")
+        for path in pending[:20]:
+            print(f"  {path}")
+        if not a.no_stale:
+            print(f"{C['d']}Stale-section calculation deferred until evidence intake is complete.{C['0']}")
+        return 0
     if a.no_stale:
         return 0
     return cmd_stale(argparse.Namespace(project=a.project, json=False))

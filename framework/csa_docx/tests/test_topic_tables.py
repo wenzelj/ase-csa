@@ -1,4 +1,5 @@
 """Topic tables: role grouping, common sentence, uncaptured hosts, no totals, placement in the document."""
+import json
 import re
 import sys
 from pathlib import Path
@@ -73,6 +74,29 @@ def test_role_without_capture_is_a_gap_not_a_row(tmp_path):
     g = [g for g in t["gaps"] if g["role"] == "Web server"][0]
     assert g["dr_id"].startswith("DR-TIME-T") and "no host of this role was captured" in g["text"]
     assert t["unassigned"] == ["SQLX"]
+
+
+def test_refresh_saved_removes_gap_after_host_settings_arrive(tmp_path):
+    hosts = tmp_path / "hosts"
+    hosts.mkdir()
+    (hosts / "hosts.csv").write_text(
+        "host,in_scope,role,site,capture\nHOSTA01,Yes,Application Server,Perth,CAP_HOSTA01\n", encoding="utf-8")
+    (hosts / "host_settings.csv").write_text(
+        "host,topic,attribute,value,capture,source,excerpt\n"
+        "HOSTA01,time,time.source,TIME01,CAP_HOSTA01,CAP_HOSTA01/03_time_status.txt line 4,Source: TIME01\n"
+        "HOSTA01,time,time.service,Windows Time Service,CAP_HOSTA01,CAP_HOSTA01/03_time_status.txt line 1,Service\n"
+        "HOSTA01,time,time.fallback,None,CAP_HOSTA01,CAP_HOSTA01/03_time_status.txt line 3,None\n"
+        "HOSTA01,time,time.poll,1024 s,CAP_HOSTA01,CAP_HOSTA01/03_time_status.txt line 5,Poll\n",
+        encoding="utf-8")
+    saved = tmp_path / "topic-tables"
+    saved.mkdir()
+    (saved / "TIME.json").write_text(json.dumps(
+        {"status": "OK", "heading": "Time Synchronisation", "key": "TIME", "gaps": []}), encoding="utf-8")
+    (saved / "gaps.json").write_text(json.dumps(
+        {"TIME": [{"dr_id": "DR-TIME-T01", "text": "stale"}]}), encoding="utf-8")
+    result = tt.refresh_saved(tmp_path)
+    assert result[0]["status"] == "OK"
+    assert "TIME" not in tt.load_gaps(tmp_path)
 
 
 def test_no_counts_or_totals_anywhere(tmp_path):

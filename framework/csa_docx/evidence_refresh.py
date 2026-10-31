@@ -41,9 +41,23 @@ def _em():
     return mod
 
 
-def _cites(row: dict, name: str) -> bool:
-    src = row.get("source_title") or ""
-    return name in src or Path(name).name in src
+def _cites(row: dict, rel: str) -> bool:
+    """Whether a matrix row cites this exact indexed file.
+
+    Basename-only matching is unsafe: two source folders and many host captures legitimately contain the same file
+    names.  A removal of one must not retire evidence supported by the other.
+    """
+    src = (row.get("source_title") or "").replace("\\", "/").strip()
+    rel = str(rel or "").replace("\\", "/").strip()
+    if not src or not rel:
+        return False
+    name = Path(rel).name
+    folder = Path(rel).parent.name
+    if src == rel or src.startswith(rel + " "):
+        return True
+    if folder and (src == f"{folder}: {name}" or src.startswith(f"{folder}: {name} ")):
+        return True
+    return False
 
 
 def run(work_dir: Path, dry_run: bool = False) -> dict:
@@ -72,10 +86,10 @@ def run(work_dir: Path, dry_run: bool = False) -> dict:
             else:
                 continue
             name = Path(rel).name
-            if not name or source_class == "capture":
+            if not name:
                 continue
             for r in rows:
-                if r.get("status") != "VERIFIED" or r["evidence_id"] in reject or not _cites(r, name):
+                if r.get("status") != "VERIFIED" or r["evidence_id"] in reject or not _cites(r, rel):
                     continue
                 out["checked"] += 1
                 if kind == "removed":

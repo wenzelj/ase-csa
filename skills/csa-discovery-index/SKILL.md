@@ -71,10 +71,12 @@ from an older capture of the same host.
 
 ## What is not indexed
 
-Binaries (DLL, EXE, DAT, W001, zips whose contents are extracted alongside), exact duplicate files (e.g. `UGL 2`
-and `UTC 2` are copies of `UGL` and `UTC`), gpresult HTML/XML renderings (the text versions are indexed), and the
-repeating I/O-mapping elements of large SIGMAP configuration XMLs (their structural elements - Builder, Ports,
-Communication - are indexed). `status` lists every reason with counts.
+Binaries (DLL, EXE, DAT, W001, zips whose contents are extracted alongside), legacy `.doc` / `.xls` files and exact duplicate files (e.g. `UGL 2`
+and `UTC 2` are copies of `UGL` and `UTC`) are not indexed. Word text is read from the document body, headers,
+footers, footnotes, endnotes and comments. PowerPoint slide, speaker-note and comment text is indexed. HTML and XML are indexed losslessly: element names,
+attribute names and values, and text are searchable, including repeated records in large XML files. Extraction keeps
+one output line per physical source line so citations continue to identify the original line. `status` lists every
+reason for files that were not indexed.
 
 ## Building / refreshing
 
@@ -84,7 +86,7 @@ python3 "$X" --project utcdtc build --rebuild  # from scratch
 ```
 
 The index is written to `<work_dir>/discovery-index.sqlite` (UTC DTC: ~350 MB, ~45 s to build). It indexes the
-parent of the project's `default_source_set` (`01 Current State AS Built`) unless `--source` is given. Rebuild after
+project's exact `default_source_set` plus its configured `index_extra_sources` unless `--source` is given. Rebuild after
 new captures are added. If the build runs somewhere the work folder cannot host SQLite (e.g. a mounted share),
 add `--stage-dir <local folder>`: it builds there and copies the finished file into `work_dir`. Queries open
 the index read-only, so do not run a build while agents are querying.

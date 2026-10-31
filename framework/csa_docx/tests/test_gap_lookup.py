@@ -21,6 +21,11 @@ def test_queries_use_hosts_in_documents_and_topic_words_not_host_fragments():
     assert "dns fallback" in pairs and "service isolation" in pairs and len(pairs) <= 12
 
 
+def test_content_addressed_dr_id_keeps_the_answer_sheet_block_token():
+    assert gl._qid_from_dr_id("DR-SUPPLY-B1-Q926208417374") == "B1"
+    assert gl._qid_from_dr_id("DR-DNS-F20") == "F20"
+
+
 def _fake_run(matrix_matches, hits, written_ids, dup_of=None, index_ok=True):
     calls = []
 
@@ -36,6 +41,19 @@ def _fake_run(matrix_matches, hits, written_ids, dup_of=None, index_ok=True):
             return {"status": "APPENDED", "written": [{"evidence_id": written_ids.pop(0)}]}
         return None
     return run, calls
+
+
+def _write_answer_link(workspace, evidence_id, dr_id, question, *, status="VERIFIED", review="reviewed"):
+    (workspace / "csa-work").mkdir(parents=True, exist_ok=True)
+    matrix = workspace / "csa-work" / "evidence-matrix.csv"
+    matrix.write_text(
+        "evidence_id,csa_area,question,claim,status,source_title,source_version,section,page_or_location,"
+        "evidence_excerpt,inference_reason,confidence,gap_or_action,review_state\n"
+        f"{evidence_id},ops,q,claim,{status},source,,,,quote,,high,Answers {dr_id},pending\n", encoding="utf-8")
+    (workspace / "csa-work" / "evidence-reviews.jsonl").write_text(
+        json.dumps({"evidence_id": evidence_id, "state": review}) + "\n", encoding="utf-8")
+    if status == "VERIFIED" and review in ("reviewed", "accepted"):
+        gl.resolve_gap(workspace, dr_id, question, [evidence_id], by="test")
 
 
 HIT = {"rel_path": "RevLoc/system_matrix.xlsx", "page_or_location": "system_matrix.xlsx sheet!row Sheet2!7",
@@ -58,10 +76,14 @@ def test_a_matrix_row_that_answers_it_wins_and_legacy_or_not_found_rows_do_not_c
     answer = {"evidence_id": "E-043", "status": "VERIFIED", "review_state": "reviewed", "score": 0.8, "coverage": 1.0, "gap_or_action": ""}
     legacy = {"evidence_id": "E-016", "status": "VERIFIED", "review_state": "reviewed", "score": 0.9, "coverage": 1.0, "gap_or_action": "legacy L-0100"}
     earlier = {"evidence_id": "E-014", "status": "NOT_FOUND", "score": 0.9, "coverage": 1.0, "gap_or_action": "ask"}
-    run, _ = _fake_run([legacy, earlier, answer], [], [])
+    _write_answer_link(tmp_path, "E-043", "DR-01", "Role of the jump hosts")
+    run, calls = _fake_run([legacy, earlier, answer], [], [])
     monkeypatch.setattr(gl, "_run", run)
     res = gl.lookup_gap(tmp_path, "DR-01", "Role of the jump hosts")
     assert res["verdict"] == "ANSWERED" and res["answer_evidence_ids"] == ["E-043"] and res["lead_ids"] == []
+    assert not [call for call in calls if "search" in call]
+    (tmp_path / "csa-work" / "evidence-matrix.csv").unlink()
+    (tmp_path / "csa-work" / "evidence-reviews.jsonl").unlink()
     run, _ = _fake_run([legacy, earlier], [], [])
     monkeypatch.setattr(gl, "_run", run)
     assert gl.lookup_gap(tmp_path, "DR-01", "Role of the jump hosts")["verdict"] == "NOT_FOUND"
@@ -77,19 +99,75 @@ def test_a_terminal_lead_is_not_offered_again_and_the_scope_is_reported(tmp_path
     assert res["verdict"] == "NOT_FOUND" and "discovery index" in res["searched"] and "MKYPRDOPS110" in res["searched"]
     run, _ = _fake_run([], [], [], index_ok=False)
     monkeypatch.setattr(gl, "_run", run)
-    assert "no index built" in gl.lookup_gap(ws, "DR-OPS-B1", "Role of MKYPRDOPS110")["searched"]
+    incomplete = gl.lookup_gap(ws, "DR-OPS-B1", "Role of MKYPRDOPS110")
+    assert incomplete["verdict"] == "INCOMPLETE" and "no index built" in incomplete["searched"]
+
+
+def test_index_result_limit_is_reported_as_incomplete(tmp_path, monkeypatch):
+    many_hits = [dict(HIT, rel_path=f"RevLoc/source-{n}.xlsx", source_title=f"RevLoc/source-{n}.xlsx")
+                 for n in range(50)]
+    run, _ = _fake_run([], many_hits, [f"E-{n}" for n in range(50)])
+    monkeypatch.setattr(gl, "_run", run)
+    result = gl.lookup_gap(tmp_path, "DR-OPS-B1", "Role of the jump hosts")
+    assert result["verdict"] == "INCOMPLETE"
+    assert any("50-result limit" in reason for reason in result["coverage"]["incomplete_reasons"])
 
 
 def test_only_source_checked_verified_rows_answer_and_related_rows_stay_separate(tmp_path, monkeypatch):
     checked = {"evidence_id": "E-006", "status": "VERIFIED", "review_state": "reviewed", "score": 0.7, "coverage": 0.9, "gap_or_action": ""}
     pending = {"evidence_id": "E-007", "status": "VERIFIED", "review_state": "pending", "score": 0.9, "coverage": 1.0, "gap_or_action": ""}
     inferred = {"evidence_id": "E-008", "status": "INFERRED", "review_state": "reviewed", "score": 0.9, "coverage": 1.0, "gap_or_action": ""}
+    _write_answer_link(tmp_path, "E-006", "DR-X-01", "Where are the domain controllers")
     run, _ = _fake_run([pending, inferred, checked], [], [])
     monkeypatch.setattr(gl, "_run", run)
     result = gl.lookup_gap(tmp_path, "DR-X-01", "Where are the domain controllers")
     assert result["verdict"] == "ANSWERED"
     assert result["answer_evidence_ids"] == ["E-006"]
     assert result["related_evidence_ids"] == ["E-007", "E-008"]
+
+
+def test_similar_verified_matrix_row_without_explicit_question_link_is_not_an_answer(tmp_path, monkeypatch):
+    checked = {"evidence_id": "E-006", "status": "VERIFIED", "review_state": "reviewed", "score": 0.9,
+               "coverage": 1.0, "gap_or_action": ""}
+    run, _ = _fake_run([checked], [], [])
+    monkeypatch.setattr(gl, "_run", run)
+    result = gl.lookup_gap(tmp_path, "DR-X-01", "Where are the domain controllers")
+    assert result["verdict"] == "NOT_FOUND"  # similarity is only related evidence
+    assert result["answer_evidence_ids"] == []
+    assert result["related_evidence_ids"] == ["E-006"]
+
+
+def test_answers_note_alone_does_not_close_a_compound_question(tmp_path, monkeypatch):
+    question = "Which vendor connects, and how is access approved and monitored?"
+    _write_answer_link(tmp_path, "E-006", "DR-X-B1", question)
+    # Remove the explicit completeness decision while retaining the historical Answers tag.
+    (tmp_path / "csa-work" / "intake" / "gap-resolutions.jsonl").unlink()
+    run, _ = _fake_run([], [], [])
+    monkeypatch.setattr(gl, "_run", run)
+    result = gl.lookup_gap(tmp_path, "DR-X-B1", question)
+    assert result["verdict"] == "NOT_FOUND" and result["answer_evidence_ids"] == []
+
+
+def test_resolution_is_bound_to_exact_question_words(tmp_path, monkeypatch):
+    _write_answer_link(tmp_path, "E-006", "DR-X-B1", "Which vendor connects?")
+    run, _ = _fake_run([], [], [])
+    monkeypatch.setattr(gl, "_run", run)
+    changed = gl.lookup_gap(tmp_path, "DR-X-B1", "How is vendor access approved?")
+    assert changed["verdict"] == "NOT_FOUND" and changed["answer_evidence_ids"] == []
+
+
+def test_resolution_rejects_verified_evidence_not_linked_to_the_question(tmp_path):
+    ws = _workspace(tmp_path)
+    work = ws / "csa-work"
+    (work / "evidence-matrix.csv").write_text(
+        "evidence_id,csa_area,question,claim,status,source_title,source_version,section,page_or_location,"
+        "evidence_excerpt,inference_reason,confidence,gap_or_action,review_state\n"
+        "E-006,ops,q,claim,VERIFIED,source,,,,quote,,high,Supports DR-OTHER-B1,pending\n", encoding="utf-8")
+    (work / "evidence-reviews.jsonl").write_text(
+        json.dumps({"evidence_id": "E-006", "state": "reviewed"}) + "\n", encoding="utf-8")
+    import pytest
+    with pytest.raises(ValueError, match="not explicitly linked"):
+        gl.resolve_gap(ws, "DR-X-B1", "Which vendor connects?", ["E-006"], by="test")
 
 
 def test_a_hit_must_be_about_the_gap_not_just_share_a_generic_word():
@@ -175,6 +253,35 @@ def test_a_gap_that_names_a_host_is_answered_only_by_something_about_that_host()
     assert gl.relevant("IPTPRDLIC201 time source is IPTPRDSRV224", gap, vocab)
 
 
+def test_exact_structured_host_setting_precedes_truncated_text_search(tmp_path, monkeypatch):
+    workspace = _workspace(tmp_path)
+    work = workspace / "csa-work"
+    (work / "hosts").mkdir(parents=True)
+    (work / "hosts" / "host_settings.csv").write_text(
+        "host,topic,attribute,value,capture,source,excerpt\n"
+        "MOTPRDLOG103,time,time.source,ROTPRDSRV122 (10.40.228.97),"
+        "REVELOC_discovery_MOTPRDLOG103_20261029T002029Z,"
+        "REVELOC_discovery_MOTPRDLOG103_20261029T002029Z/03_time_status.txt line 4,"
+        "Source: ROTPRDSRV122.internal.qr.com.au\n", encoding="utf-8")
+
+    def run(cmd):
+        if "lookup" in cmd:
+            return {"status": "OK", "matches": []}
+        if "search" in cmd:
+            raise AssertionError("generic search must not run when the exact structured host setting is present")
+        return None
+
+    monkeypatch.setattr(gl, "_run", run)
+    result = gl.lookup_gap(workspace, "DR-TIME-F03",
+                           "MOTPRDLOG103: not in the discovery captures, so its time source is not known")
+    assert result["verdict"] == "CANDIDATES"
+    assert result["coverage"]["index_complete"] is True
+    assert result["queries"] == ["structured host settings"]
+    lead = leads.open_leads(workspace, "DR-TIME-F03")[0]
+    assert "time.source = ROTPRDSRV122" in lead["excerpt"]
+    assert lead["rel_path"].endswith("03_time_status.txt")
+
+
 def test_the_scheduled_task_inventory_is_searched_only_for_gaps_about_tasks(tmp_path, monkeypatch):
     ws = _workspace(tmp_path)
     task_hit = dict(HIT, rel_path="REVELOC_discovery_ROKPRDOPS110_20260607/66_scheduled_tasks.txt",
@@ -226,6 +333,15 @@ def test_a_not_found_record_names_the_verified_rows_that_bear_on_the_question(tm
 
 
 def test_a_not_found_record_with_no_verified_row_keeps_the_plain_sentence(tmp_path, monkeypatch):
-    ws, lead_id, calls = _confirm_setup(tmp_path, monkeypatch, with_verified=True)
+    ws, old_lead_id, calls = _confirm_setup(tmp_path, monkeypatch, with_verified=True)
+    lead_id = leads.add_leads(ws, "DR-X-01", "01", "Where is the gateway", [HIT])[0]
     gl.confirm_gap(ws, "DR-X-01", "Where is the gateway", [lead_id], searched="saved scope", ask="ask")
     assert _claim(calls) == "No evidence in the matrix or the discovery index answers: Where is the gateway"
+    assert leads.open_leads(ws, "DR-X-01")[0]["lead_id"] == old_lead_id
+
+
+def test_confirm_rejects_a_lead_from_older_question_words(tmp_path, monkeypatch):
+    ws, lead_id, _ = _confirm_setup(tmp_path, monkeypatch, with_verified=True)
+    import pytest
+    with pytest.raises(ValueError, match="different question words"):
+        gl.confirm_gap(ws, "DR-X-01", "Where is the gateway", [lead_id], searched="saved scope", ask="ask")
