@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { cancelJob, fetchDraft, fetchJob, submitJob } from "../api";
+import { cancelJob, fetchDraft, fetchJob, fetchJobs, submitJob } from "../api";
 import { AGENT_CLIS, rememberedAgentCli, rememberAgentCli } from "../agentClis";
 import type { DraftSection, DraftSnapshot, ReviewJob } from "../types";
 import { Empty } from "./ui";
@@ -31,22 +31,34 @@ export function DraftLane({ system, focus = "", investigate }: { system: string;
       setError(message === "Not Found" ? "The evidence workspace server is older than this page and has no draft route yet. Stop it (Ctrl+C in its Terminal) and run csa browse again." : message);
     }
   }
-  useEffect(() => { setSnap(null); setJob(null); void load(); return () => window.clearInterval(poll.current); }, [system]);
+  async function resume() {
+    try {
+      const jobs = (await fetchJobs(system)).filter(j => j.operation === "answer" || j.operation === "refresh_draft");
+      const active = jobs.filter(j => !TERMINAL.includes(j.state)).sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+      const latest = active || jobs.sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+      if (!latest) return;
+      if (!TERMINAL.includes(latest.state)) { setJob(latest); watch(latest.id); }
+      else { setJob(latest); await load(); }
+    } catch { /* no job list: nothing to recover */ }
+  }
+  useEffect(() => { setSnap(null); setJob(null); void load(); void resume(); return () => window.clearInterval(poll.current); }, [system]);
   useEffect(() => { if (!focus) return; const el = document.getElementById(`draft-row-${focus}`); el?.scrollIntoView({ block: "center" }); }, [focus, snap]);
   useEffect(() => { rememberAgentCli(cli); }, [cli]);
 
+  function watch(id: string) {
+    window.clearInterval(poll.current);
+    poll.current = window.setInterval(async () => {
+      try {
+        const current = await fetchJob(system, id); setJob(current);
+        if (TERMINAL.includes(current.state)) { window.clearInterval(poll.current); await load(); }
+      } catch (e) { window.clearInterval(poll.current); setError((e as Error).message); }
+    }, 2000);
+  }
   const running = !!job && !TERMINAL.includes(job.state);
   async function run(operation: string, target?: string, options: Record<string, string | boolean> = {}) {
     setError(""); setShowLog(true);
     try {
-      const started = await submitJob(system, operation, target, options); setJob(started);
-      window.clearInterval(poll.current);
-      poll.current = window.setInterval(async () => {
-        try {
-          const current = await fetchJob(system, started.id); setJob(current);
-          if (TERMINAL.includes(current.state)) { window.clearInterval(poll.current); await load(); }
-        } catch (e) { window.clearInterval(poll.current); setError((e as Error).message); }
-      }, 2000);
+      const started = await submitJob(system, operation, target, options); setJob(started); watch(started.id);
     } catch (e) { setError((e as Error).message); }
   }
   function answer(row: DraftSection) { void run("answer", row.number || row.key, { cli, ...(fresh ? { fresh: true } : {}) }); }

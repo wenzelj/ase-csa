@@ -99,6 +99,7 @@ export async function recordAuditGap(system: string, payload: Record<string, str
 
 export async function fetchDraft(system: string): Promise<DraftSnapshot> { return api(`/api/systems/${system}/draft`); }
 export async function submitJob(system: string, operation: string, target?: string, options: Record<string, string | boolean> = {}): Promise<ReviewJob> { return api(`/api/systems/${system}/jobs`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ operation, target: target || null, options }) }); }
+export async function fetchJobs(system: string): Promise<ReviewJob[]> { const data = await api<{ jobs: ReviewJob[] }>(`/api/systems/${system}/jobs`); return data.jobs; }
 export async function fetchJob(system: string, id: string): Promise<ReviewJob> { return api(`/api/systems/${system}/jobs/${id}`); }
 
 export async function fetchIntake(system: string): Promise<IntakeSnapshot> { return api(`/api/systems/${system}/intake`); }
