@@ -77,6 +77,39 @@ def test_local_prompt_names_the_supported_codex_cli_shell_tool(tmp_path):
     assert "Never call `exec`" in prompt
 
 
+def test_answer_agent_uses_space_free_linked_paths_when_project_name_has_spaces(tmp_path, monkeypatch):
+    monkeypatch.setitem(CSA["agent_working_dir"].__globals__, "STATE_DIR", tmp_path / "state")
+    root = tmp_path / "TETRA" / "06 REVELOC TETRA"
+    cards = root / "csa-work" / "cards"
+    cards.mkdir(parents=True)
+    project = {
+        "key": "test", "label": "Test", "project_context": str(tmp_path / "context.yaml"),
+        "work_dir": str(root / "csa-work"), "project_root": str(root),
+    }
+    route = {"file": "csa-draft-agent.md", "title": "Draft Agent", "verb": "draft",
+             "instruction": "Do the task."}
+    args = CSA["answer_launch_args"](
+        project, route, "3.4", cards / "TIME.focus-B1.md", cards / "TIME.patch-B1.md",
+        ["ONLY=B1", f"ANSWER={cards / 'TIME.answer-base.md'}", f"ERRORS={cards / 'TIME.errors-B1.md'}"],
+    )
+    model_workspace = tmp_path / "state" / "model-work" / "test"
+    assert CSA["agent_working_dir"](project, route) == model_workspace
+    assert args == [
+        "3.4", "CARD=TIME.focus-B1.md", "SHEET=TIME.patch-B1.md",
+        "ONLY=B1", "ANSWER=TIME.answer-base.md", "ERRORS=TIME.errors-B1.md",
+    ]
+    prompt = CSA["build_prompt"](project, route, args, local=True)
+    assert "WORKSPACE=." in prompt
+    assert "CARD=TIME.focus-B1.md" in prompt
+    assert "This is a closed-file task." in prompt
+    assert "SOURCE_SET=" not in prompt
+    assert "CHANGE_FILE=" not in prompt
+    assert "STABLE_SUBTREE=" not in prompt
+    assert "PROJECT_CONTEXT=" not in prompt
+    assert (model_workspace / "TIME.focus-B1.md").resolve() == cards / "TIME.focus-B1.md"
+    assert (model_workspace / "TIME.patch-B1.md").resolve(strict=False) == cards / "TIME.patch-B1.md"
+
+
 def test_fleet_model_argv_stays_in_the_invoking_process():
     command = CSA["_fleet_argv"]({}, {"prompt": "prompt", "last": Path("last.md"), "verb": "author"},
                                  "evo-x3-qwen", "codex")

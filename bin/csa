@@ -359,6 +359,71 @@ def local_path(p: str) -> Path:
     return path
 
 
+def agent_working_dir(p: dict, r: dict) -> Path:
+    """Working directory exposed to a model call.
+
+    Answer/draft agents only need their selected project's card and answer files. A real framework-owned directory is
+    used instead of a directory symlink: macOS resolves a symlink cwd back to its physical path, which would expose the
+    spaces again. File-level links inside this directory give small models bare filenames and keep an accidental listing
+    inside the closed set of answer artifacts. Other agents retain the shared framework root.
+    """
+    if r.get("verb") in ("answer", "draft"):
+        key = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(p.get("key") or "project")).strip("-.") or "project"
+        workspace = STATE_DIR / "model-work" / key
+        workspace.mkdir(parents=True, exist_ok=True)
+        return workspace
+    return ROOT
+
+
+def _answer_file_link(p: dict, r: dict, path: Path) -> str:
+    """Expose one card artifact in the answer model's space-free working directory."""
+    cards = (local_path(str(p.get("work_dir") or "")) / "cards").resolve()
+    resolved = path.resolve()
+    if resolved.parent != cards:
+        return str(resolved)
+    link = agent_working_dir(p, r) / resolved.name
+    if link.is_symlink():
+        try:
+            if link.resolve(strict=False) == resolved:
+                return link.name
+        except OSError:
+            pass
+        link.unlink(missing_ok=True)
+    elif link.exists():
+        link.unlink()
+    link.symlink_to(resolved)
+    return link.name
+
+
+def model_file_path(p: dict, r: dict, value: str | Path) -> str:
+    """Render a filesystem value for the model, relative to its cwd when it is inside that cwd."""
+    path = local_path(str(value)).resolve()
+    if r.get("verb") in ("answer", "draft"):
+        return _answer_file_link(p, r, path)
+    cwd = agent_working_dir(p, r).resolve()
+    try:
+        relative = path.relative_to(cwd)
+    except ValueError:
+        return str(path)
+    return "." if relative == Path(".") else relative.as_posix()
+
+
+_ANSWER_PATH_INPUTS = frozenset({"CARD", "SHEET", "ANSWER", "ERRORS"})
+
+
+def answer_launch_args(p: dict, r: dict, number: str, card: Path, sheet: Path,
+                       extra: list[str] | None = None) -> list[str]:
+    """Build one answer-agent request without making the model reconstruct or shell-quote project paths."""
+    args = [str(number), f"CARD={model_file_path(p, r, card)}", f"SHEET={model_file_path(p, r, sheet)}"]
+    for item in extra or []:
+        key, sep, value = item.partition("=")
+        if sep and key.strip().upper() in _ANSWER_PATH_INPUTS:
+            args.append(f"{key}={model_file_path(p, r, value)}")
+        else:
+            args.append(item)
+    return args
+
+
 # ---------------------------------------------------------------- config
 def settings() -> dict:
     return parse_flat_map(CLI_FILE)
@@ -2139,6 +2204,7 @@ def local_launch(cmdline: str = "") -> bool:
 def build_prompt(p: dict, r: dict, args: list[str], local: bool | None = None) -> str:
     inputs = parse_inputs(r.get("inputs", ""))
     values = {k: v for k, v, _ in inputs if v is not None}
+    answer_workspace = r.get("verb") in ("answer", "draft")
     if local if local is not None else local_launch():
         for k, v, _ in parse_inputs(r.get("local_inputs", "")):   # smaller batches for local models
             if v is not None:
@@ -2155,24 +2221,32 @@ def build_prompt(p: dict, r: dict, args: list[str], local: bool | None = None) -
     resolved = resolve_visible_section(p, label_display(sec, label)) if str(requested_section).strip() else {}
     if label:
         values["SECTION"], values["SUBSECTION"] = sec, label_display(sec, label)
-        if r.get("verb") != "answer":            # the answer agent writes a sheet, never a change file
+        if not answer_workspace:                  # answer/draft agents write a sheet, never a change file
             cf = pick_change_file(p, sec, label)
             values["CHANGE_FILE"] = str(cf) if cf else f"reviews/ChangesCSA_<App>_Section{sec}_{label}.md (create it)"
     if resolved.get("stable_path"):
-        values["STABLE_SUBTREE"] = "@H" + resolved["stable_path"]
         values["DOCUMENT_HEADING"] = resolved["heading"]
+        if not answer_workspace:
+            values["STABLE_SUBTREE"] = "@H" + resolved["stable_path"]
     missing = [k for k, _, req in inputs if req and not values.get(k)]
     if missing:
         die(f"`csa {r['verb']}` needs {', '.join(missing)}, e.g. `csa {r['verb']} <{missing[0].lower()}>`")
-    lines = [f"Load this agent definition:\n{CANON_AGENTS / r['file']}\n", f"Act as the {r['title']}.\n",
-             f"PROJECT={p.get('label')} ({p['key']})  -- confirmed by the user via `csa use`; do not ask again.",
-             f"PROJECT_CONTEXT={p['project_context']}", f"WORK_DIR={p['work_dir']}",
-             f"WORKSPACE={p['project_root']}", f"SOURCE_SET={values.pop('SOURCE_SET', p.get('default_source_set', ''))}"]
+    if answer_workspace:
+        values.pop("SOURCE_SET", None)
+        lines = [f"Load this agent definition:\n{CANON_AGENTS / r['file']}\n", f"Act as the {r['title']}.\n",
+                 f"PROJECT={p.get('label')} ({p['key']})  -- confirmed by the user via `csa use`; do not ask again.",
+                 "WORKSPACE=."]
+    else:
+        lines = [f"Load this agent definition:\n{CANON_AGENTS / r['file']}\n", f"Act as the {r['title']}.\n",
+                 f"PROJECT={p.get('label')} ({p['key']})  -- confirmed by the user via `csa use`; do not ask again.",
+                 f"PROJECT_CONTEXT={p['project_context']}", f"WORK_DIR={p['work_dir']}",
+                 f"WORKSPACE={p['project_root']}",
+                 f"SOURCE_SET={values.pop('SOURCE_SET', p.get('default_source_set', ''))}"]
     order = [k for k, _, _ in inputs] + [k for k in values if k not in {i[0] for i in inputs}]
     for k in order:
         if values.get(k):
             lines.append(f"{k}={values[k]}")
-    if values.get("SUBSECTION") and r.get("verb") == "answer":
+    if values.get("SUBSECTION") and answer_workspace:
         lines.append(f"\nThe card is for visible document subsection {values['SUBSECTION']} ({values.get('DOCUMENT_HEADING')}). "
                      "Write only the answer sheet at SHEET.")
     elif values.get("SUBSECTION"):
@@ -2196,6 +2270,10 @@ def build_prompt(p: dict, r: dict, args: list[str], local: bool | None = None) -
     is_local = local if local is not None else local_launch()
     if is_local:
         lines.append("\nCodex CLI tool rule: use `exec_command` for shell commands. Never call `exec`, which is not a supported CLI tool.")
+    if answer_workspace:
+        lines.append("\nThis is a closed-file task. Read only CARD, ANSWER and ERRORS, and write only SHEET. These are "
+                     "filenames in WORKSPACE. Use them exactly as given. Do not inspect directories, search for files, "
+                     "open the project context, source set, change file or Word document, or reconstruct any path.")
     if stage and not (r.get("verb") == "answer" and str(values.get("MODE", "answer")).lower() != "answer"):
         lines.append("\n## Rules (digest)\n\n" + _fw_digest(stage).rstrip())
         lines.append("\nDo not read the full skill or reference files unless a check names them.")
@@ -2303,9 +2381,10 @@ def _launch(p: dict, r: dict, args: list[str], a) -> int:
     if not shutil.which(argv[0]):
         print(prompt)
         die(f"'{argv[0]}' is not on PATH. Prompt printed above; paste it into your CLI.")
-    print(f"{C['d']}launching {cli} ({mode}) as {r['title']} in {ROOT}{C['0']}", file=sys.stderr)
+    run_cwd = agent_working_dir(p, r)
+    print(f"{C['d']}launching {cli} ({mode}) as {r['title']} in {run_cwd}{C['0']}", file=sys.stderr)
     if r.get("verb") not in ("answer", "draft"):
-        return subprocess.call(argv, cwd=str(ROOT))
+        return subprocess.call(argv, cwd=str(run_cwd))
 
     # Answer runs can involve several model passes. Keep each pass bounded and make a quiet/stalled call visible.
     # The caller still validates any sheet written before a timeout or non-zero exit.
@@ -2326,7 +2405,7 @@ def _launch(p: dict, r: dict, args: list[str], a) -> int:
             proc.kill(); proc.wait()
 
     for attempt in range(restarts + 1):
-        proc = subprocess.Popen(argv, cwd=str(ROOT), stdin=subprocess.DEVNULL if mode == "headless" else None)
+        proc = subprocess.Popen(argv, cwd=str(run_cwd), stdin=subprocess.DEVNULL if mode == "headless" else None)
         began, next_beat = time.time(), time.time() + heartbeat_min * 60 if heartbeat_min else float("inf")
         watch = Watch(proc.pid, stall_min * 60) if stall_min else None
         stalled = False
@@ -2712,7 +2791,8 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
                   blocks or ["all"], model=chosen_cli)
         hold_old_sheets()
         try:
-            rc = launch(p, agent(verb), [number, f"CARD={card or card_md}", f"SHEET={out}", *extra], run_a)
+            route = agent(verb)
+            rc = launch(p, route, answer_launch_args(p, route, number, card or card_md, out, extra), run_a)
         finally:
             release_held()
         sheet_from_last_message(out)
@@ -2940,7 +3020,8 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
         if blk.get("status") != "OK":
             die(f"draft lane: {blk.get('message')}")
     if getattr(a, "print", False):
-        return launch(p, agent(verb), [number, f"CARD={card_md}", f"SHEET={sheet}"], a)
+        route = agent(verb)
+        return launch(p, route, answer_launch_args(p, route, number, card_md, sheet), a)
     hosts_csv = work / "hosts" / "hosts.csv"
     fix_max = int(settings().get("answer_fix_rounds", 3) or 3)
     cache = {"status": "NONE", "changed": []}
