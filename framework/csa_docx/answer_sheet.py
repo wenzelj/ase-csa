@@ -229,7 +229,7 @@ HARD_CODES = {"CROSS_PROJECT_ONLY", "NOTE_TOO_LONG", "NOTE_NONE_AND_TEXT", "NOTE
               "DRAWBRIDGE_CAUSAL_SCOPE",
               "EXAMPLE_COPIED", "SUMMARY_MISSING", "STORY_MISSING", "SUMMARY_TOO_LONG", "SUMMARY_TOO_MANY_SENTENCES",
               "SUMMARY_REPEATS_STORY", "SUMMARY_STORY_OVERLAP", "SUMMARY_NO_RATING_BASIS", "QUESTION_IN_SUMMARY",
-              "STORY_NO_EVIDENCE_PATH", "STORY_STARTS_WITH_RATING", "STORY_NO_RATING_CONCLUSION", "STORY_AND_TEXT"}
+              "STORY_NO_EVIDENCE_PATH", "STORY_STARTS_WITH_RATING", "STORY_RESTATES_RATING", "STORY_REPEATS_SUMMARY", "STORY_AND_TEXT"}
 
 #: Relaxed draft lane (cli.yaml draft_strictness: relaxed, the default for csa answer): the answer's job is to answer the
 #: question from the evidence, so only what makes it wrong or unusable stops it: evidence it cannot cite, a missing or
@@ -241,7 +241,7 @@ RELAXED_HARD = {"CROSS_PROJECT_ONLY", "QUESTION_MISSING", "EMPTY_ANSWER", "FACT_
                 "RATING_INVALID", "COLUMNS", "ROW_WIDTH", "NO_ROWS", "BACKGROUND_AS_EVIDENCE",
                 "ZONE_CONTRADICTED", "ISOLATION_WRONG_SIDE", "ATTEMPT_AS_ESTABLISHED",
                 "SUMMARY_NO_RATING_BASIS", "SUMMARY_STORY_OVERLAP", "QUESTION_IN_SUMMARY",
-                "STORY_NO_EVIDENCE_PATH", "STORY_STARTS_WITH_RATING", "STORY_NO_RATING_CONCLUSION"}
+                "STORY_NO_EVIDENCE_PATH", "STORY_STARTS_WITH_RATING", "STORY_RESTATES_RATING", "STORY_REPEATS_SUMMARY"}
 #: Of those, the ones the document cannot be written around: the answer cannot be rendered, or cites evidence that does
 #: not exist. Any other hard error left after the fix round is applied anyway and listed in RESULT.md.
 FATAL_CODES = {"NO_SHEET", "QUESTION_MISSING", "EMPTY_ANSWER", "FACT_NO_EVIDENCE", "UNKNOWN_EVIDENCE", "RATING_INVALID",
@@ -255,7 +255,8 @@ CONTENT_CODES = {"PART_MISATTRIBUTED", "PART_NOT_NAMED", "SLOT_NOT_ANSWERED", "S
                  "FRAME_UNCOVERED", "CITATION_OFF_TOPIC", "GAP_AS_FACT", "UNKNOWN_BUNDLED", "DIGEST_UNUSED", "BASIS_NOT_OBSERVED", "ZONE_CONTRADICTED",
                  "ATTEMPT_AS_ESTABLISHED", "ISOLATION_WRONG_SIDE",
                  "PRACTICE_NOT_ADDRESSED", "PRACTICE_ATTRIBUTION_DROPPED", "APPLICATION_ZONE_CLAIM", "QUESTION_BUNDLED",
-                 "CROSS_PROJECT_ONLY", "BACKGROUND_AS_EVIDENCE", "FACT_OFF_TOPIC", "DRAWBRIDGE_FUNCTION_MISSING"}
+                 "CROSS_PROJECT_ONLY", "BACKGROUND_AS_EVIDENCE", "FACT_OFF_TOPIC", "DRAWBRIDGE_FUNCTION_MISSING",
+                 "HOST_IN_PROSE", "JARGON_SHORTHAND"}
 
 
 def tier_of(finding: dict) -> str:
@@ -538,7 +539,69 @@ def read_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
 
 
 
-_STORY_WORDS = 90
+#: Framework shorthand a reader has never met (csa-writing-style, "Plain language for the reader").
+_SHORTHAND = re.compile(r"\bresolvers?\b|\bOT parts?\b|\bcaptured parts?\b|\brole-aware\b", re.I)
+_ASKS_FOR_HOSTS = re.compile(r"\bwhich (?:hosts?|servers?|addresses|ip addresses)\b|\bwhat (?:hosts?|addresses)\b", re.I)
+_PROSE_LINT = None
+
+
+def _prose_lint():
+    """The csa-writing-style prose_lint module (loaded once), or None when the skill is not installed."""
+    global _PROSE_LINT
+    if _PROSE_LINT is None:
+        import importlib.util
+        sp = Path(__file__).resolve().parents[2] / "skills" / "csa-writing-style" / "scripts" / "prose_lint.py"
+        try:
+            spec = importlib.util.spec_from_file_location("prose_lint", sp)
+            mod = importlib.util.module_from_spec(spec)
+            sys.modules["prose_lint"] = mod   # dataclasses need the module registered while it executes
+            spec.loader.exec_module(mod)
+            _PROSE_LINT = mod
+        except Exception:
+            _PROSE_LINT = False
+    return _PROSE_LINT or None
+
+
+def plain_language_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
+    """The draft lane runs no check-change, so the prose rules are checked here (all warn):
+    HOST_IN_PROSE: a Summary, Story or Text names a host or gives an address (names and addresses belong in the table)
+    unless the question asks for hosts or addresses.
+    JARGON_SHORTHAND: framework shorthand such as "resolver pair" or "OT parts" that the reader has never met.
+    PROSE_LINT: the csa-writing-style prose_lint findings for the block's prose."""
+    out: list[dict] = []
+    lint = _prose_lint()
+    for q in card.get("questions", []):
+        if q.get("kind") not in ("requirement", "narrative"):
+            continue
+        b = sheet.get(q["id"]) or {}
+        pieces = [(w, b.get(k) or "") for w, k in (("Summary", "summary"), ("Story", "story"), ("Text", "text"))]
+        pieces = [(w, t) for w, t in pieces if t.strip()]
+        asks = bool(_ASKS_FOR_HOSTS.search(q.get("text") or q.get("question") or ""))
+        for where, t in pieces:
+            hosts = sorted(set(_HOSTTOKEN.findall(t)))
+            ips = sorted(set(_IP.findall(t))) if not asks else []
+            if (hosts and not asks) or ips:
+                shown = ", ".join((hosts if not asks else []) + [i if isinstance(i, str) else str(i) for i in ips][:3])
+                out.append(_f("WARN", "HOST_IN_PROSE", q["id"],
+                              f"the {where} names {shown}: name the machine by its role and site, and keep host names and "
+                              "addresses in the table unless the question asks for them"))
+            m = _SHORTHAND.search(t)
+            if m:
+                out.append(_f("WARN", "JARGON_SHORTHAND", q["id"],
+                              f"the {where} says \"{m.group(0)}\", which the reader has never met: say what it is "
+                              "in plain words (for example 'the two DNS servers every server asks for names'; the term is 'DNS server', not 'resolver')"))
+        if lint and pieces:
+            sec = lint.Section(1, q["id"], [lint.Para("text", " ".join(t.split())) for _, t in pieces])
+            try:
+                res = lint.analyse(sec, 900)
+            except Exception:
+                continue
+            for w in (res.get("warnings") or [])[:3]:
+                out.append(_f("WARN", "PROSE_LINT", q["id"], f"csa-writing-style prose_lint: {w}"))
+    return out
+
+
+_STORY_REPEAT = 0.5   # share of a Story sentence's meaningful words already in the Summary
 _RATING_ANY = re.compile(r"\b(?:Partially Met|Not Met|Not Applicable|Met|partially meets|does not meet|meets)\b", re.I)
 _ENDPOINT_GAP = re.compile(r"\bunidentified\b|\bnot identified\b|\bzone not recorded\b", re.I)
 
@@ -548,7 +611,6 @@ def readability_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
     READ_LIST: a Story, Text or Summary sentence names more than 3 parts (parts.parts_in on the card's part names).
     TWO_ROLE_NAME: a sentence contains ", also the " or ", also " followed by a part name, or the full "A, B"
     name of a two-role part.
-    STORY_TOO_LONG: a Story is over 90 words.
     ENDPOINT_UNDERSTATED: a sentence says "unidentified", "not identified" or "zone not recorded" and names an end
     (or the part grouping it) that endpoints.load gives a name or zone.
     NARRATIVE_NEW_ENDPOINT: the Drawbridge Impact Text names a dependency part that no requirement block's Facts
@@ -621,13 +683,6 @@ def readability_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
         text = (b.get("text") or "")
         summary = (b.get("summary") or "")
         story_sentences = _sentences(story)
-
-        # STORY_TOO_LONG
-        if kind == "requirement" and story:
-            words = len(" ".join(story.split()).split())
-            if words > _STORY_WORDS:
-                out.append(_f("WARN", "STORY_TOO_LONG", q["id"],
-                              f"Story is {words} words (over {_STORY_WORDS}): keep it under {_STORY_WORDS} words"))
 
         # READ_LIST, TWO_ROLE_NAME, ENDPOINT_UNDERSTATED
         if kind not in ("requirement", "narrative"):
@@ -1498,14 +1553,23 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
                 story_sentences = _prose_sentences(story)
                 if story and len(story_sentences) < 2:
                     findings.append(_f("ERROR", "STORY_NO_EVIDENCE_PATH", qid,
-                                       "Story needs at least an observed-current-state sentence and a separate rating conclusion"))
+                                       "Story needs at least two sentences: how the capability works now, then what the evidence leaves unknown"))
                 if story_sentences and _RATING_ANY.search(story_sentences[0]):
                     findings.append(_f("ERROR", "STORY_STARTS_WITH_RATING", qid,
                                        "start Story with how the capability or practice operates; put the rating conclusion last"))
-                if story_sentences and b.get("rating") and not _rating_basis(story_sentences[-1], b["rating"]):
-                    findings.append(_f("ERROR", "STORY_NO_RATING_CONCLUSION", qid,
-                                       f"finish Story with 'The requirement is {b['rating']} because ...' and connect the "
-                                       "observations to the decisive requirement condition"))
+                if story_sentences and b.get("rating") and any(_rating_basis(x, b["rating"]) for x in story_sentences):
+                    findings.append(_f("ERROR", "STORY_RESTATES_RATING", qid,
+                                       "the rating and its reason are already in the Summary on the same page: end the "
+                                       "Story with what the evidence leaves unknown or the gap that decided it, in new words"))
+                sum_words = _content(summary)
+                for sent in story_sentences:
+                    sw = _content(sent)
+                    if len(sw) >= 5 and len(sw & sum_words) / len(sw) >= _STORY_REPEAT:
+                        findings.append(_f("ERROR", "STORY_REPEATS_SUMMARY", qid,
+                                           "this Story sentence repeats the Summary in other words: replace it with "
+                                           "something the Summary does not say (what was checked, what was found, what is "
+                                           f"unknown): {sent[:90]}"))
+                        break
         rendered = [("Summary", b.get("summary") or ""), ("Text", b.get("text") or "")] + [("fact", f["text"]) for f in b["facts"]] + \
                    [("bullet", x) for x in b["bullets"]] + [("row", " | ".join(c)) for c in b["rows"][1:]]
         for where, s_ in rendered:
@@ -1565,6 +1629,7 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
     findings += frame_checks(sheet, card)
     findings += read_checks(sheet, card)
     findings += readability_checks(sheet, card)
+    findings += plain_language_checks(sheet, card)
     findings += practice_checks(sheet, card)
     findings += subject_checks(sheet, card)
     findings += drawbridge_topic_checks(sheet, card)

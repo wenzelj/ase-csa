@@ -13,8 +13,14 @@ import sys
 from pathlib import Path
 
 LIMIT = 8192
+SHARED_LIMIT = 2048
+COMMON_LIMIT = 6144
+COMMON_STAGES = ("answer", "draft")   # the card lanes share one file of cross-lane rules
 STAGES = ("answer", "writer", "author", "draft")
 DIGESTS = Path(__file__).resolve().parents[2] / "references" / "digests"
+STYLE_SKILL = Path(__file__).resolve().parents[2] / "skills" / "csa-writing-style" / "SKILL.md"
+_PLAIN_START = "<!-- digest:plain-language:start -->"
+_PLAIN_END = "<!-- digest:plain-language:end -->"
 
 
 def digest_path(stage: str) -> Path:
@@ -23,12 +29,30 @@ def digest_path(stage: str) -> Path:
     return DIGESTS / f"{stage}.md"
 
 
+def plain_language() -> str:
+    """The shared plain-language rule, read from csa-writing-style/SKILL.md (its single source) for every stage."""
+    text = STYLE_SKILL.read_text(encoding="utf-8")
+    a, b = text.find(_PLAIN_START), text.find(_PLAIN_END)
+    if a < 0 or b < a:
+        raise ValueError(f"{STYLE_SKILL} has no {_PLAIN_START} ... {_PLAIN_END} section")
+    body = text[a + len(_PLAIN_START):b].strip()
+    if len(body.encode("utf-8")) > SHARED_LIMIT:
+        raise ValueError(f"the plain-language section is over {SHARED_LIMIT} bytes")
+    return body
+
+
 def digest(stage: str) -> str:
     path = digest_path(stage)
     data = path.read_bytes()
     if len(data) > LIMIT:
         raise ValueError(f"{path.name} is {len(data)} bytes; a digest must be {LIMIT} bytes or less")
-    return data.decode("utf-8")
+    text = data.decode("utf-8").rstrip("\n")
+    if stage in COMMON_STAGES:
+        common = (DIGESTS / "_shared.md").read_bytes()
+        if len(common) > COMMON_LIMIT:
+            raise ValueError(f"_shared.md is {len(common)} bytes; it must be {COMMON_LIMIT} bytes or less")
+        text += "\n\n" + common.decode("utf-8").strip("\n")
+    return text + "\n\n" + plain_language() + "\n"
 
 
 def main(argv: list[str] | None = None) -> int:

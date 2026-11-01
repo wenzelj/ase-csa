@@ -1290,8 +1290,8 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
                   '  1. Start with how the capability or practice currently operates. Do not start with the rating.',
                   '  2. Explain the relevant coverage, behaviour and gaps in a logical order. Name at most three parts in a sentence, by their display names.',
                   '  3. State any material limitation as a factual unknown. Keep the corresponding `QUESTION:` line separate so the framework sends it to Discovery Required.',
-                  '  4. Finish with `The requirement is <Rating> because ...` and the decisive comparison with the requirement.',
-                  "  At most 90 words. Story must add the evidence path, not paraphrase Summary. Say nothing about another requirement's conditions. Hosts, ports and inventories stay in the tables."]
+                  '  4. Finish with what the evidence leaves unknown or the gap that decided the rating, in words the Summary does not use. Do not state the rating and do not repeat a Summary sentence: the reader has just read the Summary on the same page.',
+                  "  No word limit: write as much as a good explanation needs. A longer Story is right when each sentence tells the reader something new, and wrong when it pads. Story must add the evidence path, not paraphrase Summary: every sentence says something the Summary does not. Say nothing about another requirement's conditions. Hosts, ports and inventories stay in the tables."]
     sysname = system_name(workspace)
     if sysname:
         lines += ["", "## System name", "",

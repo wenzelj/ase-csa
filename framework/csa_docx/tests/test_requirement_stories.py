@@ -38,7 +38,7 @@ def _sheet(two=True):
 Facts:
 - The application uses local storage. (E-001) {observed; application}
 Summary: The application uses local storage. The requirement is Partially Met because recovery testing was not established.
-Story: The application keeps its operational data in local storage. No recovery test or isolation fallback was established. The requirement is Partially Met because storage exists but recovery evidence is incomplete.
+Story: Operational data is kept on a disk inside the server. A second copy of that data sits on the same machine.
 Rating: Partially Met
 Rating reason: local storage exists but recovery evidence is incomplete.
 """]
@@ -47,7 +47,7 @@ Rating reason: local storage exists but recovery evidence is incomplete.
 Facts:
 - Direct transfer remains in use. (E-002) {observed; application}
 Summary: Direct transfer remains in use. The requirement is Not Met because no controlled transfer pattern was identified.
-Story: The application transfers files directly between its parts. No proxy or scanning point was identified for that path. The requirement is Not Met because the transfer does not use a defined controlled pattern.
+Story: The application transfers files directly between its parts. The transfer runs over a shared folder. Whether any file is scanned before it reaches OT was not established.
 Rating: Not Met
 Rating reason: the observed transfer does not use a defined controlled pattern.
 """)
@@ -65,7 +65,7 @@ def test_split_requirement_fields_validate_and_render_to_two_destinations():
     text = "\n".join(rendered["records"])
     assert "Observed: The application uses local storage. The requirement is Partially Met because recovery testing was not established." in text
     assert "SEP-X-01 — x" in text
-    assert "The application keeps its operational data in local storage." in text
+    assert "Operational data is kept on a disk inside the server." in text
     assert "SEP-X-02 — y" in text
     assert "The application transfers files directly between its parts." in text
     assert text.index("SEP-X-02 discovery story") < text.index("SEP-X-01 discovery story")
@@ -146,12 +146,27 @@ Rating reason: recovery was not established.
     assert "SUMMARY_NO_RATING_BASIS" in codes
     assert "STORY_STARTS_WITH_RATING" in codes
     assert "STORY_NO_EVIDENCE_PATH" in codes
-    no_conclusion = raw.replace(
+    restates = raw.replace(
         "Story: Partially Met because local storage exists but recovery was not established.",
-        "Story: The application uses local storage. Recovery testing was not established.",
+        "Story: The application uses local storage on one disk. The requirement is Partially Met because recovery was not established.",
     )
-    res2 = A.validate(A.parse(no_conclusion), card, matrix, draft=True, relaxed=True)
-    assert "STORY_NO_RATING_CONCLUSION" in {f["code"] for f in res2["findings"] if f["level"] == "ERROR"}
+    res2 = A.validate(A.parse(restates), card, matrix, draft=True, relaxed=True)
+    assert "STORY_RESTATES_RATING" in {f["code"] for f in res2["findings"] if f["level"] == "ERROR"}
+
+
+def test_story_sentence_that_repeats_the_summary_is_rejected():
+    card = _card(two=False)
+    matrix = {"E-001": {"claim": "local storage"}}
+    raw = """## B1 SEP-X-01
+Facts:
+- The application uses local storage. (E-001) {observed; application}
+Summary: The application keeps its data on local storage and no restore test was recorded. The requirement is Partially Met because recovery was not established.
+Story: The application keeps its data on local storage and no restore test was recorded. The nightly job writes to a second disk on the same server.
+Rating: Partially Met
+Rating reason: recovery was not established.
+"""
+    res = A.validate(A.parse(raw), card, matrix, draft=True, relaxed=True)
+    assert "STORY_REPEATS_SUMMARY" in {f["code"] for f in res["findings"] if f["level"] == "ERROR"}
 
 
 def test_near_duplicate_summary_and_story_are_rejected():
@@ -161,7 +176,7 @@ def test_near_duplicate_summary_and_story_are_rejected():
 Facts:
 - The application uses local storage. (E-001) {observed; application}
 Summary: The application uses local storage. The requirement is Partially Met because recovery testing was not established.
-Story: The application uses local storage for its data. Recovery testing was not established. The requirement is Partially Met because recovery testing was not established.
+Story: The application uses local storage for its data. Recovery testing was not established.
 Rating: Partially Met
 Rating reason: recovery testing was not established.
 """

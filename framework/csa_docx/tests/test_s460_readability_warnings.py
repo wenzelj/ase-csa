@@ -119,7 +119,7 @@ def test_stor_fixture_gives_read_list_two_role_name_story_too_long_endpoint_unde
 
     findings = A.readability_checks(sheet, card)
     codes = {f["code"] for f in findings}
-    for want in ("READ_LIST", "TWO_ROLE_NAME", "STORY_TOO_LONG", "ENDPOINT_UNDERSTATED"):
+    for want in ("READ_LIST", "TWO_ROLE_NAME", "ENDPOINT_UNDERSTATED"):
         assert want in codes, f"expected {want} in {sorted(codes)}"
     # all are warnings, none is an error
     for f in findings:
@@ -158,7 +158,7 @@ def test_well_shaped_story_gives_none(tmp_path, monkeypatch):
     sheet = A.parse(sheet_text)
     findings = A.readability_checks(sheet, card)
     codes = {f["code"] for f in findings}
-    for not_wanted in ("READ_LIST", "STORY_NO_REASON", "TWO_ROLE_NAME", "STORY_TOO_LONG",
+    for not_wanted in ("READ_LIST", "STORY_NO_REASON", "TWO_ROLE_NAME",
                         "ENDPOINT_UNDERSTATED", "NARRATIVE_NEW_ENDPOINT"):
         assert not_wanted not in codes, f"unexpected {not_wanted}: " + "; ".join(
             f["message"] for f in findings if f["code"] == not_wanted)
@@ -176,6 +176,6 @@ def test_validate_includes_new_warnings_and_draft_lane_keeps_them_as_warn():
     sheet = A.parse(_fixture_sheet(story))
     res = A.validate(sheet, card, {"E-001": {"claim": "x"}, "E-002": {"claim": "y"}}, draft=True, relaxed=True)
     levels = {f["code"]: f["level"] for f in res["findings"]}
-    for want in ("READ_LIST", "STORY_NO_REASON", "TWO_ROLE_NAME", "STORY_TOO_LONG"):
+    for want in ("READ_LIST", "STORY_NO_REASON", "TWO_ROLE_NAME"):
         if want in levels:
             assert levels[want] == "WARN", f"{want} is {levels[want]}, expected WARN"

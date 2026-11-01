@@ -90,18 +90,32 @@ After (the same facts, told as a story):
 
 The addresses, ports and gateway names move to the discovery table. Nothing is lost, and the paragraph now explains the system instead of listing it.
 
+<!-- digest:plain-language:start -->
+## Plain language for the reader
+
+The agent digests copy this section word for word, so edit it here and nowhere else.
+
+- Write for a reader who has never seen the evidence or this framework. Say what this system's own parts are or do the first time they appear ("the two domain controllers that every server asks for DNS"), not in a shorthand label. This is not textbook material: do not explain what DNS or a domain controller is in general.
+- Say "DNS server", not "resolver", in prose (the terminology skill's term).
+- Never use framework shorthand as if the reader knew it: "resolver pair", "OT parts", "captured parts", "role group", "role-aware".
+- Write a term in full on first use, and the abbreviation after it only where the abbreviation is needed again.
+- Name a machine by its role and site ("the Reveloc application server in Mackay"). Host names and IP addresses go in tables, unless the question asks for them. This holds even when a Fact names the host.
+- Tell it as a short story: how it works now, what is missing, what that means for operations. Do not list what the captures contain.
+- Read it aloud to a colleague who does not know the system. If they would ask "what is that?", rewrite it.
+<!-- digest:plain-language:end -->
+
 ## Say it once, say it first
 
 A Current State Assessment (CSA) gives decision-makers an evidenced baseline: what exists, how it differs from what the design or reference standard expects, and what that means for operations. Its readers are technical and operational people who already know the technologies. They need the facts and their consequence, not a tour of the evidence. These rules apply to every paragraph, bullet and table cell, and they outrank "match the existing voice".
 
 - **The subject is the system, not the evidence.** The subject of a sentence is the application, a component, a service, or a dependency -- never "the discovery data", "the table", "the workbook", "the capture", "the script output". Evidence supports the statement; it does not become its subject. Full rules and before/after examples: `csa-section-writer/references/current-state-reasoning.md`.
-- **Answer first.** The first sentence of a section or subsection states its conclusion. Supporting facts follow; raw detail goes in a table or the appendix. Do not build up to the conclusion through a chain of "This confirms... As a result..." steps.
+- **Answer first.** The first sentence of a section or subsection states its conclusion. (In a requirement block the Summary answers first. The Story then tells how the capability works now and what the evidence leaves unknown. It does not restate the rating or repeat the Summary.) Supporting facts follow; raw detail goes in a table or the appendix. Do not build up to the conclusion through a chain of "This confirms... As a result..." steps.
 - **Each fact once.** A fact (a host list, a server name, an IP address, a dependency, a consequence) is stated in the one place that owns it. Everywhere else, refer to it ("the two enterprise time servers", or a finding ID) rather than listing it again. When Findings, Assessment, Operational Behaviour and Impact subsections all restate the same dependency, each keeps only what is new to it.
 - **State, don't announce.** Delete lead-ins that announce a conclusion instead of stating it: "This confirms that", "This indicates", "This establishes that", "This results in:", "This represents", "As a result:", "The following findings are derived from...", "The analysis focuses on...". Write the conclusion itself as the sentence.
 - **Sentences, not fragments.** Write full sentences in paragraphs. Use a bullet list only for three or more parallel items a reader will scan (hosts, services, requirements). Never split one sentence across a lead-in line and bullets ("Loss of:" followed by "- ongoing time synchronisation"). No nested bullets.
 - **No textbook material.** Do not explain what DNS, NTP, Kerberos, a firewall or an endpoint agent is, or why such services matter in general. Say what it does in this system and why that matters here. If a reader needs background, it goes in a labelled `Technical explanation` note (`technical-explainer`), not in the finding.
 - **Findings, not log lines.** Never paste raw log or command output into the body. State what it shows and give a short source reference (file name and date); the raw lines stay in the evidence.
-- **Detail lives in tables and appendices.** Per-host lists, address lists, port lists, capture dates and evidence file names belong in the observed-state or discovery table, or the evidence appendix. Prose carries what the detail means ("all eight captured hosts", "both production sites").
+- **Detail lives in tables and appendices.** Per-host lists, address lists, port lists, capture dates and evidence file names belong in the observed-state or discovery table, or the evidence appendix. Prose carries what the detail means ("the captured SQL Server cluster nodes", "the Rockhampton site"). Do not give counts of hosts: name the role group.
 - **State the evidence basis once.** How evidence was gathered, and what it could not see, is stated once in Scope and Methodology. Do not tag headings or sentences with "(Script Evidence)", "(Evidence-Based)" or "(Script Confirmed)". A limitation that affects one finding is stated once, precisely, in that finding ("not confirmed on six of eight hosts, whose captures did not include service inventories").
 - **Findings run condition, criteria, consequence.** Each finding is one short paragraph with a headline sentence that could stand alone: what is (condition), what the design or reference standard expects (criteria), and what it means for operations, including under the isolation scenario (consequence). Add the cause only when the evidence shows it. Recommendations sit separately and refer back to the finding.
 - **Rank by consequence.** Order findings by operational consequence, not by the order discovery happened.

@@ -153,7 +153,7 @@ def test_card_and_answer_sheet_round_trip():
 Facts:
 - Every host uses the enterprise time servers. (E-1) {observed; all hosts}
     Summary: Every host uses enterprise time servers. The requirement is Not Met because no OT-resident source was identified.
-    Story: The system's hosts synchronise from enterprise time servers. Isolation leaves them without an identified source inside OT. The requirement is Not Met because no OT-resident time source was identified.
+    Story: The hosts take their clock from servers on the corporate network. Whether any host keeps a usable clock during isolation was not established.
 Rating: Not Met
 Rating reason: no OT-resident source.
 
@@ -178,7 +178,7 @@ None: every host fits a row of the table.
     assert "`@H3.4.2-P1`" in t and "> Time source | Enterprise servers | all hosts" in t
     assert "SEP-TIME-01 discovery story" in t
     assert "SEP-TIME-01 — Time from an OT-resident authoritative source independent of the IT domain hierarchy" in t
-    assert "The system's hosts synchronise" in t
+    assert "The hosts take their clock from servers on the corporate network" in t
     assert "E-1" not in t.split("**Text:**")[2].split("**Why:**")[0]
 
 

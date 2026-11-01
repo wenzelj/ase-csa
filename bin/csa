@@ -406,44 +406,32 @@ def local_path(p: str) -> Path:
 def agent_working_dir(p: dict, r: dict) -> Path:
     """Working directory exposed to a model call.
 
-    Answer/draft agents only need their selected project's card and answer files. A real framework-owned directory is
-    used instead of a directory symlink: macOS resolves a symlink cwd back to its physical path, which would expose the
-    spaces again. File-level links inside this directory give small models bare filenames and keep an accidental listing
-    inside the closed set of answer artifacts. Other agents retain the shared framework root.
+    Answer/draft agents run in their project's own csa-work/cards folder: the card, the answer and the sheet are all
+    there, and file names are passed bare, so the spaces in the project path never reach the model. No links to files
+    elsewhere are made, so the folder can be the whole of what the call may touch (see _closed_sandbox_args).
+    Other agents retain the shared framework root.
     """
     if r.get("verb") in ("answer", "draft"):
-        key = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(p.get("key") or "project")).strip("-.") or "project"
-        workspace = STATE_DIR / "model-work" / key
-        workspace.mkdir(parents=True, exist_ok=True)
-        return workspace
+        cards = local_path(str(p.get("work_dir") or "")) / "cards"
+        cards.mkdir(parents=True, exist_ok=True)
+        return cards
     return ROOT
 
 
-def _answer_file_link(p: dict, r: dict, path: Path) -> str:
-    """Expose one card artifact in the answer model's space-free working directory."""
-    cards = (local_path(str(p.get("work_dir") or "")) / "cards").resolve()
-    resolved = path.resolve()
-    if resolved.parent != cards:
-        return str(resolved)
-    link = agent_working_dir(p, r) / resolved.name
-    if link.is_symlink():
-        try:
-            if link.resolve(strict=False) == resolved:
-                return link.name
-        except OSError:
-            pass
-        link.unlink(missing_ok=True)
-    elif link.exists():
-        link.unlink()
-    link.symlink_to(resolved)
-    return link.name
+def _closed_sandbox_args(argv: list[str]) -> list[str]:
+    """Codex permission profile for an answer/draft call: read the minimal system set and the framework's .agents
+    folder, read and write the working folder (the project's cards). Nothing else on the machine, so one application
+    cannot see another."""
+    if not (argv and Path(argv[0]).name == "codex" and "exec" in argv):
+        return []
+    # The .agents folder is readable (core rules, skills, project context): the required reading lives there.
+    return ["-c", 'default_permissions="csa_closed"',
+            "-c", f'permissions.csa_closed.filesystem={{":minimal"="read","{CANON_AGENTS}"="read",":project_roots"={{"."="write"}}}}']
 
 
 def model_file_path(p: dict, r: dict, value: str | Path) -> str:
     """Render a filesystem value for the model, relative to its cwd when it is inside that cwd."""
     path = local_path(str(value)).resolve()
-    if r.get("verb") in ("answer", "draft"):
-        return _answer_file_link(p, r, path)
     cwd = agent_working_dir(p, r).resolve()
     try:
         relative = path.relative_to(cwd)
@@ -2245,6 +2233,23 @@ def local_launch(cmdline: str = "") -> bool:
     return "--profile" in cmdline or "model_provider=\"ollama" in cmdline
 
 
+def required_reading(p: dict) -> list[str]:
+    """Absolute paths an answer/draft agent reads before writing: the card rules, the writing and terminology skills,
+    and each skill the project context lists under application_skills."""
+    paths = [CANON_AGENTS / "csa-card-rules.md", CANON_AGENTS / "skills" / "csa-writing-style" / "SKILL.md",
+             CANON_AGENTS / "skills" / "australian-it-ot-terminology" / "SKILL.md"]
+    try:
+        text = Path(str(p.get("project_context") or "")).read_text(encoding="utf-8")
+        m = re.search(r"^application_skills:\s*\n((?:[ \t]*-[ \t]*\S+[^\n]*\n?)+)", text, re.M)
+        for line in (m.group(1).splitlines() if m else []):
+            name = line.split("-", 1)[1].split("#")[0].strip().strip("'\"")
+            if name:
+                paths.append(CANON_AGENTS / "skills" / name / "SKILL.md")
+    except OSError:
+        pass
+    return [str(x) for x in paths if x.is_file()]
+
+
 def build_prompt(p: dict, r: dict, args: list[str], local: bool | None = None) -> str:
     inputs = parse_inputs(r.get("inputs", ""))
     values = {k: v for k, v, _ in inputs if v is not None}
@@ -2315,12 +2320,14 @@ def build_prompt(p: dict, r: dict, args: list[str], local: bool | None = None) -
     if is_local:
         lines.append("\nCodex CLI tool rule: use `exec_command` for shell commands. Never call `exec`, which is not a supported CLI tool.")
     if answer_workspace:
-        lines.append("\nThis is a closed-file task. Read only CARD, ANSWER and ERRORS, and write only SHEET. These are "
-                     "filenames in WORKSPACE. Use them exactly as given. Do not inspect directories, search for files, "
-                     "open the project context, source set, change file or Word document, or reconstruct any path.")
+        lines.append("\nRead CARD, ANSWER and ERRORS (filenames in WORKSPACE, used exactly as given) and the files listed under "
+                     "REQUIRED_READING (absolute paths: read them first). Write only SHEET. Do not inspect other "
+                     "directories, search for files, open the source set, change file or Word document, or reconstruct any path.")
+        lines.append("\nREQUIRED_READING:\n" + "\n".join(f"- {x}" for x in required_reading(p)))
     if stage and not (r.get("verb") == "answer" and str(values.get("MODE", "answer")).lower() != "answer"):
         lines.append("\n## Rules (digest)\n\n" + _fw_digest(stage).rstrip())
-        lines.append("\nDo not read the full skill or reference files unless a check names them.")
+        lines.append("\nThe digest summarises the rules. It does not replace the required reading." if answer_workspace
+                     else "\nDo not read the full skill or reference files unless a check names them.")
     return "\n".join(lines)
 
 
@@ -2431,6 +2438,9 @@ def _launch(p: dict, r: dict, args: list[str], a) -> int:
         print(prompt)
         die(f"'{argv[0]}' is not on PATH. Prompt printed above; paste it into your CLI.")
     run_cwd = agent_working_dir(p, r)
+    if r.get("verb") in ("answer", "draft"):
+        i = argv.index("exec") + 1 if "exec" in argv else 1
+        argv[i:i] = _closed_sandbox_args(argv)
     print(f"{C['d']}launching {cli} ({mode}) as {r['title']} in {run_cwd}{C['0']}", file=sys.stderr)
     if r.get("verb") not in ("answer", "draft"):
         return subprocess.call(argv, cwd=str(run_cwd))

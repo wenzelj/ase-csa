@@ -2,6 +2,8 @@
 
 Every agent and skill in `.agents/` follows these rules. Where a line in an agent or skill file disagrees with this file, this file wins; say so in your final report so the other file can be fixed.
 
+**Card-based lanes (`csa answer`, `csa draft`) read `csa-card-rules.md` instead of this file.** It holds the rules those writers use (project, evidence classes, document text, never infer, evidence IDs, stopping). The tools, evidence-matrix lookup, change-file, subsection, Word-comment and tracked-change sections below do not apply to them: their evidence is the card, and they write only the answer sheet. The shared sections are kept word for word in both files (a test fails when they drift), so edit them here and copy them across.
+
 ## Paths and tools
 
 - Paths that start with `.agents/` are relative to the CurrentStateAssessments folder. `csa` starts every agent there.
@@ -45,6 +47,7 @@ Every agent and skill in `.agents/` follows these rules. Where a line in an agen
 - Use the evidence's own words for frequency, timing, direction, content and quantity: "copies yesterday's file" is not "daily".
 - Keep the scope of the capture: name the hosts or sites it covers, and never widen to "all", "every", "both" or "the system".
 - A conclusion you would have to reason your way to is an unknown and an open question, never a fact. A gap stated plainly is good writing.
+- A consequence the evidence records is not an inference: a function map or flow row that says a function needs DNS, and a cut path that removes it, lets you write what stops and what that means for operations in the function's own words. Without that record, the consequence is an open question.
 - `prose_lint` flags inference wording; `csa check-change` checks every fact against the evidence matrix.
 
 ## Evidence IDs never in document text

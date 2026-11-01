@@ -76,6 +76,7 @@ Use the narrowest correct term. Go broader only when the evidence does not estab
 | It is a VM | virtual machine | infrastructure item |
 | It is a domain controller | domain controller | authentication asset, identity infrastructure |
 | It answers DNS queries | DNS server / DNS service | network service asset |
+| A host lists the servers it asks for names | the DNS servers configured on the host (not "resolver" or "resolver pair") | network service dependency |
 | It is an SMB share | network share (file share) | storage resource |
 | It is a VMware ESXi host managed by vCenter | ESXi host, vCenter-managed cluster | virtualisation platform asset |
 | It polls field devices over DNP3 | SCADA front-end / telemetry processor (as the application names it) | data collection component |
@@ -102,7 +103,7 @@ Examples of the register (vary them; do not turn them into a template):
 Evidence wording is right when the strength or the limit of the evidence changes what the reader should conclude:
 
 - "Observed traffic confirms communication between the Central Engines and the Message Redirectors over TCP/6003."
-- "The current configuration shows both hosts using the same two resolvers."
+- "The current configuration shows both hosts using the same two DNS servers."
 - "The supplied architecture documentation identifies a third DNS server that was not observed in use."
 - "No dedicated backup server was identified in the available evidence."
 - "The backup retention period has not been confirmed."
@@ -192,7 +193,7 @@ Severity: `MAJOR` for an IT/OT misclassification that changes the dependency pic
 | The server inventory identifies four servers at the ROT site. | The application is hosted on four servers at the Rockhampton (ROT) site. |
 | The network capture shows traffic between Server A and Server B over TCP port 443. | Server A communicates with Server B over HTTPS (TCP/443). Where the qualification matters: "Observed network traffic confirms communication between Server A and Server B over HTTPS (TCP/443)." |
 | Active Directory is part of the OT application stack. | The application depends on the INTERNAL Active Directory domain for Windows authentication; the domain is an enterprise IT service. |
-| The OT DNS servers ROTPRDSRV122 and MOTPRDSRV122 ... | The INTERNAL domain controllers ROTPRDSRV122 and MOTPRDSRV122, which also provide DNS, ... |
+| The OT DNS servers <host A> and <host B> ... (when the evidence shows they are domain controllers) | The INTERNAL domain controllers <host A> and <host B>, which also provide DNS, ... |
 | Platform tooling (CrowdStrike, SCCM, Nessus, LAPS) | Management and security agents: CrowdStrike Falcon, the Configuration Manager client, the Tenable Nessus agent and LAPS |
 | This is not a full-estate absence claim. | This does not establish that the shares are absent on hosts outside those captures. |
 | Heading: Estate and Discovery Coverage | Heading: Application Hosts and Discovery Scope (for a table of the application's hosts and which were examined) |
