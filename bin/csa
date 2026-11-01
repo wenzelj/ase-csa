@@ -2404,6 +2404,11 @@ def launch(p: dict, r: dict, args: list[str], a) -> int:
 
 def _launch(p: dict, r: dict, args: list[str], a) -> int:
     cli = getattr(a, "cli", None) or os.environ.get("CSA_CLI") or task_cli(r.get("verb", "")) or settings().get("default_cli", "codex")
+    # the model's own shell must run the framework with the framework's interpreter: a bare `python3` can resolve to an
+    # older one (macOS Command Line Tools 3.9), which cannot import csa_docx
+    _py = framework_python()
+    os.environ["CSA_PYTHON"] = _py
+    os.environ["PATH"] = os.pathsep.join([str(Path(_py).parent), os.environ.get("PATH", "")])
     mode = "headless" if getattr(a, "headless", False) else "interactive"
     if mode == "interactive" and not getattr(a, "print", False) and not (sys.stdin.isatty() and sys.stdout.isatty()):
         # An interactive CLI draws a full-screen UI (title, cursor and screen control codes). With no terminal

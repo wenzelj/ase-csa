@@ -30,6 +30,29 @@ _EVIDENCE_ID = re.compile(r"E-\d+$", re.I)
 _SECRET = re.compile(
     r"(?i)\b(pass(word|wd)?|pwd|secret|api[_-]?key|access[_-]?key|token|private[_-]?key)\b\s*[:=]\s*\S+"
 )
+# XML/CLIXML escapes such as _x0009_ (tab) or _x000D_ that sit between a field name and its value
+_XML_ESC = re.compile(r"_x[0-9A-Fa-f]{4}_")
+# a value after "token:" / "password=" that is a flag, a label or a placeholder, not a credential
+_BENIGN_VALUE = {
+    "yes", "no", "true", "false", "none", "null", "nil", "n/a", "na", "unknown", "empty", "required",
+    "enabled", "disabled", "set", "notset", "absent", "present", "redacted", "hidden", "masked", "x",
+}
+
+
+def _looks_secret(text: str) -> bool:
+    """True when text holds `password: <value>` style content whose value could be a credential.
+
+    A flag or placeholder after the field name (Windows logon "Elevated Token: Yes", `password: ********`,
+    `token = <redacted>`, `%%1842`) is not a credential and does not count."""
+    for m in _SECRET.finditer(text or ""):
+        rest = _XML_ESC.sub(" ", (text or "")[m.end(1):])
+        rest = rest.lstrip(" \t:=")
+        value = rest.split(None, 1)[0] if rest.strip() else ""
+        bare = value.strip("\"'<>[]()*").lower()
+        if not bare or bare in _BENIGN_VALUE or value.startswith("%%") or set(bare) <= {"*", "x", "-", "."}:
+            continue
+        return True
+    return False
 
 
 def _utc() -> str:
@@ -121,6 +144,15 @@ def _identity(record: dict) -> tuple[str, str, str, str]:
     )
 
 
+def hit_has_secret(hit: dict) -> bool:
+    """True when a hit's excerpt, source_ref or source_title looks like it holds a credential value."""
+    if not isinstance(hit, dict):
+        return False
+    source_ref = hit.get("source_ref") or hit.get("source_title") or ""
+    excerpt = hit.get("evidence_excerpt", hit.get("excerpt", "")) or ""
+    return any(_looks_secret(v) for v in (source_ref, excerpt, hit.get("source_title", "") or "") if isinstance(v, str))
+
+
 def _validate_hit(hit: dict, *, migration: bool) -> None:
     if not isinstance(hit, dict):
         raise ValueError("each hit must be an object")
@@ -146,9 +178,6 @@ def _validate_hit(hit: dict, *, migration: bool) -> None:
             raise ValueError(f"{name} must be a string")
         if len(value) > MAX_FIELD:
             raise ValueError(f"{name} is too long ({len(value)} chars)")
-    for name, value in (("source_ref", source_ref), ("excerpt", excerpt), ("source_title", hit.get("source_title", ""))):
-        if _SECRET.search(value or ""):
-            raise ValueError(f"{name} looks like it contains a credential/secret value")
 
 
 def _overlay(leads: list[dict], reviews: list[dict]) -> list[dict]:
@@ -174,6 +203,11 @@ def add_leads(workspace: str | Path, dr_id: str, qid: str, question: str, hits: 
         raise ValueError("dr_id, qid and question are required")
     if not isinstance(hits, list):
         raise ValueError("hits must be a list")
+    # a hit whose text looks like a credential is skipped (never stored), so one such excerpt cannot fail the whole run
+    kept = [item for item in hits if not hit_has_secret(item)]
+    if len(kept) != len(hits):
+        print(f"leads: {len(hits) - len(kept)} hit(s) skipped for {dr_id}: excerpt looked like a credential value", file=sys.stderr)
+    hits = kept
     for item in hits:
         _validate_hit(item, migration=migration)
     _, lead_path, review_path, lock_path = _paths(workspace)

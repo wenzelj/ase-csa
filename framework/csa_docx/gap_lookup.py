@@ -581,6 +581,12 @@ def lookup_gap(workspace: Path, dr_id: str, text: str, *, exclude: tuple[str, ..
     lead_ids: list[str] = []
     if hits:
         from csa_docx import leads
+        # a hit whose excerpt looks like a credential is withheld, never written to leads.jsonl; it must not abort the sweep
+        withheld = [h for h in hits if leads.hit_has_secret(h)]
+        if withheld:
+            hits = [h for h in hits if not leads.hit_has_secret(h)]
+            index_notes.append(f"{len(withheld)} index hit(s) withheld: excerpt looked like a credential value")
+    if hits:
         added = leads.add_leads(workspace, dr_id, _qid_from_dr_id(dr_id), text, hits)
         open_ids = {r["lead_id"] for r in leads.open_leads(workspace, dr_id)}
         lead_ids = [lead_id for lead_id in added if lead_id in open_ids]
@@ -685,6 +691,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--by", default="csa-evidence-investigator", help="resolve: reviewer/agent recording the complete answer")
     ap.add_argument("--ask", default="Confirm with the site team or the application owner", help="confirm: who to ask")
     ap.add_argument("--legacy-docx", type=Path)
+    raw = sys.argv[1:] if argv is None else list(argv)
+    joined = [t for t in raw if t.startswith("--") and " " in t]
+    if joined:
+        ap.error(f"flag and value arrived as one word: {joined[0][:80]!r}. Pass them as separate arguments, "
+                 f"for example --related-evidence \"E-1,E-2\" (check your shell quoting)")
     a = ap.parse_args(argv)
     exclude = (a.legacy_docx.name,) if a.legacy_docx else ()
     if not a.dr or not a.text:

@@ -101,7 +101,11 @@ search hit is only a lead: never promote it merely because its words overlap the
 6. If a lead's source does not answer its exact question, leave every real evidence row untouched. When no retained or
    newly written VERIFIED row answers after all saved leads are read, run `python3 -m csa_docx.gap_lookup confirm` with
    the exact `lead_ids` and `searched` value from `GAP_CHECK`. This appends/reuses the scoped NOT_FOUND row and marks those
-   leads `not_an_answer`; it must not search again. If the question disappeared, mark its leads `retired` with the reason.
+   leads `not_an_answer`; it must not search again. Run these commands with the framework interpreter (`$CSA_PYTHON`, set for you; never the system `/usr/bin/python3`, which is 3.9 and cannot import the framework) and `PYTHONPATH=.agents/framework`. Run one plain command per question, with each flag and its value as
+   separate shell words and no wrapper function, loop or variable expansion:
+   `python3 -m csa_docx.gap_lookup confirm --workspace WORKSPACE --dr <DR-id> --text "<text>" --leads L-...,L-... --searched "<searched>" --related-evidence E-...,E-... --ask "<who to ask>"`
+   (`--related-evidence` only when the record lists related IDs). A flag and its value joined inside one quoted string
+   (`"--related-evidence E-1,E-2"`) is read as a positional word and fails with `invalid choice`. If the question disappeared, mark its leads `retired` with the reason.
 7. Do not rerun `csa gap-check` and do not edit an answer sheet, change record or DOCX. The calling framework verifies
    the questions again and reruns affected subsection answers after settlement.
 8. Write `WORK_DIR/intake/gap-settlement-<UTC>.md` listing each DR id, the lead IDs considered, the resulting
