@@ -1130,30 +1130,45 @@ def role_name_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
     return out
 
 
-_CAPTURED_HOSTS = re.compile(r"(?<!\d )(?<!\d)\b(?:the|all) captured (?:ot )?hosts\b", re.I)
+def _load_framework_terms() -> list:
+    """Framework terms from term_lint.py (loaded by path, as check_change.py does); [] when unavailable."""
+    import importlib.util
+    script = Path(__file__).resolve().parents[2] / "skills" / "australian-it-ot-terminology" / "scripts" / "term_lint.py"
+    try:
+        spec = importlib.util.spec_from_file_location("term_lint_s508", script)
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules["term_lint_s508"] = mod
+        spec.loader.exec_module(mod)
+        return list(mod.load_framework_terms())
+    except Exception:
+        return []
 
 
-def captured_hosts_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
-    """CAPTURED_HOSTS_PHRASE (warning): prose says "the captured hosts" instead of naming the system. One per block."""
+def framework_term_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
+    """FRAMEWORK_TERM (error): a framework term in a block's Story, Summary, Text, facts or table cells.
+    QUESTION: lines and Unknown lines are not counted. One finding per phrase per block."""
+    terms = _load_framework_terms()
+    if not terms:
+        return []
     out = []
     for q in card.get("questions", []):
         qid = q["id"]
         b = sheet.get(qid)
         if not b:
             continue
-        texts = [b.get("summary") or "", b.get("story") or "", b.get("text") or ""] + [f["text"] for f in b.get("facts", [])]
-        hit = False
+        texts = [b.get("story") or "", b.get("summary") or "", b.get("text") or ""] + [f["text"] for f in b.get("facts", [])]
+        texts += [c for r in b.get("rows", []) for c in r]
+        seen = set()
         for t in texts:
             for line in t.splitlines():
-                if line.strip().upper().startswith("QUESTION:"):
+                if line.strip().upper().startswith(("QUESTION:", "UNKNOWN:")):
                     continue
-                if _CAPTURED_HOSTS.search(line):
-                    hit = True
-        if hit:
-            out.append(_f("WARN", "CAPTURED_HOSTS_PHRASE", qid,
-                          "The prose says 'the captured hosts', which does not tell the reader which system or hosts "
-                          "are meant. Name the system (its application name, or the host names). The role table "
-                          "footnote already shows which hosts were not captured."))
+                for pat, ask in terms:
+                    m = pat.search(line)
+                    if m and pat.pattern not in seen:
+                        seen.add(pat.pattern)
+                        out.append(_f("ERROR", "FRAMEWORK_TERM", qid,
+                                      f"'{m.group(0)}' is a framework term and does not belong in CSA text. Say instead: {ask}"))
     return out
 
 
@@ -1937,7 +1952,7 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
     findings += practice_checks(sheet, card)
     findings += subject_checks(sheet, card)
     findings += role_name_checks(sheet, card)
-    findings += captured_hosts_checks(sheet, card)
+    findings += framework_term_checks(sheet, card)
     findings += table_value_checks(sheet, card)
     findings += drawbridge_topic_checks(sheet, card)
     findings += topic_checks(sheet, card, matrix, _f)

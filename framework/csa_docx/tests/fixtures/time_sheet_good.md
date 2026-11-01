@@ -15,4 +15,4 @@ Rows:
 
 ## B3 Optional note
 Facts:
-- Every captured host runs the Windows Time service. (E-004) {observed; all captured hosts}
+- Every host runs the Windows Time service. (E-004) {observed; all hosts}

@@ -70,9 +70,9 @@ def test_story_states_rating():
 
 
 def test_note_repeats_text():
-    _, got = check(fault("Every captured host runs the Windows Time service.",
+    _, got = check(fault("Every host runs the Windows Time service.",
                          "MOTPRDREV101 and MOTPRDLOG103 at Mackay take their time from ROTPRDSRV122 at Rockhampton.", 1)
-                   .replace("(E-004) {observed; all captured hosts}", "(E-005) {observed; MOTPRDREV101, MOTPRDLOG103}"))
+                   .replace("(E-004) {observed; all hosts}", "(E-005) {observed; MOTPRDREV101, MOTPRDLOG103}"))
     assert ("NOTE_REPEATS_TEXT", "WARN") in got
 
 
