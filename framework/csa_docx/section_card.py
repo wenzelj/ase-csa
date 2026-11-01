@@ -340,6 +340,91 @@ def _index_hits(workspace: Path, term: str, exclude: tuple[str, ...], cache: dic
     return cache[term]
 
 
+# S495: prefer the newest capture. A row is superseded when every capture folder it names (read from the
+# host+timestamp pairs in source_title) is not the newest capture of that host for the same capture file;
+# the newest capture per host is read from hosts/host_facts.csv, with the matrix's own source_title
+# timestamps as fallback. Superseded rows are never dropped from the card; they are listed under their
+# question with the ID of the newer row that replaces them, and answer_sheet warns (SUPERSEDED_EVIDENCE)
+# when a block cites one without citing the newer row.
+
+_CAP_REF = re.compile(r"discovery_([A-Za-z0-9\-]+?)_(\d{8}T\d{6}Z)")
+
+
+def capture_refs(row: dict) -> list[tuple[str, str]]:
+    """(host, capture timestamp) pairs named in a row's source_title, in citation order, no repeats."""
+    out: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for host, ts in _CAP_REF.findall((row.get("source_title") or "")):
+        key = (host.upper(), ts)
+        if key not in seen:
+            seen.add(key)
+            out.append(key)
+    return out
+
+
+def _latest_capture(workspace: Path | None) -> dict[tuple[str, str], tuple[str, list[str]]]:
+    """{(host, capture file): (timestamp, evidence row ids)}: the newest capture of each host, per capture
+    file, and the matrix rows that cite it. The capture set is hosts/host_facts.csv; when it does not name
+    a capture, the matrix's own source_title timestamps are used so a row can still be superseded."""
+    if not workspace:
+        return {}
+    rows = _matrix_rows(Path(workspace))
+    latest: dict[tuple[str, str], tuple[str, list[str]]] = {}
+    facts = {}
+    for f in _file_rows(Path(workspace) / "csa-work", "hosts/host_facts.csv"):
+        src = (f.get("source") or "").split(" line ")[0].strip()
+        for host, ts in _CAP_REF.findall(src):
+            if not ts or "/" not in src:
+                continue
+            name = src.split("/")[-1]
+            key = (host.upper(), name)
+            if ts > (facts.get(key) or ("", set()))[0]:
+                facts[key] = (ts, {name})
+            else:
+                facts.setdefault(key, ("", set()))[1].add(name)
+    for r in rows:
+        st = r.get("source_title") or ""
+        for host, ts in capture_refs(r):
+            m = re.search(r"\b(\d{2}_[a-z0-9_]+\.txt)\b", st)
+            if not (ts and m):
+                continue
+            name = m.group(1)
+            key = (host.upper(), name)
+            fact = facts.get(key)
+            if fact and ts < fact[0]:
+                continue                    # an older capture of a file the host facts say was re-captured
+            cur = latest.get(key)
+            if cur is None or ts > cur[0]:
+                latest[key] = (ts, [r["evidence_id"]])
+            elif ts == cur[0]:
+                latest[key] = (ts, cur[1] + [r["evidence_id"]])
+    return latest
+
+
+def superseded(row: dict, latest: dict[tuple[str, str], tuple[str, list[str]]]) -> list[str]:
+    """The IDs of the newer rows that supersede ``row``, or []: every capture it cites must be older than
+    the newest capture of that host for the same capture file."""
+    if not latest:
+        return []
+    refs = capture_refs(row)
+    if not refs:
+        return []
+    st = row.get("source_title") or ""
+    files = set(re.findall(r"\b\d{2}_[a-z0-9_]+\.txt\b", st))
+    newer: set[str] = set()
+    for host, ts in refs:
+        superseded_by: set[str] = set()
+        for (h, name), (lts, ids) in latest.items():
+            if h != host.upper() or name not in files or ts >= lts:
+                continue
+            superseded_by |= set(ids)
+        if not superseded_by:
+            return []                       # one capture is current: the row is not superseded
+        newer |= superseded_by
+    newer.discard(row.get("evidence_id", ""))
+    return sorted(newer)
+
+
 def evidence_pack(node: dict, qs: list[dict], workspace: Path | None, extra_searches: dict | None = None,
                   exclude: tuple[str, ...] = (), skip: frozenset = frozenset(), terms: dict | None = None) -> dict:
     """{question id: {"rows", "cut", "candidates", "searched"}}, gathered before the AI starts.
@@ -360,6 +445,8 @@ def evidence_pack(node: dict, qs: list[dict], workspace: Path | None, extra_sear
     offered = {r["evidence_id"].upper() for r in rows}
     rejected = _rejected(workspace)
     cache: dict = {}
+    latest = _latest_capture(workspace)
+    newer_of = {r["evidence_id"].upper(): superseded(r, latest) for r in rows}
     topic = _norm(node["title"])
     own = [r for r in rows if r["evidence_id"].upper() not in rejected and r["evidence_id"].upper() not in skip and (
         topic and (topic in _norm(r.get("section", "")) or _norm(r.get("csa_area", "")) in (topic, topic.replace(" and ", " "))))]
@@ -385,8 +472,13 @@ def evidence_pack(node: dict, qs: list[dict], workspace: Path | None, extra_sear
                     continue
                 scored[m["evidence_id"]] = (_STATUS_RANK.get(m.get("status", ""), 5) + 1, -int(10 * m.get("score", 0)), m)
         ranked = [v[2] for v in sorted(scored.values(), key=lambda v: (v[0], v[1]))]
+        ranked.sort(key=lambda m: bool(newer_of.get(m["evidence_id"].upper())))    # newest captures first (stable)
         kept = [_row(m) for m in ranked[:MAX_ROWS_PER_QUESTION]]
-        cut = [m["evidence_id"] for m in ranked[MAX_ROWS_PER_QUESTION:]]
+        for k_ in kept:
+            if newer_of.get(k_["id"].upper()):
+                k_["superseded_by"] = newer_of[k_["id"].upper()]
+        old_ = {m["evidence_id"]: newer_of[m["evidence_id"].upper()] for m in ranked if newer_of.get(m["evidence_id"].upper())}
+        cut =[m["evidence_id"] for m in ranked[MAX_ROWS_PER_QUESTION:]]
         cands = []
         for term in (terms or {}).get(q["id"], []):        # the frame's own words for this question's slots
             searched.append(f"index '{term}'")
@@ -402,7 +494,7 @@ def evidence_pack(node: dict, qs: list[dict], workspace: Path | None, extra_sear
                                   "excerpt": " ".join(h.get("evidence_excerpt", "").split())[:EXCERPT]})
         if skip:
             searched.append(f"{len(skip)} rows the analysis frame cites are on the card with its findings, not repeated here")
-        pack[q["id"]] = {"rows": kept, "cut": cut, "candidates": cands[:4 if (terms or {}).get(q["id"]) else 3],
+        pack[q["id"]] = {"superseded": old_, "rows": kept, "cut": cut, "candidates": cands[:4 if (terms or {}).get(q["id"]) else 3],
                          "searched": searched}
     return pack
 
@@ -1476,11 +1568,20 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
                 lines += [f"- {c['text']}" + (f" ({', '.join(c['ids'])})" if c["ids"] else "")
                           for c in p["note_candidates"]] or ["- none found: write 'None: <why>' unless a row below shows one"]
                 lines.append("")
+            old_rows = []
             for r in p["rows"]:
                 if r.get("established"):
                     continue                    # listed under Facts already established
+                if r.get("superseded_by"):
+                    old_rows.append(r)
+                    continue
                 note = f" [{r['note']}]" if r["note"] else ""
                 lines.append(f"- {r['id']} {r['status']}: {r['claim']}{note}")
+            if old_rows:
+                lines.append("superseded (an older capture; a newer row replaces each, cite the newer one):")
+                for r in old_rows:
+                    note = f" [{r['note']}]" if r["note"] else ""
+                    lines.append(f"- {r['id']} {r['status']} superseded by {', '.join(r['superseded_by'])}: {r['claim']}{note}")
             for c in p["candidates"]:
                 lines.append(f"- candidate (unverified, not in the matrix): {c['source']} {c['where']}: {c['excerpt']}")
             if not p["rows"] and not p["candidates"]:

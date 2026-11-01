@@ -1535,6 +1535,15 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
             elif allowed and i not in allowed:
                 findings.append(_f("ERROR", "EVIDENCE_NOT_ON_CARD", qid,
                                    f"{i} was not on the card; ask for it with 'Search:' or append it to the matrix first"))
+        old_ev: dict[str, list[str]] = {}
+        for p_ in card.get("evidence", {}).values():
+            for oid, nids in (p_.get("superseded") or {}).items():
+                old_ev[oid.upper()] = nids
+        for oid in sorted(cited & set(old_ev)):
+            if not ({n.upper() for n in old_ev[oid]} & cited):
+                findings.append(_f("WARN", "SUPERSEDED_EVIDENCE", qid,
+                                   f"{oid} comes from an older capture; the newer capture is {', '.join(old_ev[oid])}: "
+                                   "cite the newer row (or both, if the change over time is the point)"))
         p = card.get("evidence", {}).get(qid, {})
         if p.get("digest_ids") and p.get("need") in ("inventory", "dependencies", "isolation") \
                 and not (cited & {i.upper() for i in p["digest_ids"]}):
