@@ -128,5 +128,28 @@ const earlierFailed = deriveIntakeSteps(evidenced, null, errs(run({ step: "inges
 assert(earlierFailed.steps[0].status === "failed" && earlierFailed.next === "gaps", "failed step is skipped when a later step is current");
 
 // The checks above run when the file loads (a failed one fails the suite); vitest needs at least one test.
-import { it } from "vitest";
+import { it, vi } from "vitest";
+import { refreshWhileRunning, runningText } from "../components/EvidenceIntake";
 it("intake steps derive as expected", () => { assert(true, "loaded"); });
+it("errors reload every 10 seconds only while a job runs", () => {
+  vi.useFakeTimers();
+  const state = { n: 0, fail: false };
+  const n = (): number => state.n;
+  const refresh = () => { state.n++; return state.fail ? Promise.reject(new Error("down")) : Promise.resolve(); };
+  refreshWhileRunning(false, refresh);
+  vi.advanceTimersByTime(30000); assert(n() === 0, "idle page never refreshes");
+  const stop = refreshWhileRunning(true, refresh);
+  vi.advanceTimersByTime(9999); assert(n() === 0, "nothing before 10 seconds");
+  vi.advanceTimersByTime(1); assert(n() === 1, "refresh at 10 seconds");
+  state.fail = true; vi.advanceTimersByTime(10000); assert(n() === 2, "a failed refresh does not stop the timer");
+  state.fail = false; vi.advanceTimersByTime(10000); assert(n() === 3, "the next tick tries again");
+  stop(); vi.advanceTimersByTime(60000); assert(n() === 3, "no timer left after stop");
+  assert(vi.getTimerCount() === 0, "no timers pending");
+  vi.useRealTimers();
+});
+it("running text shows problems so far", () => {
+  const e = errs(run({ id: "j1", state: "running", exit_code: null, problem_count: 3 }));
+  assert(runningText("j1", e) === "Running… 3 problems so far", "plural");
+  assert(runningText("j1", errs(run({ id: "j1", state: "running", problem_count: 1 }))) === "Running… 1 problem so far", "singular");
+  assert(runningText("j1", null) === "Running…" && runningText("zz", e) === "Running…", "no problems or no run");
+});

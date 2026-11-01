@@ -9,6 +9,19 @@ const TERMINAL = ["succeeded", "failed", "cancelled", "interrupted"];
 const OP_LABEL: Record<string, string> = { ingest: "Ingest new data", intake: "Evidence agent", gap_check: "Check open questions", resolve_gaps: "Resolve evidence and update answers" };
 const VERDICT: Record<string, string> = { ANSWERED: "Answered", CANDIDATES: "Possible answer found", NOT_FOUND: "Not found" };
 
+export const ERROR_REFRESH_MS = 10000;
+// Reload the errors while a job runs; a failed refresh is ignored and the next tick tries again. Returns the stop function.
+export function refreshWhileRunning(running: boolean, refresh: () => Promise<unknown>): () => void {
+  if (!running) return () => {};
+  const timer = setInterval(() => { void refresh().catch(() => {}); }, ERROR_REFRESH_MS);
+  return () => clearInterval(timer);
+}
+export function runningText(jobId: string, errors: IntakeErrors | null): string {
+  const live = (errors?.runs || []).find(r => r.id === jobId);
+  const n = live?.problem_count || 0;
+  return n > 0 ? `Running… ${n} ${n === 1 ? "problem" : "problems"} so far` : "Running…";
+}
+
 function when(value?: string | null) { if (!value) return "—"; const d = new Date(value); return isNaN(d.getTime()) ? value : d.toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }); }
 function name(path: string) { return path.split("/").pop() || path; }
 
@@ -28,6 +41,8 @@ export function EvidenceIntake({ system, draftStage, refreshKey, openEvidence, w
     try { setErrors(await fetchIntakeErrors(system)); }
     catch { /* no error report: show nothing new */ }
   }
+  const watching = !!job && !TERMINAL.includes(job.state);
+  useEffect(() => refreshWhileRunning(watching, () => fetchIntakeErrors(system).then(setErrors)), [watching, system]);
   async function load() {
     void loadErrors();
     try { setSnap(await fetchIntake(system)); }
@@ -102,7 +117,7 @@ export function EvidenceIntake({ system, draftStage, refreshKey, openEvidence, w
 
     {snap.sync && !snap.sync.ok && <div className="intake-warn" role="alert"><b>{snap.sync.failed ? "The host files did not rebuild" : "The host files are older than the evidence"}</b><p>{snap.sync.failed ? `${snap.sync.last?.hosts_index || "Graph sync failed"}. ` : ""}Hosts, links, flows and per-host evidence shown elsewhere in the workspace may be out of date. Run Ingest new data{snap.sync.failed ? " once the error is fixed" : ""}.</p></div>}
     {error && <p className="desk-error" role="alert">{error}</p>}
-    {job && <div className={`draft-job draft-job-${job.state}`} role="status"><div><b>{OP_LABEL[job.operation] || job.operation}</b><span>{running ? "Running…" : job.state === "succeeded" ? "Done" : `Stopped: ${job.state}`}</span></div><div className="draft-job-buttons"><button className="quiet" onClick={() => setShowLog(!showLog)}>{showLog ? "Hide output" : "Show output"}</button>{running && <button className="quiet" onClick={() => void cancelJob(system, job.id).then(() => fetchJob(system, job.id)).then(setJob)}>Stop</button>}</div>{showLog && <pre>{[job.stdout_tail, job.stderr_tail].filter(Boolean).join("\n") || "No output yet."}</pre>}</div>}
+    {job && <div className={`draft-job draft-job-${job.state}`} role="status"><div><b>{OP_LABEL[job.operation] || job.operation}</b><span>{running ? runningText(job.id, errors) : job.state === "succeeded" ? "Done" : `Stopped: ${job.state}`}</span></div><div className="draft-job-buttons"><button className="quiet" onClick={() => setShowLog(!showLog)}>{showLog ? "Hide output" : "Show output"}</button>{running && <button className="quiet" onClick={() => void cancelJob(system, job.id).then(() => fetchJob(system, job.id)).then(setJob)}>Stop</button>}</div>{showLog && <pre>{[job.stdout_tail, job.stderr_tail].filter(Boolean).join("\n") || "No output yet."}</pre>}</div>}
 
     <section className="decision-desk"><header><div><h2>1 · What came in</h2><p>{rec ? `Last ingest that brought something in: ${when(rec.built_at_utc)}.` : "Run Ingest new data after adding files to the project's discovery folders."}{snap.nothing_new_since ? ` The index was refreshed since then with nothing new.` : ""}</p></div></header>
       {rec && rec.unreadable.length > 0 && <div className="intake-warn" role="note"><b>Not readable: supply a text or PDF copy</b><ul>{rec.unreadable.map(f => <li key={f.rel_path}>{name(f.rel_path)} <small>{f.reason}</small></li>)}</ul></div>}
