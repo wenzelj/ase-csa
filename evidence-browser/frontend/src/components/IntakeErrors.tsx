@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { fetchJobLog } from "../api";
+import { runSummaryText } from "../intakeErrorsText";
 import type { IntakeProblem, IntakeRun, IntakeWarning, JobLogPage } from "../types";
 
 export const LOG_PAGE = 50;
@@ -59,6 +60,19 @@ function Group({ problem, open, system, jobId, fetcher }: { problem: IntakeProbl
   </li>;
 }
 
+function CopySummary({ run }: { run: IntakeRun }) {
+  const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
+  const text = runSummaryText(run);
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(text); setState("copied"); setTimeout(() => setState("idle"), 2000); }
+    catch { setState("failed"); }
+  };
+  return <span className="intake-copy">
+    <button className="quiet" onClick={copy}>{state === "copied" ? "Copied" : state === "failed" ? "Could not copy" : "Copy summary"}</button>
+    {state === "failed" && <pre className="intake-err-sample">{text}</pre>}
+  </span>;
+}
+
 export function IntakeErrors({ runs, warnings, expandSamples = false, system, fetcher = fetchJobLog }: { runs: IntakeRun[]; warnings: IntakeWarning[]; expandSamples?: boolean; system?: string; fetcher?: LogFetcher }) {
   const failing = runs.filter(r => r.has_problems || r.problems.length > 0)
     .sort((a, b) => (Date.parse(b.started_at || "") || 0) - (Date.parse(a.started_at || "") || 0));
@@ -68,7 +82,7 @@ export function IntakeErrors({ runs, warnings, expandSamples = false, system, fe
     {warnings.length > 0 && <ul className="intake-err-warnings">{warnings.map(w => <li key={`${w.step}-${w.code}`} className="intake-warn-line">{w.message} <b>×{w.count}</b></li>)}</ul>}
     {failing.length === 0 && <p className="draft-none">No errors in the last 10 runs.</p>}
     {failing.map(r => <article key={r.id} className="intake-err-run">
-      <header><b>{OP_LABEL[r.operation] || r.operation}</b><span>{when(r.started_at)}</span><span className="draft-pill">{r.state}</span></header>
+      <header><b>{OP_LABEL[r.operation] || r.operation}</b><span>{when(r.started_at)}</span><span className="draft-pill">{r.state}</span><CopySummary run={r} /></header>
       {r.reason && <p>{r.reason}</p>}
       <ul>{r.problems.map(p => <Group key={`${p.kind}-${p.signature}`} problem={p} open={expandSamples} system={system} jobId={r.id} fetcher={fetcher} />)}</ul>
     </article>)}
