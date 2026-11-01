@@ -125,3 +125,42 @@ def test_intake_runs_cached(tmp_path, monkeypatch):
     assert first == 2
     intake_runs(_project(tmp_path))
     assert len(calls) == first
+
+
+def _write(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+
+def test_warnings_empty_without_intake_folder(tmp_path):
+    assert intake_errors.intake_warnings(tmp_path) == []
+
+
+def test_warnings_from_gap_check(tmp_path):
+    qs = [{"verdict": "INCOMPLETE", "coverage": {"incomplete_reasons": ["a", "b"]}},
+          {"verdict": "INCOMPLETE", "coverage": {"incomplete_reasons": ["a"]}},
+          {"verdict": "ANSWERED"}]
+    _write(tmp_path / "intake" / "gap-check-latest.json",
+           {"schema_version": 3, "input_warnings": ["bad file"], "questions": qs})
+    codes = {w["code"]: w for w in intake_errors.intake_warnings(tmp_path)}
+    assert codes["input_warning"]["message"] == "bad file" and codes["input_warning"]["step"] == "gaps"
+    assert codes["incomplete_questions"]["count"] == 2 and "a (2)" in codes["incomplete_questions"]["message"]
+    assert codes["old_schema"]["severity"] == "warning"
+
+
+def test_warnings_from_sync_and_unreadable(tmp_path):
+    (tmp_path / "graph-audit.jsonl").write_text(
+        json.dumps({"action": "sync", "ts": "t", "report": {"status": "ERROR"}}) + "\n", encoding="utf-8")
+    (tmp_path / "evidence-matrix.csv").write_text("x\n", encoding="utf-8")
+    _write(tmp_path / "intake" / "latest.json", {"unreadable": [{"rel_path": "a"}, {"rel_path": "b"}]})
+    got = {w["code"]: w for w in intake_errors.intake_warnings(tmp_path)}
+    assert got["sync_failed"]["severity"] == "error" and got["sync_failed"]["step"] == "ingest"
+    assert got["sync_behind"]["severity"] == "warning"
+    assert got["unreadable_files"]["count"] == 2 and got["unreadable_files"]["step"] == "documents"
+
+
+def test_warnings_ignore_unreadable_records(tmp_path):
+    (tmp_path / "intake").mkdir()
+    (tmp_path / "intake" / "gap-check-latest.json").write_text("{not json", encoding="utf-8")
+    (tmp_path / "intake" / "latest.json").write_text("[]", encoding="utf-8")
+    assert intake_errors.intake_warnings(tmp_path) == []

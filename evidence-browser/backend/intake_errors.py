@@ -197,3 +197,71 @@ def intake_runs(project: dict[str, str], limit: int = 10) -> list[dict[str, Any]
             "has_problems": state in _FAILED_STATES or bool(problems), "log_truncated": truncated,
         })
     return runs
+
+
+GAP_SCHEMA_VERSION = 4
+_REASON_LIMIT = 3
+
+
+def _record(path: Path) -> dict[str, Any] | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _entry(step: str, severity: str, code: str, message: str, count: int = 1) -> dict[str, Any]:
+    return {"step": step, "severity": severity, "code": code, "message": message, "count": count}
+
+
+def _gap_warnings(record: dict[str, Any]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for text in record.get("input_warnings") or []:
+        out.append(_entry("gaps", "warning", "input_warning", str(text)))
+    questions = [q for q in record.get("questions") or [] if isinstance(q, dict)]
+    incomplete = sum(1 for q in questions if q.get("verdict") == "INCOMPLETE")
+    if incomplete:
+        reasons: dict[str, int] = {}
+        for q in questions:
+            if q.get("verdict") != "INCOMPLETE":
+                continue
+            coverage = q.get("coverage") if isinstance(q.get("coverage"), dict) else {}
+            for reason in coverage.get("incomplete_reasons") or []:
+                reasons[str(reason)] = reasons.get(str(reason), 0) + 1
+        top = sorted(reasons.items(), key=lambda kv: (-kv[1], kv[0]))[:_REASON_LIMIT]
+        message = f"{incomplete} question(s) have an incomplete search"
+        if top:
+            message += ": " + "; ".join(f"{reason} ({n})" for reason, n in top)
+        out.append(_entry("gaps", "warning", "incomplete_questions", message, incomplete))
+    version = record.get("schema_version")
+    if version != GAP_SCHEMA_VERSION:
+        out.append(_entry("gaps", "warning", "old_schema",
+                          f"The gap-check record uses schema version {version}, not {GAP_SCHEMA_VERSION}"))
+    return out
+
+
+def intake_warnings(work: Path) -> list[dict[str, Any]]:
+    """Problems the saved records already hold: [{step, severity, code, message, count}]. A missing or
+    unreadable record adds nothing."""
+    out: list[dict[str, Any]] = []
+    work = Path(work)
+    gap = _record(work / "intake" / "gap-check-latest.json")
+    if gap is not None:
+        out.extend(_gap_warnings(gap))
+    try:
+        from backend.intake_workflow import _sync_health
+        health = _sync_health(work)
+    except Exception:  # an unreadable register must not break the page
+        health = {}
+    if health.get("failed"):
+        status = (health.get("last") or {}).get("status", "")
+        out.append(_entry("ingest", "error", "sync_failed", f"The last host rebuild did not finish (status {status})"))
+    if health.get("behind"):
+        out.append(_entry("ingest", "warning", "sync_behind", "The host register is older than the evidence"))
+    latest = _record(work / "intake" / "latest.json")
+    unreadable = latest.get("unreadable") if latest else None
+    if isinstance(unreadable, list) and unreadable:
+        out.append(_entry("documents", "warning", "unreadable_files",
+                          f"{len(unreadable)} file(s) could not be read", len(unreadable)))
+    return out
