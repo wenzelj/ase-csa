@@ -12,6 +12,7 @@ import sys
 import tempfile
 from .soffice import find_soffice
 from collections import Counter, defaultdict
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
@@ -20,9 +21,9 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import apply_workflow, audit_workflow, author_workflow, intake_workflow, build_workflow, cleanup_workflow, commands, documents, draft_workflow, explorer, csa_figures, network, pipeline, proposals, review_workflow, sections, validation, word_review
+from . import intake_errors, apply_workflow, audit_workflow, author_workflow, intake_workflow, build_workflow, cleanup_workflow, commands, documents, draft_workflow, explorer, csa_figures, network, pipeline, proposals, review_workflow, sections, validation, word_review
 from .jobs import JobManager
-from .models import CommandRequest, JobCreateRequest
+from .models import CommandRequest, IntakeErrorsResponse, JobCreateRequest
 
 
 APP_ROOT = Path(__file__).resolve().parents[1]
@@ -476,6 +477,14 @@ def get_draft(system_key: str) -> dict[str, Any]:
 @app.get("/api/systems/{system_key}/intake")
 def get_intake(system_key: str) -> dict[str, Any]:
     return intake_workflow.snapshot(system_project(system_key))
+
+
+@app.get("/api/systems/{system_key}/intake/errors", response_model=IntakeErrorsResponse)
+def get_intake_errors(system_key: str) -> dict[str, Any]:
+    project = system_project(system_key)
+    return {"generated_at": datetime.now(timezone.utc).isoformat(),
+            "runs": intake_errors.intake_runs(project),
+            "warnings": intake_errors.intake_warnings(work_dir(project))}
 
 
 @app.post("/api/systems/{system_key}/evidence/{evidence_id}/review")
