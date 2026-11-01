@@ -228,6 +228,33 @@ def brief_markdown(node: dict, spec: dict | None = None) -> str:
 
 # ---------------------------------------------------------------- evidence pack
 
+def _load_framework_terms() -> list:
+    """Framework terms from term_lint.py (loaded by path); [] when the file cannot be loaded."""
+    import importlib.util
+    script = Path(__file__).resolve().parents[2] / "skills" / "australian-it-ot-terminology" / "scripts" / "term_lint.py"
+    try:
+        spec = importlib.util.spec_from_file_location("term_lint_s510", script)
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules["term_lint_s510"] = mod
+        spec.loader.exec_module(mod)
+        return list(mod.load_framework_terms())
+    except Exception:
+        return []
+
+
+def forbidden_terms_lines() -> list[str]:
+    """'## Words that must not appear in the text': each framework phrase with its 'Say instead' text; [] if unavailable."""
+    terms = _load_framework_terms()
+    if not terms:
+        return []
+    out = ["", "## Words that must not appear in the text", ""]
+    for pat, instead in terms:
+        phrase = pat.pattern.removeprefix("(?<!\\w)").removesuffix("(?!\\w)")
+        phrase = re.sub(r"\\(.)", r"\1", phrase)
+        out.append(f"- {phrase}: {instead}")
+    return out
+
+
 def _skills() -> Path:
     return Path(__file__).resolve().parents[2] / "skills"
 
@@ -762,9 +789,8 @@ def _register_lines(reg: dict) -> list[str]:
            "by name, never by a number or total of hosts (NO_TOTALS). The zone is the side of the OT boundary the host "
            "is on: it wins over any OT or IT in a role name.", ""]
     if reg.get("application"):
-        out.insert(-1, f"Refer to the hosts as the {reg['application']} hosts, or by role group or host name. Do not write "
-                       "'the captured hosts'. The role table footnote already shows which hosts were not captured and "
-                       "which are assumed to match their role.")
+        out.insert(-1, f"Refer to the hosts as the {reg['application']} hosts, or by role group or host name. "
+                       "Do not describe how the hosts were examined.")
     for c in reg.get("zone_conflicts") or []:
         out.append(f"- ZONE CONFLICT: {c['text']}")
     for g in reg["groups"]:
@@ -1489,6 +1515,7 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
     rl = rules(node, spec)
     if rl:
         lines += ["", "## Rules from the template", ""] + [f"- {r}" for r in rl]
+    lines += forbidden_terms_lines()
     if extra:
         lines += ["", "## Scope", "", f"- Must explain: {extra['must_explain']}", f"- Not here: {extra['not_here']}"]
         if fr:
