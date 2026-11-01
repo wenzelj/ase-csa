@@ -890,6 +890,36 @@ def rating_from_absence(sheet: dict[str, dict]) -> list[dict]:
     return out
 
 
+_INFERS = re.compile(r"(?:,|\band)?\s*\bso\s+(?!far\b|that\b|many\b|much\b)\w|\bwhich\s+means\b|\brather\s+than\b"
+                     r"|\bplacing\b[^.]*\bbehind\b", re.I)
+_RATING_TALK_CASE = re.compile(r"\b(?:Partially Met|Not Met|Met)\b")
+
+
+def story_factual(qid: str, kind: str, b: dict) -> list[dict]:
+    """STORY_INFERS and STORY_STATES_RATING (warnings): a Story or note joins facts into a conclusion ('so', 'which
+    means', 'rather than', 'placing ... behind') or talks about the rating. The rating lives in the Rating cell and Summary."""
+    out = []
+    text = b.get("story") if kind == "requirement" else (note_text(b) if kind == "note" else "")
+    text = " ".join((text or "").split())
+    if not text:
+        return out
+    for sent in _prose_sentences(text):
+        m = _INFERS.search(sent)
+        if m:
+            out.append(_f("WARN", "STORY_INFERS", qid,
+                          f"this sentence draws a conclusion from the facts ('{m.group(0).strip(' ,')}'): state each "
+                          f"observation as it was seen and leave the conclusion out: {sent[:90]}"))
+            break
+    for sent in _prose_sentences(text):
+        m = re.search(r"\brating\b", sent, re.I) or _RATING_TALK_CASE.search(sent)
+        if m:
+            out.append(_f("WARN", "STORY_STATES_RATING", qid,
+                          f"this sentence talks about the rating ('{m.group(0)}'): the rating belongs in the Rating cell "
+                          f"and Summary; state only what was observed: {sent[:90]}"))
+            break
+    return out
+
+
 def practice_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
     """Require configured practice evidence or an Unknown, retain statement attribution and enforce its rating cap."""
     out = []
@@ -1517,6 +1547,7 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
             findings += _note_checks(qid, q, b, sheet, qs)
         elif b["none"]:
             findings.append(_f("WARN", "NONE_IGNORED", qid, "'None:' answers only the optional note under a table"))
+        findings += story_factual(qid, q["kind"], b)
         for fact in b["facts"]:
             if not fact["ids"]:
                 findings.append(_f("ERROR", "FACT_NO_EVIDENCE", qid, f"a fact cites no evidence ID: {fact['text'][:80]}"))
