@@ -107,6 +107,12 @@ def key_for_work_dir(work_dir) -> str | None:
     return None
 
 
+def application_name(work_dir) -> str:
+    """The optional ``application`` field of the project whose work_dir is ``work_dir``; "" when absent."""
+    key = key_for_work_dir(work_dir)
+    return ((_project(key) or {}).get("application") or "").strip() if key else ""
+
+
 def citable_projects(work_dir) -> dict[str, Path]:
     """{project key: work_dir} of the other projects whose evidence this project may cite as <key>:E-nnn: the
     members of its estate (context only) and its system siblings (hosts/roles.csv kind=system_project)."""

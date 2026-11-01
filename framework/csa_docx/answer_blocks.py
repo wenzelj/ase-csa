@@ -326,9 +326,9 @@ def focus(card_md: str, only: set[str], first_pass: bool = False) -> str:
             routed["evidence pack"] = _pack_blocks(by_name["evidence pack"], only)
 
         corpus = "\n".join(routed.values())
-        if "host register (captured hosts, grouped by role)" in by_name:
-            routed["host register (captured hosts, grouped by role)"] = _host_register(
-                by_name["host register (captured hosts, grouped by role)"], corpus)
+        if "host register (hosts grouped by role)" in by_name:
+            routed["host register (hosts grouped by role)"] = _host_register(
+                by_name["host register (hosts grouped by role)"], corpus)
         if "system parts (built by the framework from the host register and the flows)" in by_name:
             routed["system parts (built by the framework from the host register and the flows)"] = _named_subsections(
                 by_name["system parts (built by the framework from the host register and the flows)"], corpus)
