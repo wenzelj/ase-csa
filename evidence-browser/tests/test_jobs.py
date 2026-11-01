@@ -183,3 +183,57 @@ def test_evidence_lock_refuses_a_second_evidence_job(tmp_path: Path, monkeypatch
     manager.wait(item, first.id)
     second = manager.submit(item, "stub", CommandRequest())
     assert manager.wait(item, second.id).state == "succeeded"
+
+
+def _job_with_log(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, text: str | None):
+    operation(monkeypatch, "pass")
+    item = project(tmp_path)
+    manager = JobManager(tmp_path / ".agents")
+    created = manager.submit(item, "stub", CommandRequest())
+    manager.wait(item, created.id)
+    log = Path(item["work_dir"]) / "ui-jobs" / created.id / "stderr.log"
+    if text is None:
+        log.unlink(missing_ok=True)
+    else:
+        log.write_text(text, encoding="utf-8")
+    return manager, item, created.id
+
+
+def test_read_log_returns_requested_page(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    manager, item, job_id = _job_with_log(tmp_path, monkeypatch, "".join("line %d\n" % i for i in range(1, 1001)))
+    page = manager.read_log(item, job_id, "stderr", start=401, limit=50)
+    assert page["total_lines"] == 1000 and page["start"] == 401 and page["truncated"] is False
+    assert [row["n"] for row in page["lines"]] == list(range(401, 451))
+    assert page["lines"][0]["text"] == "line 401"
+    assert len(manager.read_log(item, job_id, "stderr", start=1, limit=9999)["lines"]) == 500
+
+
+def test_read_log_rejects_bad_stream(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    manager, item, job_id = _job_with_log(tmp_path, monkeypatch, "x\n")
+    with pytest.raises(HTTPException) as error:
+        manager.read_log(item, job_id, "stdin")
+    assert error.value.status_code == 400
+
+
+def test_read_log_missing_file_is_empty_page(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    manager, item, job_id = _job_with_log(tmp_path, monkeypatch, None)
+    page = manager.read_log(item, job_id, "stderr")
+    assert page["lines"] == [] and page["total_lines"] == 0
+
+
+def test_read_log_bad_or_unknown_job_is_404(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    manager, item, _job_id = _job_with_log(tmp_path, monkeypatch, "x\n")
+    for bad in ("../x", "..", "a/b", "00000000-0000-0000-0000-000000000000"):
+        with pytest.raises(HTTPException) as error:
+            manager.read_log(item, bad, "stderr")
+        assert error.value.status_code == 404
+
+
+def test_read_log_cuts_long_lines_and_withholds_credentials(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    text = "before\npassword=Abc123!xyz\nafter\n" + "y" * 5000 + "\n"
+    manager, item, job_id = _job_with_log(tmp_path, monkeypatch, text)
+    page = manager.read_log(item, job_id, "stderr")
+    rows = {row["n"]: row["text"] for row in page["lines"]}
+    assert rows[1] == "before" and rows[3] == "after"
+    assert rows[2] == "[withheld: looked like a credential]"
+    assert len(rows[4]) == 2000 and page["truncated"] is True and page["total_lines"] == 4

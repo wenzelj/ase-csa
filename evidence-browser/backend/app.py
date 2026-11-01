@@ -529,6 +529,12 @@ def get_job(system_key: str, job_id: str) -> dict[str, Any]:
     return job_manager.get(system_project(system_key), job_id).model_dump()
 
 
+@app.get("/api/systems/{system_key}/jobs/{job_id}/log")
+def get_job_log(system_key: str, job_id: str, stream: str = "stderr", start: int = 1,
+                limit: int = 200) -> dict[str, Any]:
+    return job_manager.read_log(system_project(system_key), job_id, stream, start, limit)
+
+
 @app.delete("/api/systems/{system_key}/jobs/{job_id}")
 def cancel_job(system_key: str, job_id: str) -> dict[str, Any]:
     return job_manager.cancel(system_project(system_key), job_id).model_dump()
