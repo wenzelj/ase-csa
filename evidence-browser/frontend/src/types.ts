@@ -181,4 +181,5 @@ export type IntakeRun = {
   elapsed_seconds?: number | null; reason: string; problems: IntakeProblem[]; problem_count: number; has_problems: boolean; log_truncated: boolean;
 };
 export type IntakeWarning = { step: string; severity: string; code: string; message: string; count: number };
+export type JobLogPage = { stream: "stdout" | "stderr"; total_lines: number; start: number; lines: { n: number; text: string }[]; truncated: boolean };
 export type IntakeErrors = { generated_at: string; runs: IntakeRun[]; warnings: IntakeWarning[] };
