@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, cancelJob, fetchIntake, fetchIntakeErrors, fetchJob, reviewLead, submitJob } from "../api";
 import { AGENT_CLIS, rememberedAgentCli, rememberAgentCli } from "../agentClis";
 import type { IntakeLead, IntakeEvidenceRow, IntakeFile, IntakeErrors, IntakeSnapshot, ReviewJob } from "../types";
+import { IntakeErrors as IntakeErrorsPanel } from "./IntakeErrors";
 import { deriveIntakeSteps, gapFindings, resumableJob, type StepKey } from "./intakeSteps";
 
 const TERMINAL = ["succeeded", "failed", "cancelled", "interrupted"];
@@ -87,6 +88,8 @@ export function EvidenceIntake({ system, draftStage, refreshKey, openEvidence, w
     <ol className="intake-steps">{steps.map((s, i) => <li key={s.key} className={`intake-step intake-${s.status}${s.status === "failed" ? " intake-failed" : ""}${s.key === next ? " intake-next" : ""}`}>
       <span className="intake-num">{i + 1}</span><div><b>{s.title}{s.status === "failed" && <span className="intake-badge">failed{problemCount(s.key) > 0 ? ` · ${problemCount(s.key)}` : ""}</span>}</b><small>{s.detail || " "}</small></div>{action(s.key)}
     </li>)}</ol>
+
+    <IntakeErrorsPanel runs={errors?.runs || []} warnings={errors?.warnings || []} />
 
     <div className="draft-counts">
       <div className="draft-count"><strong>{snap.matrix.evidence_rows}</strong><span>Evidence rows</span></div>
