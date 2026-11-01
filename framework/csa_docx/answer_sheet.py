@@ -1004,6 +1004,79 @@ _ATTEMPTED = re.compile(r"\battempted\b.*\bSYN_SENT\b|\bSYN_SENT\b.*\bno reply\b
 _REQ_KEY = re.compile(r"\b[A-Z]{2,5}-([A-Z][A-Z_]*)-[A-Z]?\d+\b")
 _HOSTTOKEN = re.compile(r"\b[A-Z][A-Z0-9]{5,}\d{2,3}\b")
 
+_ROLE_PHRASE = re.compile(r"\b((?:[A-Z][A-Za-z0-9-]*\s+){0,4}(?:Hosts?|Servers?))\b")
+_ROLE_LEAD = {"the", "a", "an", "all", "both", "each", "every", "these", "those", "this", "that", "some", "any", "its", "their"}
+_PRODUCT_WORD = {"windows", "sql", "linux", "vmware", "esxi", "hyper-v", "active", "directory", "exchange", "web", "file",
+                 "print", "database", "application", "terminal", "remote", "desktop", "domain", "time", "dns", "dhcp"}
+
+
+def _role_key(s: str) -> str:
+    w = s.lower().split()
+    if w and w[-1].endswith("s") and not w[-1].endswith("ss"):
+        w[-1] = w[-1][:-1]
+    return " ".join(w)
+
+
+def register_roles(card: dict) -> list[str]:
+    """Role names in the card's host register (captured groups and named-but-not-captured hosts)."""
+    reg = card.get("host_register") or {}
+    out = [g["role"] for g in reg.get("groups", []) if g.get("role")]
+    out += [u["role"] for u in reg.get("uncaptured", []) if u.get("role")]
+    return list(dict.fromkeys(r for r in out if r != "role not recorded"))
+
+
+def unknown_role_names(text: str, roles: list[str], hosts: set[str]) -> list[tuple[str, str | None]]:
+    """Role-group phrases in text (name words + Host/Server) that match no register role, with the nearest role."""
+    import difflib
+    keys = {_role_key(r): r for r in roles}
+    low_hosts = {h.lower() for h in hosts}
+    out = []
+    for m in _ROLE_PHRASE.finditer(text):
+        words = m.group(1).split()
+        while len(words) > 1 and words[0].lower() in _ROLE_LEAD:
+            words = words[1:]
+        lead = words[:-1]
+        if not lead:
+            continue
+        if all(w.lower() in low_hosts or _HOSTTOKEN.fullmatch(w) for w in lead):
+            continue
+        if any(w.lower() in _PRODUCT_WORD for w in lead):
+            continue
+        key = _role_key(" ".join(words))
+        if _role_key(" ".join(lead)) in keys or any(key == k or k.endswith(" " + key) or k.startswith(key + " ") for k in keys):
+            continue
+        near = difflib.get_close_matches(key, list(keys), n=1, cutoff=0.0)
+        out.append((" ".join(words), keys[near[0]] if near else None))
+    return out
+
+
+def role_name_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
+    """ROLE_NAME_UNKNOWN (warning): a role group named in an Aspect row or a story sentence is not a register role."""
+    roles = register_roles(card)
+    if not roles:
+        return []
+    hosts = role_table_tokens(card)
+    out = []
+    for q in card.get("questions", []):
+        qid = q["id"]
+        b = sheet.get(qid)
+        if not b:
+            continue
+        texts = [b.get("summary") or "", b.get("text") or ""] + [f["text"] for f in b.get("facts", [])]
+        if q.get("kind") == "observation":
+            texts += [" | ".join(r) for r in b.get("rows", [])[1:]]
+        seen = set()
+        for t in texts:
+            for name, near in unknown_role_names(t, roles, hosts):
+                if name in seen:
+                    continue
+                seen.add(name)
+                hint = f"; the nearest register role is '{near}'" if near else ""
+                out.append(_f("WARN", "ROLE_NAME_UNKNOWN", qid,
+                              f"'{name}' is not a role in the host register{hint}. Use the register's role name, "
+                              "or write the host name as it is."))
+    return out
+
 
 def source_class(row: dict | None) -> str:
     """Where a matrix row comes from: capture (a discovery capture file), previous (the previous assessment),
@@ -1696,6 +1769,7 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
     findings += plain_language_checks(sheet, card)
     findings += practice_checks(sheet, card)
     findings += subject_checks(sheet, card)
+    findings += role_name_checks(sheet, card)
     findings += drawbridge_topic_checks(sheet, card)
     findings += topic_checks(sheet, card, matrix, _f)
     findings += function_checks(sheet, card, _f)
