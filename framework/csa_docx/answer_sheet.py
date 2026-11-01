@@ -1206,6 +1206,38 @@ def _content(s: str) -> set[str]:
     return {w.lower().strip(".") for w in _CONTENT.findall(no_ids(s or "")) if len(w) >= 3 and w.lower() not in _FILLER}
 
 
+def _norm_sentence(s: str) -> str:
+    return " ".join(re.sub(r"[^a-z0-9. ]+", " ", no_ids(s or "").lower()).replace(".", " ").split())
+
+
+def same_note_text(a: str, b: str) -> bool:
+    """The same note: the same normalised sentence, or at least 75% of the same content words."""
+    na, nb = _norm_sentence(a), _norm_sentence(b)
+    if not na or not nb:
+        return False
+    if na == nb:
+        return True
+    ca, cb = _content(a), _content(b)
+    if not ca or not cb:
+        return False
+    return len(ca & cb) / max(len(ca), len(cb)) >= 0.75
+
+
+def _note_copies(node: dict, p: dict, texts: list[str]) -> list[dict]:
+    """Other paragraphs of the same Discovery Information block that hold the note's text, in document order.
+    Without a part id on the note part itself, the first of them stands in for it."""
+    out = []
+    for q in node.get("parts", []):
+        if q is p or q.get("kind") not in ("text", "note") or not q.get("pid") or q.get("pid") == p.get("pid"):
+            continue
+        if q.get("facet") != p.get("facet"):
+            continue
+        cur = q.get("current") or q.get("text") or ""
+        if cur and not cur.startswith("[") and any(same_note_text(cur, t) for t in texts):
+            out.append(q)
+    return out
+
+
 def _note_checks(qid: str, q: dict, b: dict, sheet: dict[str, dict], qs: dict[str, dict]) -> list[dict]:
     """The optional note under a table: None, or one or two sentences of evidenced fact the rows do not show."""
     out: list[dict] = []
@@ -1809,14 +1841,39 @@ def render_records(sheet: dict[str, dict], card: dict, node: dict, section: str,
             text = note_text(b)
             where = p.get("pid") or f"{node['hid']}-P1"
             label = f"{p.get('facet') or node['title']}: note"
+            # Earlier copies of the note: other plain paragraphs in the same Discovery Information block that
+            # hold the same text (by part id the note part itself; by text when the id was lost).
+            earlier = p.get("current", "") if p.get("answered") else ""
+            copies = _note_copies(node, p, [t for t in (earlier, text if text and not b["none"] else "") if t])
+            holders = list(copies)
+            if p.get("pid") and p.get("answered"):
+                holders.append(p)
+            order = {id(x): i for i, x in enumerate(node.get("parts", []))}
+            holders.sort(key=lambda x: order.get(id(x), 0))
+            if not p.get("pid") and copies:
+                where = copies[0].get("pid")
+                copies = copies[1:]
             if text and not b["none"]:
-                eid = record(label, where, p.get("current", ""), facts, text, why,
+                # The first holder of the earlier text is replaced; a placeholder or any other copy is deleted.
+                first = holders[0] if holders else p
+                where = first.get("pid") or where
+                copies = holders[1:]
+                if holders and p.get("pid") and not any(h is p for h in holders):
+                    copies.append(p)
+                eid = record(label, where, first.get("current", "") if holders else p.get("current", ""), facts, text, why,
                              f"Note under the {p.get('facet') or node['title']} table from the evidence.")
                 audit += [f"| {eid} | {_quote(_sentence(f), 160)} | {', '.join(f['ids'])} | {f['basis']} | {f['scope'] or '-'} |" for f in b["facts"]]
+                for c in copies:
+                    record(label, c["pid"], c.get("current", ""), [], "", "The note is written once, in the place of its earlier text.",
+                           "Second copy of the note removed.", do="Delete")
             elif b["none"] or (not p.get("answered") and not b["search"]):
                 reason = b["none"] if b["none"] not in ("", "yes") else "the table rows show everything the evidence holds"
                 record(label, where, p.get("current", ""), [], "", f"No note: {reason.rstrip('.')}.",
                        "Optional note placeholder removed.", do="Delete")
+                if b["none"]:
+                    for c in copies:
+                        record(label, c["pid"], c.get("current", ""), [], "", f"No note: {reason.rstrip('.')}.",
+                               "Copy of the note removed.", do="Delete")
         elif q["kind"] == "findings":
             holders = [(pid, t) for pid, t in zip(p.get("pids", []), p.get("bullets", []))]
             free = [(pid, t) for pid, t in holders if t.startswith("[")]

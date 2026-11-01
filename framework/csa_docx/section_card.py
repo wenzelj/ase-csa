@@ -762,6 +762,89 @@ def note_candidates(node: dict, workspace: Path | None, reg: dict | None, rows: 
     return out[:limit]
 
 
+_PEER_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9-]*\d[A-Za-z0-9-]*$")
+_ZONE_QUESTION = re.compile(r"\bzone\b|side of (?:the )?(?:OT|IT)\b|boundary|hosted in", re.I)
+
+
+def peer_identity(fr: dict | None, workspace: Path | None) -> dict:
+    """The identity of every host named as the value of one of the topic's host settings (the frame slots' settings:
+    a time source, a DNS resolver, a domain controller, a patch server), looked up in the host register.
+
+    Returns {"hosts": [{host, role, zone, site, how, known}], "lines": [...], "answered": [slot id], "open": [host]}.
+    ``how`` is ``confirmed by Wenzel``, ``assumed: <note>`` (the identity fact carries an assumption note) or
+    ``not recorded``. A slot that asks for the zone or side of OT is answered by the register when every named host is
+    known; a host the register does not hold stays an open question (a Discovery Required item)."""
+    empty = {"hosts": [], "lines": [], "answered": [], "open": []}
+    if not fr or not workspace:
+        return empty
+    from csa_docx import host_settings, topic_frames, zones as zones_mod
+    frame = topic_frames.frame_for(fr.get("heading", "")) or {}
+    attrs = [a for s in frame.get("slots", []) for a in (s.get("source") or {}).get("settings", [])]
+    work = Path(workspace) / "csa-work"
+    if not attrs:
+        return empty
+    reg = {r["host"].strip().upper(): r for r in _file_rows(work, "hosts/hosts.csv") if (r.get("host") or "").strip()}
+    by_ip: dict[str, str] = {}
+    for h, r in reg.items():
+        for ip in re.split(r"[;,\s]+", r.get("ips") or ""):
+            if ip:
+                by_ip.setdefault(ip, h)
+        fq = (r.get("fqdn") or "").split(".")[0].strip().upper()
+        if fq:
+            reg.setdefault(fq, r)
+    named: list[str] = []
+    for attrs_of in host_settings.load(work).values():
+        for a in attrs:
+            row = attrs_of.get(a)
+            for tok in re.split(r"[,;\s]+", (row or {}).get("value") or ""):
+                tok = tok.strip("()[]")
+                if re.fullmatch(r"\d{1,3}(?:\.\d{1,3}){3}", tok):
+                    name = by_ip.get(tok, "")
+                else:
+                    first = tok.split(".")[0]
+                    name = first.upper() if len(first) >= 4 and _PEER_NAME.match(first) else ""
+                if name and name not in named:
+                    named.append(name)
+    if not named:
+        return empty
+    facts: dict[str, dict[str, str]] = {}
+    for f in _file_rows(work, "hosts/host_facts.csv"):
+        if (f.get("listed_as") or "") == "capture":
+            continue
+        col = (f.get("attribute") or "").rsplit(":", 1)[-1].strip().lower()
+        if col in ("role", "hosted in", "note", "notes") and (f.get("value") or "").strip():
+            facts.setdefault((f.get("host") or "").upper(), {}).setdefault("note" if col == "notes" else col, f["value"].strip())
+    zs = zones_mod.for_project(work)
+    hosts = []
+    for name in sorted(named):
+        r, fact = reg.get(name) or {}, facts.get(name) or {}
+        identity = bool(fact.get("role") or fact.get("hosted in"))
+        zone = fact.get("hosted in") or ""
+        if not zone and (r or identity):
+            z = zs.of(name)
+            zone = "" if z.get("kind") == "unknown" else (z.get("zone") or "")
+        note = fact.get("note", "")
+        how = ("assumed: " + note if re.search(r"assum", note, re.I) else "confirmed by Wenzel") if identity else "not recorded"
+        hosts.append({"host": name, "role": fact.get("role") or (r.get("role") or "").strip() or "role not recorded",
+                      "zone": zone or "zone not recorded", "site": (r.get("site") or "").strip() or "site not recorded",
+                      "how": how, "known": identity})
+    unknown = [h["host"] for h in hosts if not h["known"]]
+    answered = [s["id"] for s in fr.get("slots", [])
+                if not unknown and _ZONE_QUESTION.search(s.get("question", ""))]
+    lines = ["", "## Hosts named as sources or peers (identity from the host register)", "",
+             "Each host below is the value of one of this topic's host settings. State its role and zone from this list, "
+             "not as unknown.", ""]
+    for h in hosts:
+        lines.append(f"- {h['host']}: role {h['role']}; zone {h['zone']}; site {h['site']}; {h['how']}")
+    if answered:
+        lines += ["", "Answered by the host register, not open: " + ", ".join(answered)
+                  + ". Do not write a QUESTION: line for the zone of these hosts."]
+    if unknown:
+        lines += ["", "Not in the host register (open question, Discovery Required): " + ", ".join(unknown)
+                  + ". Write a QUESTION: line asking for the role and zone of each."]
+    return {"hosts": hosts, "lines": lines, "answered": answered, "open": unknown}
+
+
 SHARED_HEAD = "## Shared enterprise services (other applications in the estate)"
 SERVICE_NAME = {"dns": "DNS", "time": "time"}
 SHARED_IDS = 3                 # other-project rows cited per use: enough to show it, not enough to drown the card
@@ -1355,7 +1438,9 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
     if fr:
         from csa_docx import topic_frames
         lines += topic_frames.card_lines(fr)
-        frame = {"slots": [s["id"] for s in fr["slots"]], "ids": sorted(topic_frames.all_ids(fr)),
+        peers = peer_identity(fr, workspace) if evidence else {"hosts": [], "lines": [], "answered": [], "open": []}
+        lines += peers["lines"]
+        frame = {"peer_identity": peers["hosts"], "register_answered": peers["answered"],"slots": [s["id"] for s in fr["slots"]], "ids": sorted(topic_frames.all_ids(fr)),
                  "coverage": topic_frames.coverage_targets(fr), "must_address": owed,
                  "context_ids": topic_frames.context_ids(fr), "zone_conflicts": fr.get("zone_conflicts", []),
                  "strict": fr.get("strict", False)}
