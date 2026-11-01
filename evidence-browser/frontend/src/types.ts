@@ -175,3 +175,10 @@ export type IntakeSnapshot = {
 };
 export type IntakeSync = { ok: boolean; failed: boolean; behind: boolean; last: { at: string; status: string; hosts_index: string; merged_nodes: string[] } | null };
 export type IntakeRecheck = { evidence_id: string; file: string; kind: string; why: string; claim: string };
+export type IntakeProblem = { kind: string; signature: string; count: number; first_line: number; last_line: number; sample: string; stream: "stdout" | "stderr" };
+export type IntakeRun = {
+  id: string; operation: string; step: string; state: string; exit_code?: number | null; started_at?: string | null; finished_at?: string | null;
+  elapsed_seconds?: number | null; reason: string; problems: IntakeProblem[]; problem_count: number; has_problems: boolean; log_truncated: boolean;
+};
+export type IntakeWarning = { step: string; severity: string; code: string; message: string; count: number };
+export type IntakeErrors = { generated_at: string; runs: IntakeRun[]; warnings: IntakeWarning[] };
