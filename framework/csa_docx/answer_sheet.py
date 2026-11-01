@@ -868,6 +868,28 @@ def rating_floor(sheet: dict[str, dict], card: dict) -> list[dict]:
     return out
 
 
+_ABSENCE = re.compile(r"\b(?:not\s+(?:identified|recorded|found|evidenced|observed)|no\s+records?"
+                      r"|no\s+\S+(?:\s+\S+){0,4}?\s+(?:was|were)\s+(?:identified|recorded|found))\b", re.I)
+
+
+def rating_from_absence(sheet: dict[str, dict]) -> list[dict]:
+    """RATING_FROM_ABSENCE (warning): the rating reason rests on a phrase such as 'not identified' or 'no record' while
+    the same block still lists an open question or Unknown line, and the reason cites no observed fact (E- ID)."""
+    out = []
+    for qid, b in sheet.items():
+        reason = b.get("rating_reason") or ""
+        if not b.get("rating") or not reason or not b.get("unknown"):
+            continue
+        m = _ABSENCE.search(reason)
+        if _EID.search(reason) or not m:
+            continue
+        out.append(_f("WARN", "RATING_FROM_ABSENCE", qid,
+                      f"the rating reason rests on an absence ('{m.group(0)}') while the block still has an open "
+                      "question: state the observation behind the rating (what was seen, with its E- ID), "
+                      "or say the rating is undetermined"))
+    return out
+
+
 def practice_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
     """Require configured practice evidence or an Unknown, retain statement attribution and enforce its rating cap."""
     out = []
@@ -1648,6 +1670,7 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
                 findings.append(_f("ERROR", "RATING_INVALID", qid, f"rating '{b['rating']}' is not one of {', '.join(ratings)}"))
             if b["rating"] and not b["rating_reason"]:
                 findings.append(_f("ERROR", "RATING_NO_REASON", qid, "a rating needs a 'Rating reason:'"))
+            findings += rating_from_absence({qid: b})
             if not b["facts"] and not b["keep"] and b["rating"] not in ("Not Applicable",):
                 findings.append(_f("ERROR", "REQUIREMENT_NO_FACTS", qid, "a current state needs at least one fact"))
             if card.get("requirement_stories") and not b["search"] and not b["keep"]:
