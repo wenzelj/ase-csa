@@ -15,7 +15,7 @@ The table's shape follows the data:
   is dropped;
 * a host with no capture for this topic takes its role's values and is marked "†" (one Discovery
   Required item per role asks to confirm it); when the captured hosts of its role differ it is marked
-  "‡" and shows "Not captured"; a role with no captured host gets no row, only a Discovery Required item;
+  "‡" and shows "Not known"; a role with no captured host gets no row, only a Discovery Required item;
 * no counts or totals anywhere: host names and role groups carry it.
 
 Every cell keeps the capture lines it came from in ``csa-work/topic-tables/<KEY>.json``.
@@ -254,7 +254,7 @@ def build(work_dir: Path, heading: str, key: str = "", profile: dict | None = No
                 f"as the captured hosts of that role.", names, role)
         elif unc:
             rows.append({"role": role, "first": False, "hosts": [h["host"] + VARIES for h in unc],
-                         "cells": ["Not captured"] * len(shown), "sources": []})
+                         "cells": ["Not known"] * len(shown), "sources": []})
             markers.add(VARIES)
             gap(f"Capture the {tname} settings of {_join([h['host'] for h in unc])} ({role}): "
                 f"the captured hosts of this role differ.", [h["host"] for h in unc], role)
@@ -275,12 +275,12 @@ def build(work_dir: Path, heading: str, key: str = "", profile: dict | None = No
         common_line = f"All hosts in this table {_join(parts)}."
         gaps_ = sorted({h for c in common for h in c.get("missing", [])})
         if gaps_:
-            common_line = common_line[:-1] + f", where captured ({_join(gaps_)} not captured for this)."
+            common_line = common_line[:-1] + f", where known (the setting is not known for {_join(gaps_)})."
     marker_lines = []
     if ASSUMED in markers:
-        marker_lines.append(f"{ASSUMED} Not captured, assumed to match the captured hosts of its role.")
+        marker_lines.append(f"{ASSUMED} Assumed to match the other hosts of the same role.")
     if VARIES in markers:
-        marker_lines.append(f"{VARIES} Not captured, and the captured hosts of its role differ.")
+        marker_lines.append(f"{VARIES} Setting not known; the other hosts of the same role differ.")
     return {"status": "OK", "heading": heading, "key": key, "profile": profile.get("_file", ""),
             "columns": ["Role", "Hosts"] + [c["label"] for c in shown],
             "explains": {c["label"]: c.get("explains", "") for c in shown},

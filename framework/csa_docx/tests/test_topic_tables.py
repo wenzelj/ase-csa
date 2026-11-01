@@ -56,7 +56,7 @@ def test_role_split_only_where_values_differ(tmp_path):
     rows = [r for r in build(tmp_path)["rows"] if r["role"] == "SQL node"]
     assert [r["hosts"] for r in rows] == [["ROTSQL1", "ROTSQL2"], ["MOTSQL3"], ["MOTSQL9" + tt.VARIES]]
     assert [r["first"] for r in rows] == [True, False, False]
-    assert rows[2]["cells"] == ["Not captured", "Not captured"]
+    assert rows[2]["cells"] == ["Not known", "Not known"]
 
 
 def test_uncaptured_host_takes_its_role_values(tmp_path):
@@ -65,7 +65,7 @@ def test_uncaptured_host_takes_its_role_values(tmp_path):
     assert app == [{"role": "App server", "first": True, "hosts": ["ROTAPP1", "ROTAPP2" + tt.ASSUMED],
                     "cells": ["SRV1 (10.0.0.1)", "32,768 s"], "sources": app[0]["sources"]}]
     assert any("ROTAPP2" in g["text"] and g["text"].startswith("Confirm") for g in t["gaps"])
-    assert tt.ASSUMED + " Not captured, assumed to match" in " ".join(t["markers"])
+    assert tt.ASSUMED + " Assumed to match the other hosts of the same role." in " ".join(t["markers"])
 
 
 def test_role_without_capture_is_a_gap_not_a_row(tmp_path):
@@ -107,7 +107,7 @@ def test_no_counts_or_totals_anywhere(tmp_path):
 
 def test_every_cell_keeps_its_capture_lines(tmp_path):
     for r in build(tmp_path)["rows"]:
-        if "Not captured" not in r["cells"]:
+        if "Not known" not in r["cells"]:
             assert r["sources"] and all("03_time_status.txt line" in s for s in r["sources"])
 
 
