@@ -163,6 +163,73 @@ def settings_findings(work_dir: Path, attr: str, req: str, area: str, section: s
     return out
 
 
+def _setting_host(value: str, reg: dict[str, dict]) -> str:
+    """The register host a source-following setting value names ('ROTPRDSRV122 (10.1.2.3)', 'host.domain', or an IP), else ''."""
+    v = (value or "").strip()
+    tok = re.split(r"[\s(,;]+", v, maxsplit=1)[0].strip().upper() if v else ""
+    for cand in (tok, tok.split(".")[0]):
+        if cand in reg:
+            return cand
+    ips = set(re.findall(r"\b\d{1,3}(?:\.\d{1,3}){3}\b", v))
+    for h, r in reg.items():
+        if ips & set(re.findall(r"\b\d{1,3}(?:\.\d{1,3}){3}\b", r.get("ips") or "")):
+            return h
+    return ""
+
+
+def cross_site_findings(work_dir: Path, cfg: dict, req: str, area: str, section: str) -> list[dict]:
+    """source_in_other_site: hosts whose source-following setting (a time source, a DNS server) names a host
+    registered in a different site. One finding per source host; hosts whose own site or whose source's site is
+    not recorded are listed in a separate finding to raise as Unknown. Sites come from the host register."""
+    attr = cfg.get("attr", "time.source")
+    label = LABELS.get(attr, attr)
+    data = host_settings.load(work_dir)
+    reg = _register(work_dir)
+    other: dict[str, list[tuple[str, dict]]] = {}
+    unknown: list[str] = []
+    for h, attrs in sorted(data.items()):
+        r = attrs.get(attr)
+        if not r or h.upper() not in reg:
+            continue
+        src = _setting_host(r["value"], reg)
+        if not src or src == h.upper():
+            continue
+        mine = (reg[h.upper()].get("site") or "").strip()
+        theirs = (reg[src].get("site") or "").strip()
+        if not mine or not theirs:
+            unknown.append(h)
+        elif mine.lower() != theirs.lower():
+            other.setdefault(src, []).append((h, r))
+
+    out = []
+    blocks = list(cfg.get("blocks", []))
+    for src, members in sorted(other.items()):
+        hosts = [h for h, _ in members]
+        sites = list(dict.fromkeys((reg[h.upper()].get("site") or "").strip() for h in hosts))
+        ssite = (reg[src].get("site") or "").strip()
+        ev = []
+        for part in _chunks(members, MAX_HOSTS_PER_ROW):
+            if not all(r["excerpt"] for _, r in part):
+                continue
+            ph = [h for h, _ in part]
+            ev.append({"csa_area": area, "question": f"{req}: {label.lower()} in another site, {', '.join(ph)}",
+                       "claim": f"{label} on {_join(ph)}: {src}", "status": "VERIFIED",
+                       "source_title": _src_title([r["source"] for _, r in part]), "source_version": "", "section": section,
+                       "page_or_location": re.sub(r"\s+line\s+\d+$", "", part[0][1]["source"]).rsplit("/", 1)[-1],
+                       "confidence": "high", "inference_reason": "", "gap_or_action": "",
+                       "evidence_excerpt": _fit(list(dict.fromkeys(x for _, r in part for x in r["excerpt"].split(" | "))))})
+        text = (f"[Source in another site] {label} on {_join(hosts)} ({_join(sites)}) is {src}, which is in {ssite}: "
+                f"the source sits in a different site from the hosts that follow it.")
+        out.append({"text": text, "hosts": hosts + [src], "evidence": ev, "hint": "", "tokens": hosts + [src],
+                    "class": "source_in_other_site", "source_host": src, "source_site": ssite, "blocks": blocks})
+    if unknown:
+        text = (f"[Source site not recorded] The site of {_join(unknown)}, or of the host that supplies its "
+                f"{label.lower()}, is not in the host register: say so and raise it as Unknown.")
+        out.append({"text": text, "hosts": unknown, "evidence": [], "hint": "", "tokens": unknown,
+                    "class": "source_site_unknown", "blocks": blocks})
+    return out
+
+
 # which way a flow crosses the OT boundary, worked out from the side that opens it and the way its data goes
 DIRECTION_LABEL = {"ot_push": "OT push", "pull_into_ot": "Pull out of OT", "into_ot": "Into OT",
                    "inside_ot": "Inside OT", "unknown_zone": "Zone not recorded", "not_ot": "Outside OT, context only"}
@@ -281,6 +348,8 @@ def build(workspace: Path, heading: str, key: str = "", evidence: bool = True) -
         found = []
         for attr in src.get("settings", []):
             found += settings_findings(work, attr, req, area, section)
+        if "cross_site" in src:
+            found += cross_site_findings(work, src["cross_site"], req, area, section)
         if "flows" in src:
             found += flow_findings(work, src["flows"], req, area, section)
         bind_requirements(s, found)
@@ -432,7 +501,8 @@ def must_address(res: dict | None) -> dict[str, list[dict]]:
                                               "tokens": [], "empty": True})
             continue
         for f in s["findings"]:
-            for r in f.get("requirements", []):
+            # a finding may also bind to a named block (the Drawbridge Impact) beside its requirements
+            for r in list(dict.fromkeys(list(f.get("requirements", [])) + list(f.get("blocks", [])))):
                 items = out.setdefault(r, [])
                 if not any(x["slot"] == s["id"] and x["text"] == f["text"] for x in items):
                     items.append({"slot": s["id"], "text": f["text"], "ids": list(f.get("ids", [])),
