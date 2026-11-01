@@ -1,0 +1,48 @@
+{
+  "key": "TIME",
+  "title": "Time Synchronisation",
+  "number": "3.4",
+  "ratings": ["Met", "Partially Met", "Not Met", "Not Applicable"],
+  "requirement_stories": true,
+  "questions": [
+    {"id": "B1", "kind": "requirement", "text": "SEP-TIME-01: time from an OT-resident authoritative source independent of the IT domain hierarchy"},
+    {"id": "B2", "kind": "observation", "text": "Discovery Information table", "part": 1, "columns": ["Aspect", "Finding"]},
+    {"id": "B3", "kind": "note", "part": 2, "text": "the optional note under the table, or None",
+     "table_rows": ["Time source | Domain controllers hosted in OT"]}
+  ],
+  "evidence": {
+    "B1": {
+      "rows": [
+        {"id": "E-003", "status": "VERIFIED", "claim": "MOTPRDSRV122 and ROTPRDSRV122 are domain controllers hosted in the OT network and are the time sources of the captured hosts"},
+        {"id": "E-004", "status": "VERIFIED", "claim": "The Windows Time service on each captured host syncs from a domain controller"},
+        {"id": "E-005", "status": "VERIFIED", "claim": "MOTPRDREV101 and MOTPRDLOG103 at Mackay take their time from ROTPRDSRV122 at Rockhampton"},
+        {"id": "E-3173", "status": "VERIFIED", "claim": "Source stratum 5 for most hosts (20261029 capture)"}
+      ],
+      "cut": ["E-081"],
+      "superseded": {"E-081": ["E-3173"]}
+    }
+  },
+  "frame": {
+    "slots": ["S6"],
+    "strict": true,
+    "ids": ["E-005"],
+    "must_address": {
+      "B1": [{"slot": "S6", "text": "Source in another site: MOTPRDREV101 and MOTPRDLOG103 at Mackay take their time from ROTPRDSRV122 at Rockhampton",
+              "ids": ["E-005"], "tokens": ["ROTPRDSRV122"]}]
+    }
+  },
+  "host_register": {
+    "groups": [
+      {"role": "General Purpose Jump Host", "hosts": ["MKYPRDOPS110", "ROCPRDOPS110"], "sites": []},
+      {"role": "Domain Controller", "hosts": ["MOTPRDSRV122", "ROTPRDSRV122"], "sites": []}
+    ],
+    "uncaptured": []
+  },
+  "role_tables": [
+    {"rows": [{"hosts": ["MOTPRDSRV122", "ROTPRDSRV122"], "cells": ["Domain Controller", "MOTPRDSRV122, ROTPRDSRV122"]}]}
+  ],
+  "host_settings": {
+    "MKYPRDOPS110": {"time.poll": "16,384 s"},
+    "ROCPRDOPS110": {"time.poll": "32,768 s"}
+  }
+}
