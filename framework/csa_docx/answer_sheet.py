@@ -1268,6 +1268,29 @@ def _note_checks(qid: str, q: dict, b: dict, sheet: dict[str, dict], qs: dict[st
             out.append(_f("ERROR", "NOTE_REPEATS_ROW", qid, f"the note repeats a table row (\"{_quote(r, 80)}\"): "
                           "say what the rows cannot show, or write 'None: <why>'"))
             break
+    for oid, oq in qs.items():               # NOTE_REPEATS_TEXT: prose this same sheet writes, story, table rows or another note
+        if oid == qid or oid not in sheet:
+            continue
+        if oq["kind"] not in ("requirement", "narrative", "findings", "note", "observation", "register"):
+            continue
+        ob = sheet[oid]
+        parts = [(f"fact", f["text"]) for f in ob["facts"]] + [(f"bullet", x) for x in ob["bullets"]]
+        if oq["kind"] == "note":
+            parts += [("note", note_text(ob))]
+        else:
+            parts += [("story", ob.get("story") or ""), ("text", ob.get("text") or "")]
+            parts += [(f"row", " | ".join(r)) for r in ob["rows"][1:]]
+        for where, s in parts:
+            if not s:
+                continue
+            sw = _content(s)
+            if words and sw and len(words & sw) / len(words) >= 0.75:
+                out.append(_f("WARN", "NOTE_REPEATS_TEXT", qid, f"the note repeats prose this sheet already writes "
+                              f"(\"{_quote(s, 80)}\", in {oid}): say what the earlier text does not cover, or write 'None: <why>'"))
+                break
+        else:
+            continue
+        break
     return out
 
 
