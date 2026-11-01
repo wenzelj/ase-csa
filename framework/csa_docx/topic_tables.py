@@ -573,7 +573,7 @@ def _blocks(xml: str, start: int, end: int) -> list[tuple[str, int, int, str]]:
         else:
             # a paragraph can hold others (a figure drawn as Word shapes has text boxes): match to its own </w:p>
             depth, j = 0, m.end()
-            for t in _PTAG.finditer(xml, pos):
+            for t in ([] if m.group(0).endswith("/>") else _PTAG.finditer(xml, pos)):
                 if t.group(0).endswith("/>"):
                     continue
                 depth += -1 if t.group(0) == "</w:p>" else 1
@@ -748,6 +748,22 @@ def place_xml(xml: str, t, heading: str, styles_xml: str = "") -> tuple[str, str
     # of our marked tables. Figure captions and human-authored captions stay.
     remove += [(s, e) for i, (k, s, e, b) in enumerate(blocks[:-1])
                if is_table_caption(k, b) and ours_tbl(blocks[i + 1][0], blocks[i + 1][3])]
+    # A stray marked table can sit anywhere in the section: its notes below it and an empty paragraph above
+    # it (or above its generated caption) go with it. Figures, human captions and the Aspect table stay.
+    is_empty = lambda k, b: (k == "p" and not _heading_level(b) and not _text(b).strip()          # noqa: E731
+                             and not re.search(r"<w:drawing|<w:pict|<w:object|<w:fldChar|<w:sectPr", b))
+    for i, (k, s, e, b) in enumerate(blocks):
+        if not ours_tbl(k, b):
+            continue
+        n = i + 1
+        while n < len(blocks) and is_note(blocks[n][0], blocks[n][3]):
+            remove.append(blocks[n][1:3])
+            n += 1
+        h = i - 1
+        if h >= 0 and is_table_caption(blocks[h][0], blocks[h][3]):
+            h -= 1
+        if h >= 0 and is_empty(blocks[h][0], blocks[h][3]):
+            remove.append(blocks[h][1:3])
     if replace_observation and reference_entry:
         remove.append(reference_entry[:2])
     replaced = any(ours_tbl(k, b) for k, _s, _e, b in blocks)

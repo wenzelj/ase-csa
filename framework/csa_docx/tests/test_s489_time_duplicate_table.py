@@ -7,8 +7,6 @@ import re
 import sys
 from pathlib import Path
 
-import pytest
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -32,7 +30,6 @@ def _with_stale_table(once: str) -> str:
     return once[:at] + EMPTY_P + stale + once[at:]
 
 
-@pytest.mark.xfail(strict=True, reason="S489: _blocks swallows a table's first cell after a self-closing <w:p/>")
 def test_blocks_reads_the_table_after_a_self_closing_paragraph(tmp_path):
     once, _ = tt.place_xml(DOC, build(tmp_path), HEADING)
     messy = _with_stale_table(once)
@@ -41,7 +38,6 @@ def test_blocks_reads_the_table_after_a_self_closing_paragraph(tmp_path):
     assert kinds.count("tbl") == 3          # our table, the stale one, the Aspect table
 
 
-@pytest.mark.xfail(strict=True, reason="S489: _blocks swallows a table's first cell after a self-closing <w:p/>")
 def test_place_leaves_exactly_the_built_tables_and_no_empty_paragraph(tmp_path):
     t = build(tmp_path)
     once, _ = tt.place_xml(DOC, t, HEADING)
