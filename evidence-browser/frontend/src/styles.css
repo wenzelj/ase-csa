@@ -149,6 +149,7 @@
 .intake-num{display:grid;place-items:center;width:30px;height:30px;border-radius:50%;background:var(--field);font-weight:700}
 .intake-done{border-left-color:var(--teal)}.intake-done .intake-num{background:#e5f1ef;color:var(--teal)}
 .intake-current{border-left-color:var(--amber)}.intake-next{background:#fffaf0}
+.intake-failed{border-left-color:#a6423d;background:#f5ddda}.intake-badge{margin-left:8px;padding:2px 8px;border-left:3px solid #a6423d;background:#fff;color:#a6423d;font-size:12px;font-weight:700}
 .intake-blocked{border-left-color:var(--slate)}.intake-waiting{opacity:.7}
 .intake-step button{padding:8px 14px;white-space:nowrap}.intake-step button:disabled{opacity:.45;cursor:default}
 .intake-action{display:flex;gap:6px;align-items:center}.intake-action select{padding:7px;border:1px solid var(--line);background:#fff;font:inherit}

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { api, cancelJob, fetchIntake, fetchJob, reviewLead, submitJob } from "../api";
+import { api, cancelJob, fetchIntake, fetchIntakeErrors, fetchJob, reviewLead, submitJob } from "../api";
 import { AGENT_CLIS, rememberedAgentCli, rememberAgentCli } from "../agentClis";
-import type { IntakeLead, IntakeEvidenceRow, IntakeFile, IntakeSnapshot, ReviewJob } from "../types";
+import type { IntakeLead, IntakeEvidenceRow, IntakeFile, IntakeErrors, IntakeSnapshot, ReviewJob } from "../types";
 import { deriveIntakeSteps, gapFindings, resumableJob, type StepKey } from "./intakeSteps";
 
 const TERMINAL = ["succeeded", "failed", "cancelled", "interrupted"];
@@ -20,10 +20,15 @@ type Props = {
 export function EvidenceIntake({ system, draftStage, refreshKey, openEvidence, writeFact, openSection }: Props) {
   const [snap, setSnap] = useState<IntakeSnapshot | null>(null); const [job, setJob] = useState<ReviewJob | null>(null);
   const [error, setError] = useState(""); const [cli, setCli] = useState(rememberedAgentCli()); const [showLog, setShowLog] = useState(false);
-  const [onlyFound, setOnlyFound] = useState(true);
+  const [onlyFound, setOnlyFound] = useState(true); const [errors, setErrors] = useState<IntakeErrors | null>(null);
   const poll = useRef<number | undefined>(undefined);
 
+  async function loadErrors() {
+    try { setErrors(await fetchIntakeErrors(system)); }
+    catch { /* no error report: show nothing new */ }
+  }
   async function load() {
+    void loadErrors();
     try { setSnap(await fetchIntake(system)); }
     catch (e) {
       const message = (e as Error).message;
@@ -43,7 +48,7 @@ export function EvidenceIntake({ system, draftStage, refreshKey, openEvidence, w
     try { const live = resumableJob((await api<{ jobs: ReviewJob[] }>(`/api/systems/${system}/jobs`)).jobs); if (live) { setJob(live); watch(live.id); } }
     catch { /* no job list: nothing to resume */ }
   }
-  useEffect(() => { setSnap(null); setJob(null); void load(); void resume(); return () => window.clearInterval(poll.current); }, [system]);
+  useEffect(() => { setSnap(null); setJob(null); setErrors(null); void load(); void resume(); return () => window.clearInterval(poll.current); }, [system]);
   useEffect(() => { if (refreshKey) void load(); }, [refreshKey]);
   useEffect(() => { rememberAgentCli(cli); }, [cli]);
 
@@ -61,9 +66,10 @@ export function EvidenceIntake({ system, draftStage, refreshKey, openEvidence, w
 
   if (!snap) return <section className="page draft-page intake-page">{error ? <div className="desk-error" role="alert">{error}</div> : <div className="loading"><span /><strong>Reading what came in…</strong></div>}</section>;
 
-  const { steps, next, busy, canResolve } = deriveIntakeSteps(snap, job);
+  const { steps, next, busy, canResolve } = deriveIntakeSteps(snap, job, errors);
   const running = !!job && !TERMINAL.includes(job.state);
   const rec = snap.intake;
+  const problemCount = (key: StepKey) => (errors?.runs || []).find(r => r.step === key && !!r.state && TERMINAL.includes(r.state))?.problem_count || 0;
   const questions = (snap.gap_check?.questions || []).filter(q => !onlyFound || q.verdict !== "NOT_FOUND");
   const files: IntakeFile[] = rec ? [...rec.added, ...rec.changed] : [];
   const resolveAction = <span className="intake-action"><select value={cli} onChange={e => setCli(e.target.value)} disabled={busy} aria-label="Agent for evidence settlement">{AGENT_CLIS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}</select><button onClick={() => void run("resolve_gaps", { cli })} disabled={busy || !canResolve}>Resolve and update answers</button></span>;
@@ -78,8 +84,8 @@ export function EvidenceIntake({ system, draftStage, refreshKey, openEvidence, w
   return <section className="page draft-page intake-page">
     <header className="page-heading"><div><span>Evidence intake</span><h1>Bring new data in and use it</h1><p>New files go into the index first. The evidence agent records what the sources state, checks open questions against the matrix and index, settles each finding from its source, and updates the affected answers. The final step can change the working document through the normal framework pipeline.</p></div></header>
 
-    <ol className="intake-steps">{steps.map((s, i) => <li key={s.key} className={`intake-step intake-${s.status}${s.key === next ? " intake-next" : ""}`}>
-      <span className="intake-num">{i + 1}</span><div><b>{s.title}</b><small>{s.detail || " "}</small></div>{action(s.key)}
+    <ol className="intake-steps">{steps.map((s, i) => <li key={s.key} className={`intake-step intake-${s.status}${s.status === "failed" ? " intake-failed" : ""}${s.key === next ? " intake-next" : ""}`}>
+      <span className="intake-num">{i + 1}</span><div><b>{s.title}{s.status === "failed" && <span className="intake-badge">failed{problemCount(s.key) > 0 ? ` · ${problemCount(s.key)}` : ""}</span>}</b><small>{s.detail || " "}</small></div>{action(s.key)}
     </li>)}</ol>
 
     <div className="draft-counts">
