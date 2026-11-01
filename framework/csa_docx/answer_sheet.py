@@ -1130,6 +1130,33 @@ def role_name_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
     return out
 
 
+_CAPTURED_HOSTS = re.compile(r"(?<!\d )(?<!\d)\b(?:the|all) captured (?:ot )?hosts\b", re.I)
+
+
+def captured_hosts_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
+    """CAPTURED_HOSTS_PHRASE (warning): prose says "the captured hosts" instead of naming the system. One per block."""
+    out = []
+    for q in card.get("questions", []):
+        qid = q["id"]
+        b = sheet.get(qid)
+        if not b:
+            continue
+        texts = [b.get("summary") or "", b.get("story") or "", b.get("text") or ""] + [f["text"] for f in b.get("facts", [])]
+        hit = False
+        for t in texts:
+            for line in t.splitlines():
+                if line.strip().upper().startswith("QUESTION:"):
+                    continue
+                if _CAPTURED_HOSTS.search(line):
+                    hit = True
+        if hit:
+            out.append(_f("WARN", "CAPTURED_HOSTS_PHRASE", qid,
+                          "The prose says 'the captured hosts', which does not tell the reader which system or hosts "
+                          "are meant. Name the system (its application name, or the host names). The role table "
+                          "footnote already shows which hosts were not captured."))
+    return out
+
+
 _UNIT_VALUE = re.compile(r"(\d[\d,]*)\s*(ms|s|sec|secs|seconds?|min|mins|minutes?|h|hrs?|hours?|days?)\b", re.I)
 
 
@@ -1910,6 +1937,7 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
     findings += practice_checks(sheet, card)
     findings += subject_checks(sheet, card)
     findings += role_name_checks(sheet, card)
+    findings += captured_hosts_checks(sheet, card)
     findings += table_value_checks(sheet, card)
     findings += drawbridge_topic_checks(sheet, card)
     findings += topic_checks(sheet, card, matrix, _f)

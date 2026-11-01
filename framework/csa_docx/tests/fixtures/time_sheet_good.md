@@ -1,6 +1,6 @@
 ## B1 SEP-TIME-01
 Facts:
-- MOTPRDSRV122 and ROTPRDSRV122 are domain controllers hosted in the OT network, and the captured hosts take their time from them. (E-003, E-004) {observed; MOTPRDSRV122, ROTPRDSRV122}
+- MOTPRDSRV122 and ROTPRDSRV122 are domain controllers hosted in the OT network, and MOTPRDREV101 and MOTPRDLOG103 take their time from them. (E-003, E-004) {observed; MOTPRDSRV122, ROTPRDSRV122}
 - MOTPRDREV101 and MOTPRDLOG103 at Mackay take their time from ROTPRDSRV122 at Rockhampton. (E-005) {observed; MOTPRDREV101, MOTPRDLOG103}
 - The time sources sit at stratum 5 in the latest capture. (E-3173) {observed; MOTPRDSRV122}
 Summary: The time sources are domain controllers hosted in OT. The Mackay hosts depend on a source at another site. The requirement is Partially Met because the sources are OT-hosted but share one domain hierarchy.
