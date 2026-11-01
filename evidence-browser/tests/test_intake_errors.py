@@ -1,4 +1,7 @@
-from backend.intake_errors import classify_log
+import json
+
+from backend import intake_errors
+from backend.intake_errors import classify_log, intake_runs
 
 TB = """Traceback (most recent call last):
   File "/opt/x/csa_docx/gap_lookup.py", line 12, in <module>
@@ -78,3 +81,47 @@ def test_order_and_cap():
     assert len(classify_log(text)) == 25
     text = "csa: failed a\ncsa: failed b\ncsa: failed b\n"
     assert classify_log(text)[0]["signature"] == "csa: failed b"
+
+
+def _job(root, job_id, operation, state, created, exit_code=0, stdout="", stderr="", message=None):
+    folder = root / "ui-jobs" / job_id
+    folder.mkdir(parents=True)
+    (folder / "metadata.json").write_text(json.dumps({
+        "id": job_id, "project_key": "p", "operation": operation, "state": state, "created_at": created,
+        "started_at": created, "finished_at": None if state == "running" else created,
+        "exit_code": exit_code, "message": message}))
+    (folder / "stdout.log").write_text(stdout)
+    (folder / "stderr.log").write_text(stderr)
+
+
+def _project(tmp_path):
+    return {"key": "p", "work_dir": str(tmp_path)}
+
+
+def test_intake_runs_states_and_filter(tmp_path):
+    _job(tmp_path, "a", "ingest", "succeeded", "2026-01-01T00:00:01+00:00", stdout="done\n")
+    _job(tmp_path, "b", "intake", "succeeded", "2026-01-01T00:00:02+00:00", stderr=TB)
+    _job(tmp_path, "c", "gap_check", "cancelled", "2026-01-01T00:00:03+00:00", exit_code=-15)
+    _job(tmp_path, "d", "resolve_gaps", "running", "2026-01-01T00:00:04+00:00", exit_code=None, stdout="x\n")
+    _job(tmp_path, "e", "answer", "failed", "2026-01-01T00:00:05+00:00")
+    runs = intake_runs(_project(tmp_path))
+    assert [r["id"] for r in runs] == ["d", "c", "b", "a"]
+    by = {r["id"]: r for r in runs}
+    assert by["a"]["has_problems"] is False and by["a"]["step"] == "ingest"
+    assert by["b"]["has_problems"] is True and by["b"]["problems"][0]["stream"] == "stderr"
+    assert by["b"]["reason"].startswith("TypeError")
+    assert by["c"]["state"] == "cancelled" and by["c"]["has_problems"] is True
+    assert by["d"]["state"] == "running" and by["d"]["step"] == "settle"
+    assert len(intake_runs(_project(tmp_path), limit=2)) == 2
+
+
+def test_intake_runs_cached(tmp_path, monkeypatch):
+    _job(tmp_path, "a", "ingest", "succeeded", "2026-01-01T00:00:01+00:00", stdout="done\n")
+    calls = []
+    real = intake_errors._read_log
+    monkeypatch.setattr(intake_errors, "_read_log", lambda *a, **k: calls.append(a) or real(*a, **k))
+    intake_runs(_project(tmp_path))
+    first = len(calls)
+    assert first == 2
+    intake_runs(_project(tmp_path))
+    assert len(calls) == first

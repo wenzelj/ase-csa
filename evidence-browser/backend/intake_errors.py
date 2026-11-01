@@ -5,8 +5,11 @@ output into distinct problems with counts so the page can show them.
 """
 from __future__ import annotations
 
+import json
 import re
 import sys
+import threading
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -96,3 +99,101 @@ def classify_log(text: str) -> list[dict[str, Any]]:
 
     ordered = sorted(groups.values(), key=lambda g: (-g["count"], g["first_line"]))
     return ordered[:MAX_GROUPS]
+
+
+RUN_OPERATIONS = {"ingest": "ingest", "intake": "documents", "gap_check": "gaps", "resolve_gaps": "settle"}
+MAX_LOG_BYTES = 8 * 1024 * 1024
+_FAILED_STATES = {"failed", "interrupted", "cancelled"}
+_cache: dict[str, tuple[tuple, tuple[list[dict[str, Any]], bool]]] = {}
+_cache_lock = threading.Lock()
+
+
+def _read_log(path: Path, max_bytes: int = MAX_LOG_BYTES) -> tuple[str, bool]:
+    """Return (text, truncated). A log over max_bytes is read from its end, starting at a whole line."""
+    try:
+        with path.open("rb") as handle:
+            size = handle.seek(0, 2)
+            truncated = size > max_bytes
+            handle.seek(size - max_bytes if truncated else 0)
+            data = handle.read(max_bytes)
+    except OSError:
+        return "", False
+    if truncated:
+        newline = data.find(b"\n")
+        data = data[newline + 1:] if newline >= 0 else b""
+    return data.decode("utf-8", errors="replace"), truncated
+
+
+def _stat_key(path: Path) -> tuple[int, int]:
+    try:
+        info = path.stat()
+    except OSError:
+        return (-1, -1)
+    return (info.st_size, info.st_mtime_ns)
+
+
+def _classify_job(job_id: str, folder: Path) -> tuple[list[dict[str, Any]], bool]:
+    stdout_path, stderr_path = folder / "stdout.log", folder / "stderr.log"
+    key = (_stat_key(stdout_path), _stat_key(stderr_path))
+    with _cache_lock:
+        hit = _cache.get(job_id)
+        if hit is not None and hit[0] == key:
+            return hit[1]
+    problems: list[dict[str, Any]] = []
+    truncated = False
+    for stream, path in (("stdout", stdout_path), ("stderr", stderr_path)):
+        text, cut = _read_log(path)
+        truncated = truncated or cut
+        for group in classify_log(text):
+            problems.append({**group, "stream": stream})
+    result = (problems, truncated)
+    with _cache_lock:
+        _cache[job_id] = (key, result)
+    return result
+
+
+def _seconds(started: str | None, finished: str | None) -> float | None:
+    if not started:
+        return None
+    try:
+        begin = datetime.fromisoformat(started)
+        end = datetime.fromisoformat(finished) if finished else datetime.now(timezone.utc)
+        return max(0.0, round((end - begin).total_seconds(), 3))
+    except ValueError:
+        return None
+
+
+def intake_runs(project: dict[str, str], limit: int = 10) -> list[dict[str, Any]]:
+    """Recent runs of the four intake steps, newest first, each with the problems found in its logs."""
+    root = Path(project["work_dir"]).expanduser() / "ui-jobs"
+    if not root.is_dir() or limit <= 0:
+        return []
+    metas: list[dict[str, Any]] = []
+    for path in root.glob("*/metadata.json"):
+        try:
+            meta = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(meta, dict) or meta.get("operation") not in RUN_OPERATIONS or not meta.get("id"):
+            continue
+        if meta.get("project_key") not in (None, project.get("key")):
+            continue
+        metas.append(meta)
+    metas.sort(key=lambda m: str(m.get("created_at") or ""), reverse=True)
+    runs: list[dict[str, Any]] = []
+    for meta in metas[:limit]:
+        job_id = str(meta["id"])
+        problems, truncated = _classify_job(job_id, root / job_id)
+        state = str(meta.get("state") or "")
+        reason = meta.get("message") or ""
+        if not reason and problems:
+            reason = max(problems, key=lambda g: g["count"])["signature"]
+        runs.append({
+            "id": job_id, "operation": meta["operation"], "step": RUN_OPERATIONS[meta["operation"]],
+            "state": state, "exit_code": meta.get("exit_code"),
+            "started_at": meta.get("started_at"), "finished_at": meta.get("finished_at"),
+            "elapsed_seconds": _seconds(meta.get("started_at"), meta.get("finished_at")),
+            "reason": reason, "problems": problems, "problem_count": len(problems),
+            "has_problems": state in _FAILED_STATES or bool(problems), "log_truncated": truncated,
+        })
+    return runs
