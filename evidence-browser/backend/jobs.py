@@ -116,6 +116,13 @@ class JobManager:
             _atomic_text(folder / "stderr.log", stderr)
         _atomic_json(folder / "metadata.json", job.model_dump())
 
+    def _append_log(self, project: dict[str, str], job: JobRecord, name: str, text: str) -> None:
+        folder = self._folder(project, job.id)
+        folder.mkdir(parents=True, exist_ok=True)
+        with open(folder / f"{name}.log", "a", encoding="utf-8") as handle:
+            handle.write(text)
+        _atomic_json(folder / "metadata.json", job.model_dump())
+
     def _load_project(self, project: dict[str, str]) -> None:
         project_key = project["key"]
         with self._condition:
@@ -221,7 +228,7 @@ class JobManager:
                         current = self._jobs[job_id]
                         current.stdout_tail = _tail("".join(chunks["stdout"]))
                         current.stderr_tail = _tail("".join(chunks["stderr"]))
-                        self._persist(project, current, "".join(chunks["stdout"]), "".join(chunks["stderr"]))
+                        self._append_log(project, current, name, text)
                 stream.close()
 
             readers = [threading.Thread(target=drain, args=("stdout", process.stdout), daemon=True),

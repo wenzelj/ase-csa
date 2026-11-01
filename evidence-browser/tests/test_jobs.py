@@ -60,6 +60,29 @@ def test_running_job_streams_output_before_process_finishes(tmp_path: Path, monk
     assert manager.wait(item, created.id).state == "succeeded"
 
 
+def test_long_output_logs_match_expected_text_and_never_shrink(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    operation(monkeypatch, "import sys\n"
+                           "for i in range(2000):\n"
+                           "    print('out line', i, flush=True)\n"
+                           "    print('err line', i, file=sys.stderr, flush=True)\n")
+    item = project(tmp_path)
+    manager = JobManager(tmp_path / ".agents")
+    created = manager.submit(item, "stub", CommandRequest())
+    folder = Path(item["work_dir"]) / "ui-jobs" / created.id
+    last = {"stdout": 0, "stderr": 0}
+    while manager.get(item, created.id).state in {"queued", "running"}:
+        for name in last:
+            path = folder / f"{name}.log"
+            if path.exists():
+                size = path.stat().st_size
+                assert size >= last[name]
+                last[name] = size
+    assert manager.wait(item, created.id).state == "succeeded"
+    assert (folder / "stdout.log").read_text() == "".join(f"out line {i}\n" for i in range(2000))
+    assert (folder / "stderr.log").read_text() == "".join(f"err line {i}\n" for i in range(2000))
+    assert json.loads((folder / "metadata.json").read_text())["state"] == "succeeded"
+
+
 def test_read_only_jobs_run_concurrently(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     operation(monkeypatch, "import time; time.sleep(.25)")
     item = project(tmp_path)
