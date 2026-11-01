@@ -1130,6 +1130,92 @@ def role_name_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
     return out
 
 
+_UNIT_VALUE = re.compile(r"(\d[\d,]*)\s*(ms|s|sec|secs|seconds?|min|mins|minutes?|h|hrs?|hours?|days?)\b", re.I)
+
+
+def _unit_values(s: str) -> set[tuple[str, str]]:
+    """(number, unit) pairs in s, number without thousands commas, unit as its first letter (m for min, ms kept)."""
+    out = set()
+    for n, u in _UNIT_VALUE.findall(s or ""):
+        u = u.lower()
+        out.add((n.replace(",", "").lstrip("0") or "0", "ms" if u == "ms" else ("min" if u.startswith("min") else u[0])))
+    return out
+
+
+def _card_host_settings(card: dict) -> dict[str, dict[str, str]]:
+    """{HOST: {attribute: value}} from card["host_settings"], else from csa-work/hosts/host_settings.csv in the
+    working folder (empty when neither exists)."""
+    given = card.get("host_settings")
+    if given is None:
+        out: dict[str, dict[str, str]] = {}
+        try:
+            from csa_docx import host_settings
+            for cand in (Path.cwd() / "csa-work", Path.cwd()):
+                if (cand / "hosts" / "host_settings.csv").is_file():
+                    for h, attrs in host_settings.load(cand, merge_isolation=False).items():
+                        out[h] = {a: r.get("value", "") for a, r in attrs.items()}
+                    break
+        except Exception:
+            return {}
+        return out
+    return {h.upper(): {a: (v.get("value", "") if isinstance(v, dict) else v) for a, v in attrs.items()}
+            for h, attrs in given.items()}
+
+
+def table_value_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
+    """TABLE_VALUE_CONFLICT (warning): an Aspect row that names a host or a register role and gives a value for a
+    setting that differs from the value recorded for that host in hosts/host_settings.csv. Compared for settings
+    whose recorded value is a number with a unit (poll intervals and the like); rows that name no host or role
+    are ignored."""
+    settings = _card_host_settings(card)
+    if not settings:
+        return []
+    from csa_docx.topic_frames import LABELS
+    groups = [(g["role"], [h.upper() for h in g.get("hosts", [])])
+              for g in (card.get("host_register") or {}).get("groups", []) if g.get("role")]
+    out = []
+    for q in card.get("questions", []):
+        b = sheet.get(q["id"])
+        if not b or q.get("kind") != "observation":
+            continue
+        seen = set()
+        for row in b.get("rows", [])[1:]:
+            text = " | ".join(row)
+            up = text.upper()
+            named = [h for h in settings if re.search(r"(?<![A-Z0-9])" + re.escape(h) + r"(?![A-Z0-9])", up)]
+            for role, hs in groups:
+                if re.search(r"\b" + re.escape(role.lower()) + r"s?\b", text.lower()):
+                    named += [h for h in hs if h in settings]
+            named = list(dict.fromkeys(named))
+            if not named:
+                continue
+            aspect = (row[0] if row else "").lower()
+            row_vals = _unit_values(text)
+            if not row_vals:
+                continue
+            for h in named:
+                for attr, rec in settings[h].items():
+                    label = LABELS.get(attr, "").lower()
+                    tail = attr.split(".", 1)[-1].replace("_", " ")
+                    if not ((label and label in aspect) or re.search(r"\b" + re.escape(tail) + r"\b", aspect)):
+                        continue
+                    rec_vals = _unit_values(rec)
+                    if not rec_vals or rec_vals & row_vals:
+                        continue
+                    if not {u for _, u in rec_vals} & {u for _, u in row_vals}:
+                        continue
+                    key = (h, attr)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    shown = ", ".join(f"{n} {u}" for n, u in sorted(row_vals))
+                    out.append(_f("WARN", "TABLE_VALUE_CONFLICT", q["id"],
+                                  f"The row '{row[0]}' gives {shown} but the recorded {LABELS.get(attr, attr).lower()} for "
+                                  f"{h} is {rec} (host settings, {attr}). Use the recorded value for {h}, or split the "
+                                  "row by host."))
+    return out
+
+
 def source_class(row: dict | None) -> str:
     """Where a matrix row comes from: capture (a discovery capture file), previous (the previous assessment),
     user (a confirmation), or document (any other supplied document)."""
@@ -1824,6 +1910,7 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
     findings += practice_checks(sheet, card)
     findings += subject_checks(sheet, card)
     findings += role_name_checks(sheet, card)
+    findings += table_value_checks(sheet, card)
     findings += drawbridge_topic_checks(sheet, card)
     findings += topic_checks(sheet, card, matrix, _f)
     findings += function_checks(sheet, card, _f)
