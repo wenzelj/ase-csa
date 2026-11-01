@@ -9,7 +9,7 @@ project:
   assessment_type: "Current State Assessment"
   program: "OT 3.5 Migration Program"
   environment: ""
-  application: "REVELOC TETRA"
+  application: "TETRA/Reveloc"
   # From the Document Information table of the existing CSA (NetSeg_Current_State_Assessment_REVELOC_TETRA.docx).
   organisation: "Aurizon Network Pty Ltd"
   as_of_date: ""
