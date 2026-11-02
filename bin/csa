@@ -2324,6 +2324,12 @@ def build_prompt(p: dict, r: dict, args: list[str], local: bool | None = None) -
                      "REQUIRED_READING (absolute paths: read them first). Write only SHEET. Do not inspect other "
                      "directories, search for files, open the source set, change file or Word document, or reconstruct any path.")
         lines.append("\nREQUIRED_READING:\n" + "\n".join(f"- {x}" for x in required_reading(p)))
+        if values.get("SHEET") and values.get("CARD"):
+            # `python3` on an agent's PATH can be Apple's command-line-tools stub: give the interpreter csa itself runs under
+            lines.append("\nVALIDATE=PYTHONPATH=\"" + str(FRAMEWORK) + "\" \"" + sys.executable +
+                         "\" -m csa_docx.answer_sheet validate " + shlex.quote(str(values["SHEET"])) + " --card " +
+                         shlex.quote(str(values["CARD"]).replace(".md", ".json")) +
+                         "   (run it from the folder you start in, with this exact interpreter, not `python3`)")
     if stage and not (r.get("verb") == "answer" and str(values.get("MODE", "answer")).lower() != "answer"):
         lines.append("\n## Rules (digest)\n\n" + _fw_digest(stage).rstrip())
         lines.append("\nThe digest summarises the rules. It does not replace the required reading." if answer_workspace

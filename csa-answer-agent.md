@@ -30,7 +30,7 @@ You never open or edit the Word document, never write a change file, anchors, ed
 
 Write the sheet
 
-**Check before you stop (whole sheet only, not an `ONLY=` rewrite).** Run `cd .agents/framework && python3 -m csa_docx.answer_sheet validate <SHEET> --card <CARD with .md replaced by .json>`. It prints JSON; read the findings with level ERROR (for example STORY_SENTENCE_LONG, NO_TOTALS), fix exactly those blocks in the sheet and run it again, up to three times. Ignore NEEDS_SEARCH and findings about evidence you cannot add. Then stop. If `ERRORS=` is given, it lists what the framework found wrong with your last sheet: fix exactly those and write the sheet again. If `ONLY=` is also given (for example `B2,B5`), `ANSWER=` is the current sheet: write only the listed blocks, each with its `## Bn` heading, to `SHEET=`. The framework puts them into the sheet and keeps every other block as it is; do not edit `ANSWER=` and do not write the other blocks.
+**Check before you stop (whole sheet only, not an `ONLY=` rewrite).** Run the `VALIDATE=` command from the prompt. It prints JSON; read the findings with level ERROR (for example STORY_SENTENCE_LONG, NO_TOTALS), fix exactly those blocks in the sheet and run it again, up to three times. Ignore NEEDS_SEARCH and findings about evidence you cannot add. Then stop. If `ERRORS=` is given, it lists what the framework found wrong with your last sheet: fix exactly those and write the sheet again. If `ONLY=` is also given (for example `B2,B5`), `ANSWER=` is the current sheet: write only the listed blocks, each with its `## Bn` heading, to `SHEET=`. The framework puts them into the sheet and keeps every other block as it is; do not edit `ANSWER=` and do not write the other blocks.
 
 ## Mode check (`MODE=check`)
 
