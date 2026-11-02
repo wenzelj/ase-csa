@@ -1,3 +1,4 @@
+from pathlib import Path
 from csa_docx import answer_sheet as A, doc_spec
 from csa_docx.engines.docxengine_adapter import Document
 
@@ -154,21 +155,6 @@ Rating reason: recovery was not established.
     assert "STORY_RESTATES_RATING" in {f["code"] for f in res2["findings"] if f["level"] == "ERROR"}
 
 
-def test_story_sentence_that_repeats_the_summary_is_rejected():
-    card = _card(two=False)
-    matrix = {"E-001": {"claim": "local storage"}}
-    raw = """## B1 SEP-X-01
-Facts:
-- The application uses local storage. (E-001) {observed; application}
-Summary: The application keeps its data on local storage and no restore test was recorded. The requirement is Partially Met because recovery was not established.
-Story: The application keeps its data on local storage and no restore test was recorded. The nightly job writes to a second disk on the same server.
-Rating: Partially Met
-Rating reason: recovery was not established.
-"""
-    res = A.validate(A.parse(raw), card, matrix, draft=True, relaxed=True)
-    assert "STORY_REPEATS_SUMMARY" in {f["code"] for f in res["findings"] if f["level"] == "ERROR"}
-
-
 def test_near_duplicate_summary_and_story_are_rejected():
     card = _card(two=False)
     matrix = {"E-001": {"claim": "local storage"}}
@@ -193,3 +179,68 @@ def test_discovery_question_is_not_rendered_into_current_state_cell():
     current_state_text = current_state.split("**Text:**", 1)[1].split("**Why:**", 1)[0]
     assert "QUESTION:" not in current_state_text
     assert any("Has recovery been tested?" in q for q in rendered["open"])
+
+
+def _story_codes(story):
+    card = _card(two=False)
+    matrix = {"E-001": {"claim": "local storage"}}
+    raw = f"""## B1 SEP-X-01
+Facts:
+- The application uses local storage. (E-001) {{observed; application}}
+Summary: Data stays on local disks. The requirement is Partially Met because recovery was not established.
+Story: {story}
+Rating: Partially Met
+Rating reason: recovery was not established.
+"""
+    res = A.validate(A.parse(raw), card, matrix, draft=True, relaxed=True)
+    return {f["code"] for f in res["findings"] if f["level"] == "ERROR"}
+
+
+def test_long_story_sentence_is_an_error():
+    long_s = " ".join(["The nightly job writes a copy of the files to a second disk"] * 1 + ["and then a further copy to a third disk on another server"] * 4) + "."
+    assert "STORY_SENTENCE_LONG" in _story_codes(long_s + " Restore was not tested.")
+    assert "STORY_SENTENCE_LONG" not in _story_codes("The nightly job copies the files to a second disk. Restore was not tested.")
+
+
+def test_same_long_phrase_twice_in_a_story_is_an_error():
+    s = "The main database cluster node runs the service. The main database cluster node also holds the log. Restore was not tested."
+    assert "STORY_PHRASE_REPEAT" in _story_codes(s)
+    assert "STORY_PHRASE_REPEAT" not in _story_codes("The main database cluster node runs the service. It also holds the log. Restore was not tested.")
+
+
+def test_story_rules_file_matches_the_code():
+    from csa_docx import story_shape
+    rules = (Path(__file__).resolve().parents[3] / "references" / "story-rules.md").read_text(encoding="utf-8")
+    assert f"over {story_shape.SENTENCE_WORDS} words" in rules
+    assert f"more than {story_shape.MAX_PARTS} parts" in rules
+    assert f"same {story_shape.PHRASE_WORDS} words" in rules
+
+
+def test_discovery_story_record_gets_the_story_errors():
+    from csa_docx import check_change
+    from types import SimpleNamespace as NS
+    long_s = " ".join(f"w{i}" for i in range(45)) + "."
+    rec = NS(title="SEP-X-01 discovery story", text=long_s, edit_id="S3-E1")
+    assert {f["code"] for f in check_change.story_findings([rec])} == {"STORY_SENTENCE_LONG"}
+    assert check_change.story_findings([NS(title="SEP-X-01 row", text=long_s, edit_id="S3-E2")]) == []
+
+
+def test_one_block_story_must_be_paragraphed_and_paragraphs_are_kept():
+    one = " ".join(f"Sentence number {i} says something about item{i} here." for i in range(6))
+    assert "STORY_NOT_PARAGRAPHED" in _story_codes(one)
+    ok = "\nStory: ".join([" ".join(f"Sentence number {i} says something about item{i} here." for i in range(3)),
+                          "The second paragraph names a different thing entirely. It is short."])
+    assert "STORY_NOT_PARAGRAPHED" not in _story_codes(ok)
+    raw = f"## B1 SEP-X-01\nFacts:\n- Data sits on local disks. (E-001) {{observed; application}}\nSummary: S.\nStory: First para here.\nStory: Second para here.\n"
+    assert A.parse(raw)["B1"]["story"] == "First para here.\n\nSecond para here."
+
+
+def test_multi_paragraph_story_is_rendered_as_paragraphs_and_replaced_as_a_range():
+    from csa_docx import answer_sheet as AS
+    assert AS.no_ids("A (E-001).") == "A."
+    assert "\n\n".join(AS.no_ids(" ".join(x.split())) for x in "One two.\n\nThree four.".split("\n\n")) == "One two.\n\nThree four."
+    from csa_docx.engines import docxengine_adapter as ad
+    from types import SimpleNamespace as NS
+    assert ad._following_line_count(NS(action="Replace this paragraph and the following 3 lines")) == 3
+    assert ad._following_line_count(NS(action="Replace this paragraph and the following line")) == 1
+    assert ad._has_paragraph_plus_following_line_replacement(NS(action="Replace this paragraph and the following 3 lines"))

@@ -276,7 +276,7 @@ class DocxEngineEditor:
         if _has_range_replacement(record) or _extract_heading_to_sentence_range(record):
             return self._apply_explicit_range_replacement(record, author, initials)
         if _has_paragraph_plus_following_line_replacement(record):
-            return self._apply_anchor_plus_following_content(record, 1, author, initials)
+            return self._apply_anchor_plus_following_content(record, _following_line_count(record), author, initials)
         if _has_delete_until_heading(record):
             return self._apply_delete_until_heading(record, author, initials)
         if _has_anchor_plus_bullets_replacement(record):
@@ -1809,7 +1809,12 @@ def _extract_heading_to_sentence_range(record: ChangeRecord) -> tuple[str, str] 
 
 def _has_paragraph_plus_following_line_replacement(record: ChangeRecord) -> bool:
     action = record.action.lower()
-    return "replace this paragraph and the following line" in action or "replace this paragraph and following line" in action
+    return bool(re.search(r"replace this paragraph and (?:the )?following (?:\d+ )?lines?\b", action))
+
+
+def _following_line_count(record: ChangeRecord) -> int:
+    m = re.search(r"following (\d+) lines", record.action.lower())
+    return int(m.group(1)) if m else 1
 
 
 def _is_requirement_story_record(record: ChangeRecord) -> bool:

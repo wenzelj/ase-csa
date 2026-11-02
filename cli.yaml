@@ -64,7 +64,7 @@ claude_fleet: claude -p {prompt}
 hermes_fleet: hermes chat -q {prompt}
 
 # csa answer: fix rounds after the first answer. Each rewrites only the blocks that fail; the framework merges them.
-answer_fix_rounds: 1
+answer_fix_rounds: 2
 answer_budget_s: 1200
 # Each answer/draft model pass reports a heartbeat and is stopped before a dead session can consume hours. A sheet
 # written before a timeout is still validated and can continue through the repair loop.

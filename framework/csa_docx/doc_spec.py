@@ -241,6 +241,7 @@ def read(path: Path | str) -> dict:
     pending_bullets: list[dict] = []
     topic_lines = False  # the TableNote lines right after a framework-built role table belong to it
     pending_story = None  # bold SEP title waiting for its normal body paragraph
+    story_open = None     # a requirement story whose body was just read: plain paragraphs right after it are more of its body
 
     def flush_bullets():
         nonlocal pending_bullets
@@ -253,6 +254,7 @@ def read(path: Path | str) -> dict:
         pending_bullets = []
 
     for el in _blocks(body):
+        story_cont, story_open = story_open, None      # any other element ends the story
         if el.tag == _q("tbl"):
             pending_story = None
             flush_bullets()
@@ -394,7 +396,12 @@ def read(path: Path | str) -> dict:
                 pending_story["text"] = text[:300]
                 pending_story["body_pid"] = pid
                 pending_story["body_current"] = text
+                story_open = pending_story
                 pending_story = None
+            elif story_cont is not None:
+                # a story told in several paragraphs: the rest of its body (replaced with it, never left behind)
+                story_cont.setdefault("extra_pids", []).append(pid)
+                story_open = story_cont
             else:
                 topic["parts"].append({"kind": "text", "facet": facet, "label": None, "text": text[:300], "pid": pid,
                                        "current": text})

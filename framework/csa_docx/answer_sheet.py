@@ -229,7 +229,8 @@ HARD_CODES = {"CROSS_PROJECT_ONLY", "NOTE_TOO_LONG", "NOTE_NONE_AND_TEXT", "NOTE
               "DRAWBRIDGE_CAUSAL_SCOPE",
               "EXAMPLE_COPIED", "SUMMARY_MISSING", "STORY_MISSING", "SUMMARY_TOO_LONG", "SUMMARY_TOO_MANY_SENTENCES",
               "SUMMARY_REPEATS_STORY", "SUMMARY_STORY_OVERLAP", "SUMMARY_NO_RATING_BASIS", "QUESTION_IN_SUMMARY",
-              "STORY_NO_EVIDENCE_PATH", "STORY_STARTS_WITH_RATING", "STORY_RESTATES_RATING", "STORY_REPEATS_SUMMARY", "STORY_AND_TEXT"}
+              "STORY_NO_EVIDENCE_PATH", "STORY_STARTS_WITH_RATING", "STORY_RESTATES_RATING", "STORY_AND_TEXT",
+              "STORY_SENTENCE_LONG", "STORY_LIST", "STORY_PHRASE_REPEAT", "STORY_NOT_PARAGRAPHED"}
 
 #: Relaxed draft lane (cli.yaml draft_strictness: relaxed, the default for csa answer): the answer's job is to answer the
 #: question from the evidence, so only what makes it wrong or unusable stops it: evidence it cannot cite, a missing or
@@ -241,7 +242,8 @@ RELAXED_HARD = {"CROSS_PROJECT_ONLY", "QUESTION_MISSING", "EMPTY_ANSWER", "FACT_
                 "RATING_INVALID", "COLUMNS", "ROW_WIDTH", "NO_ROWS", "BACKGROUND_AS_EVIDENCE",
                 "ZONE_CONTRADICTED", "ISOLATION_WRONG_SIDE", "ATTEMPT_AS_ESTABLISHED",
                 "SUMMARY_NO_RATING_BASIS", "SUMMARY_STORY_OVERLAP", "QUESTION_IN_SUMMARY",
-                "STORY_NO_EVIDENCE_PATH", "STORY_STARTS_WITH_RATING", "STORY_RESTATES_RATING", "STORY_REPEATS_SUMMARY"}
+                "STORY_NO_EVIDENCE_PATH", "STORY_STARTS_WITH_RATING", "STORY_RESTATES_RATING",
+                "STORY_SENTENCE_LONG", "STORY_LIST", "STORY_PHRASE_REPEAT", "STORY_NOT_PARAGRAPHED"}
 #: Of those, the ones the document cannot be written around: the answer cannot be rendered, or cites evidence that does
 #: not exist. Any other hard error left after the fix round is applied anyway and listed in RESULT.md.
 FATAL_CODES = {"NO_SHEET", "QUESTION_MISSING", "EMPTY_ANSWER", "FACT_NO_EVIDENCE", "UNKNOWN_EVIDENCE", "RATING_INVALID",
@@ -601,7 +603,18 @@ def plain_language_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
     return out
 
 
-_STORY_REPEAT = 0.5   # share of a Story sentence's meaningful words already in the Summary
+def story_shape_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
+    """Story readability as errors, so a fix round rewrites the block. The rules: story_shape.py, references/story-rules.md."""
+    from csa_docx import story_shape
+    names = (card.get("parts") or {}).get("names") or {}
+    out = []
+    for q in card.get("questions", []):
+        story = ((sheet.get(q["id"]) or {}).get("story")) or ""
+        if story:
+            out += [_f("ERROR", code, q["id"], msg) for code, msg in story_shape.findings(story, names)]
+    return out
+
+
 _RATING_ANY = re.compile(r"\b(?:Partially Met|Not Met|Not Applicable|Met|partially meets|does not meet|meets)\b", re.I)
 _ENDPOINT_GAP = re.compile(r"\bunidentified\b|\bnot identified\b|\bzone not recorded\b", re.I)
 
@@ -698,7 +711,7 @@ def readability_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
         for where, s in pieces:
             pids = _parts_named(s)
             # READ_LIST: more than 3 parts in one sentence
-            if len(pids) > 3:
+            if len(pids) > 3 and where != "Story":      # a Story sentence is an error: story_shape_checks
                 nm_list = ", ".join(dict.fromkeys(parts_names.get(p, p) for p in pids))
                 out.append(_f("WARN", "READ_LIST", q["id"],
                               f"a {where} sentence names {len(pids)} parts (more than 3): split the sentence so "
@@ -1880,15 +1893,6 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
                     findings.append(_f("ERROR", "STORY_RESTATES_RATING", qid,
                                        "the rating and its reason are already in the Summary on the same page: end the "
                                        "Story with what the evidence leaves unknown or the gap that decided it, in new words"))
-                sum_words = _content(summary)
-                for sent in story_sentences:
-                    sw = _content(sent)
-                    if len(sw) >= 5 and len(sw & sum_words) / len(sw) >= _STORY_REPEAT:
-                        findings.append(_f("ERROR", "STORY_REPEATS_SUMMARY", qid,
-                                           "this Story sentence repeats the Summary in other words: replace it with "
-                                           "something the Summary does not say (what was checked, what was found, what is "
-                                           f"unknown): {sent[:90]}"))
-                        break
         rendered = [("Summary", b.get("summary") or ""), ("Text", b.get("text") or "")] + [("fact", f["text"]) for f in b["facts"]] + \
                    [("bullet", x) for x in b["bullets"]] + [("row", " | ".join(c)) for c in b["rows"][1:]]
         for where, s_ in rendered:
@@ -1948,6 +1952,7 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
     findings += frame_checks(sheet, card)
     findings += read_checks(sheet, card)
     findings += readability_checks(sheet, card)
+    findings += story_shape_checks(sheet, card)
     findings += plain_language_checks(sheet, card)
     findings += practice_checks(sheet, card)
     findings += subject_checks(sheet, card)
@@ -2097,7 +2102,7 @@ def render_records(sheet: dict[str, dict], card: dict, node: dict, section: str,
                 requirement_stories.append({"req_id": q["req_id"], "qid": q["id"],
                                             "title": requirement_story_title(
                                                 q["req_id"], req.get("text") or q.get("text") or "Requirement"),
-                                            "text": no_ids(" ".join(b["story"].split())), "facts": facts,
+                                            "text": "\n\n".join(no_ids(" ".join(x.split())) for x in b["story"].split("\n\n") if x.strip()), "facts": facts,
                                             "why": why, "fact_rows": list(b["facts"])})
         elif q["kind"] in ("observation", "register"):
             data = b["rows"][1:]
@@ -2196,7 +2201,9 @@ def render_records(sheet: dict[str, dict], card: dict, node: dict, section: str,
         for item in requirement_stories:
             part = existing.get(item["req_id"])
             if part:
-                action = "Replace this paragraph and the following line" if part.get("body_pid") else "Replace"
+                n_body = 1 + len(part.get("extra_pids") or [])
+                action = ("Replace this paragraph and the following line" if n_body == 1
+                          else f"Replace this paragraph and the following {n_body} lines") if part.get("body_pid") else "Replace"
                 story_record(item, part["pid"], part.get("current") or item["req_id"], action)
         missing = [i for i, item in enumerate(requirement_stories) if item["req_id"] not in existing]
         while missing:

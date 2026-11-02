@@ -119,14 +119,16 @@ def test_alias_addresses_uses_non_ambiguous_index_identity(tmp_path):
     con = sqlite3.connect(tmp_path / "t.sqlite")
     con.executescript("""create table files(file_id integer, rel_path text);
         create table aliases(norm text, host text, kind text, basis text, confidence text,
-                             file_id integer, line_no integer, ambiguous integer);""")
+                             file_id integer, line_no integer, ambiguous integer, scope text);""")
     con.execute("insert into files values (1, 'dns/41_dns_query_tests.txt')")
-    con.executemany("insert into aliases values (?,?,?,?,?,?,?,?)", [
-        ("10.1.1.5", "SQLSRV001", "address", "paired-line", "medium", 1, 9, 0),
-        ("10.2.2.2", "HOSTA", "address", "paired-line", "medium", 1, 10, 1),
-        ("10.2.2.2", "HOSTB", "address", "paired-line", "medium", 1, 10, 1),
+    con.executemany("insert into aliases values (?,?,?,?,?,?,?,?,?)", [
+        ("10.1.1.5", "SQLSRV001", "address", "paired-line", "medium", 1, 9, 0, "system"),
+        ("10.2.2.2", "HOSTA", "address", "paired-line", "medium", 1, 10, 1, "system"),
+        ("10.2.2.2", "HOSTB", "address", "paired-line", "medium", 1, 10, 1, "system"),
+        # a peer the previous register held is not a new naming (it would keep a removed peer alive)
+        ("10.3.3.3", "SNMPC32", "address", "register", "high", None, None, 0, "external"),
     ])
-    out = hm.alias_addresses(con, {"10.1.1.5", "10.2.2.2"})
+    out = hm.alias_addresses(con, {"10.1.1.5", "10.2.2.2", "10.3.3.3"})
     assert out == {"10.1.1.5": {"name": "SQLSRV001", "cite": "41_dns_query_tests.txt line 9", "conflict": []}}
 
 

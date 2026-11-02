@@ -11,24 +11,16 @@ Other agents that must produce document prose within their own run (for example,
 
 ## Required reading
 
-Read these before any other step, and nothing else until a step tells you to:
+Read these before any other step, and nothing else until a step tells you to. They apply to every mode.
 
 - `.agents/csa-core-rules.md`
-- `.agents/skills/csa-writing-style/SKILL.md`
-- `.agents/skills/australian-it-ot-terminology/SKILL.md`
+- `.agents/skills/csa-writing-style/SKILL.md` -- how the prose should read (human, not AI-sounding).
+- `.agents/skills/australian-it-ot-terminology/SKILL.md` -- which words: component, service and dependency terms, IT/OT classification, headings, evidence phrasing, Australian English.
 - Each skill named in the project context's `application_skills` (see Application knowledge skills in core rules)
-- `.agents/skills/csa-section-writer/SKILL.md`
+- `.agents/skills/csa-section-writer/SKILL.md` (SECTION mode)
 
-## Skills
+Then load only when needed:
 
-Load always, before drafting or revising any text in any mode:
-
-- `.agents/skills/csa-writing-style/SKILL.md` -- how the prose should read (human, not AI-sounding). Applies to every mode below.
-- `.agents/skills/australian-it-ot-terminology/SKILL.md` -- which words: the technical term for each component, service and dependency, IT/OT classification, headings, evidence phrasing and Australian English. Applies to every mode below.
-
-Then load on demand:
-
-- SECTION mode (default): `.agents/skills/csa-section-writer/SKILL.md`
 - Explanation support (only when a plain-language explanation is requested or clearly needed): `.agents/skills/technical-explainer/SKILL.md`
 - EXECUTIVE_SUMMARY mode (only when the orchestrator states the detailed assessment is stable and the reviewer verdict is `READY` or `READY WITH DECLARED GAPS`): `.agents/skills/executive-summary/SKILL.md`
 
@@ -42,11 +34,10 @@ Do not load specialist analysis skills, evidence skills, or the review skill.
 - Preserve named owners, reviewers, approvers, dates, and controlled-document fields unless explicitly instructed to change them.
 - Do not copy stale facts from a prior assessment to complete a section.
 - Never edit the working DOCX yourself. Write the section file (or, in MODE=records, the change file's Text); the framework puts it in the document as tracked changes as soon as you finish, and Wenzel accepts or rejects them in Word.
-- Answer the requirement's question first, in terms of the systems and applications it concerns, and name the server, resolver or address the answer points to (see "Answer the question first" in `csa-writing-style`). Lint limits on length and identifiers are warnings, not reasons to leave the question half answered.
+- Write to the "Answer the question first" and "Say it once, say it first" rules in `csa-writing-style`: conclusion first and naming the server, resolver or address it points to, each fact once, full sentences, no general technology explanation, host-level detail in tables. Run `csa-writing-style/scripts/prose_lint.py` on every draft and fix its warnings; length and identifier limits are warnings, never a reason to leave the question half answered.
 - No semicolons in anything that lands in the document (prose, Current State cells, Drawbridge Impact, findings, notes). Write two sentences, or join the parts with a comma and "and" or "but". `csa check-change` reports SEMICOLON_IN_TEXT as an ERROR and the draft lane refuses the sheet, so fix it before returning.
 - Write technical terms in full in headings, captions, table headers and finding labels. Do not make a reader decode an abbreviation from a standalone label: write "Server Message Block connections to unnamed peers", not "SMB connections to unnamed peers". In body prose, use the full term alone when it appears only once. Only introduce an abbreviation when it will be reused, as `full term (abbreviation)` on first use in that independently readable subsection.
 - Keep current state, interpretation, gap, risk observation, and recommendation distinct. No future-state design unless requested.
-- Write to the "Say it once, say it first" rules in `csa-writing-style`: conclusion first, each fact stated once, full sentences rather than bullet fragments, no general technology explanation, host-level detail in tables. Run `csa-writing-style/scripts/prose_lint.py` on every draft before returning it and fix its warnings.
 - In EXECUTIVE_SUMMARY mode, add no new findings; keep every statement aligned with the approved detailed content and its as-of date.
 
 ## Change-record text (MODE=records)
@@ -63,7 +54,7 @@ A record titled `<SEP-ID> discovery story` is different from the table row. Pres
 - Read the change file's `## Section brief` first: the Purpose is the story you are telling, and the questions are its order. Then read the record's `**Facts:**` list and the paragraphs around the anchor. Open with the Purpose in the parent section's terms, answer the questions in brief order, and end with the consequence for the section's requirements. A fact that is true but answers no brief question stays out of the text.
 - Rewrite only the `**Text:**` block, following "Tell the story" and "Identifier budget" in `csa-writing-style`. Use every fact in the list except `Table detail:` lines, which stay out of prose. Say the `Unknown:` point once, at the end.
 - Never infer (core rules, "Never infer"). Write each fact at the strength of its evidence: keep its scope (name the site when the fact's `scope` covers part of the estate), use the evidence's own words for frequency, timing and content, and add no "which means", "likely", "therefore" or other conclusion. Connecting words may order facts; they may not add a claim. Every sentence must trace to a fact line; update the `## Fact audit` table so each rewritten sentence has its evidence quote.
-- Story and note wording (warnings STORY_INFERS, STORY_STATES_RATING): state what was seen; no "so", "which means", "rather than" or "placing … behind" joining facts, and no talk of the rating, "Met" or "Not Met" (the Rating cell and Summary carry that). Good: "The nodes take their time from the Windows Time client." Bad: "…so their time comes from it rather than a local source, the gap that decided this rating."
+- Story: follow `.agents/references/story-rules.md`. State what was seen: no "so", "which means", "rather than" or "placing … behind" joining facts, and no talk of the rating, "Met" or "Not Met" (STORY_INFERS, STORY_STATES_RATING). Good: "The nodes take their time from the Windows Time client." Bad: "…so their time comes from it rather than a local source, the gap that decided this rating."
 - Do not add a fact that is not in the list, and do not change `Where`, `Do`, `Facts`, `Why` or `Note`. If the facts need more than one paragraph to tell clearly, use more than one.
 - Leave applied records alone (a record in the run-state's completed list is in the document; a correction is a new record).
 - Run `csa check-change <N>` and fix every ERROR. Fix PROSE_LINT warnings about structure (fragments, lead-ins, evidence as subject, repetition). Treat length, sentence-size and identifier notes as advice: never drop or blur a fact that describes the system to meet them. Report which records you rewrote.
@@ -90,7 +81,6 @@ When `BRIEF=` is given (`csa convert <N>`), read the brief after the required re
 
 When `MODE=move` (`csa move <N>`), write one subsection straight from the old content in `BRIEF=`. Read the brief after the required reading and nothing else: no evidence matrix, no discovery index, no research. The document is reworked afterwards, so speed and fidelity to the brief matter more than checking. Do not edit the Word document.
 
-- Facts, not narrative; each fact once; full sentences.
 - No recommendations (they go to `parked.md`).
 - Keep qualifiers: "not tested", "not observed", "not confirmed".
 - Never mention the previous assessment, its headings or version.
@@ -98,7 +88,7 @@ When `MODE=move` (`csa move <N>`), write one subsection straight from the old co
 - Every requirement row of the subsection is present, even when its Current State is `Not stated in previous assessment`. Write that same text for a Discovery Information aspect the brief does not cover.
 - Where the old content gives no Drawbridge Impact, write one sentence that the effect has not been established (for example "The effect on X if Y becomes unreachable has not been established."). Do not refer to the previous assessment in prose; `Not stated in previous assessment` is for table cells only.
 - Content belonging to another subsection is left out (it stays in `moved.csv` under its mapped target).
-- Prose names a machine by its role from the Host register (the RevViewer Jump Host, the Radio Management host), not by host name or IP address; names and addresses go in tables, unless the question asks for hosts or addresses, in which case give them. Rules and exceptions: "Host references" in `csa-writing-style`. Tables that capture the system give both, e.g. `MOTPRDREV101 (10.20.1.5)`; names are written exactly as the sources write them (RevViewer stays RevViewer).
+- Host references follow "Host references" in `csa-writing-style` (role in prose; name and address in tables, written exactly as the sources write them).
 - Put `mode: move` in the front matter, with `status: draft`. No Evidence table and no E-ids are needed.
 - A domain that has a second table (3.1 hosts and roles, 3.2 accounts, groups and service accounts) needs it as its own `##` section named exactly as the template names it, with the template's columns. Fill it with one row per account, group or host the brief states; never leave placeholder rows. Do not repeat these rows in Discovery Information.
 - End the file with an `## open_items` block: one line `- <requirement id or aspect>: <what is unknown>` for each open question the old content leaves. `csa move` collects these into Section 8.

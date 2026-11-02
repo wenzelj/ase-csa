@@ -3224,7 +3224,7 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
                              [f"- SEARCH {q}: the results of your Search: line are now in the card's evidence pack for {q}; "
                               f"answer the block from them (or Unknown:) and drop the Search: line" for q in res2.get("searches", {})],
                              "search", "Your searches were run:")
-        elif fixes < fix_max and time.time() - started < int(settings().get("answer_budget_s", 1200) or 1200):
+        elif fixes < fix_max:   # a failing sheet always gets its fix rounds: the time budget only limits the optional passes
             fixes += 1
             lines = error_lines(res2, bad - {"*"} if bad - {"*"} else None)
             left = len(res2.get("findings", [])) - len(lines)
