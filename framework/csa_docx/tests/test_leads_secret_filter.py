@@ -1,4 +1,4 @@
-"""The credential filter on discovery leads: block real-looking values, never fail the run, ignore field labels."""
+"""The credential-text heuristic (still used to redact log samples); discovery leads are no longer filtered by it."""
 from csa_docx import leads
 
 
@@ -14,12 +14,9 @@ def test_credential_values_are_secrets():
         assert leads._looks_secret(text), text
 
 
-def test_add_leads_skips_a_secret_hit_and_keeps_the_rest(tmp_path):
-    good = {"source_ref": "a.txt", "rel_path": "a.txt", "evidence_excerpt": "DNS server 10.0.0.1"}
-    bad = {"source_ref": "b.txt", "rel_path": "b.txt", "evidence_excerpt": "password=Abc123!xyz"}
+def test_add_leads_keeps_every_hit_including_secret_looking_text(tmp_path):
+    hits = [{"source_ref": "a.txt", "rel_path": "a.txt", "evidence_excerpt": "DNS server 10.0.0.1"},
+            {"source_ref": "b.txt", "rel_path": "b.txt", "evidence_excerpt": "accesskey=P Print"}]
     ws = tmp_path / "workspace"
     (ws / "csa-work").mkdir(parents=True, exist_ok=True)
-    ids = leads.add_leads(ws, "DR-X-B1-Q1", "B1", "What DNS server?", [bad, good])
-    assert len(ids) == 1
-    stored = (ws / "csa-work" / "intake" / "leads.jsonl").read_text()
-    assert "Abc123" not in stored and "DNS server" in stored
+    assert len(leads.add_leads(ws, "DR-X-B1-Q1", "B1", "What DNS server?", hits)) == 2

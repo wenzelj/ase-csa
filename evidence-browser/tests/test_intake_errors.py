@@ -3,8 +3,9 @@ import json
 from backend import intake_errors
 from backend.intake_errors import classify_log, intake_runs
 
-TB = """Traceback (most recent call last):
-  File "/opt/x/csa_docx/gap_lookup.py", line 12, in <module>
+FW = str(intake_errors._AGENTS_DIR / "framework" / "csa_docx" / "gap_lookup.py")
+TB = f"""Traceback (most recent call last):
+  File "{FW}", line 12, in <module>
     @dataclass(slots=True)
 TypeError: dataclass() got an unexpected keyword argument 'slots'
 """
@@ -21,20 +22,12 @@ def test_identical_tracebacks_merge():
     assert len(g["sample"]) <= 300
 
 
-def test_argparse_invalid_choice_merges():
+def test_cli_usage_errors_not_reported():
     text = (
-        "usage: gap_lookup [-h]\n"
         "gap_lookup: error: argument action: invalid choice: 'E-12' (choose from x)\n"
-        "gap_lookup: error: argument action: invalid choice: 'E-345' (choose from x)\n"
+        "python3.14 -m csa_docx.gap_lookup: error: unrecognized arguments: --related-evidence E-1\n"
     )
-    groups = classify_log(text)
-    assert len(groups) == 1 and groups[0]["kind"] == "cli_error" and groups[0]["count"] == 2
-
-
-def test_cli_error_program_with_spaces():
-    line = "python3.14 -m csa_docx.gap_lookup: error: argument action: invalid choice: '--related-evidence E-1'\n"
-    groups = classify_log(line)
-    assert len(groups) == 1 and groups[0]["kind"] == "cli_error"
+    assert classify_log(text) == []
 
 
 def test_echoed_source_not_counted():
@@ -51,15 +44,23 @@ def test_no_terminal_line_not_counted():
 
 
 def test_indented_traceback_counted():
-    text = "   Traceback (most recent call last):\n     File \"a.py\", line 1\n   KeyError: 'x'\nnext\n"
+    text = "   Traceback (most recent call last):\n     File \"%s\", line 1\n   KeyError: 'x'\nnext\n" % FW
     groups = classify_log(text)
     assert len(groups) == 1 and groups[0]["kind"] == "traceback" and groups[0]["first_line"] == 1
 
 
 def test_truncated_traceback():
-    assert classify_log("Traceback (most recent call last):\n  File \"a.py\", line 1\n") == []
-    assert classify_log("Traceback (most recent call last):\n  File \"a.py\", line 1\nTypeErr") == []
-    assert len(classify_log("Traceback (most recent call last):\n  File \"a.py\", line 1\nTypeError: x\n")) == 1
+    head = "Traceback (most recent call last):\n  File \"%s\", line 1\n" % FW
+    assert classify_log(head) == []
+    assert classify_log(head + "TypeErr") == []
+    assert len(classify_log(head + "TypeError: x\n")) == 1
+
+
+def test_agent_script_traceback_not_reported():
+    text = ("Traceback (most recent call last):\n  File \"<string>\", line 7, in <module>\n"
+            "  File \"/opt/homebrew/lib/python3.14/re/__init__.py\", line 278, in findall\n"
+            "re.PatternError: unterminated character set at position 5\n")
+    assert classify_log(text) == []
 
 
 def test_csa_error_and_skipped():
@@ -110,7 +111,7 @@ def test_intake_runs_states_and_filter(tmp_path):
     assert by["a"]["has_problems"] is False and by["a"]["step"] == "ingest"
     assert by["b"]["has_problems"] is True and by["b"]["problems"][0]["stream"] == "stderr"
     assert by["b"]["reason"].startswith("TypeError")
-    assert by["c"]["state"] == "cancelled" and by["c"]["has_problems"] is True
+    assert by["c"]["state"] == "cancelled" and by["c"]["has_problems"] is False
     assert by["d"]["state"] == "running" and by["d"]["step"] == "settle"
     assert len(intake_runs(_project(tmp_path), limit=2)) == 2
 
@@ -164,3 +165,12 @@ def test_warnings_ignore_unreadable_records(tmp_path):
     (tmp_path / "intake" / "gap-check-latest.json").write_text("{not json", encoding="utf-8")
     (tmp_path / "intake" / "latest.json").write_text("[]", encoding="utf-8")
     assert intake_errors.intake_warnings(tmp_path) == []
+
+
+def test_failure_cleared_by_a_later_clean_run_of_the_same_step(tmp_path):
+    _job(tmp_path, "old", "gap_check", "failed", "2026-01-01T00:00:01+00:00", exit_code=1, stderr=TB)
+    _job(tmp_path, "new", "gap_check", "succeeded", "2026-01-01T00:00:02+00:00")
+    _job(tmp_path, "other", "intake", "failed", "2026-01-01T00:00:03+00:00", exit_code=1, stderr=TB)
+    by = {r["id"]: r for r in intake_runs(_project(tmp_path))}
+    assert by["old"]["has_problems"] is False and by["old"]["problems"] == [] and by["old"]["superseded"] is True
+    assert by["other"]["has_problems"] is True

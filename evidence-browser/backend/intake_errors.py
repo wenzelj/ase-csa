@@ -30,6 +30,11 @@ _NO_TERMINAL = "csa: no terminal here, so the agent runs headless (no interactiv
 _QUOTED = re.compile(r"'[^']*'|\"[^\"]*\"")
 _ABS_PATH = re.compile(r"(?<![\w.~])/(?:[^\s'\"/:]+/)+([^\s'\"/:]+)")
 _DIGITS = re.compile(r"\d+")
+# Only errors raised by the framework itself are reported. A traceback counts when one of its frames is in the
+# framework tree; the agent's own throwaway scripts (`<string>`, `<stdin>`, stdlib) and a mistyped command line
+# are not framework errors.
+_AGENTS_DIR = Path(__file__).resolve().parents[2]
+_FRAME = re.compile(r'^\s*File "([^"]+)"')
 
 
 def _normalise(text: str) -> str:
@@ -41,6 +46,15 @@ def _normalise(text: str) -> str:
 
 def _indent(line: str) -> int:
     return len(line) - len(line.lstrip())
+
+
+def _is_framework_traceback(block: str) -> bool:
+    root = str(_AGENTS_DIR) + "/"
+    for line in block.split("\n"):
+        m = _FRAME.match(line)
+        if m and m.group(1).startswith(root) and "/.venv/" not in m.group(1) and "/node_modules/" not in m.group(1):
+            return True
+    return False
 
 
 def _sample(text: str) -> str:
@@ -80,7 +94,8 @@ def classify_log(text: str) -> list[dict[str, Any]]:
                 j += 1
             if j < len(lines) and j != partial:
                 block = "\n".join(lines[i:j + 1])
-                add("traceback", _normalise(lines[j]), i + 1, block)
+                if _is_framework_traceback(block):
+                    add("traceback", _normalise(lines[j]), i + 1, block)
                 i = j + 1
             else:
                 i = len(lines)  # cut off before its final line: not counted
@@ -88,7 +103,7 @@ def classify_log(text: str) -> list[dict[str, Any]]:
         stripped = line.strip()
         number = i + 1
         if _CLI_ERROR.match(line):
-            add("cli_error", _normalise(line), number, stripped)
+            pass  # argparse usage error from a command the agent typed, not a framework fault
         elif stripped == _NO_TERMINAL:
             pass
         elif line.startswith(_CSA_START) and any(w in line.lower() for w in _CSA_WORDS):
@@ -103,7 +118,7 @@ def classify_log(text: str) -> list[dict[str, Any]]:
 
 RUN_OPERATIONS = {"ingest": "ingest", "intake": "documents", "gap_check": "gaps", "resolve_gaps": "settle"}
 MAX_LOG_BYTES = 8 * 1024 * 1024
-_FAILED_STATES = {"failed", "interrupted", "cancelled"}
+_FAILED_STATES = {"failed", "interrupted"}  # a run the user cancelled is not an error
 _cache: dict[str, tuple[tuple, tuple[list[dict[str, Any]], bool]]] = {}
 _cache_lock = threading.Lock()
 
@@ -196,6 +211,14 @@ def intake_runs(project: dict[str, str], limit: int = 10) -> list[dict[str, Any]
             "reason": reason, "problems": problems, "problem_count": len(problems),
             "has_problems": state in _FAILED_STATES or bool(problems), "log_truncated": truncated,
         })
+    # A later clean finished run of the same step answers an earlier failure, so the old one is no longer shown.
+    cleared: set[str] = set()
+    for run in runs:  # newest first
+        finished = run["state"] in ("succeeded", "failed", "interrupted", "cancelled")
+        if run["step"] in cleared and run["has_problems"]:
+            run.update(problems=[], problem_count=0, has_problems=False, superseded=True)
+        elif finished and not run["has_problems"] and run["state"] == "succeeded":
+            cleared.add(run["step"])
     return runs
 
 

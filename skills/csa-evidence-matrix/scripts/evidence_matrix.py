@@ -51,11 +51,6 @@ STOP = set(
     "this to was were with which what who where when how do does did than then "
     "into per any all not no can our their there these those".split()
 )
-SECRET_RE = re.compile(
-    r"(?i)\b(pass(word|wd)?|pwd|secret|api[_-]?key|access[_-]?key|token|private[_-]?key)\b\s*[:=]\s*\S+"
-)
-
-
 # --------------------------------------------------------------------------- paths
 def _load_project_registry():
     """Parse csa-context/PROJECTS.yaml (fixed-shape, no PyYAML dependency).
@@ -480,9 +475,6 @@ def validate_row(raw, known_areas, allow_new_area):
     if m:
         errs.append(f"claim uses host shorthand {m.group(0)!r}; write every host name in full "
                     "(the claim is about hosts, not the source's row layout)")
-    for f in ("claim", "evidence_excerpt", "inference_reason", "source_title"):
-        if SECRET_RE.search(row[f]):
-            errs.append(f"{f} looks like it contains a credential/secret value; redact it before recording")
     return row, errs
 
 
