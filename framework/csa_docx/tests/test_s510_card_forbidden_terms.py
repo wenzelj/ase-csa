@@ -1,5 +1,6 @@
-"""S510: every card lists the framework words the answer must not use, once, with the 'Say instead' text."""
-from csa_docx import section_card
+"""S510 (moved): the framework words the answer must not use are in the prompt digest, once, with the 'Say instead' text.
+The card carries evidence only and no longer lists them."""
+from csa_docx import rules_digest, section_card
 
 HEAD = "## Words that must not appear in the text"
 NODE = {"key": "DEMO", "title": "Demo section", "number": "1.1", "kind": "subsection", "level": 2, "parts": [], "facets": {},
@@ -7,19 +8,14 @@ NODE = {"key": "DEMO", "title": "Demo section", "number": "1.1", "kind": "subsec
 SPEC = {"nodes": [NODE]}
 
 
-def build():
-    return section_card.card(NODE, SPEC, None, evidence=False)["text"]
+def test_the_card_no_longer_lists_the_words():
+    assert HEAD not in section_card.card(NODE, SPEC, None, evidence=False)["text"]
 
 
-def test_section_appears_once_with_the_framework_terms():
-    text = build()
-    assert text.count(HEAD) == 1
-    body = text.split(HEAD)[1].split("\n## ")[0]
-    for phrase in ("captured hosts", "not captured", "discovery data"):
-        assert "- " + phrase + ": " in body
-    assert "- captured hosts: Name the system, the role group or the host" in body
-
-
-def test_section_absent_when_the_loader_fails(monkeypatch):
-    monkeypatch.setattr(section_card, "_load_framework_terms", lambda: [])
-    assert HEAD not in build()
+def test_the_answer_digest_lists_the_framework_terms_once():
+    from csa_docx import prompts
+    for text in (rules_digest.digest("answer"), prompts.assemble({"requirement"}, None)[0]):
+        assert text.count("## Words that must not appear in the text") == 1
+        for phrase in ("captured hosts", "not captured", "discovery data"):
+            assert "- " + phrase + ": " in text
+        assert "- captured hosts: Name the system, the role group or the host" in text

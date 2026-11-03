@@ -337,9 +337,9 @@ def focus(card_md: str, only: set[str], first_pass: bool = False) -> str:
                 by_name["applications (reviewed in csa-work/parts.json)"], corpus)
 
         always = {"requirement summaries and stories", "system name",
-                  "rules from the template", "scope", "current text in the document"}
-        if narrative:
-            always.add("background knowledge (not evidence)")
+                  "rules from the template", "scope"}
+        if narrative:       # a requirement block is written from the findings and evidence, not from its earlier answer
+            always |= {"background knowledge (not evidence)", "current text in the document"}
         ordered = []
         for title, body in sections:
             key = title.casefold()
@@ -359,6 +359,25 @@ def focus(card_md: str, only: set[str], first_pass: bool = False) -> str:
                 ". This focused card contains only those blocks and their routed evidence; the other blocks already pass.\n\n")
     first = text.find("\n## ")
     return text[: first + 1] + note + text[first + 1:] if first >= 0 else note + text
+
+
+def focus_card_json(card: dict, only: set[str]) -> dict:
+    """The card json of a focused call: the same card with only the requested questions and what is keyed by them, so the
+    validator can check a patch of those blocks (VALIDATE= in the prompt names it beside the focused card). A call for the
+    analysis frame (F1) keeps every question."""
+    ids = {x.upper() for x in only}
+    out = json.loads(json.dumps(card))
+    keep = [q for q in out.get("questions", []) if str(q.get("id", "")).upper() in ids]
+    if keep:
+        out["questions"] = keep
+        for path in (("evidence",), ("established",), ("drawbridge_functions",), ("frame", "must_address"),
+                     ("parts", "owed"), ("parts", "owed_applications")):
+            node = out
+            for k in path[:-1]:
+                node = node.get(k) if isinstance(node, dict) else None
+            if isinstance(node, dict) and isinstance(node.get(path[-1]), dict):
+                node[path[-1]] = {k: v for k, v in node[path[-1]].items() if str(k).upper() in ids}
+    return out
 
 
 def focus_metrics(full: str, focused: str) -> dict[str, int | float]:
@@ -512,6 +531,10 @@ def main(argv: list[str] | None = None) -> int:
         full = a.card.read_text(encoding="utf-8")
         focused = focus(full, only, a.first_pass)
         a.out.write_text(focused, encoding="utf-8")
+        src_json = a.card.with_suffix(".json")
+        if src_json.is_file():              # the focused card's json, for the agent's own VALIDATE= check
+            a.out.with_suffix(".json").write_text(json.dumps(focus_card_json(json.loads(src_json.read_text(encoding="utf-8")), only),
+                                                              ensure_ascii=False), encoding="utf-8")
         print(json.dumps({"status": "OK", "out": str(a.out), **focus_metrics(full, focused)}))
         return 0
     if a.cmd == "wip-clear":

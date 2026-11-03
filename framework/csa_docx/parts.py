@@ -287,7 +287,7 @@ def index(doc: dict) -> dict[str, dict]:
 
 
 _LABEL = re.compile(r"\b(?:not identified|unidentified)\b", re.I)
-PLAIN_LABEL = "unidentified internal peers"
+PLAIN_LABEL = "peers known only by address (name each by its address, as the findings give it)"
 
 
 def is_label(p: dict) -> bool:
@@ -299,7 +299,7 @@ def names(p: dict) -> list[str]:
     """The names that count as naming a part: its name, its aliases and, for a dependency, its members (an
     unidentified peer can only be named by its address)."""
     return ([p["name"]] + list(p.get("aliases") or []) + (list(p["members"]) if p["kind"] == "dependency" else [])
-            + ([PLAIN_LABEL, "unidentified peers", "unnamed internal peers"] if is_label(p) else []))
+            + ([PLAIN_LABEL, "unidentified internal peers", "unidentified peers", "unnamed internal peers"] if is_label(p) else []))
 
 
 def _norm(s: str) -> str:
@@ -642,7 +642,7 @@ def owed_lines(view: dict | None, qid: str) -> list[str]:
     for p in pids:
         v = view["parts"].get(p) if isinstance(view["parts"], dict) else None
         names.append(v if isinstance(v, str) else display_name(v))
-    return ["  Parts these findings are about (name them in the Facts; in the Story name only the parts that decide the rating, by their display name): "
+    return ["  Parts these findings are about (display names): "
             + ", ".join(names)]
 
 

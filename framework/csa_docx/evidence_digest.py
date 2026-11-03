@@ -256,7 +256,7 @@ _PREVIOUS = re.compile(r"Current_State_Assessment|NetSeg_Current", re.I)
 
 
 def declared_dependencies(rows: list[dict], workspace: Path | None, limit: int = 10) -> tuple[list[str], set[str]]:
-    """VERIFIED rows that declare what a function needs (flow map, system matrix, dependency summaries), newest
+    """VERIFIED rows that declare what a function needs (system matrix, dependency summaries), newest
     sources first: captures and supplied documents before the previous assessment. One line per row, with its ID."""
     picked = []
     for r in rows:
@@ -307,7 +307,7 @@ def digest(q: dict, need: str, node: dict, rows: list[dict], workspace: Path | N
     if need == "isolation":
         l, i = declared_dependencies(rows, workspace)
         if l:
-            blocks.append(["Declared dependencies and flows (what each function of the system needs, from the flow map, "
+            blocks.append(["Declared dependencies and flows (what each function of the system needs, from the "
                            "system matrix and dependency summaries). Use them to say which functions an isolation event "
                            "stops: a function stops when something it needs is cut, and only where these rows name the need:"] + l)
             ids |= i

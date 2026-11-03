@@ -1,8 +1,7 @@
 """S506: the card names the system (optional project 'application') and no longer uses 'captured hosts' in its heading."""
 from csa_docx import estate, section_card
 
-SENTENCE = ("Refer to the hosts as the Demo/App hosts, or by role group or host name. "
-            "Do not describe how the hosts were examined.")
+SENTENCE = "System: Demo/App"
 OLD_HEADING = "Host register (captured hosts, grouped by role)"
 
 

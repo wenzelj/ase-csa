@@ -29,7 +29,7 @@
     },
     {
       "id": "S2",
-      "question": "Which connections cross zones, between which hosts, on which ports, and are they in the flow map?",
+      "question": "Which connections cross zones, between which hosts, on which ports, and is the zone of the far end recorded?",
       "requirements": [
         "SEP-NET-02"
       ],
@@ -47,12 +47,10 @@
         }
       },
       "search": [
-        "Get-NetTCPConnection",
-        "flow map"
+        "Get-NetTCPConnection"
       ],
       "look_for": [
         "cross zone",
-        "flow map",
         "zone boundary",
         "connection between zones"
       ]

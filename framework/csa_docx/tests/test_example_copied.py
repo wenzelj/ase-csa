@@ -23,7 +23,7 @@ def _codes(sheet):
 def test_a_fact_copied_from_the_example_is_a_hard_error():
     copied = _sheet("KVM is excluded from this CSA and will be assessed separately. (E-203) {documented; KVM}")
     assert "EXAMPLE_COPIED" not in _codes(copied)       # the old example line is gone from the examples
-    copied = _sheet("The building management system is excluded from this CSA and will be assessed separately. "
+    copied = _sheet("The building management system is excluded from this assessment and will be assessed separately. "
                     "(E-203) {documented; building management system}")
     assert "EXAMPLE_COPIED" in _codes(copied)
     assert "EXAMPLE_COPIED" in A.HARD_CODES
@@ -31,7 +31,7 @@ def test_a_fact_copied_from_the_example_is_a_hard_error():
 
 def test_a_copied_sentence_inside_text_is_caught():
     s = _sheet("No inventory tool was found on MKYPRDOPS110. (E-203) {observed; MKYPRDOPS110}",
-               text="No dedicated OT asset inventory or CMDB tool was identified. The application keeps its own list.")
+               text="No dedicated OT asset inventory or configuration management tool was identified. The application keeps its own list.")
     assert "EXAMPLE_COPIED" in _codes(s)
 
 

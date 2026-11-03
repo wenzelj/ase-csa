@@ -345,3 +345,8 @@ The lint flags the US form as `AU_SPELLING` outside code spans, quotes, file nam
 | discovery captures | Name the system, the role group or the host |
 | host register | Name the system, the role group or the host |
 | answer sheet | Name the system, the role group or the host |
+| flow map | Say what the connection is and what was seen. The discovery script's list of expected flows (flow IDs such as R1) is a template, not evidence of a designed flow |
+| expected flow map | Say what the connection is and what was seen. The discovery script's list of expected flows is a template, not evidence of a designed flow |
+| condition C1 | Name the condition by what it says ("the requirement for OT-resident storage") |
+| condition C2 | Name the condition by what it says ("the requirement that storage does not depend on IT-hosted shares") |
+| condition C3 | Name the condition by what it says ("the requirement for a documented fallback") |

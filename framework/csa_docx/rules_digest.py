@@ -15,6 +15,7 @@ from pathlib import Path
 LIMIT = 8192
 SHARED_LIMIT = 2048
 COMMON_LIMIT = 6144
+ANSWER_CARD_RULES_LIMIT = 16384   # the card rules (prompts/answer) the V1 answer lane adds to its digest
 COMMON_STAGES = ("answer", "draft")   # the card lanes share one file of cross-lane rules
 STAGES = ("answer", "writer", "author", "draft")
 DIGESTS = Path(__file__).resolve().parents[2] / "references" / "digests"
@@ -52,6 +53,9 @@ def digest(stage: str) -> str:
         if len(common) > COMMON_LIMIT:
             raise ValueError(f"_shared.md is {len(common)} bytes; it must be {COMMON_LIMIT} bytes or less")
         text += "\n\n" + common.decode("utf-8").strip("\n")
+    if stage == "answer":        # the V1 answer lane: the card holds evidence only, its writing rules are the prompts'
+        from csa_docx import prompts
+        text += "\n\n" + prompts.card_rules(set(prompts.KIND_FILE)).rstrip()
     return text + "\n\n" + plain_language() + "\n"
 
 

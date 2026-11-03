@@ -3,6 +3,7 @@ import { cancelJob, fetchDraft, fetchJob, fetchJobs, submitJob } from "../api";
 import { AGENT_CLIS, rememberedAgentCli, rememberAgentCli } from "../agentClis";
 import type { DraftSection, DraftSnapshot, ReviewJob } from "../types";
 import { Empty } from "./ui";
+import { PromptsPanel } from "./PromptsPanel";
 import { terminalReason } from "../jobReason";
 
 const TERMINAL = ["succeeded", "failed", "cancelled", "interrupted"];
@@ -91,6 +92,7 @@ export function DraftLane({ system, focus = "", investigate }: { system: string;
     <div className="draft-counts">{(["current", "stale", "answered", "not-answered"] as const).map(k => <div key={k} className={`draft-count draft-${k}`}><strong>{counts[k] || 0}</strong><span>{STATE_LABEL[k]}</span></div>)}<div className="draft-count"><strong>{snap.open_questions.total}</strong><span>Open questions</span></div></div>
 
     {error && <p className="desk-error" role="alert">{error}</p>}
+    <PromptsPanel system={system} cli={cli} busy={running} onJob={started => { setJob(started); setShowLog(true); watch(started.id); }} />
     {job && <div className={`draft-job draft-job-${job.state}`} role="status"><div><b>{OP_LABEL[job.operation] || job.operation}{jobTarget ? ` ${jobTarget}` : ""}</b><span>{running ? (job.operation === "answer" || job.operation === "refresh_draft" ? phase(job) : "Running…") : job.state === "succeeded" ? "Done" : <span>Stopped: {job.state}{jobReason && <> — {jobReason}</>}</span>}</span></div><div className="draft-job-buttons"><button className="quiet" onClick={() => setShowLog(!showLog)}>{showLog ? "Hide output" : "Show output"}</button>{running && <button className="quiet" onClick={() => void cancelJob(system, job.id)}>Cancel</button>}</div>{showLog && <pre>{(job.stdout_tail || "") + (job.stderr_tail ? "\n" + job.stderr_tail : "") || job.message || "Waiting for output…"}</pre>}</div>}
     {snap.spec_error && <p className="desk-error">Section list unavailable: {snap.spec_error}</p>}
 

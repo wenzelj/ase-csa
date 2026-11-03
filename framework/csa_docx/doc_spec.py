@@ -263,6 +263,7 @@ def read(path: Path | str) -> dict:
                 continue                                   # cover block
             cap = el.find("w:tblPr/w:tblCaption", NS)
             if cap is not None and cap.get(_q("val")) == "csa-topic-table":
+                story_open = story_cont      # the framework's table sits inside the story: its paragraphs go on after it
                 # the role table topic_tables.py builds from the captures: counted, so table ordinals still match
                 # the stable-ID manifest, but not a part anyone answers (no columns, no placeholders)
                 topic["parts"].append({"kind": "topic-table", "facet": facet, "label": None,
@@ -281,6 +282,8 @@ def read(path: Path | str) -> dict:
             continue
         style = _style(el)
         text = _text(el)
+        if story_cont is not None and style in ("Caption", "TableNote"):
+            story_open = story_cont          # the caption and notes of the framework's table do not end the story
         notes = [comments[cs.get(_q('id'))] for cs in el.iter(_q('commentRangeStart')) if cs.get(_q('id')) in comments]
         m = _HEADING.match(style)
         if m:

@@ -418,6 +418,39 @@ def agent_working_dir(p: dict, r: dict) -> Path:
     return ROOT
 
 
+def work_signature(folder: Path) -> tuple:
+    """What an answer call has produced so far: the size and time of every answer sheet and patch in its working folder.
+    The sheet and the per-block patches are the only work the model delivers; reading files or running commands is not."""
+    out = []
+    try:
+        for f in Path(folder).glob("*.md"):
+            if re.search(r"\.(answer|patch)[^/]*\.md$", f.name) and ".errors" not in f.name:
+                st = f.stat()
+                out.append((f.name, st.st_size, st.st_mtime_ns))
+    except OSError:
+        pass
+    return tuple(sorted(out))
+
+
+def idle_expired(last_work: float, now: float, idle_min: float) -> bool:
+    """True when a call has produced no sheet or patch change for ``idle_min`` minutes (0 = never)."""
+    return bool(idle_min) and now - last_work >= idle_min * 60
+
+
+def python_read_roots(exe: str) -> list[str]:
+    """The folders a sandbox must be able to read to start the interpreter ``exe`` (it and where its links lead)."""
+    roots: list[str] = []
+    for path in {str(exe), os.path.realpath(exe)}:
+        m = re.match(r"^(.*?/uv/python/[^/]+)/", path)
+        if m:
+            roots.append(m.group(1))
+        elif path.startswith(("/opt/homebrew/", "/usr/local/")):
+            roots.append("/".join(path.split("/")[:3]))
+        elif not path.startswith(("/usr/bin/", "/bin/", str(CANON_AGENTS))):
+            roots.append(os.path.dirname(os.path.dirname(os.path.realpath(path))))
+    return sorted(set(roots))
+
+
 def _closed_sandbox_args(argv: list[str]) -> list[str]:
     """Codex permission profile for an answer/draft call: read the minimal system set and the framework's .agents
     folder, read and write the working folder (the project's cards). Nothing else on the machine, so one application
@@ -425,8 +458,12 @@ def _closed_sandbox_args(argv: list[str]) -> list[str]:
     if not (argv and Path(argv[0]).name == "codex" and "exec" in argv):
         return []
     # The .agents folder is readable (core rules, skills, project context): the required reading lives there.
+    # The interpreter the framework runs under (not whichever python3 started csa) is readable too, so the VALIDATE= command
+    # in the prompt can run inside the sandbox. Homebrew and uv pythons are chains of links into their install folder: the
+    # sandbox only starts one when that whole folder is readable.
+    extra = "".join(f',"{r}"="read"' for r in python_read_roots(framework_python()))
     return ["-c", 'default_permissions="csa_closed"',
-            "-c", f'permissions.csa_closed.filesystem={{":minimal"="read","{CANON_AGENTS}"="read",":project_roots"={{"."="write"}}}}']
+            "-c", f'permissions.csa_closed.filesystem={{":minimal"="read","{CANON_AGENTS}"="read"{extra},":project_roots"={{"."="write"}}}}']
 
 
 def model_file_path(p: dict, r: dict, value: str | Path) -> str:
@@ -2320,21 +2357,50 @@ def build_prompt(p: dict, r: dict, args: list[str], local: bool | None = None) -
     if is_local:
         lines.append("\nCodex CLI tool rule: use `exec_command` for shell commands. Never call `exec`, which is not a supported CLI tool.")
     if answer_workspace:
-        lines.append("\nRead CARD, ANSWER and ERRORS (filenames in WORKSPACE, used exactly as given) and the files listed under "
-                     "REQUIRED_READING (absolute paths: read them first). Write only SHEET. Do not inspect other "
-                     "directories, search for files, open the source set, change file or Word document, or reconstruct any path.")
-        lines.append("\nREQUIRED_READING:\n" + "\n".join(f"- {x}" for x in required_reading(p)))
+        if r.get("verb") == "draft":
+            # the draft lane's rules are all in this prompt (prompts/answer): nothing else to open
+            lines.append("\nRead CARD, ANSWER and ERRORS (filenames in WORKSPACE, used exactly as given). Write only SHEET. "
+                         "The rules below are complete: do not open other files, inspect other directories, search for files, "
+                         "open the source set, change a file or Word document, or reconstruct any path.")
+        else:
+            lines.append("\nRead CARD, ANSWER and ERRORS (filenames in WORKSPACE, used exactly as given) and the files listed under "
+                         "REQUIRED_READING (absolute paths: read them first). Write only SHEET. Do not inspect other "
+                         "directories, search for files, open the source set, change file or Word document, or reconstruct any path.")
+            lines.append("\nREQUIRED_READING:\n" + "\n".join(f"- {x}" for x in required_reading(p)))
         if values.get("SHEET") and values.get("CARD"):
             # `python3` on an agent's PATH can be Apple's command-line-tools stub: give the interpreter csa itself runs under
-            lines.append("\nVALIDATE=PYTHONPATH=\"" + str(FRAMEWORK) + "\" \"" + sys.executable +
+            lines.append("\nVALIDATE=PYTHONPATH=\"" + str(FRAMEWORK) + "\" \"" + framework_python() +
                          "\" -m csa_docx.answer_sheet validate " + shlex.quote(str(values["SHEET"])) + " --card " +
                          shlex.quote(str(values["CARD"]).replace(".md", ".json")) +
-                         "   (run it from the folder you start in, with this exact interpreter, not `python3`)")
+                         "   (run it from the folder you start in, with this exact interpreter, not `python3`; run it as one plain command, "
+                         "with no `cd`, `&&`, `;` or pipe around it, which the permission rules refuse)")
     if stage and not (r.get("verb") == "answer" and str(values.get("MODE", "answer")).lower() != "answer"):
-        lines.append("\n## Rules (digest)\n\n" + _fw_digest(stage).rstrip())
-        lines.append("\nThe digest summarises the rules. It does not replace the required reading." if answer_workspace
+        lines.append("\n## Rules (digest)\n\n" + (_draft_rules(p, values) if stage == "draft" and answer_workspace
+                                                      else _fw_digest(stage).rstrip()))
+        lines.append("\nThe digest summarises the rules. It does not replace the required reading." if answer_workspace and r.get("verb") != "draft"
                      else "\nDo not read the full skill or reference files unless a check names them.")
     return "\n".join(lines)
+
+
+def _draft_rules(p: dict, values: dict) -> str:
+    """The draft lane's rules for one call: the base prompt plus the prompt of each block kind the call writes
+    (framework/csa_docx/prompts.py; a project's own copies under csa-work/prompts/answer win over the shared ones)."""
+    sys.path.insert(0, str(FRAMEWORK))
+    try:
+        from csa_docx import prompts
+        work = local_path(str(p.get("work_dir") or ""))
+        only = str(values.get("ONLY", ""))
+        kinds = prompts.kinds_for_call(work, str(values.get("CARD", "")), only)
+        ids = {x.strip().upper() for x in only.split(",") if x.strip()}
+        text, sources = prompts.assemble(kinds, work, fix=bool(values.get("ERRORS")), frame=(not ids or "F1" in ids))
+        mine = [n for n, src in sources if src == "project"]
+        if mine:
+            print(f"{C['d']}prompts edited for this project: {', '.join(mine)}{C['0']}", file=sys.stderr)
+        return text.rstrip()
+    except (OSError, ValueError, KeyError) as e:
+        die(f"draft prompts: {e}")
+    finally:
+        sys.path.remove(str(FRAMEWORK))
 
 
 def _fw_digest(stage: str) -> str:
@@ -2455,7 +2521,8 @@ def _launch(p: dict, r: dict, args: list[str], a) -> int:
     # The caller still validates any sheet written before a timeout or non-zero exit.
     # A headless call never reads our stdin (codex exec waits on it when it is an open pipe), and a call that shows no
     # sign of life (no CPU, no connection to its model) for answer_stall_minutes is stopped and started again.
-    timeout_min = float(settings().get("answer_call_timeout_minutes", 45) or 0)
+    timeout_min = float(settings().get("answer_call_timeout_minutes", 0) or 0)       # an absolute cap, off by default
+    idle_min = float(settings().get("answer_idle_minutes", 25) or 0)                   # no work produced for this long: stop
     heartbeat_min = float(settings().get("answer_heartbeat_minutes", 10) or 0)
     stall_min = float(settings().get("answer_stall_minutes", 3) or 0)
     restarts = int(float(settings().get("answer_stall_restarts", 1) or 0))
@@ -2474,18 +2541,29 @@ def _launch(p: dict, r: dict, args: list[str], a) -> int:
         began, next_beat = time.time(), time.time() + heartbeat_min * 60 if heartbeat_min else float("inf")
         watch = Watch(proc.pid, stall_min * 60) if stall_min else None
         stalled = False
+        mark, last_work = work_signature(run_cwd), time.time()         # the idle clock restarts whenever work is produced
         try:
             while True:
                 try:
                     return proc.wait(timeout=30)
                 except subprocess.TimeoutExpired:
                     elapsed = time.time() - began
+                    now_mark = work_signature(run_cwd)
+                    if now_mark != mark:
+                        mark, last_work = now_mark, time.time()
+                    if idle_expired(last_work, time.time(), idle_min):
+                        print(f"{C['r']}CSA {r.get('verb')} model call produced no work for {idle_min:g} min (no answer sheet or patch "
+                              f"written or changed); stopped it. Any sheet it wrote will still be validated.{C['0']}",
+                              file=sys.stderr, flush=True)
+                        stop(proc)
+                        return 124
                     if watch and watch.stalled():
                         stalled = True
                         break
                     if time.time() >= next_beat:
                         print(f"{C['y']}CSA {r.get('verb')} model call is still running after {elapsed / 60:.1f} min "
-                              f"({cli}, {mode}).{C['0']}", file=sys.stderr, flush=True)
+                              f"({cli}, {mode}); last work produced {(time.time() - last_work) / 60:.1f} min ago.{C['0']}",
+                              file=sys.stderr, flush=True)
                         next_beat = time.time() + heartbeat_min * 60
                     if timeout_min and elapsed >= timeout_min * 60:
                         print(f"{C['r']}CSA {r.get('verb')} model call timed out after {timeout_min:g} min; "
@@ -2600,6 +2678,25 @@ def _writer_needed(p: dict, cf: Path, sec: str, label: str | None) -> tuple[bool
         return writer_needed_from(json.loads(r.stdout).get("findings", []))
     except ValueError:
         return True, "check-change gave no result"
+
+
+def _reader_pass(work: Path, cards: Path, key: str, sheet: Path) -> None:
+    """After an answer is written: one advisory call reads the whole sheet as the customer (contradictions between blocks,
+    terms a customer may not know, repeated wording, claims beyond the cited facts). It never edits the sheet; its report is
+    saved as <KEY>.review.md and added to <KEY>.RESULT.md. cli.yaml: answer_reader_pass, answer_reader_cli."""
+    if str(settings().get("answer_reader_pass", "true")).strip().lower() not in ("1", "true", "yes", "on"):
+        return
+    cli = str(settings().get("answer_reader_cli", "claude") or "claude")
+    tmpl = settings().get(f"{cli}_headless")
+    if not tmpl or not shutil.which(shlex.split(tmpl)[0]):
+        return
+    print(f"{C['b']}Reader pass ({cli}): reading the whole subsection as the customer...{C['0']}", flush=True)
+    res = _fw_json("csa_docx.reader_pass", "review", "--work-dir", work, "--sheet", sheet, "--key", key, "--cwd", cards,
+                   "--template", tmpl)
+    if res.get("status") == "OK":
+        print(f"{C['b']}Reader review: {res.get('words', 0)} words in {Path(res['file']).name} (also in {key}.RESULT.md){C['0']}")
+    else:
+        print(f"{C['y']}Reader pass did not run: {res.get('message', res.get('status'))}{C['0']}", file=sys.stderr)
 
 
 def _write_answer_result(path, number, outcome, res, fixes, sheet, note):
@@ -3105,7 +3202,10 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
             die(f"draft lane: {blk.get('message')}")
     if getattr(a, "print", False):
         route = agent(verb)
-        return launch(p, route, answer_launch_args(p, route, number, card_md, sheet), a)
+        shown = answer_launch_args(p, route, number, card_md, sheet)
+        if getattr(a, "blocks", ""):               # preview the prompt of a focused call (--blocks B1)
+            shown = shown + [f"ONLY={str(a.blocks).upper()}"]
+        return launch(p, route, shown, a)
     hosts_csv = work / "hosts" / "hosts.csv"
     fix_max = int(settings().get("answer_fix_rounds", 3) or 3)
     cache = {"status": "NONE", "changed": []}
@@ -3272,6 +3372,8 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
                                  "these checks still fail after the fix round; the answer is applied as written")
             print(f"{C['y']}APPLIED WITH OPEN CHECKS: {', '.join(hard)} still fail after {fixes} fix round(s). The answer is "
                   f"written as it stands. Details: {cards / (key + '.RESULT.md')}{C['0']}", file=sys.stderr)
+            if draft:
+                _reader_pass(work, cards, key, sheet)
             break
         if rc != 0:
             latest = check()
@@ -3385,6 +3487,8 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
     if res2.get("status") == "OK":      # a sheet applied with open checks is not cached: the next run tries it again
         _write_answer_result(cards / f"{key}.RESULT.md", number, "APPLIED" + (f" WITH {len(warns)} WARNING(S)" if warns else ""),
                              res2, fixes, sheet, "every blocking check passes")
+        if draft:
+            _reader_pass(work, cards, key, sheet)
         _fw_json("csa_docx.answer_cache", "write", sheet, "--card", card_json, "--matrix", matrix,
                  *(["--hosts", hosts_csv] if hosts_csv.is_file() else []), "--json")
     _fw_json("csa_docx.fact_store", "add", work, sheet, "--card", card_json)

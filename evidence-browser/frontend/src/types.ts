@@ -183,3 +183,8 @@ export type IntakeRun = {
 export type IntakeWarning = { step: string; severity: string; code: string; message: string; count: number };
 export type JobLogPage = { stream: "stdout" | "stderr"; total_lines: number; start: number; lines: { n: number; text: string }[]; truncated: boolean };
 export type IntakeErrors = { generated_at: string; runs: IntakeRun[]; warnings: IntakeWarning[] };
+
+export type PromptInfo = { name: string; title: string; use: string; kinds: string[]; required: string[]; text: string; source: "default" | "project"; etag: string; words: number };
+export type PromptSection = { key: string; number: string; title: string; blocks: { id: string; kind: string; label: string }[] };
+export type PromptList = { prompts: PromptInfo[]; max_bytes: number; sections: PromptSection[] };
+export type PromptPreview = { text: string; words: number; sources: { name: string; source: string }[]; kinds: string[] };

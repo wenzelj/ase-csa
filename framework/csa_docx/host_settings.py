@@ -20,6 +20,7 @@ import argparse
 import csv
 import ipaddress
 import json
+import ntpath
 import re
 import sqlite3
 import sys
@@ -39,6 +40,8 @@ _SHORT = re.compile(r"^[A-Za-z][A-Za-z0-9-]{2,30}$")
 
 def _capture(rel: str):
     folder = Path(rel).parent.name
+    if folder == "Collected_Host_Files":                # the newer script keeps the host's own files one folder down
+        folder = Path(rel).parent.parent.name
     m = CAPTURE_FOLDER_RE.match(folder)
     return (m["host"].upper(), folder, m["ts"]) if m else (None, None, None)
 
@@ -185,6 +188,81 @@ def latest_texts(con, like: str, keep_empty: bool = False) -> dict[str, dict]:
     return out
 
 
+#: Group Policy result: the verbose text of the older discovery script, or the XML of the newer one (which no longer writes
+#: `61_gpresult_verbose`). The newest capture of a host wins, whichever file it holds.
+GPO_LIKES = ("%61_gpresult_verbose%", "%64_gpresult.xml%")
+
+
+def _is_gpresult(cap: dict) -> bool:
+    """A gpresult XML counts only when it holds the computer's applied policy (a truncated or empty one proves nothing)."""
+    return not cap["fname"].lower().endswith(".xml") or "ComputerResults" in cap["text"]
+
+
+def latest_texts_any(con, likes, keep_empty: bool = False, accept=None, transform=None) -> dict[str, dict]:
+    """latest_texts over several file names (an older and a newer discovery script name the same thing differently):
+    per host, the capture that is newest wins, and a host keeps an older capture's file when its newest capture lacks it.
+    ``transform`` may cut the part of a file that matters (returns the capture, or None to drop it)."""
+    out: dict[str, dict] = {}
+    for like in ([likes] if isinstance(likes, str) else likes):
+        for host, cap in latest_texts(con, like, keep_empty).items():
+            if transform:
+                cap = transform(cap)
+                if cap is None:
+                    continue
+            if accept and not accept(cap):
+                continue
+            have = out.get(host)
+            if have is None or _capture(cap["folder"] + "/x")[2] > _capture(have["folder"] + "/x")[2]:
+                out[host] = cap
+    return out
+
+
+#: capture kinds where an empty file is an answer (no sessions, no open files, no shadow copies, no bindings)
+KEEP_EMPTY_KINDS = {"sess", "openf", "vss", "netuse", "httpssl", "bkclue", "hostscoll", "hostsman", "bksvc", "sqlbk"}
+
+
+def _root_store(cap: dict) -> dict | None:
+    """The newer script keeps every certificate store in one file (68A_Trusted_Certificate_Stores: Root, CA, TrustedPeople);
+    the Trusted Root section is what the older 69_certificates_localmachine_root held."""
+    if not cap["fname"].startswith("68A"):
+        return cap
+    lines = cap["text"].splitlines()
+    at = next((i for i, l in enumerate(lines) if re.match(r"^=+\s*Cert:\\LocalMachine\\Root\s*=+\s*$", l.strip(), re.I)), None)
+    if at is None:
+        return None
+    end = next((i for i in range(at + 1, len(lines)) if lines[i].startswith("===")), len(lines))
+    return {**cap, "text": "\n".join(lines[at:end]), "start": cap["start"] + at}
+
+
+def read_captures(con, kinds: dict) -> dict[str, dict[str, dict]]:
+    """{kind: {HOST: capture}} for a {kind: like or (likes)} map; the gpo kind accepts either Group Policy file."""
+    return {k: latest_texts_any(con, like, keep_empty=k in KEEP_EMPTY_KINDS, accept=_is_gpresult if k == "gpo" else None,
+                                transform=_root_store if k == "root" else None) for k, like in kinds.items()}
+
+
+def capture_gaps(con, caps: dict[str, dict[str, dict]]) -> list[str]:
+    """Hosts whose newest capture holds Group Policy files, yet no gpo setting was read from them: a discovery script
+    that renames a file would otherwise turn into "not known" with nothing to say why."""
+    gaps = []
+    try:
+        newest = {}
+        for host, folder, utc in con.execute("select host, folder, capture_utc from captures where archived = 0 or archived is null"):
+            if host and (host.upper() not in newest or utc > newest[host.upper()][1]):
+                newest[host.upper()] = (folder, utc)
+        for host, (folder, _utc) in sorted(newest.items()):
+            if host in caps.get("gpo", {}):
+                continue
+            names = [r[0] for r in con.execute(
+                "select rel_path from files where rel_path like ? and rel_path like '%gpresult%' and status in ('indexed', 'duplicate')",
+                (f"%/{folder}/%",))]
+            if names:
+                gaps.append(f"{host}: the capture {folder} holds {', '.join(sorted(Path(n).name for n in names))}, "
+                            "but no Group Policy setting was read from it (expected 61_gpresult_verbose or a complete 64_gpresult.xml)")
+    except sqlite3.OperationalError:
+        pass
+    return gaps
+
+
 _DB_SERVICE = re.compile(r"^\s*(MSSQL\$\S+|MSSQLSERVER|MySQL\S*|postgresql\S*|OracleService\S*)\s+(.+?)\s+Running\b", re.I)
 _DB_NAME = re.compile(r"^(MSSQL\$\S+|MSSQLSERVER|MySQL\S*|MariaDB\S*|postgresql\S*|OracleService\S*)$", re.I)
 _DEFAULT_SHARE = re.compile(r"^(?:[A-Z]\$|ADMIN\$|IPC\$|print\$)$", re.I)
@@ -204,7 +282,7 @@ def _row(host, attr, value, cap, off, lines, topic):
 def storage_settings(caps: dict[str, dict[str, dict]]) -> list[dict]:
     """storage.* and transfer.* rows. ``caps`` maps a capture kind to latest_texts() output:
     services (32_services_inventory), sql (52_*sql*), shares (42_local_shares), software (67_installed_software),
-    gpo (61_gpresult_verbose), proxy (15_proxy_configuration). An absence keeps an empty excerpt: it is a
+    gpo (61_gpresult_verbose or 64_gpresult.xml), proxy (15_proxy_configuration). An absence keeps an empty excerpt: it is a
     searched-and-not-found fact, never a quoted one."""
     out = []
     hosts = sorted({h for k in caps.values() for h in k})
@@ -252,6 +330,69 @@ def storage_settings(caps: dict[str, dict[str, dict]]) -> list[dict]:
             elif names:
                 out.append(_row(h, "storage.shares", "Default and administrative shares only", cap,
                                 [i for i, _ in names], lines, "storage"))
+        cap = caps.get("share_access", {}).get(h)          # 42E_smb_share_access (newer script): who may open each share
+        if cap:
+            lines = cap["text"].splitlines()
+            blocks: dict[str, list[tuple[str, str, str]]] = {}
+            at: dict[str, list[int]] = {}
+            cur = None
+            for i, l in enumerate(lines):
+                m = re.match(r"^\s*(Share|AccountName|AccessRight|AccessControlType)\s*:\s*(.*?)\s*$", l)
+                if not m:
+                    continue
+                if m.group(1) == "Share":
+                    cur = {"share": m.group(2), "acct": "", "right": "", "type": "", "line": i}
+                    blocks.setdefault(cur["share"], [])
+                    at.setdefault(cur["share"], [])
+                elif cur is not None:
+                    cur[{"AccountName": "acct", "AccessRight": "right", "AccessControlType": "type"}[m.group(1)]] = m.group(2)
+                    if m.group(1) == "AccessControlType":
+                        blocks[cur["share"]].append((cur["acct"], cur["right"], cur["type"]))
+                        at[cur["share"]].append(cur["line"])
+            extra = {n: v for n, v in blocks.items() if not _DEFAULT_SHARE.match(n)}
+            if extra:
+                parts_, offs_ = [], []
+                for n, acl in extra.items():
+                    who = ", ".join(f"{a} {r}" + ("" if t.lower() == "allow" else f" ({t})") for a, r, t in dict.fromkeys(acl))
+                    parts_.append(f"{n}: {who}")
+                    offs_ += at[n]
+                out.append(_row(h, "storage.share_access", "; ".join(parts_), cap, offs_, lines, "storage"))
+            elif blocks:
+                out.append(_row(h, "storage.share_access", "Default and administrative shares only", cap, [], lines, "storage"))
+        cap = caps.get("smb_client", {}).get(h)            # 42A_smb_connections (newer script): shares this host has open on other servers
+        if cap:
+            lines = cap["text"].splitlines()
+            conns, offs_ = [], []
+            cur = {}
+            for i, l in enumerate(lines + ["ServerName : "]):
+                m = re.match(r"^\s*(ServerName|ShareName|Dialect)\s*:\s*(.*?)\s*$", l)
+                if not m:
+                    continue
+                if m.group(1) == "ServerName":
+                    if cur.get("server"):
+                        conns.append(f"{cur['server'].split('.')[0].upper()}\\{cur.get('share', '')}" + (f" (SMB {cur['dialect']})" if cur.get("dialect") else ""))
+                    cur = {"server": m.group(2), "line": i}
+                    offs_.append(i)
+                else:
+                    cur[m.group(1).lower().replace("name", "")] = m.group(2)
+            offs_ = offs_[:-1]
+            out.append(_row(h, "transfer.smb_sessions", ", ".join(dict.fromkeys(conns)) if conns else "None found", cap,
+                            offs_ if conns else [], lines, "transfer"))
+        cap = caps.get("wbadmin", {}).get(h)               # 85_windows_backup_configuration (newer script): wbadmin get versions
+        if cap:
+            lines = cap["text"].splitlines()
+            times = [(i, re.search(r"Backup time:\s*(\d{1,2})/(\d{1,2})/(\d{4})", l)) for i, l in enumerate(lines) if "Backup time:" in l]
+            times = [(i, (int(m.group(3)), int(m.group(2)), int(m.group(1)))) for i, m in times if m]
+            none_ = [i for i, l in enumerate(lines) if re.search(r"No backup was found", l, re.I)]
+            if times:
+                last_i, last = max(times, key=lambda t: t[1])
+                where = next((lines[j].split(":", 1)[1].strip() for j in range(last_i, min(last_i + 3, len(lines)))
+                              if lines[j].strip().startswith("Backup location:")), "")
+                out.append(_row(h, "storage.backup_windows",
+                                f"{len(times)} Windows Server Backup versions, the latest on {last[2]:02d}/{last[1]:02d}/{last[0]}"
+                                + (f", stored on {where}" if where else ""), cap, [last_i], lines, "storage"))
+            elif none_:
+                out.append(_row(h, "storage.backup_windows", "No Windows Server Backup version found", cap, none_[:1], lines, "storage"))
         cap = caps.get("software", {}).get(h)
         if cap:
             lines = cap["text"].splitlines()
@@ -278,6 +419,191 @@ def storage_settings(caps: dict[str, dict[str, dict]]) -> list[dict]:
                 out.append(_row(h, "transfer.proxy", lines[j].split(":", 1)[1].strip(), cap, j, lines, "transfer"))
             elif i is not None:
                 out.append(_row(h, "transfer.proxy", "Direct, no WinHTTP proxy", cap, i, lines, "transfer"))
+    return out
+
+
+# ---- the newer discovery script's remaining files (every one is read; an empty file is "None found") -----------------
+NEWER_CAPTURES = {
+    "scope": "%01_scope_validation%", "ad": "%05_AD_Computer_Identity%", "ident": "%69_identity_computer%",
+    "dnscache": "%13_dns_client_cache%", "hostsfile": "%001_windows_hosts%", "procs": "%16_processes_inventory%",
+    "sess": "%42B_smb_sessions%", "openf": "%42C_smb_open_files_metadata%", "netuse": "%42D_net_use%",
+    "tasks": "%66B_scheduled_task_actions%", "taskres": "%66C_scheduled_task_triggers_results%",
+    "chain": "%68B_certificate_trust_chains%", "certx": "%69A_certificate_extended%", "httpssl": "%69B_http_ssl_bindings%",
+    "bksvc": "%85A_backup_services_products%", "sqlbk": "%85B_sql_backup_metadata%", "bktasks": "%85C_backup_and_unc_configuration_references%",
+    "vss": "%85D_volume_shadow_copy_metadata%", "bkclue": "%85E_backup_destination_clues%",
+    "hostscoll": "%88A_host_files_collection_summary%", "hostsman": "%88B_host_files_collection_manifest%"}
+
+_KV = re.compile(r"^\s*([A-Za-z][A-Za-z0-9_]*)\s*:\s*(.*?)\s*$")
+
+
+def _blocks(lines: list[str], first: str, keys: set[str]) -> list[dict]:
+    """Blocks of ``Key : value`` lines, a new block at every ``first`` key; each keeps the line of every key it read."""
+    out, cur = [], None
+    for i, l in enumerate(lines):
+        m = _KV.match(l)
+        if not m or m.group(1) not in keys:
+            continue
+        if m.group(1) == first:
+            cur = {first: m.group(2), "_line": i, "_at": {first: i}}
+            out.append(cur)
+        elif cur is not None and m.group(1) not in cur:
+            cur[m.group(1)] = m.group(2)
+            cur["_at"][m.group(1)] = i
+    return out
+
+
+def _cap_empty(cap, text_ok=lambda t: bool(t.strip())):
+    return not text_ok(cap["text"])
+
+
+def newer_settings(caps: dict[str, dict[str, dict]]) -> list[dict]:
+    """Settings from the files only the newer discovery script writes, so none of its files is left unread:
+    scope.script_allow_list (01), identity.computer_domain (05, 69_identity_computer), dns.client_cache (13), dns.hosts_file (the
+    collected hosts file), platform.running_applications (16), transfer.smb_inbound_sessions / smb_open_files / net_use
+    (42B, 42C, 42D), schedule.custom_tasks / schedule.task_results (66B, 66C), cert.chain (68B), cert.usage (69A),
+    cert.http_bindings (69B), backup.services (85A), backup.sql_writer (85B), backup.task_references (85C), backup.vss
+    (85D), backup.destination_clues (85E), capture.host_files (88A, 88B). Absence is a searched-and-not-found row."""
+    out = []
+    for h in sorted({h for k in caps.values() for h in k}):
+        def has(kind):
+            return caps.get(kind, {}).get(h)
+
+        cap = has("scope")
+        if cap:
+            lines = cap["text"].splitlines()
+            head = next((l for l in lines if l.startswith("Name ") and "Role" in l and "Zone" in l), None)
+            at = next((i for i, l in enumerate(lines) if re.match(rf"^{re.escape(h)}\b", l, re.I)), None)
+            if head and at is not None:
+                r0, z0 = head.index("Role"), head.index("Zone")
+                z1 = head.index("ExpectedOS") if "ExpectedOS" in head else len(lines[at])
+                role, zone = lines[at][r0:z0].strip(), lines[at][z0:z1].strip()
+                if role:
+                    out.append(_row(h, "scope.script_allow_list", f"Listed in the discovery script's allow-list as {role} (zone {zone})", cap, at, lines, "scope"))
+        for kind in ("ad", "ident"):
+            cap = has(kind)
+            if cap:
+                lines = cap["text"].splitlines()
+                at = next((i for i, l in enumerate(lines) if re.match(rf"^\s*{re.escape(h)}\s+\S+\s+(True|False)\b", l, re.I)), None)
+                if at is not None:
+                    f = lines[at].split()
+                    out.append(_row(h, "identity.computer_domain",
+                                    f"Member of the domain {f[1]}" if f[2].lower() == "true" else f"Not joined to a domain ({f[1]})",
+                                    cap, at, lines, "identity"))
+                    break
+        cap = has("dnscache")
+        if cap:
+            lines = cap["text"].splitlines()
+            ents = _blocks(lines, "Entry", {"Entry", "Name", "Data", "Type", "Status"})
+            done = [e for e in ents if e.get("Data")]
+            names = sorted({f"{e['Entry']} to {e['Data']}" for e in done})
+            val = (f"{len(ents)} cached entries; resolved: " + ", ".join(names[:6]) + (f" and {len(names) - 6} more" if len(names) > 6 else "")
+                   if done else (f"{len(ents)} cached entries, none resolved" if ents else "None found"))
+            out.append(_row(h, "dns.client_cache", val, cap, [e["_line"] for e in done][:6] if done else [], lines, "dns"))
+        cap = has("hostsfile")
+        if cap:
+            lines = cap["text"].splitlines()
+            ents = [(i, l.split("#")[0].split()) for i, l in enumerate(lines) if l.split("#")[0].strip()]
+            ents = [(i, f) for i, f in ents if len(f) >= 2 and f[1].lower() not in ("localhost",) and f[0] not in ("127.0.0.1", "::1")]
+            out.append(_row(h, "dns.hosts_file", "; ".join(f"{f[0]} is {', '.join(f[1:])}" for _, f in ents[:8]) + (f"; and {len(ents) - 8} more" if len(ents) > 8 else "")
+                            if ents else "No entries beyond the defaults", cap, [i for i, _ in ents][:8], lines, "dns"))
+        cap = has("procs")
+        if cap:
+            lines = cap["text"].splitlines()
+            bl = _blocks(lines, "ProcessId", {"ProcessId", "Name", "ExecutablePath"})
+            mine = {}
+            for b in bl:
+                path = (b.get("ExecutablePath") or "")
+                if path and not re.match(r"^C:\\(Windows|Program Files\\(Microsoft|Windows Defender|Common Files\\Microsoft|VMware\\VMware Tools|Windows)|ProgramData\\Microsoft)", path, re.I):
+                    mine.setdefault(b.get("Name", ""), b["_at"].get("Name", b["_line"]))
+            names = sorted(mine, key=str.lower)
+            out.append(_row(h, "platform.running_applications",
+                            ", ".join(names[:16]) + (f" and {len(names) - 16} more" if len(names) > 16 else "") if names else "None found",
+                            cap, [mine[n] for n in names][:16] if names else [], lines, "platform"))
+        for kind, attr in (("sess", "transfer.smb_inbound_sessions"), ("openf", "transfer.smb_open_files")):
+            cap = has(kind)
+            if cap:
+                lines = cap["text"].splitlines()
+                hits = [i for i, l in enumerate(lines) if _KV.match(l)]
+                out.append(_row(h, attr, f"{len(hits)} entries" if hits else "None found", cap, hits[:3], lines, "transfer"))
+        cap = has("netuse")
+        if cap:
+            lines = cap["text"].splitlines()
+            none_ = any("no entries" in l.lower() for l in lines) or not cap["text"].strip()
+            ents = [i for i, l in enumerate(lines) if re.match(r"^\s*(OK|Disconnected|Unavailable)\s", l)]
+            out.append(_row(h, "transfer.net_use", "None found" if none_ and not ents else "; ".join(lines[i].strip() for i in ents[:4]),
+                            cap, ents[:4], lines, "transfer"))
+        cap = has("tasks")
+        if cap:
+            lines = cap["text"].splitlines()
+            bl = [b for b in _blocks(lines, "TaskPath", {"TaskPath", "TaskName", "RunAs", "Execute", "Arguments"})
+                  if not b["TaskPath"].lower().startswith("\\microsoft\\")]
+            vals = [f"{b.get('TaskName', '')} (as {b.get('RunAs') or 'the logged-on user'}) runs {ntpath.basename((b.get('Execute') or '').strip(chr(34)))}" for b in bl]
+            out.append(_row(h, "schedule.custom_tasks", "; ".join(vals[:10]) + (f"; and {len(vals) - 10} more" if len(vals) > 10 else "") if vals else "None found",
+                            cap, [b["_line"] for b in bl][:10] if vals else [], lines, "schedule"))
+            res = has("taskres")
+            if res:
+                rl = res["text"].splitlines()
+                names = {b.get("TaskName") for b in bl}
+                bad = [b for b in _blocks(rl, "TaskPath", {"TaskPath", "TaskName", "LastTaskResult", "LastRunTime"})
+                       if b.get("TaskName") in names and b.get("LastTaskResult") not in (None, "", "0", "267008", "267009", "267010", "267011")]
+                out.append(_row(h, "schedule.task_results",
+                                "; ".join(f"{b['TaskName']} last returned {b['LastTaskResult']}" for b in bad[:8]) if bad else "No result other than success",
+                                res, [b["_line"] for b in bad][:8] if bad else [], rl, "schedule"))
+        cap = has("chain")
+        if cap:
+            lines = cap["text"].splitlines()
+            bl = _blocks(lines, "Subject", {"Subject", "ChainBuilds", "ChainLength", "ChainStatus"})
+            vals = [f"{(_dn(b['Subject'], 'CN') or b['Subject'])} chain {'builds' if str(b.get('ChainBuilds')).lower() == 'true' else 'does not build'}"
+                    + (f" (length {b['ChainLength']})" if b.get("ChainLength") else "") + (f", {b['ChainStatus']}" if b.get("ChainStatus") else "") for b in bl]
+            out.append(_row(h, "cert.chain", "; ".join(vals) if vals else "None found", cap, [b["_line"] for b in bl], lines, "certificates"))
+        cap = has("certx")
+        if cap:
+            lines = cap["text"].splitlines()
+            bl = _blocks(lines, "Store", {"Store", "Subject", "HasPrivateKey", "EnhancedKeyUsage"})
+            mine = [b for b in bl if b["Store"].lower() == "my" and str(b.get("HasPrivateKey")).lower() == "true"]
+            vals = [f"{(_dn(b.get('Subject', ''), 'CN') or b.get('Subject', ''))}: {b.get('EnhancedKeyUsage') or 'no extended key usage'}" for b in mine]
+            out.append(_row(h, "cert.usage", "; ".join(vals) if vals else "None found", cap, [b["_at"].get("EnhancedKeyUsage", b["_line"]) for b in mine], lines, "certificates"))
+        cap = has("httpssl")
+        if cap:
+            lines = cap["text"].splitlines()
+            ents = [i for i, l in enumerate(lines) if re.search(r"(IP:port|Hostname:port)\s*:", l, re.I)]
+            out.append(_row(h, "cert.http_bindings", "; ".join(lines[i].split(":", 1)[1].strip() for i in ents[:6]) if ents else "None found", cap, ents[:6], lines, "certificates"))
+        cap = has("bksvc")
+        if cap:
+            lines = cap["text"].splitlines()
+            bl = _blocks(lines, "Name", {"Name", "DisplayName", "State"})
+            vals = [f"{b.get('DisplayName') or b['Name']} ({b.get('State', '')})" for b in bl]
+            out.append(_row(h, "backup.services", ", ".join(vals[:8]) + (f" and {len(vals) - 8} more" if len(vals) > 8 else "") if vals else "None found",
+                            cap, [b["_line"] for b in bl][:8] if vals else [], lines, "backup"))
+        cap = has("sqlbk")
+        if cap:
+            lines = cap["text"].splitlines()
+            hits = [i for i, l in enumerate(lines) if re.match(r"^\s*SQLWriter\s", l)]
+            out.append(_row(h, "backup.sql_writer", "SQL Server VSS Writer " + (lines[hits[0]].split()[1].lower() if hits else "not found") if hits else "None found",
+                            cap, hits[:1], lines, "backup"))
+        cap = has("bktasks")
+        if cap:
+            lines = cap["text"].splitlines()
+            hits = [i for i, l in enumerate(lines) if re.search(r"backup|\\\\[A-Za-z0-9._-]+\\", l, re.I) and not l.lstrip().startswith(("Task action", "---", "TaskName")) and "\\Microsoft\\" not in l]
+            out.append(_row(h, "backup.task_references", "; ".join(re.sub(r"\s{2,}", " ", lines[i].strip())[:140] for i in hits[:4]) if hits else "None found",
+                            cap, hits[:4], lines, "backup"))
+        cap = has("vss")
+        if cap:
+            lines = cap["text"].splitlines()
+            body = [i for i, l in enumerate(lines) if l.strip()]
+            out.append(_row(h, "backup.vss", "; ".join(lines[i].strip() for i in body[:3]) if body else "None found", cap, body[:3], lines, "backup"))
+        cap = has("bkclue")
+        if cap:
+            lines = cap["text"].splitlines()
+            body = [i for i, l in enumerate(lines) if l.strip() and not l.lstrip().startswith("Existing SMB connections")]
+            out.append(_row(h, "backup.destination_clues", "; ".join(lines[i].strip() for i in body[:4]) if body else "None found", cap, body[:4], lines, "backup"))
+        for kind in ("hostscoll", "hostsman"):
+            cap = has(kind)
+            if cap:
+                lines = cap["text"].splitlines()
+                err = [i for i, l in enumerate(lines) if l.strip().upper().startswith("ERROR")]
+                out.append(_row(h, "capture.host_files", "The script could not collect the host files (" + lines[err[0]].strip()[:90] + ")" if err else "Collected", cap, err[:1], lines, "capture"))
+                break
     return out
 
 
@@ -373,7 +699,7 @@ def agent_settings(caps: dict[str, dict[str, dict]], cat: dict | None = None) ->
     return out
 
 
-AGENT_CAPTURES = {"services": "%32_services_inventory%", "software": "%67_installed_software%", "gpo": "%61_gpresult_verbose%"}
+AGENT_CAPTURES = {"services": "%32_services_inventory%", "software": "%67_installed_software%", "gpo": GPO_LIKES}
 
 
 # ---- identity and admin access (3.2, 3.8, 3.16) -------------------------------------------------------------
@@ -941,11 +1267,13 @@ def cert_settings(caps: dict[str, dict[str, dict]]) -> list[dict]:
     return out
 
 
-CERT_CAPTURES = {"my": "%68_certificates_localmachine_my%", "root": "%69_certificates_localmachine_root%"}
+CERT_CAPTURES = {"my": "%68_certificates_localmachine_my%", "root": ("%69_certificates_localmachine_root%", "%68A_Trusted_Certificate_Stores%")}
 
 
 STORAGE_CAPTURES = {"services": "%32_services_inventory%", "sql": "%sql_cluster_evidence%", "shares": "%42_local_shares%",
-                    "software": "%67_installed_software%", "gpo": "%61_gpresult_verbose%", "proxy": "%15_proxy_configuration%"}
+                    "software": "%67_installed_software%", "gpo": GPO_LIKES, "proxy": "%15_proxy_configuration%",
+                    "share_access": "%42E_smb_share_access%", "smb_client": "%42A_smb_connections%",
+                    "wbadmin": "%85_windows_backup_configuration%"}
 
 
 def write(work_dir: Path, rows: list[dict]) -> Path:
@@ -982,8 +1310,11 @@ def build(work_dir: Path, con=None, services: list[dict] | None = None) -> dict:
         con = sqlite3.connect(str(p))
     try:
         rows = from_chunks(_time_chunks(con))
-        rows += storage_settings({k: latest_texts(con, like) for k, like in STORAGE_CAPTURES.items()})
-        rows += agent_settings({k: latest_texts(con, like) for k, like in AGENT_CAPTURES.items()})
+        storage_caps = read_captures(con, STORAGE_CAPTURES)
+        gaps = capture_gaps(con, storage_caps)
+        rows += storage_settings(storage_caps)
+        rows += agent_settings(read_captures(con, AGENT_CAPTURES))
+        rows += newer_settings(read_captures(con, NEWER_CAPTURES))
         rows += identity_settings({k: latest_texts(con, like, keep_empty=k in ("admins", "rdp"))
                                    for k, like in IDENTITY_CAPTURES.items()})
         rows += platform_settings({k: latest_texts(con, like) for k, like in PLATFORM_CAPTURES.items()})
@@ -996,7 +1327,7 @@ def build(work_dir: Path, con=None, services: list[dict] | None = None) -> dict:
         rows += net_settings({k: latest_texts(con, like) for k, like in NET_CAPTURES.items()}, zone_of,
                              indexed_addresses(con))
         rows += firewall_settings({k: latest_texts(con, like) for k, like in FIREWALL_CAPTURES.items()})
-        rows += cert_settings({k: latest_texts(con, like) for k, like in CERT_CAPTURES.items()})
+        rows += cert_settings(read_captures(con, CERT_CAPTURES))
     finally:
         if own:
             con.close()
@@ -1005,7 +1336,7 @@ def build(work_dir: Path, con=None, services: list[dict] | None = None) -> dict:
         services = list(csv.DictReader(sf.open(encoding="utf-8"))) if sf.is_file() else []
     rows += from_services(services)
     out = write(work_dir, rows)
-    return {"status": "OK", "rows": len(rows), "hosts": len({r["host"] for r in rows}), "out": str(out)}
+    return {"status": "OK", "rows": len(rows), "hosts": len({r["host"] for r in rows}), "out": str(out), "capture_gaps": gaps}
 
 
 def load(work_dir: Path, merge_isolation: bool = True) -> dict[str, dict[str, dict]]:

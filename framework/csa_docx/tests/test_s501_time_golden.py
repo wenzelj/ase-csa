@@ -51,7 +51,7 @@ def test_table_value_conflict():
 
 
 def test_rating_from_absence():
-    text = fault("Rating reason: The sources are domain controllers hosted in OT (E-003, E-004), but the Mackay hosts depend on a source at Rockhampton (E-005).",
+    text = fault("Rating reason: Mackay takes its time from the Rockhampton controller (E-005), so the sites are not independent.",
                  "Rating reason: No OT-resident time source was identified.\nQUESTION: Which side of OT are the sources on?")
     _, got = check(text)
     assert ("RATING_FROM_ABSENCE", "WARN") in got
@@ -78,7 +78,7 @@ def test_note_repeats_text():
 
 def test_missing_cross_site_finding():
     res, got = check(fault("- MOTPRDREV101 and MOTPRDLOG103 at Mackay take their time from ROTPRDSRV122 at Rockhampton. (E-005) {observed; MOTPRDREV101, MOTPRDLOG103}\n", ""))
-    assert ("SLOT_NOT_ANSWERED", "ERROR") in got and res["status"] == "ERROR"
+    assert ("SLOT_NOT_ANSWERED", "WARN") in got      # a finding may be left out: it warns, it does not block
 
 
 # ------------------------------------------------------------------ the document: duplicate table and duplicate note

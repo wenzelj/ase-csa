@@ -92,7 +92,9 @@
       ],
       "source": {
         "settings": [
-          "agent.patch_management"
+          "agent.patch_management",
+          "schedule.custom_tasks",
+          "schedule.task_results"
         ]
       },
       "search": [

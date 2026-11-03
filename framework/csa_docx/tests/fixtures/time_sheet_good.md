@@ -6,7 +6,7 @@ Facts:
 Summary: The time sources are domain controllers hosted in OT. The Mackay hosts depend on a source at another site. The requirement is Partially Met because the sources are OT-hosted but share one domain hierarchy.
 Story: Sources are OT domain controllers. Mackay uses the Rockhampton controller. Most hosts show stratum 5.
 Rating: Partially Met
-Rating reason: The sources are domain controllers hosted in OT (E-003, E-004), but the Mackay hosts depend on a source at Rockhampton (E-005).
+Rating reason: Mackay takes its time from the Rockhampton controller (E-005), so the sites are not independent.
 
 ## B2 Discovery Information
 Rows:

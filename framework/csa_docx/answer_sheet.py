@@ -202,11 +202,15 @@ def count_mismatch(text: str) -> str | None:
     """'twelve hosts ...: two jump hosts, one server, six nodes' -> message when the parts do not add up.
 
     Only checked where a total is followed by a colon (or 'made up of' / 'comprising') and at least two counts."""
-    m = re.search(r":|\bmade up of\b|\bcomprising\b|\bconsisting of\b", text)
+    # a drive letter ("the C: drive") is not the colon that introduces the parts
+    m = re.search(r"(?<![\s(][A-Za-z]):|\bmade up of\b|\bcomprising\b|\bconsisting of\b", text)
     if not m:
         return None
     head = [x for x in _NUM.finditer(text[:m.start()])
             if not re.match(r"[\d.]", text[x.end():x.end() + 1] or " ")
+            # "228 Windows Server Backup versions": a count of things that are not hosts or parts
+            and not re.match(r"\s+(?:[A-Za-z/-]+\s+){0,4}?(?:versions?|entries|rules|tasks|files|copies|snapshots|events|records|rows|lines|bytes|days|minutes|hours)\b",
+                             text[x.end():], re.IGNORECASE)
             and not re.search(r"\b(?:port|ports|version|line|instance|vlan|site|row)\s*$", text[:x.start()], re.IGNORECASE)
             and _n(x.group(1)) <= 500]
     tail = [_n(x.group(1)) for x in _NUM.finditer(text[m.end():].split(".")[0])]
@@ -230,7 +234,8 @@ HARD_CODES = {"CROSS_PROJECT_ONLY", "NOTE_TOO_LONG", "NOTE_NONE_AND_TEXT", "NOTE
               "EXAMPLE_COPIED", "SUMMARY_MISSING", "STORY_MISSING", "SUMMARY_TOO_LONG", "SUMMARY_TOO_MANY_SENTENCES",
               "SUMMARY_REPEATS_STORY", "SUMMARY_STORY_OVERLAP", "SUMMARY_NO_RATING_BASIS", "QUESTION_IN_SUMMARY",
               "STORY_NO_EVIDENCE_PATH", "STORY_STARTS_WITH_RATING", "STORY_RESTATES_RATING", "STORY_AND_TEXT",
-              "STORY_SENTENCE_LONG", "STORY_LIST", "STORY_PHRASE_REPEAT", "STORY_NOT_PARAGRAPHED"}
+              "STORY_SENTENCE_LONG", "STORY_LABEL", "STORY_PHRASE_REPEAT", "STORY_NOT_PARAGRAPHED", "STORY_SAME_OPENING",
+              "SETTING_NOT_STATED", "TERM_NOT_EXPLAINED"}
 
 #: Relaxed draft lane (cli.yaml draft_strictness: relaxed, the default for csa answer): the answer's job is to answer the
 #: question from the evidence, so only what makes it wrong or unusable stops it: evidence it cannot cite, a missing or
@@ -243,7 +248,8 @@ RELAXED_HARD = {"CROSS_PROJECT_ONLY", "QUESTION_MISSING", "EMPTY_ANSWER", "FACT_
                 "ZONE_CONTRADICTED", "ISOLATION_WRONG_SIDE", "ATTEMPT_AS_ESTABLISHED",
                 "SUMMARY_NO_RATING_BASIS", "SUMMARY_STORY_OVERLAP", "QUESTION_IN_SUMMARY",
                 "STORY_NO_EVIDENCE_PATH", "STORY_STARTS_WITH_RATING", "STORY_RESTATES_RATING",
-                "STORY_SENTENCE_LONG", "STORY_LIST", "STORY_PHRASE_REPEAT", "STORY_NOT_PARAGRAPHED"}
+                "STORY_SENTENCE_LONG", "STORY_LABEL", "STORY_PHRASE_REPEAT", "STORY_NOT_PARAGRAPHED", "STORY_SAME_OPENING",
+              "SETTING_NOT_STATED", "TERM_NOT_EXPLAINED"}
 #: Of those, the ones the document cannot be written around: the answer cannot be rendered, or cites evidence that does
 #: not exist. Any other hard error left after the fix round is applied anyway and listed in RESULT.md.
 FATAL_CODES = {"NO_SHEET", "QUESTION_MISSING", "EMPTY_ANSWER", "FACT_NO_EVIDENCE", "UNKNOWN_EVIDENCE", "RATING_INVALID",
@@ -258,6 +264,7 @@ CONTENT_CODES = {"PART_MISATTRIBUTED", "PART_NOT_NAMED", "SLOT_NOT_ANSWERED", "S
                  "ATTEMPT_AS_ESTABLISHED", "ISOLATION_WRONG_SIDE",
                  "PRACTICE_NOT_ADDRESSED", "PRACTICE_ATTRIBUTION_DROPPED", "APPLICATION_ZONE_CLAIM", "QUESTION_BUNDLED",
                  "CROSS_PROJECT_ONLY", "BACKGROUND_AS_EVIDENCE", "FACT_OFF_TOPIC", "DRAWBRIDGE_FUNCTION_MISSING",
+                 "REASON_REPEATS_SUMMARY", "STORY_ENDS_BY_REPEATING", "REASON_DIFFERS_FROM_SUMMARY", "ABSENCE_WITHOUT_FACT", "DIRECTION_ASSUMED", "REPEATED_UNKNOWN",
                  "HOST_IN_PROSE", "JARGON_SHORTHAND"}
 
 
@@ -291,8 +298,8 @@ def frame_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
     if fr.get("must_address"):
         slots = []                  # the requirement blocks answer the slots themselves: the F1 block is optional
     elif fb is None:
-        return [_f("ERROR", "FRAME_UNCOVERED", None, f"no '## F1 Analysis frame' block: give every slot of the card's analysis "
-                   f"frame ({', '.join(slots)}) a line naming the blocks that answer it, or QUESTION: <what is not known>")]
+        return [_f("WARN", "FRAME_UNCOVERED", None, f"no '## F1 Analysis frame' block: a line per slot of the card's analysis "
+                   f"frame ({', '.join(slots)}) names the blocks that answer it")]
     bad = []
     for s in slots:
         v = (fb.get("frame") or {}).get(s, "")
@@ -307,8 +314,8 @@ def frame_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
         if not ok:
             bad.append(f"{s} names no answered block ({v[:40]})")
     if bad:
-        out.append(_f("ERROR", "FRAME_UNCOVERED", "F1", "; ".join(bad) + ": name the B blocks that answer each slot, "
-                      "or write QUESTION: <what is not known>"))
+        out.append(_f("WARN", "FRAME_UNCOVERED", "F1", "; ".join(bad) + ": name the B blocks that answer each slot, "
+                      "or say it is not known"))
     out += flow_coverage(sheet, card)
     out += zone_contradictions(sheet, card)
     out += rating_floor(sheet, card)
@@ -564,6 +571,129 @@ def _prose_lint():
     return _PROSE_LINT or None
 
 
+def named_host_addresses(card: dict) -> set[str]:
+    """Addresses that belong to a host with a name on the card. A peer the evidence shows only by its address is named by
+    that address, so only these addresses are better said by the host's name."""
+    return {k for k in ((card.get("parts") or {}).get("hosts") or {}) if _IP.fullmatch(str(k))}
+
+
+# "No proxy, scanning service or other defined transfer path was identified": an absence stated as the answer. The things
+# named must also appear in a Fact, so the claim rests on a finding (for example "no host has a proxy configured") and not on the
+# writer's say-so.
+_NO_X_WAS = re.compile(r"\b[Nn]o\s+([A-Za-z][A-Za-z/ ,'-]{2,90}?)\s+(?:was|were|has been|have been)\s+(?:identified|found|seen|established|recorded|evidenced)\b")
+_NOT_NOUN = {"other", "defined", "documented", "written", "tested", "known", "controlled", "separate", "specific", "any", "further", "such"}
+
+
+_DIRECTION_WORDS = re.compile(r"\b(?:leaves?|leaving)\s+OT\b|\bout\s+of\s+OT\b|\boutward(?:s)?\b|\boutbound\b|\bpush(?:ed|es)?\s+out\b|\bsend(?:s|ing)?\s+(?:data\s+)?out\b", re.I)
+
+
+def direction_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
+    """DIRECTION_ASSUMED (warning): the text says data leaves OT, goes outward or is read out of OT while the card lists
+    connections whose far end has no recorded zone. What is known is which side opens the connection; where the far end sits
+    is not."""
+    out: list[dict] = []
+    must = (card.get("frame") or {}).get("must_address") or {}
+    for q in card.get("questions", []):
+        if q.get("kind") != "requirement":
+            continue
+        unknown = [x for x in must.get(q["id"], []) if x.get("far_unknown")]
+        b = sheet.get(q["id"]) or {}
+        prose = " ".join(x for x in (b.get("summary"), b.get("story"), b.get("rating_reason")) if x)
+        m = _DIRECTION_WORDS.search(prose)
+        if unknown and m:
+            out.append(_f("WARN", "DIRECTION_ASSUMED", q["id"],
+                          f"the text says \"{m.group(0)}\" while the zone of the far end of {len(unknown)} listed connection(s) is not "
+                          "recorded: say which side opens the connection and that the far end's zone is not recorded, not where the data goes"))
+    return out
+
+
+_GLOSS = None
+
+
+def _glossary_terms() -> list[dict]:
+    global _GLOSS
+    if _GLOSS is None:
+        path = Path(__file__).resolve().parents[2] / "references" / "glossary.json"
+        try:
+            _GLOSS = [t for t in json.loads(path.read_text(encoding="utf-8")).get("terms", []) if t.get("check", True)]
+        except (OSError, ValueError):
+            _GLOSS = []
+    return _GLOSS
+
+
+def glossary_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
+    """TERM_NOT_EXPLAINED (error, so the fix round adds the explanation): a standard technology term from the card's
+    glossary (references/glossary.json) appears in a block's Story or Text and no explanation of it sits next to the
+    first mention: two of the glossary's plain words within about 200 characters after it, or 80 before."""
+    out: list[dict] = []
+    for q in card.get("questions", []):
+        if q.get("kind") not in ("requirement", "narrative"):
+            continue
+        b = sheet.get(q["id"]) or {}
+        prose = " ".join(x for x in (b.get("story"), b.get("text")) if x)         # the short Summary cell is not held to this
+        low = prose.lower()
+        missing = []
+        for t in _glossary_terms():
+            at = [low.find(m) for m in t.get("match", []) if m in low]
+            if not at:
+                continue
+            i = min(at)
+            near = low[max(0, i - 80): i + 200]
+            words = {w[:5] for w in re.findall(r"[a-z]{5,}", t["plain"].lower())}
+            hits = sum(1 for w in words if w in near)
+            if hits < 2:
+                missing.append(f"{t['term']} ({t['plain']})")
+        if missing:
+            out.append(_f("ERROR", "TERM_NOT_EXPLAINED", q["id"],
+                          "explain these terms in one short clause where they first appear, in your own words: " + "; ".join(missing[:4])))
+    return out
+
+
+_UNKNOWN_SAID = re.compile(r"\bnot\s+(?:been\s+)?(?:recorded|established|known|identified)\b|\bunknown\b|\bnot\s+recorded\b", re.I)
+
+
+def repeated_unknown_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
+    """REPEATED_UNKNOWN (warning): a block says what is not recorded or not known four times or more across its Summary, Story
+    and rating reason. State each unknown once, in the closing paragraph; elsewhere only where it changes the meaning."""
+    out: list[dict] = []
+    for q in card.get("questions", []):
+        if q.get("kind") != "requirement":
+            continue
+        b = sheet.get(q["id"]) or {}
+        prose = " ".join(x for x in (b.get("summary"), b.get("story"), b.get("rating_reason")) if x)
+        n = len(_UNKNOWN_SAID.findall(prose))
+        if n >= 4:
+            out.append(_f("WARN", "REPEATED_UNKNOWN", q["id"],
+                          f"the text says something is not recorded or not known {n} times: state each unknown once, in the closing "
+                          "paragraph, and mention it earlier only where it changes what a sentence means"))
+    return out
+
+
+def absence_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
+    """ABSENCE_WITHOUT_FACT (warning): the Summary, Story or rating reason says 'no <things> was identified' and no Fact of the
+    block mentions one of those things. The claim needs a Fact that states it with its evidence."""
+    out: list[dict] = []
+    for q in card.get("questions", []):
+        if q.get("kind") != "requirement":
+            continue
+        b = sheet.get(q["id"]) or {}
+        facts = " ".join(f["text"] for f in b.get("facts", [])).lower() + " " + " ".join(b.get("unknown") or []).lower()
+        prose = " ".join(x for x in (b.get("summary"), b.get("story"), b.get("rating_reason")) if x)
+        missing: list[str] = []
+        for m in _NO_X_WAS.finditer(prose):
+            for alt in re.split(r",\s*|\s+or\s+|\s+and\s+", m.group(1)):
+                if re.match(r"\s*(?:other|further|any other)\b", alt, re.I):
+                    continue                  # "or other defined transfer path" is a catch-all, not a named thing
+                words = [w for w in re.findall(r"[a-z]{4,}", alt.lower()) if w not in _NOT_NOUN]
+                if words and not any(w[:6] in facts for w in words) and alt.strip() not in missing:
+                    missing.append(alt.strip())
+        if missing:
+            out.append(_f("WARN", "ABSENCE_WITHOUT_FACT", q["id"],
+                          f"the text says no {', '.join(missing[:3])} was identified, but no Fact states it: add the finding the card "
+                          "lists (for example that no host has a proxy configured), with its evidence, or leave the claim out"))
+    return out
+
+
 def plain_language_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
     """The draft lane runs no check-change, so the prose rules are checked here (all warn):
     HOST_IN_PROSE: a Summary, Story or Text names a host or gives an address (names and addresses belong in the table)
@@ -581,7 +711,7 @@ def plain_language_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
         asks = bool(_ASKS_FOR_HOSTS.search(q.get("text") or q.get("question") or ""))
         for where, t in pieces:
             hosts = sorted(set(_HOSTTOKEN.findall(t)))
-            ips = sorted(set(_IP.findall(t))) if not asks else []
+            ips = sorted(set(_IP.findall(t)) & named_host_addresses(card)) if not asks else []     # a peer known only by address is named by it
             if (hosts and not asks) or ips:
                 shown = ", ".join((hosts if not asks else []) + [i if isinstance(i, str) else str(i) for i in ips][:3])
                 out.append(_f("WARN", "HOST_IN_PROSE", q["id"],
@@ -604,7 +734,7 @@ def plain_language_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
 
 
 def story_shape_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
-    """Story readability as errors, so a fix round rewrites the block. The rules: story_shape.py, references/story-rules.md."""
+    """Story readability as errors, so a fix round rewrites the block. The rules: story_shape.py, "Answer rules" in skills/csa-writing-style/SKILL.md."""
     from csa_docx import story_shape
     names = (card.get("parts") or {}).get("names") or {}
     out = []
@@ -1017,11 +1147,10 @@ def flow_coverage(sheet: dict[str, dict], card: dict) -> list[dict]:
 
 
 def slot_answers(sheet: dict[str, dict], fr: dict, fb: dict | None = None) -> list[dict]:
-    """SLOT_NOT_ANSWERED (an error when the frame is "strict", else a warning): each requirement block cites the evidence of every frame finding the card says it must
-    address, or has an QUESTION: line naming it (one of its hosts, addresses or evidence IDs). A slot the captures do
-    not answer needs an QUESTION: line in the block (or on its F1 line)."""
+    """SLOT_NOT_ANSWERED (always a warning): a frame finding the card lists for a block that the block neither cites nor
+    names. A finding may be left out, with or without a QUESTION: line; the warning only points at what was not used."""
     out = []
-    level = "ERROR" if fr.get("strict") else "WARN"      # a frame tuned for its topic ("strict": true) blocks; others warn
+    level = "WARN"                                      # a finding may be left out: it never blocks
     f1 = (fb or {}).get("frame") or {}
     for qid, items in (fr.get("must_address") or {}).items():
         b = sheet.get(qid)
@@ -1039,13 +1168,22 @@ def slot_answers(sheet: dict[str, dict], fr: dict, fb: dict | None = None) -> li
             elif unk and any(t and t.lower() in unk for t in list(x.get("tokens", [])) + list(x["ids"])):
                 continue
             miss.append(x)
+        # A setting the card marks must-state (removable media, proxy) answers part of the requirement outright: leaving every
+        # finding of that slot unused is an error, so the fix round restates it.
+        for slot in sorted({x["slot"] for x in items if x.get("must_state")}):
+            mine = [x for x in items if x["slot"] == slot and x.get("must_state")]
+            if mine and all(any(m is x for m in miss) for x in mine):
+                out.append(_f("ERROR", "SETTING_NOT_STATED", qid,
+                              f"the card lists a finding that settles part of this requirement and the block does not state it: "
+                              f"{slot} {mine[0]['text'][:140]}. State it in the Story in plain words and cite its evidence "
+                              f"({', '.join(mine[0]['ids'][:3])})"))
         if miss:
             listed = "; ".join(f"{x['slot']} {x['text'][:110]}" + (f" ({', '.join(x['ids'][:3])})" if x["ids"] else "")
                                for x in miss[:6])
             out.append(_f(level, "SLOT_NOT_ANSWERED", qid,
-                          f"{len(miss)} finding(s) the card lists under 'Must address' are neither cited nor raised as QUESTION: "
-                          f"{listed}{' …' if len(miss) > 6 else ''}. Cite each one's evidence in this block, or add an "
-                          "QUESTION: line naming it"))
+                          f"{len(miss)} finding(s) the card lists for this block are not used in it: "
+                          f"{listed}{' …' if len(miss) > 6 else ''}. Cite one if it adds a fact the answer lacks; "
+                          "leaving it out is allowed"))
     return out
 
 
@@ -1087,6 +1225,11 @@ def register_roles(card: dict) -> list[str]:
     reg = card.get("host_register") or {}
     out = [g["role"] for g in reg.get("groups", []) if g.get("role")]
     out += [u["role"] for u in reg.get("uncaptured", []) if u.get("role")]
+    # a role written "A, B" is two names for one group, and the card's own part names (and their aliases) are the names
+    # the card tells the answer to use: none of them is an unknown role
+    out += [piece.strip() for r in list(out) for piece in r.split(",") if piece.strip()]
+    for names in ((card.get("parts") or {}).get("names") or {}).values():
+        out += [n for n in names if n]
     return list(dict.fromkeys(r for r in out if r != "role not recorded"))
 
 
@@ -1731,8 +1874,10 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
                 findings.append(_f("ERROR", "COUNT_MISMATCH", qid, f"{cm}: {fact['text'][:90]}"))
             if q["kind"] in ("requirement", "narrative", "findings", "note") and _SOURCE_SUBJECT.search(fact["text"]):
                 findings.append(_f("ERROR", "SOURCE_AS_SUBJECT", qid, f"the fact is about the source, not the system: make the application, host or practice the subject and keep the source in the basis braces: {fact['text'][:80]}"))
-            if q["kind"] in ("requirement", "narrative", "findings", "note") and _IP.search(fact["text"]):
-                findings.append(_f("WARN", "IP_IN_PROSE", qid, f"address in a prose fact: name the host if it has a name; an address alone is right only where no host name is known: {fact['text'][:80]}"))
+            if q["kind"] == "requirement" and len(fact["text"].split()) > 45:
+                findings.append(_f("WARN", "FACT_LONG", qid, f"a Fact of {len(fact['text'].split())} words (over 45): one observation per Fact, split it: {fact['text'][:70]}..."))
+            if q["kind"] in ("requirement", "narrative", "findings", "note") and set(_IP.findall(fact["text"])) & named_host_addresses(card):
+                findings.append(_f("WARN", "IP_IN_PROSE", qid, f"address of a host that has a name: name the host: {fact['text'][:80]}"))
         findings += _background_checks(qid, q, b, background)
         for f_ in b["facts"]:
             if q["kind"] in ("requirement", "narrative", "findings", "note") and _GAP_AS_FACT.search(f_["text"]):
@@ -1882,6 +2027,26 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
                     findings.append(_f("ERROR", "SUMMARY_STORY_OVERLAP", qid,
                                        "Summary and Story substantially repeat the same wording; keep Summary decision-first "
                                        "and make Story an evidence-first path from how the capability operates to the rating"))
+                # The Summary, the closing Story paragraph and the rating reason must each add something: reading all three
+                # should not be the same sentence three times.
+                reason = b.get("rating_reason") or ""
+                if summary and len(_content(reason)) >= 6 and len(_content(reason) & _content(summary)) / len(_content(reason)) >= 0.7:
+                    findings.append(_f("WARN", "REASON_REPEATS_SUMMARY", qid,
+                                       "the rating reason repeats the Summary: give the one deciding fact in a short clause, "
+                                       "or a fact the Summary does not state"))
+                if summary and len(_content(reason)) >= 5 and len(_content(summary)) >= 5 \
+                        and len(_content(reason) & _content(summary)) / len(_content(reason)) < 0.2:
+                    findings.append(_f("WARN", "REASON_DIFFERS_FROM_SUMMARY", qid,
+                                       "the rating reason and the Summary give different grounds for the rating: the reason rests on the same "
+                                       "ground as the Summary's 'The requirement is ... because ...' and adds the one fact that settles it"))
+                paras = [x for x in story.split("\n\n") if x.strip()]
+                if len(paras) >= 2 and summary:
+                    said = _content(summary) | _content(reason)
+                    last = _content(paras[-1])
+                    if len(last) >= 8 and len(last & said) / len(last) >= 0.7:
+                        findings.append(_f("WARN", "STORY_ENDS_BY_REPEATING", qid,
+                                           "the last Story paragraph repeats the Summary or the rating reason: end with what is "
+                                           "unknown and who can answer it, in new words"))
                 story_sentences = _prose_sentences(story)
                 if story and len(story_sentences) < 2:
                     findings.append(_f("ERROR", "STORY_NO_EVIDENCE_PATH", qid,
@@ -1954,6 +2119,10 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
     findings += readability_checks(sheet, card)
     findings += story_shape_checks(sheet, card)
     findings += plain_language_checks(sheet, card)
+    findings += absence_checks(sheet, card)
+    findings += direction_checks(sheet, card)
+    findings += glossary_checks(sheet, card)
+    findings += repeated_unknown_checks(sheet, card)
     findings += practice_checks(sheet, card)
     findings += subject_checks(sheet, card)
     findings += role_name_checks(sheet, card)

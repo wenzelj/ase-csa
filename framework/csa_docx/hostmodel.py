@@ -876,7 +876,8 @@ def build(work_dir: Path) -> dict:
             "evidence_rows": ev["rows"], "evidence_without_host": ev["without_host"],
             "addresses_named": sum(1 for e in reg.values() if any(x.startswith("address ") for x in e["sources"])),
             "addresses_ambiguous": ambiguous,
-            "host_services": len(svc_rows), "host_settings": settings.get("rows", 0), "flows": flow_res.get("flows", 0),
+            "host_services": len(svc_rows), "host_settings": settings.get("rows", 0), "capture_gaps": settings.get("capture_gaps", []),
+            "flows": flow_res.get("flows", 0),
             "isolation": iso_res.get("rows", 0),
             "endpoint_conflicts": ep_res.get("conflicts", []), "endpoint_proposed": ep_res.get("proposed", []),
             "out": str(out)}

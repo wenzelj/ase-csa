@@ -147,13 +147,8 @@ def _role_table_lines(ts) -> list[str]:
     t = ts[0]
     split = any(x.get("requirement") for x in ts)
     title = "Requirement evidence tables" if split else "Role table"
-    placement = ("The framework puts each table directly after its matching SEP story under Discovery Information. "
-                 if split else
-                 "The framework puts this table under Discovery Information, above the Aspect table, every time this subsection is written. ")
     out = ["", f"## {title} (built by the framework from the captures)", "",
-           placement + "It is the detailed discovery evidence for this topic. Keep the SEP story as the synthesis and "
-           "do not recreate these tables in an Aspect block (ROLE_TABLE_REPEAT). Write about hosts by these role groups, never by a number of hosts "
-           "(NO_TOTALS). Use it in the Current State and Drawbridge Impact text, citing the evidence rows for the same facts.",
+           "The framework places this table in the document. It is the detailed discovery evidence for this topic.",
            "", topic_markdown(ts)]
     if t.get("gaps"):
         out += ["", "Already raised as Discovery Required by the framework (do not write these as QUESTION: lines):"]
@@ -552,6 +547,21 @@ _HOST = re.compile(r"\b(?=[A-Z0-9]*\d)[A-Z][A-Z0-9]{6,}\b")
 _NEGATIVE_ASSERTION = re.compile(r"\b(?:no|not|none|without|absent|missing|never|neither|nor)\b", re.I)
 
 
+def _repair_slash_names(text: str, vocab) -> str:
+    """A word like "TETRA/Reveloc" that an earlier answer misspelled ("2ETRA/Reveloc") is put back to the spelling the
+    evidence uses. Only a token with a slash that is not in the evidence but is a near match (0.85) to one that is."""
+    import difflib
+    def fix(m):
+        tok = m.group(0)
+        if tok in vocab:
+            return tok
+        near = difflib.get_close_matches(tok, list(vocab), n=3, cutoff=0.85)
+        if not near:
+            return tok
+        return max(near, key=lambda c: (vocab[c] if hasattr(vocab, "most_common") else 0))
+    return re.sub(r"[A-Za-z0-9]+/[A-Za-z0-9]+", fix, text)
+
+
 def facts_to_keep(node: dict, workspace: Path | None) -> list[dict]:
     """Capture-backed facts this subsection's applied answers have stated (from the fact store), newest wording
     per question and capture evidence: [{question, fact, evidence_ids, capture_ids}]. A re-answer keeps each, or
@@ -563,6 +573,9 @@ def facts_to_keep(node: dict, workspace: Path | None) -> list[dict]:
     work = Path(workspace) / "csa-work"
     rows = {r["evidence_id"].upper(): r for r in _matrix_rows(workspace)}
     rejected = _rejected(workspace)
+    from collections import Counter
+    slash_vocab = Counter(t for r in rows.values() for v in r.values() if isinstance(v, str)
+                          for t in re.findall(r"[A-Za-z0-9]+/[A-Za-z0-9]+", v))
     latest: dict[tuple, dict] = {}
     for f in fact_store._read(work):
         if f.get("section") != node["key"] or f.get("basis") == "background":
@@ -591,9 +604,10 @@ def facts_to_keep(node: dict, workspace: Path | None) -> list[dict]:
             continue
         k = (f.get("question", ""), tuple(caps))
         if k not in latest or f.get("added", "") >= latest[k].get("added", ""):
-            latest[k] = {"question": f.get("question", ""), "fact": f["fact"],
+            latest[k] = {"question": f.get("question", ""), "fact": _repair_slash_names(f["fact"], slash_vocab),
                          "evidence_ids": list(f["evidence_ids"]),
-                         "capture_ids": caps, "added": f.get("added", ""), "kind": f.get("kind", "fact")}
+                         "capture_ids": caps, "added": f.get("added", ""), "kind": f.get("kind", "fact"),
+                         "basis": f.get("basis", ""), "hosts": list(f.get("hosts") or [])}
     # a capture set already covered by a newer fact of the same question is not asked for twice
     out = sorted(latest.values(), key=lambda x: (x["question"], x["added"]), reverse=True)
     seen: dict[str, set] = {}
@@ -623,6 +637,10 @@ def filter_keep(keep: list[dict], fr: dict | None) -> tuple[list[dict], list[dic
         return keep, []
     from csa_docx import topic_frames
     ids = {i.upper() for i in topic_frames.all_ids(fr)}
+    # A setting finding is built from the current host settings on every card build: an old answer's wording of it is not
+    # carried forward (an earlier answer once turned "Direct, no WinHTTP proxy" into "proxy settings are configured", and
+    # keeping it locked the mistake in). The writer restates the current finding instead.
+    setting_ids = {i.upper() for s in fr.get("slots", []) for f in s["findings"] if f.get("from_setting") for i in f.get("ids", [])}
     rules = []                       # (baseline phrase, non-baseline findings of the same slot)
     for s in fr.get("slots", []):
         base = [f for f in s["findings"] if f.get("value") and not f.get("requirements")]
@@ -631,9 +649,12 @@ def filter_keep(keep: list[dict], fr: dict | None) -> tuple[list[dict], list[dic
             phrase = " ".join(f["value"].lower().split()[:3])
             if phrase and more:
                 rules.append((phrase, more))
+    framework_terms = [pat for pat, _ in _load_framework_terms()]
     kept, correct = [], []
     for k in keep:
         low = k["fact"].lower()
+        if any(pat.search(k["fact"]) for pat in framework_terms):
+            continue                      # a framework word ("flow map", "discovery captures") is not carried into new prose
         hit = [f for phrase, more in rules if phrase in low for f in more
                if any(t.lower() in low for t in (f.get("roles") or []) + (f.get("hosts") or []))
                and not _value_items_in(f.get("value") or "", low)]
@@ -641,6 +662,9 @@ def filter_keep(keep: list[dict], fr: dict | None) -> tuple[list[dict], list[dic
             correct.append({**k, "contradicts": [{"text": f["text"], "ids": f.get("ids", [])} for f in hit],
                             "phrase": next(ph for ph, more in rules if ph in low and any(f in more for f in hit))})
         elif {i.upper() for i in k["capture_ids"]} & ids:
+            cited = {i.upper() for i in k["capture_ids"]}
+            if setting_ids and len(cited & setting_ids) * 2 >= len(cited):
+                continue                  # restated from the current setting finding, not from the old wording
             kept.append(k)
     return kept, correct
 
@@ -668,6 +692,25 @@ def filter_established(established: dict, pack: dict, fr: dict | None) -> dict:
         if qid in pack:
             pack[qid]["rows"] = [r for r in rows if not r.get("established") or r["id"].upper() in need]
     return out
+
+
+def glossary_lines(text: str) -> list[str]:
+    """The card's plain-words glossary: standard technology terms that occur in the card, each with a short explanation for a
+    customer who has never met it (references/glossary.json). The writer explains such a term the first time it appears.
+    Project acronyms are not in it: the sources do not define them, so the writer uses the part's display name."""
+    path = Path(__file__).resolve().parents[2] / "references" / "glossary.json"
+    try:
+        terms = json.loads(path.read_text(encoding="utf-8")).get("terms", [])
+    except (OSError, ValueError):
+        return []
+    low = text.lower()
+    found = [t for t in terms if any(m in low for m in t.get("match", []))]
+    if not found:
+        return []
+    return ["", "## Plain-words glossary", "",
+            "Explain each of these terms in one short clause the first time it appears in a Story or Text (for example "
+            "\"Server Message Block, the Windows file-sharing protocol\"). These describe the technology, not this system:", ""] + \
+           [f"- {t['term']}: {t['plain']}" for t in found]
 
 
 def _foreign_absence(fact: dict, rows: dict, key: str) -> bool:
@@ -784,13 +827,9 @@ def host_register(workspace: Path | None) -> dict | None:
 
 
 def _register_lines(reg: dict) -> list[str]:
-    out = ["", "## Host register (hosts grouped by role)", "",
-           "Any host table uses one row per role group below, never one row per host. Write about hosts by role group or "
-           "by name, never by a number or total of hosts (NO_TOTALS). The zone is the side of the OT boundary the host "
-           "is on: it wins over any OT or IT in a role name.", ""]
+    out = ["", "## Host register (hosts grouped by role)", ""]
     if reg.get("application"):
-        out.insert(-1, f"Refer to the hosts as the {reg['application']} hosts, or by role group or host name. "
-                       "Do not describe how the hosts were examined.")
+        out += [f"System: {reg['application']}", ""]
     for c in reg.get("zone_conflicts") or []:
         out.append(f"- ZONE CONFLICT: {c['text']}")
     for g in reg["groups"]:
@@ -959,8 +998,7 @@ def peer_identity(fr: dict | None, workspace: Path | None) -> dict:
     answered = [s["id"] for s in fr.get("slots", [])
                 if not unknown and _ZONE_QUESTION.search(s.get("question", ""))]
     lines = ["", "## Hosts named as sources or peers (identity from the host register)", "",
-             "Each host below is the value of one of this topic's host settings. State its role and zone from this list, "
-             "not as unknown.", ""]
+             "Each host below is the value of one of this topic's host settings:", ""]
     for h in hosts:
         lines.append(f"- {h['host']}: role {h['role']}; zone {h['zone']}; site {h['site']}; {h['how']}")
     if answered:
@@ -1284,7 +1322,7 @@ def condition_lines(req_id: str, req_text: str = "") -> list[str]:
     out = ["  What decides this rating (conditions):"]
     out += [f"  - {x['id']}: {x['text']}" for x in c["conditions"]]
     if len(c["conditions"]) > 1:
-        out.append(f"  - Logic: {c['logic']}   (Met only when the logic holds; an unknown condition caps the rating at Partially Met)")
+        out.append(f"  - Logic: {c['logic']}   (Met only when the logic holds)")
     if not c["reviewed"]:
         out.append("  (conditions not reviewed yet: use them, and say nothing that depends on their wording)")
     return out
@@ -1300,16 +1338,33 @@ def must_address_by_question(qs: list[dict], fr: dict | None) -> dict[str, list[
     return {q["id"]: by_req[q["req_id"]] for q in qs if q.get("kind") == "requirement" and by_req.get(q.get("req_id"))}
 
 
-def must_address_lines(items: list[dict]) -> list[str]:
-    """The card lines under one requirement question: what it must cite, or raise as Unknown."""
+def must_address_lines(items: list[dict], groups: list[dict] | None = None) -> list[str]:
+    """The card lines under one requirement question: what it must cite, or raise as Unknown. With the frame's
+    story_groups the findings are listed group by group, in the order the Story and the Facts follow."""
     if not items:
         return []
-    out = ["  Must address (from the analysis frame): cite each finding's evidence in this block, or write an "
-           "QUESTION: line that names it (SLOT_NOT_ANSWERED):"]
-    for x in items:
+    out = ["  Findings this block must cover (each is cited here or named in a QUESTION: line; SLOT_NOT_ANSWERED):"]
+
+    def line(x: dict) -> str:
         ids = f" ({', '.join(x['ids'])})" if x["ids"] else ""
-        out.append(f"  - {x['slot']}: {'Unknown unless the evidence pack answers it: ' if x['empty'] else ''}"
-                   f"{x['text'][:260]}{ids}")
+        return (f"  - {x['slot']}: {'Unknown unless the evidence pack answers it: ' if x['empty'] else ''}"
+                f"{x['text'][:260]}{ids}")
+
+    if not groups:
+        return out + [line(x) for x in items]
+    left = list(items)
+    n = 0
+    for g in groups:
+        mine = [x for x in left if x["slot"] in g.get("slots", [])]
+        if not mine:
+            continue
+        n += 1
+        out.append(f"  Story paragraph {n}: {g['title']}")
+        out += ["  " + line(x) for x in mine]
+        left = [x for x in left if x not in mine]
+    if left:
+        out.append("  Other findings")
+        out += ["  " + line(x) for x in left]
     return out
 
 
@@ -1476,7 +1531,7 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
         lines.append(f"- {q['id']} {q['text']}")
         if q.get("columns"):
             lines.append(f"  Columns: {' | '.join(q['columns'])}")
-        lines += must_address_lines(owed.get(q["id"], []))
+        lines += must_address_lines(owed.get(q["id"], []), (fr or {}).get("story_groups"))
         lines += db_lines.get(q["id"], [])
         if q.get("kind") == "requirement" and q.get("req_id"):
             rtext = ""
@@ -1492,30 +1547,13 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
         if pview:
             from csa_docx.parts import owed_lines
             lines += owed_lines(pview, q["id"])
-    if requirement_stories:
-        lines += ["", "## Requirement summaries and stories", "",
-                  'For every requirement block write both `Summary:` and `Story:`. Do not put the SEP label or a title in either field; the framework adds a bold title from the requirement ID and wording.',
-                  '- Summary is the Current State table cell. It is decision-first: state the observed control or practice, then finish with `The requirement is <Rating> because ...` and name the decisive requirement condition. Use one to three sentences and at most 80 words. Do not put discovery questions, host inventories or the detailed evidence trail in Summary.',
-                  '- Story is the paragraph under its requirement title in Discovery Information. It is evidence-first and tells how the assessment reached the rating to a reader who has not seen the evidence:',
-                  '  1. Start with how the capability or practice currently operates. Do not start with the rating.',
-                  '  2. Explain the relevant coverage, behaviour and gaps in a logical order. Name at most three parts in a sentence, by their display names.',
-                  '  3. State any material limitation as a factual unknown. Keep the corresponding `QUESTION:` line separate so the framework sends it to Discovery Required.',
-                  '  4. Finish with what the evidence leaves unknown or the gap that decided the rating, in words the Summary does not use. Do not state the rating and do not repeat a Summary sentence: the reader has just read the Summary on the same page.',
-                  "  No word limit: write as much as a good explanation needs. A longer Story is right when each sentence tells the reader something new, and wrong when it pads. Story must add the evidence path, not paraphrase Summary: every sentence says something the Summary does not. Say nothing about another requirement's conditions. Hosts, ports and inventories stay in the tables."]
     sysname = system_name(workspace)
     if sysname:
-        lines += ["", "## System name", "",
-                  f"- The document names the system \"{sysname}\". Use exactly this name, spelled and cased this way, "
-                  "whenever you refer to the system as a whole. Evidence rows and quoted sources may spell it another way; "
-                  "do not copy that spelling into your text."]
+        lines += ["", "## System name", "", f"- {sysname}"]
     from csa_docx import knowledge
     bg_lines, bg_ids = (knowledge.card_section(node["key"], node["title"], qs, (extra or {}).get("must_explain", ""), workspace)
                         if evidence else ([], []))
     lines += bg_lines
-    rl = rules(node, spec)
-    if rl:
-        lines += ["", "## Rules from the template", ""] + [f"- {r}" for r in rl]
-    lines += forbidden_terms_lines()
     if extra:
         lines += ["", "## Scope", "", f"- Must explain: {extra['must_explain']}", f"- Not here: {extra['not_here']}"]
         if fr:
@@ -1528,28 +1566,23 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
     keep, correct = filter_keep(facts_to_keep(node, workspace) if evidence else [], fr)
     if correct:
         lines += ["", "## Facts to correct or drop", "",
-                  "Earlier answers stated these, but the analysis frame shows otherwise. Do not repeat them: state the "
-                  "finding instead, citing its evidence, and add `Dropped: E-<n> contradicted by <finding>` to the block.", ""]
+                  "Earlier answers stated these. The analysis frame shows otherwise.", ""]
         for c in correct:
             lines.append(f"- {c['question']}: {c['fact']} ({', '.join(c['evidence_ids'])})")
             if c.get("phrase"):
-                lines.append(f"  Only the claim \"{c['phrase']} ...\" is contradicted. If another claim in this fact "
-                             "still stands, cite the row for that claim and leave the Dropped: line out; otherwise drop the row and "
-                             "do not cite it (CITED_AND_DROPPED).")
+                lines.append(f"  Only the claim \"{c['phrase']} ...\" is contradicted.")
             lines += [f"  Contradicted by: {x['text'][:220]}" + (f" ({', '.join(x['ids'])})" if x["ids"] else "")
                       for x in c["contradicts"]]
     if keep:
         lines += ["", "## Facts to keep", "",
-                  "This subsection's applied answers stated these facts and table rows from the discovery captures. Keep "
-                  "each in the block shown (a table row as a row of that table), citing its capture evidence, or add `Dropped: E-<n> <why it no longer applies>` to that "
-                  "block. The check refuses an answer that loses one silently (CAPTURE_DROPPED). Keep the fact and its evidence, "
-                  "not its old wording: restate it in your own words, and where it counts hosts (marked below) name the role "
-                  "groups or the hosts instead of any number or total (NO_TOTALS).", ""]
+                  "This subsection's applied answers stated these facts and table rows from the discovery captures:", ""]
         lines += [f"- {k['question']}{' (table row)' if k.get('kind') == 'row' else ''}: {k['fact']} "
-                  f"({', '.join(k['evidence_ids'])}){count_hint(k['fact'])}" for k in keep]
+                  f"({', '.join(k['evidence_ids'])})"
+                  + (f" {{{k['basis']}{'; ' + ', '.join(k['hosts']) if k['hosts'] else ''}}}"
+                     if k.get("basis") in ("observed", "documented", "stated") and k.get("kind") != "row" else "")
+                  + count_hint(k['fact']) for k in keep]
     if established:
-        lines += ["", "## Facts already established", "",
-                  "Facts other sections have already validated. Reuse one where it answers a question; still cite its evidence IDs.", ""]
+        lines += ["", "## Facts already established", "", "Facts other sections have validated:", ""]
         by_fact: dict[tuple, list[str]] = {}
         for qid, facts in established.items():
             for f in facts:
@@ -1576,11 +1609,7 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
         lines += pview["lines"]
     lines += shared_lines
     if pack:
-        lines += ["", "## Evidence pack", "",
-                  "These rows are worded the way the source records them (\"The system matrix records X as ...\"). "
-                  "Never copy that wording: restate each as a fact about the host or application "
-                  "(\"X is the <part> that ...\", naming the part as the System parts list does) and put the source in the basis braces. "
-                  "A fact whose subject is the matrix, capture, host map or previous assessment is rejected (SOURCE_AS_SUBJECT).", ""]
+        lines += ["", "## Evidence pack", "", "Evidence rows, worded as the source records them:", ""]
         shown: dict[str, str] = {}
         for qid, p in pack.items():
             lines.append(f"### {qid}")
@@ -1625,7 +1654,10 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
             if p["cut"]:
                 lines.append(f"- more rows not shown: {', '.join(p['cut'])}")
             lines.append(f"- searched: {'; '.join(p['searched'])}")
+    lines += glossary_lines("\n".join(lines))
     for k in kinds:
+        if k == "requirement":          # the requirement example is in the prompt digest with the rules
+            continue
         ex = _example(k)
         if ex:
             lines += ["", f"## Example answer ({k}): format only, not evidence", "",

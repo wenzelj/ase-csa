@@ -292,7 +292,7 @@ def build(work_dir: Path, heading: str, key: str = "", profile: dict | None = No
 
 def build_flows(work_dir: Path, heading: str, profile: dict | None = None) -> dict:
     """The data-flow table for a topic whose profile has "flows": rows grouped by mechanism (merged cell), the side
-    that opens the connection, the other end, the port and whether the flow map declares it. No counts.
+    that opens the connection, the other end and the port. No counts.
 
     S461: only flows that cross the OT boundary (one end on the OT side, the other outside OT or of unknown zone)
     are shown, with a Direction column (Pulled from OT / Pushed from OT / Zone not settled) and rows sorted pulled
@@ -335,30 +335,29 @@ def build_flows(work_dir: Path, heading: str, profile: dict | None = None) -> di
             return False
         other = (ssrc - {"ot"}) | (sdst - {"ot"})
         return "outside" in other or "unknown" in other
-    gs = [g for g in flows_mod.groups(rows) if crosses_ot(g)]
+    # a flow only the script's expected-flow list names was never seen: it is not a row (nor is the list shown as a column)
+    gs = [g for g in flows_mod.groups(rows) if crosses_ot(g) and g['status'] != 'declared']
     gs = sorted(gs,
                 key=lambda g: ({"pulled": 0, "pushed": 1, "unsettled": 2}[gside(g)], g["mechanism"], g["status"] == "declared", g["srcs"][0]))
     for g in gs:
-        seen = {"both": f"Declared ({g['declared_id']}) and seen", "observed": "Seen, not in the flow map",
-                "declared": f"Declared ({g['declared_id']}), not seen",
-                "attempted": "Attempted, no reply seen"}[g["status"]]
+        port = f"{g['port']} (attempted, no reply seen)" if g["status"] == "attempted" else str(g["port"])
         dsts = g["dsts"] if len(g["dsts"]) <= 4 else g["dsts"][:3] + ["other addresses"]   # every one stays in the sources
         to = f"{', '.join(end_label(d) for d in dsts[:-1]) + ' and ' + end_label(dsts[-1]) if dsts[-1] == 'other addresses' else ', '.join(end_label(d) for d in dsts)} " \
              f"({zone(g['dst_zones'])}{', crosses zones' if g['cross_zone'] == 'yes' else ''})"
         direction = {"pulled": "Pulled from OT", "pushed": "Pushed from OT", "unsettled": "Zone not settled"}[gside(g)]
         out.append({"role": g["mechanism"][:1].upper() + g["mechanism"][1:], "first": g["mechanism"] != last,
                     "hosts": [f"{', '.join(end_label(s) for s in g['srcs'])} ({zone(g['src_zones'])})"],
-                    "cells": [to, direction, str(g["port"]), seen],
+                    "cells": [to, direction, port],
                     "sources": [c for f in g["flows"] for c in f["sources"].split("; ") if c]})
         last = g["mechanism"]
     notes = ["From is the side that opens the connection."]
-    if any(r["cells"][3].startswith(("Seen", "Declared")) for r in out):
-        notes.append("Seen means it appeared in the sampled process connections.")
-    if any(r["cells"][3] == "Attempted, no reply seen" for r in out):
+    if any("attempted" not in r["cells"][2] for r in out):
+        notes.append("Each connection appeared in the sampled process connections.")
+    if any("attempted" in r["cells"][2] for r in out):
         notes.append("Attempted means the host sent a connection request and no reply was seen in the netstat samples.")
     notes.append("Zones come from the project zone list.")
     return {"status": "OK", "heading": heading, "key": (profile or {}).get("key", ""),
-            "columns": ["Mechanism", "From (opens the connection)", "To", "Direction", "Port", "Flow map"], "rows": out,
+            "columns": ["Mechanism", "From (opens the connection)", "To", "Direction", "Port"], "rows": out,
             "common": " ".join(notes), "markers": [], "gaps": [], "unassigned": [],
             "warnings": []}
 
@@ -789,10 +788,16 @@ def place_xml(xml: str, t, heading: str, styles_xml: str = "") -> tuple[str, str
             story_end = e
             # A new-format story has a bold SEP title and one normal body
             # paragraph. Requirement-specific tables belong after that body.
+            # The story may run to several plain paragraphs: the table goes after the last of them.
             if '<w:b' in b and i + 1 < len(clean_blocks):
-                nk, _ns, ne, nb = clean_blocks[i + 1]
-                if nk == "p" and not story.match(_text(nb).strip()) and not _heading_level(nb):
+                j = i + 1
+                while j < len(clean_blocks):
+                    nk, _ns, ne, nb = clean_blocks[j]
+                    if (nk != "p" or story.match(_text(nb).strip()) or _heading_level(nb) or not _text(nb).strip()
+                            or re.search(r'<w:pStyle w:val="(?:Caption|TableNote|Figure)"', nb)):
+                        break
                     story_end = ne
+                    j += 1
             story_ends[m.group(1).upper()] = story_end
     if story_ends:
         insert_at = max(story_ends.values())

@@ -32,6 +32,16 @@ MATRIX_SCRIPT = Path(__file__).resolve().parents[2] / "skills" / "csa-evidence-m
 MAX_HOSTS_PER_ROW = 6
 LABELS = {"storage.database": "Database service", "storage.shares": "Shares", "transfer.tools": "File transfer tools installed",
           "transfer.removable": "Removable storage policy", "transfer.proxy": "Proxy setting",
+          "storage.share_access": "Who may open the shares", "transfer.smb_sessions": "File shares the host has open on other servers",
+          "storage.backup_windows": "Windows Server Backup history",
+          "transfer.smb_inbound_sessions": "Other hosts connected to this host's shares", "transfer.smb_open_files": "Files open over the network on this host",
+          "transfer.net_use": "Network drives mapped on the host", "backup.services": "Backup and shadow copy services",
+          "backup.sql_writer": "SQL Server VSS Writer", "backup.vss": "Shadow copies", "backup.task_references": "Scheduled tasks that mention backup or a network path",
+          "backup.destination_clues": "Backup destination clues", "cert.chain": "Machine certificate chain", "cert.usage": "Machine certificate use",
+          "cert.http_bindings": "Certificates bound to HTTPS listeners", "identity.computer_domain": "Domain the computer is joined to",
+          "dns.client_cache": "DNS client cache", "dns.hosts_file": "Entries in the hosts file", "capture.host_files": "Collection of the host's own files",
+          "platform.running_applications": "Applications running", "scope.script_allow_list": "Role in the discovery script's allow-list",
+          "schedule.custom_tasks": "Scheduled tasks added beyond Windows", "schedule.task_results": "Scheduled task results",
           "agent.edr": "Endpoint detection and response", "agent.antivirus": "Antivirus", "agent.log_forwarding": "Log forwarding",
           "agent.monitoring": "Monitoring agent", "agent.security_telemetry": "Workload security telemetry",
           "agent.backup": "Backup agent", "agent.backup_account": "Backup service account",
@@ -123,6 +133,20 @@ def _chunks(xs: list, n: int) -> list[list]:
     return [xs[i:i + n] for i in range(0, len(xs), n)] or [[]]
 
 
+#: A setting whose value says "nothing is configured" is worded so that it cannot be read as "a setting exists": an earlier answer
+#: turned "Proxy setting on A: Direct, no WinHTTP proxy" into "proxy settings are configured". {hosts} is the host list.
+PLAIN_FINDINGS = {
+    ("transfer.proxy", "Direct, no WinHTTP proxy"): "No web proxy is configured on {hosts} (WinHTTP uses direct access)",
+    ("transfer.removable", "Not set in applied Group Policy"): "No removable storage restriction is set in the applied Group Policy of {hosts}",
+    ("appcontrol.policy", "Not set in applied Group Policy"): "No application control policy is set in the applied Group Policy of {hosts}",
+}
+
+
+def _finding_claim(label: str, attr: str, value: str, hosts: str) -> str:
+    plain = PLAIN_FINDINGS.get((attr, value))
+    return plain.format(hosts=hosts) if plain else f"{label} on {hosts}: {value}"
+
+
 def settings_findings(work_dir: Path, attr: str, req: str, area: str, section: str) -> list[dict]:
     """One finding per (value, capture file) of a host setting, hosts grouped; absences become NOT_FOUND rows."""
     data = host_settings.load(work_dir)
@@ -140,26 +164,26 @@ def settings_findings(work_dir: Path, attr: str, req: str, area: str, section: s
         members.sort(key=lambda x: x[0])
         hosts = [h for h, _ in members]
         roles = list(dict.fromkeys((reg.get(h) or {}).get("role", "") for h in hosts if (reg.get(h) or {}).get("role")))
-        text = f"{label} on {_join(hosts)}: {value}"
+        text = _finding_claim(label, attr, value, _join(hosts))
         ev = []
         for part in _chunks(members, MAX_HOSTS_PER_ROW):
             ph = [h for h, _ in part]
             if quoted:
                 ev.append({"csa_area": area, "question": f"{req}: {label.lower()} on {', '.join(ph)}",
-                           "claim": f"{label} on {_join(ph)}: {value}", "status": "VERIFIED",
+                           "claim": _finding_claim(label, attr, value, _join(ph)), "status": "VERIFIED",
                            "source_title": _src_title([r["source"] for _, r in part]), "source_version": "",
                            "section": section, "page_or_location": f"{fname}", "confidence": "high",
                            "evidence_excerpt": _fit(list(dict.fromkeys(x for _, r in part for x in r["excerpt"].split(" | ")))),
                            "inference_reason": "", "gap_or_action": ""})
             else:
                 ev.append({"csa_area": area, "question": f"{req}: {label.lower()} on {', '.join(ph)}",
-                           "claim": f"{label} on {_join(ph)}: {value} (searched {fname})", "status": "NOT_FOUND",
+                           "claim": f"{_finding_claim(label, attr, value, _join(ph))} (searched {fname})", "status": "NOT_FOUND",
                            "source_title": f"searched: {fname} in the captures of {', '.join(ph)}", "source_version": "",
                            "section": section, "page_or_location": "", "confidence": "medium", "evidence_excerpt": "",
                            "inference_reason": "",
                            "gap_or_action": f"confirm the {label.lower()} on {', '.join(ph)} with the system owner (nothing in {fname})"})
         out.append({"text": text, "hosts": hosts, "roles": roles, "evidence": ev, "hint": "", "tokens": hosts,
-                    "value": value})
+                    "value": value, "from_setting": True})
     return out
 
 
@@ -276,32 +300,19 @@ def flow_findings(work_dir: Path, flt: dict, req: str, area: str, section: str) 
         zones = f"{'/'.join(g['src_zones']) or 'zone not recorded'} to {'/'.join(g['dst_zones']) or 'zone not recorded'}"
         port = f"TCP {g['port']}" if str(g["port"]).isdigit() else f"ports {g['port']}"
         if g["status"] == "declared":
-            text = (f"Declared in the flow map as {g['declared_id']} ({g['declared_flow']}, {port}): {_join(g['srcs'])} to "
-                    f"{_join(g['dsts'])} ({zones}). No matching connection appeared in the sampled process connections.")
-            f0 = g["flows"][0]
-            ev = [{"csa_area": area, "question": f"{req}: declared flow {g['declared_id']}",
-                   "claim": f"The expected flow map declares {g['declared_id']}: {g['declared_flow']} from {g['srcs'][0]} to {g['dsts'][0]}, {port}",
-                   "status": "VERIFIED", "source_title": f0["sources"], "source_version": "", "section": section,
-                   "page_or_location": "expected flow map", "evidence_excerpt": f0["excerpt"], "confidence": "high",
-                   "inference_reason": "", "gap_or_action": ""},
-                  {"csa_area": area, "question": f"{req}: is declared flow {g['declared_id']} seen in the captures?",
-                   "claim": f"No connection matching declared flow {g['declared_id']} ({_join(g['srcs'])} to {_join(g['dsts'])}, {port}) "
-                            f"appeared in the sampled process connection captures",
-                   "status": "NOT_FOUND", "source_title": "searched: 23_process_connection_mapping.txt in the captures of the hosts named",
-                   "source_version": "", "section": section, "page_or_location": "", "evidence_excerpt": "",
-                   "confidence": "medium", "inference_reason": "",
-                   "gap_or_action": f"confirm with the system owner whether declared flow {g['declared_id']} runs; the connection "
-                                    f"captures are samples and may have missed it"}]
+            # A flow only the script's expected-flow list names (no capture shows it) is not an observation: it is not
+            # put on the card, and no evidence row is made from the list. flows.csv keeps it for the framework.
+            continue
         else:
-            seen = "declared in the flow map as " + g["declared_id"] if g["status"] == "both" else "not in the flow map"
+            seen = ""        # what the captures show is stated; whether a script template lists it is not
             proc = f" ({g['process']})" if g["process"] else ""
             tried = g["status"] == "attempted"
             verb = ("attempt" if len(g["srcs"]) > 1 else "attempts") if tried else ("open" if len(g["srcs"]) > 1 else "opens")
             if tried:
-                seen += ", and only a connection request (SYN_SENT) was seen, with no reply"
+                seen = "only a connection request (SYN_SENT) was seen, with no reply"
             mech = g["mechanism"][:1].upper() + g["mechanism"][1:]
             text = (f"{mech}{proc}, {port}: {_join(g['srcs'])} {verb} connections to {_join(g['dsts'])} "
-                    f"({zones}{', crosses zones' if g['cross_zone'] == 'yes' else ''}); {seen}.")
+                    f"({zones}{', crosses zones' if g['cross_zone'] == 'yes' else ''}){'; ' + seen if seen else ''}.")
             ev = []
             for part in _chunks(g["flows"], MAX_HOSTS_PER_ROW):
                 cites = [f["sources"].split("; ")[0] for f in part if f["sources"]]     # the capture each excerpt line is from
@@ -359,9 +370,11 @@ def build(workspace: Path, heading: str, key: str = "", evidence: bool = True) -
         cand = matrix_candidates.candidates(matrix_rows, s["question"], s.get("look_for") or s.get("search"), area,
                                             limit=10) if matrix_rows and not found else []
         slots.append({"id": s["id"], "question": s["question"], "requirements": s.get("requirements", []),
-                      "findings": found, "matrix": cand, "cross_zone": bool(src.get("flows", {}).get("cross_zone"))})
+                      "findings": found, "matrix": cand, "cross_zone": bool(src.get("flows", {}).get("cross_zone")),
+                      "must_state": bool(s.get("must_state"))})
     res = {"status": "OK", "key": key, "heading": heading, "frame": fr.get("_file", ""), "slots": slots,
-           "strict": bool(fr.get("strict")), "zone_conflicts": zone_conflicts(work)}
+           "strict": bool(fr.get("strict")), "zone_conflicts": zone_conflicts(work),
+           "story_groups": fr.get("story_groups", [])}
     if evidence:
         _ensure_evidence(workspace, res)
         _verified_ids_only(work, res)
@@ -506,7 +519,8 @@ def must_address(res: dict | None) -> dict[str, list[dict]]:
                 items = out.setdefault(r, [])
                 if not any(x["slot"] == s["id"] and x["text"] == f["text"] for x in items):
                     items.append({"slot": s["id"], "text": f["text"], "ids": list(f.get("ids", [])),
-                                  "direction": f.get("direction", ""), "tokens": list(f.get("tokens", [])), "empty": False})
+                                  "direction": f.get("direction", ""), "tokens": list(f.get("tokens", [])), "empty": False,
+                                  "must_state": bool(s.get("must_state")), "far_unknown": bool(f.get("far_unknown"))})
     return out
 
 
@@ -539,9 +553,26 @@ def row_disagreements(res: dict | None, rows: list[dict]) -> list[str]:
             m = (f.get("mechanism") or "").lower()
             if m and f.get("requirements") and f.get("ids"):
                 mechs.setdefault(m, []).extend(f["ids"])
+    # a setting row that says the baseline value ("limited to default and administrative shares") while the frame found other
+    # values on some hosts: the row is older, or broader than the hosts it covered
+    rules = []
+    for s in (res or {}).get("slots", []):
+        base = [f for f in s["findings"] if f.get("value") and not f.get("requirements")]
+        more = [f for f in s["findings"] if f.get("value") and f.get("requirements")]
+        for f in base:
+            phrase = " ".join(f["value"].lower().split()[:3])
+            if phrase and more:
+                rules.append((phrase, more))
     out, seen = [], set()
     for r in rows:
         claim = r.get("claim", "")
+        for phrase, more in rules:
+            if r["id"] not in seen and phrase in claim.lower():
+                seen.add(r["id"])
+                ids = sorted({i for f in more for i in f.get("ids", [])})[:3]
+                hosts = ", ".join(dict.fromkeys(h for f in more for h in (f.get("hosts") or [])))[:120]
+                out.append(f"Rows disagree: {r['id']} says \"{claim[:150]}\", yet the frame found other values on {hosts} "
+                           f"({', '.join(ids)}). State the current finding; do not cite {r['id']} as showing only the default.")
         for m, ids in mechs.items():
             words = [w for w in re.findall(r"[a-z]{4,}", m) if w not in ("connection", "connections")]
             if r["id"] in seen or not words:
@@ -559,32 +590,23 @@ def all_ids(res: dict | None) -> set[str]:
 
 
 def card_lines(res: dict) -> list[str]:
-    out = ["", "## Analysis frame (built by the framework from the captures)", "",
-           "Work through this topic slot by slot before you write. Each finding below is citable by its evidence IDs. "
-           "A 'Likely' note is background, not evidence: never state it as a fact, write what it asks you to confirm as an "
-           "QUESTION: line. Answer every slot in one extra block at the end of the sheet:", "",
-           "    ## F1 Analysis frame", "    - S1: B1, B4", "    - S9: QUESTION: how long the recordings are kept", "",
-           "List the blocks whose text answers the slot, or write QUESTION: with what is not known (it becomes Discovery "
-           "Required). Every slot needs a line (FRAME_UNCOVERED). Cross-zone data flows must be addressed in a requirement "
-           "or the Drawbridge Impact (FLOW_NOT_COVERED).", ""]
+    out = ["", "## Analysis frame (built by the framework from the captures)", ""]
     if res.get("zone_conflicts"):
-        out += ["Zone conflicts (the zone list wins over the role name; ZONE_CONTRADICTED):"]
+        out += ["Zone conflicts:"]
         out += [f"- {c['text']}" for c in res["zone_conflicts"]] + [""]
     for s in res["slots"]:
         reqs = f" ({', '.join(s['requirements'])})" if s["requirements"] else ""
         out.append(f"### {s['id']} {s['question']}{reqs}")
         if not s["findings"] and s.get("matrix"):
-            out.append("- the captures bind nothing to this slot, but the evidence matrix already holds rows that may answer it. "
-                       "Read them first: state what they show as Facts (cite the ID) and write QUESTION: only for what they "
-                       "leave open:")
+            out.append("- the captures bind nothing to this slot. The evidence matrix holds these rows:")
             out += [f"- {c['claim'][:240]} ({c['id']})" for c in s["matrix"]]
         elif not s["findings"]:
-            out.append("- nothing in the captures answers this: answer from the evidence pack or write QUESTION:")
+            out.append("- nothing in the captures answers this")
         for f in s["findings"][:25]:
             ids = f" ({', '.join(f.get('ids', []))})" if f.get("ids") else " (no citable row: state it only with other evidence)"
             out.append(f"- {f['text']}{ids}")
             if f.get("hint"):
-                out.append(f"  {f['hint']}")
+                out.append(f"  {f['hint']} (background, not evidence)")
         if len(s["findings"]) > 25:
             out.append(f"- {len(s['findings']) - 25} more in csa-work/topic-frames/{res['key']}.json")
         out.append("")

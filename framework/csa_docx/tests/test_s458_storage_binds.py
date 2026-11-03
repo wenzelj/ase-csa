@@ -108,9 +108,9 @@ def test_other_crossings_and_declared_flows_bind_to_the_crossing_requirement(tmp
     bkp = next(f for f in s3 if "BKPSRV01" in f["text"])
     web = next(f for f in s3 if "8080" in f["text"])
     assert bkp["requirements"] == ["SEP-STOR-03"] and web["requirements"] == ["SEP-STOR-03"]
-    s5 = _findings(fr, "S5")
-    decl = [f for f in s5 if f["status"] == "declared"]
-    assert decl and all(f["requirements"] == ["SEP-STOR-03"] for f in decl)
+    # a flow only the script's expected-flow list names is not an observation: it is not put on the card
+    assert not any(f.get("status") == "declared" for slot in fr["slots"] for f in slot.get("findings", []))
+    assert not any("flow map" in f["text"] for slot in fr["slots"] for f in slot.get("findings", []))
 
 
 def test_inside_ot_flows_bind_to_the_data_location_requirement_as_context(tmp_path):

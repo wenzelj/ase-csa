@@ -34,8 +34,7 @@ def test_the_stor_card_shows_the_conditions_and_logic_under_sep_stor_01():
     assert "  - C1: The vital OT systems hold their operational and application data on storage inside OT" in b1
     assert "  - C2: That storage does not depend on IT-hosted file shares" in b1
     assert "  - C3: A documented fallback keeps the data available during isolation" in b1
-    assert ("  - Logic: C1 and (C2 or C3)   (Met only when the logic holds; an unknown condition "
-            "caps the rating at Partially Met)") in b1
+    assert "  - Logic: C1 and (C2 or C3)   (Met only when the logic holds)" in b1
     # reviewed: true in the reference file, so no not-reviewed note under SEP-STOR-01
     assert "conditions not reviewed yet" not in b1
 
@@ -57,7 +56,7 @@ def test_the_not_reviewed_note_appears_only_when_the_entry_is_not_reviewed():
         conditions.load = lambda req_id, text="": dict(reviewed)
         lines = section_card.condition_lines("SEP-REV-01", "a and b")
         assert "conditions not reviewed yet" not in "\n".join(lines)
-        assert "  - Logic: C1 and C2   (Met only when the logic holds; an unknown condition caps the rating at Partially Met)" in lines
+        assert "  - Logic: C1 and C2   (Met only when the logic holds)" in lines
         conditions.load = lambda req_id, text="": dict(reviewed, reviewed=False)
         lines = section_card.condition_lines("SEP-REV-01", "a and b")
         assert lines[-1] == "  (conditions not reviewed yet: use them, and say nothing that depends on their wording)"

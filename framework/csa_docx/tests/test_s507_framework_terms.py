@@ -47,7 +47,7 @@ def test_every_section_16_phrase_reported():
     tl = _load()
     md = TERMS.read_text(encoding="utf-8")
     phrases = [r[0] for r in tl._table(md, r"16\. Framework terms")]
-    assert len(phrases) == 8
+    assert len(phrases) == 13
     for phrase in phrases:
         assert _codes(tl, f"The text uses {phrase} here."), phrase
 

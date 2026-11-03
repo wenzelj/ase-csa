@@ -69,7 +69,11 @@ answer_budget_s: 1200
 # Each answer/draft model pass reports a heartbeat and is stopped before a dead session can consume hours. A sheet
 # written before a timeout is still validated and can continue through the repair loop.
 answer_heartbeat_minutes: 10
-answer_call_timeout_minutes: 45
+# A model call has no fixed time limit (0 = off; it was 45). Instead the clock restarts whenever the call produces work (an
+# answer sheet or a per-block patch is written or changed), and the call is stopped when it has produced none for this many
+# minutes. Reading files and running commands is not work. 0 turns the idle limit off.
+answer_call_timeout_minutes: 0
+answer_idle_minutes: 25
 # If a focused repair returns the same blocking signature, use this already-configured CLI for subsequent repairs.
 answer_repair_cli: evo
 answer_resolve_leads: false
@@ -77,10 +81,16 @@ answer_resolve_leads: false
 # listed first in RESULT.md). Kept only if the sheet still passes with no more content warnings. Off: it costs a call.
 answer_repair_content: false
 # csa answer: a model call with no CPU use and no connection to its model for this many minutes is stopped and started again
-# (answer_stall_restarts times); 0 turns the check off. The 45-minute call timeout still applies.
+# (answer_stall_restarts times); 0 turns the check off. A call has no overall time limit while answer_call_timeout_minutes is 0.
 answer_stall_minutes: 3
 answer_stall_restarts: 1
 # csa answer: one focused model call per block (its own evidence only) instead of one call for the whole card.
 # Calls run one after another; answer_by_block_workers > 1 runs that many at once if the model server allows it.
 answer_by_block: true
 answer_by_block_workers: 1
+
+# csa answer (draft lane): after the answer is written, one advisory call reads the whole subsection as the customer and lists
+# contradictions between blocks, terms a customer may not know, repeated wording and claims beyond the cited facts
+# (cards/<KEY>.review.md and RESULT.md). It never edits the sheet. answer_reader_cli is the CLI that makes the call.
+answer_reader_pass: true
+answer_reader_cli: claude

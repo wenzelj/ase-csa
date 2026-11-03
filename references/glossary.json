@@ -1,0 +1,91 @@
+{
+  "note": "Plain-words explanations of standard technology terms, for a customer who has never met them. They describe what the technology is, never the system under assessment. Project acronyms (TGOIP, IAMPS, FCC, SDS, DAAM) are not defined in the sources, so they are not here: use the part's display name from the card.",
+  "terms": [
+    {
+      "term": "availability group",
+      "match": [
+        "availability group"
+      ],
+      "plain": "a SQL Server feature that keeps copies of the same databases on several servers"
+    },
+    {
+      "term": "Server Message Block",
+      "match": [
+        "server message block"
+      ],
+      "plain": "the Windows file-sharing protocol"
+    },
+    {
+      "term": "SysVol",
+      "match": [
+        "sysvol"
+      ],
+      "plain": "the share on a domain controller that holds login scripts and policies"
+    },
+    {
+      "term": "shadow copy",
+      "match": [
+        "shadow copy",
+        "vss writer",
+        "volume shadow"
+      ],
+      "plain": "a Windows snapshot of a disk that backup software uses"
+    },
+    {
+      "term": "Everyone",
+      "match": [
+        "everyone full",
+        "to everyone",
+        "open to everyone",
+        "with everyone"
+      ],
+      "plain": "any user on the network; with full access they can read, change and delete the files"
+    },
+    {
+      "term": "ClusterStorage$",
+      "match": [
+        "clusterstorage$"
+      ],
+      "plain": "the shared disk volume of a Windows failover cluster"
+    },
+    {
+      "term": "WinHTTP proxy",
+      "match": [
+        "winhttp"
+      ],
+      "plain": "the Windows system-wide setting that sends web traffic through a proxy server"
+    },
+    {
+      "term": "backup agent",
+      "match": [
+        "backup agent",
+        "backup-agent"
+      ],
+      "plain": "software on a server that sends its data to the backup system",
+      "check": false
+    },
+    {
+      "term": "failover cluster",
+      "match": [
+        "failover cluster"
+      ],
+      "plain": "a group of servers that take over from each other if one fails",
+      "check": false
+    },
+    {
+      "term": "Group Policy",
+      "match": [
+        "group policy"
+      ],
+      "plain": "settings pushed to Windows computers from the domain",
+      "check": false
+    },
+    {
+      "term": "Drawbridge",
+      "match": [
+        "drawbridge"
+      ],
+      "plain": "a planned isolation of the OT network from IT, so that each side has to run without the other"
+    }
+  ]
+}

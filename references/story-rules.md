@@ -6,9 +6,9 @@ and do not copy it.
 
 A Story tells how the capability works now and ends with what the evidence leaves unknown. The Summary carries the rating.
 
-- Write the Story as 2 to 4 short paragraphs, one `Story:` line each, never one block (STORY_NOT_PARAGRAPHED: a paragraph over 4 sentences). Paragraph 1: how it works now. Paragraph 2: how it crosses IT and OT, or who uses it. Paragraph 3: what the evidence leaves unknown. Each paragraph is written to the document as its own paragraph.
-- One fact per sentence, none over 40 words (STORY_SENTENCE_LONG).
-- No sentence names more than 3 parts (STORY_LIST).
+- Write the Story as a short account in paragraphs, one `Story:` line each, never one block of text and never a column of one-sentence lines (STORY_NOT_PARAGRAPHED). Each paragraph covers one point and picks up where the last stopped: how it works now, how it crosses IT and OT or who uses it, then what the evidence leaves unknown. Paragraphs open with what they are about, not all with the same word (STORY_SAME_OPENING).
+- Plain sentences that carry one observation each; a run-on is rejected (STORY_SENTENCE_LONG).
+- When a sentence starts listing many parts, name the first few and say what the rest have in common (style guidance, not a framework check).
 - A long part or role-group name is written in full once, then a short form or "it" (STORY_PHRASE_REPEAT: the same 5 words twice).
 - Every sentence says something the Summary does not (style guidance, not a framework check).
 - No rating and no inference in the Story: state what was seen (STORY_RESTATES_RATING, STORY_INFERS, STORY_STATES_RATING).

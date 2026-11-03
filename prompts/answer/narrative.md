@@ -1,0 +1,9 @@
+## Drawbridge Impact and narrative blocks
+
+- Drawbridge Impact is written function by function. The card lists them under "Function with an explicit ... dependency to assess", each with a "The flows establish" line. Write about every function listed, in the order listed, using the function's own name as the card gives it ("Voice and SDS recording", "Operator view"), in one or two sentences each, from that function's own "The flows establish" line. The evidence shows the path a function depends on, not the function itself, so say what is shown about the path and what follows for operators:
+  - "cut": the path is lost, so say what operators lose.
+  - "Stays inside OT": say that the path it depends on stays inside OT, so isolation does not cut it. Do not write that the function "keeps working" or "is unaffected"; the evidence does not test the function.
+  - "May be cut (zone not recorded)": it is not established. Say so, and raise one `QUESTION:` line. Do not say it stops.
+  A function left out is reported (DRAWBRIDGE_FUNCTION_MISSING), and so is a Text that talks about connections without naming the functions that depend on them.
+- Drawbridge Impact: state each stop plainly and say what it means for operations in the function's own words (from the function map). Where a path's zone is not recorded, say so once in an `QUESTION:` line; do not hedge the Text with "if" or "may" (DRAWBRIDGE_HEDGE, a warning). Leave out a part outside OT whose only paths are its own outward internet paths unless it loses a path into OT.
+- Drawbridge Impact is one paragraph that reads in order: say the cause once at the start ("With the storage and transfer path cut, ..."), then one or two sentences for each listed function, without repeating the cause, then one last sentence on whether a fallback has been tested or documented. Do not repeat the Facts: the Text says what the evidence means for operators, the Facts hold the evidence.

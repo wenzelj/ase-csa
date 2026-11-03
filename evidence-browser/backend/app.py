@@ -21,7 +21,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import intake_errors, apply_workflow, audit_workflow, author_workflow, intake_workflow, build_workflow, cleanup_workflow, commands, documents, draft_workflow, explorer, csa_figures, network, pipeline, proposals, review_workflow, sections, validation, word_review
+from . import intake_errors, apply_workflow, audit_workflow, author_workflow, intake_workflow, build_workflow, cleanup_workflow, commands, documents, draft_workflow, prompts_workflow, explorer, csa_figures, network, pipeline, proposals, review_workflow, sections, validation, word_review
 from .jobs import JobManager
 from .models import CommandRequest, IntakeErrorsResponse, JobCreateRequest
 
@@ -467,6 +467,31 @@ def get_systems() -> dict[str, Any]:
                          "available": cfg["project_key"] in registered,
                          "stage": str(registered.get(cfg["project_key"], {}).get("stage") or "draft").strip().lower()}
                         for key, cfg in SYSTEMS.items()]}
+
+
+@app.get("/api/systems/{system_key}/prompts")
+def get_prompts(system_key: str) -> dict[str, Any]:
+    return prompts_workflow.listing(agents_dir(), system_project(system_key))
+
+
+@app.put("/api/systems/{system_key}/prompts/{name}")
+def put_prompt(system_key: str, name: str, payload: dict[str, Any]) -> dict[str, Any]:
+    return prompts_workflow.save(agents_dir(), system_project(system_key), name, payload)
+
+
+@app.delete("/api/systems/{system_key}/prompts/{name}")
+def delete_prompt(system_key: str, name: str) -> dict[str, Any]:
+    return prompts_workflow.reset(agents_dir(), system_project(system_key), name)
+
+
+@app.get("/api/systems/{system_key}/prompts/{name}/history")
+def get_prompt_history(system_key: str, name: str) -> dict[str, Any]:
+    return prompts_workflow.history(agents_dir(), system_project(system_key), name)
+
+
+@app.get("/api/systems/{system_key}/prompt-preview")
+def get_prompt_preview(system_key: str, key: str, block: str = "") -> dict[str, Any]:
+    return prompts_workflow.preview(agents_dir(), system_project(system_key), key, block)
 
 
 @app.get("/api/systems/{system_key}/draft")

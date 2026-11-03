@@ -505,7 +505,8 @@ def next_id_number(body):
 
 # --------------------------------------------------------------------------- source check
 AUTO_REVIEWER = "csa source check (automated)"
-_FILE_RE = re.compile(r"(?:[\w.\-]|\([\w.\- ]*\))+\.(?:txt|csv|xlsx|docx|pdf|md|log|json|xml|ps1)\b", re.I)   # pdf: the index reads PDFs (pdftotext)
+_FILE_RE = re.compile(r"(?:[\w.\-]|\([\w.\- ]*\))+\.(?:txt|csv|xlsx|docx|pdf|md|log|json|xml|html|ps1)\b"
+                      r"|\b\d{3}_windows_[a-z]+\b", re.I)    # also the discovery script's collected host files (001_windows_hosts: no extension)   # pdf: the index reads PDFs (pdftotext)
 _CAPTURE_RE = re.compile(r"([A-Za-z0-9]+)_(\d{8}T\d{6}Z)")
 
 
