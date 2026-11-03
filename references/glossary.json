@@ -86,6 +86,14 @@
         "drawbridge"
       ],
       "plain": "a planned isolation of the OT network from IT, so that each side has to run without the other"
+    },
+    {
+      "term": "INTERNAL domain",
+      "match": [
+        "internal domain",
+        "internal\\\\"
+      ],
+      "plain": "the Active Directory that holds the user accounts and their permissions"
     }
   ]
 }

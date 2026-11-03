@@ -235,7 +235,7 @@ HARD_CODES = {"CROSS_PROJECT_ONLY", "NOTE_TOO_LONG", "NOTE_NONE_AND_TEXT", "NOTE
               "SUMMARY_REPEATS_STORY", "SUMMARY_STORY_OVERLAP", "SUMMARY_NO_RATING_BASIS", "QUESTION_IN_SUMMARY",
               "STORY_NO_EVIDENCE_PATH", "STORY_STARTS_WITH_RATING", "STORY_RESTATES_RATING", "STORY_AND_TEXT",
               "STORY_SENTENCE_LONG", "STORY_LABEL", "STORY_PHRASE_REPEAT", "STORY_NOT_PARAGRAPHED", "STORY_SAME_OPENING",
-              "SETTING_NOT_STATED", "TERM_NOT_EXPLAINED"}
+              "SETTING_NOT_STATED", "TERM_NOT_EXPLAINED", "ROWS_DROPPED"}
 
 #: Relaxed draft lane (cli.yaml draft_strictness: relaxed, the default for csa answer): the answer's job is to answer the
 #: question from the evidence, so only what makes it wrong or unusable stops it: evidence it cannot cite, a missing or
@@ -249,7 +249,7 @@ RELAXED_HARD = {"CROSS_PROJECT_ONLY", "QUESTION_MISSING", "EMPTY_ANSWER", "FACT_
                 "SUMMARY_NO_RATING_BASIS", "SUMMARY_STORY_OVERLAP", "QUESTION_IN_SUMMARY",
                 "STORY_NO_EVIDENCE_PATH", "STORY_STARTS_WITH_RATING", "STORY_RESTATES_RATING",
                 "STORY_SENTENCE_LONG", "STORY_LABEL", "STORY_PHRASE_REPEAT", "STORY_NOT_PARAGRAPHED", "STORY_SAME_OPENING",
-              "SETTING_NOT_STATED", "TERM_NOT_EXPLAINED"}
+              "SETTING_NOT_STATED", "TERM_NOT_EXPLAINED", "ROWS_DROPPED"}
 #: Of those, the ones the document cannot be written around: the answer cannot be rendered, or cites evidence that does
 #: not exist. Any other hard error left after the fix round is applied anyway and listed in RESULT.md.
 FATAL_CODES = {"NO_SHEET", "QUESTION_MISSING", "EMPTY_ANSWER", "FACT_NO_EVIDENCE", "UNKNOWN_EVIDENCE", "RATING_INVALID",
@@ -264,7 +264,7 @@ CONTENT_CODES = {"PART_MISATTRIBUTED", "PART_NOT_NAMED", "SLOT_NOT_ANSWERED", "S
                  "ATTEMPT_AS_ESTABLISHED", "ISOLATION_WRONG_SIDE",
                  "PRACTICE_NOT_ADDRESSED", "PRACTICE_ATTRIBUTION_DROPPED", "APPLICATION_ZONE_CLAIM", "QUESTION_BUNDLED",
                  "CROSS_PROJECT_ONLY", "BACKGROUND_AS_EVIDENCE", "FACT_OFF_TOPIC", "DRAWBRIDGE_FUNCTION_MISSING",
-                 "REASON_REPEATS_SUMMARY", "STORY_ENDS_BY_REPEATING", "REASON_DIFFERS_FROM_SUMMARY", "ABSENCE_WITHOUT_FACT", "DIRECTION_ASSUMED", "REPEATED_UNKNOWN",
+                 "REASON_REPEATS_SUMMARY", "STORY_ENDS_BY_REPEATING", "REASON_DIFFERS_FROM_SUMMARY", "ABSENCE_WITHOUT_FACT", "DIRECTION_ASSUMED", "REPEATED_UNKNOWN", "UNIVERSAL_CLAIM",
                  "HOST_IN_PROSE", "JARGON_SHORTHAND"}
 
 
@@ -639,7 +639,8 @@ def glossary_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
                 continue
             i = min(at)
             near = low[max(0, i - 80): i + 200]
-            words = {w[:5] for w in re.findall(r"[a-z]{5,}", t["plain"].lower())}
+            own = {w[:5] for m in t.get("match", []) + [t["term"].lower()] for w in re.findall(r"[a-z]{4,}", m.lower())}
+            words = {w[:5] for w in re.findall(r"[a-z]{5,}", t["plain"].lower())} - own      # the term's own words prove nothing
             hits = sum(1 for w in words if w in near)
             if hits < 2:
                 missing.append(f"{t['term']} ({t['plain']})")
@@ -666,6 +667,31 @@ def repeated_unknown_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
             out.append(_f("WARN", "REPEATED_UNKNOWN", q["id"],
                           f"the text says something is not recorded or not known {n} times: state each unknown once, in the closing "
                           "paragraph, and mention it earlier only where it changes what a sentence means"))
+    return out
+
+
+_UNIVERSAL = re.compile(r"\b(?:every|all)\s+(?!case\b)(?:[\w-]+\s+){0,3}?(?:hosts?|servers?|nodes?|groups?|shares?|accounts?)\b"
+                        r"|\beach\s+(?!case\b)(?:[\w-]+\s+)?(?:hosts?|servers?|nodes?|groups?|accounts?)\b"
+                        r"|\bthe same (?:\w+ )?(?:groups?|accounts?|shares?|settings?)\b", re.I)
+_EXCEPTION = re.compile(r"\b(?:except|apart from|other than|but not|with the exception|excluding)\b", re.I)
+
+
+def universal_claim_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
+    """UNIVERSAL_CLAIM (warning): the Summary, Story or Text says 'every host', 'all servers', 'each group' or 'the same groups'
+    with no exception named. One host or group that differs makes the sentence wrong (an earlier answer said every local
+    administrator group carries the same four groups while one host had three): say 'most' and name the exceptions."""
+    out: list[dict] = []
+    for q in card.get("questions", []):
+        if q.get("kind") not in ("requirement", "narrative"):
+            continue
+        b = sheet.get(q["id"]) or {}
+        prose = " ".join(x for x in (b.get("summary"), b.get("story"), b.get("text")) if x)
+        for sent in re.split(r"(?<=[.!?])\s+|\n+", prose):
+            m = _UNIVERSAL.search(sent)
+            if m and not _EXCEPTION.search(sent):
+                out.append(_f("WARN", "UNIVERSAL_CLAIM", q["id"],
+                              f"\"{m.group(0)}\": say 'most' and name the exceptions unless the card lists every one and they all match: \"{sent[:90]}\""))
+                break
     return out
 
 
@@ -1486,6 +1512,43 @@ def table_covers(claim: str, card: dict | None) -> bool:
     return any(re.search(rf"(?<![\w.]){re.escape(value)}(?![\w])", s.lower()) for s in (cells, common))
 
 
+def best_rows_path(sheet: Path) -> Path:
+    """cards/<KEY>.answer.rows-best.json: the richest version of every table the sheet has had."""
+    return Path(sheet).with_name(Path(sheet).stem + ".rows-best.json")
+
+
+def best_rows_update(sheet_path: Path, parsed: dict[str, dict], out: Path | None = None) -> dict[str, int]:
+    """Keep, per block, the table with the most rows seen so far. A re-answer is compared with this, not only with the sheet it
+    replaces, so a table cannot be thinned out over two runs."""
+    target = Path(out) if out else best_rows_path(sheet_path)
+    try:
+        best = json.loads(target.read_text(encoding="utf-8")) if target.is_file() else {}
+    except ValueError:
+        best = {}
+    for qid, b in parsed.items():
+        rows = b.get("rows") or []
+        if len(rows) > len(best.get(qid, [])):
+            best[qid] = rows
+    target.write_text(json.dumps(best, ensure_ascii=False), encoding="utf-8")
+    return {q: len(r) - 1 for q, r in best.items() if r}
+
+
+def with_best_rows(previous: dict[str, dict] | None, sheet_path: Path) -> dict[str, dict] | None:
+    """The previous sheet, with each block's table replaced by the richest one on record when that one has more rows."""
+    f = best_rows_path(sheet_path)
+    if previous is None or not f.is_file():
+        return previous
+    try:
+        best = json.loads(f.read_text(encoding="utf-8"))
+    except ValueError:
+        return previous
+    out = {q: dict(b) for q, b in previous.items()}
+    for qid, rows in best.items():
+        if qid in out and len(rows) > len(out[qid].get("rows") or []):
+            out[qid]["rows"] = rows
+    return out
+
+
 def regression(old: dict[str, dict], new: dict[str, dict], matrix: dict[str, dict] | None = None,
                card: dict | None = None) -> list[dict]:
     """What a re-answer lost against the sheet it replaces: evidence no longer cited, fewer table rows, fewer
@@ -1507,8 +1570,17 @@ def regression(old: dict[str, dict], new: dict[str, dict], matrix: dict[str, dic
             out.append(_f("WARN", "EVIDENCE_DROPPED", qid,
                           f"{len(gone)} evidence ID(s) cited before are no longer cited: {', '.join(gone[:8])}"))
         if len(nb["rows"]) < len(ob["rows"]):
-            out.append(_f("WARN", "ROWS_DROPPED", qid,
-                          f"the table has {len(nb['rows']) - 1} row(s), the answer it replaces had {len(ob['rows']) - 1}"))
+            lost_rows = len(ob["rows"]) - len(nb["rows"])
+            # two or more rows gone without a 'Dropped:' line is an error: a re-answer adds or corrects rows, it does not thin them out
+            level = "ERROR" if lost_rows >= 2 and not nb.get("dropped") else "WARN"
+            have = {(r[0] if r else "").strip().lower() for r in nb["rows"][1:]}
+            gone = [r for r in ob["rows"][1:] if (r[0] if r else "").strip().lower() not in have]
+            names = "; ".join(f"{r[0]} ({' '.join(r[1:2])[:110]})" for r in gone[:8])
+            out.append(_f(level, "ROWS_DROPPED", qid,
+                          f"the table has {len(nb['rows']) - 1} row(s), the answer it replaces had {len(ob['rows']) - 1}"
+                          + (f". Rows missing: {names}" if names else "")
+                          + (": keep these rows, or add 'Dropped: <row name> <why it no longer applies>' for each one removed"
+                             if level == "ERROR" else "")))
         lost = [i for i in dropped if source_class(matrix.get(i)) == "capture"
                 and matrix.get(i, {}).get("status") == "VERIFIED"
                 and not any(i in d for d in nb.get("dropped", []))]
@@ -2122,6 +2194,7 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
     findings += absence_checks(sheet, card)
     findings += direction_checks(sheet, card)
     findings += glossary_checks(sheet, card)
+    findings += universal_claim_checks(sheet, card)
     findings += repeated_unknown_checks(sheet, card)
     findings += practice_checks(sheet, card)
     findings += subject_checks(sheet, card)
@@ -2694,7 +2767,7 @@ def carry_forward(text: str, card: dict) -> tuple[str, list[str]]:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("action", choices=["validate", "parse", "render", "leads"])
+    ap.add_argument("action", choices=["validate", "parse", "render", "leads", "best-rows"])
     ap.add_argument("sheet", type=Path)
     ap.add_argument("--card", type=Path, required=True)
     ap.add_argument("--matrix", type=Path)
@@ -2702,6 +2775,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--draft", action="store_true", help="validate: draft lane, only the hard checks are errors")
     ap.add_argument("--relaxed", action="store_true", help="validate --draft: only RELAXED_HARD are errors (cli.yaml draft_strictness)")
     ap.add_argument("--previous", type=Path, help="validate: the sheet this one replaces (regression report)")
+    ap.add_argument("--out", type=Path, help="best-rows: where to write the richest tables (default: beside the sheet)")
     ap.add_argument("--docx", type=Path, help="render: the working document")
     ap.add_argument("--section", help="render: framework section number (3)")
     ap.add_argument("--change-file", type=Path, help="render: the change file to write (merged when it exists)")
@@ -2731,8 +2805,12 @@ def main(argv: list[str] | None = None) -> int:
         leads = unknown_leads(sheet, load_matrix(a.matrix))
         print(json.dumps({"leads": leads, "text": leads_text(leads) if leads else ""}, indent=1))
         return 0
+    if a.action == "best-rows":
+        print(json.dumps({"status": "OK", "rows": best_rows_update(a.sheet, sheet, a.out)}))
+        return 0
     if a.action == "validate":
         prev = parse(a.previous.read_text(encoding="utf-8")) if a.previous and a.previous.is_file() else None
+        prev = with_best_rows(prev, a.sheet)
         res = validate(sheet, card, load_matrix(a.matrix), new_ids={x.strip() for x in a.new_ids.split(",") if x.strip()},
                        draft=a.draft, previous=prev, relaxed=getattr(a, "relaxed", False))
         drift = sheet_hash_drift(a.sheet)

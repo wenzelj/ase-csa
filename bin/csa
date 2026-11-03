@@ -2680,6 +2680,11 @@ def _writer_needed(p: dict, cf: Path, sec: str, label: str | None) -> tuple[bool
         return True, "check-change gave no result"
 
 
+def _remember_tables(cards: Path, key: str, card_json: Path, sheet: Path) -> None:
+    """Keep the richest version of every table the sheet has had, so a later answer is compared with it (ROWS_DROPPED)."""
+    _fw_json("csa_docx.answer_sheet", "best-rows", sheet, "--card", card_json)
+
+
 def _reader_pass(work: Path, cards: Path, key: str, sheet: Path) -> None:
     """After an answer is written: one advisory call reads the whole sheet as the customer (contradictions between blocks,
     terms a customer may not know, repeated wording, claims beyond the cited facts). It never edits the sheet; its report is
@@ -3373,6 +3378,7 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
             print(f"{C['y']}APPLIED WITH OPEN CHECKS: {', '.join(hard)} still fail after {fixes} fix round(s). The answer is "
                   f"written as it stands. Details: {cards / (key + '.RESULT.md')}{C['0']}", file=sys.stderr)
             if draft:
+                _remember_tables(cards, key, card_json, sheet)
                 _reader_pass(work, cards, key, sheet)
             break
         if rc != 0:
@@ -3488,6 +3494,7 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
         _write_answer_result(cards / f"{key}.RESULT.md", number, "APPLIED" + (f" WITH {len(warns)} WARNING(S)" if warns else ""),
                              res2, fixes, sheet, "every blocking check passes")
         if draft:
+            _remember_tables(cards, key, card_json, sheet)
             _reader_pass(work, cards, key, sheet)
         _fw_json("csa_docx.answer_cache", "write", sheet, "--card", card_json, "--matrix", matrix,
                  *(["--hosts", hosts_csv] if hosts_csv.is_file() else []), "--json")

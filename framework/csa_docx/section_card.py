@@ -268,11 +268,36 @@ def _matrix(workspace: Path, query: str, limit: int = MAX_ROWS_PER_QUESTION) -> 
     return (res or {}).get("matches", []) if (res or {}).get("status") == "OK" else []
 
 
+_IP_NAMES: dict[str, str] = {}          # address -> host name, set for the card being built
+
+
+def load_ip_names(workspace) -> None:
+    """The host register's addresses, so a claim that names a host only by address is shown with the host's name."""
+    global _IP_NAMES
+    _IP_NAMES = {}
+    try:
+        work = Path(workspace) / "csa-work"
+        for r in _file_rows(work, "hosts/hosts.csv"):
+            host = (r.get("host") or "").strip().upper()
+            for ip in re.split(r"[;,\s]+", r.get("ips") or ""):
+                if host and re.fullmatch(r"\d{1,3}(?:\.\d{1,3}){3}", ip):
+                    _IP_NAMES.setdefault(ip, host)
+    except Exception:                   # the card still builds without the names
+        _IP_NAMES = {}
+
+
+def name_addresses(claim: str) -> str:
+    """'10.40.228.180 opened ...' -> '10.40.228.180 (ROKPRDOPS110) opened ...' for every address of a host with a name. The
+    matrix is not changed: only the card shows it, so the writer cannot take an address for another host of the same role."""
+    return re.sub(r"(?<![\d.])(\d{1,3}(?:\.\d{1,3}){3})(?![\d.]|\s*\()", lambda m: f"{m.group(1)} ({_IP_NAMES[m.group(1)]})"
+                  if m.group(1) in _IP_NAMES and _IP_NAMES[m.group(1)] not in claim else m.group(1), claim)
+
+
 def _row(m: dict) -> dict:
     """One evidence row as the card shows it."""
     legacy = (m.get("gap_or_action") or "").startswith("legacy L-")
     return {"id": m["evidence_id"], "status": m.get("status", ""),
-            "claim": " ".join((m.get("claim") or "").split())[:EXCERPT],
+            "claim": name_addresses(" ".join((m.get("claim") or "").split()))[:EXCERPT],
             "source": (m.get("source_title") or "")[:160],
             "note": "previous assessment, not checked against the captures" if legacy else
                     ("searched: " + (m.get("source_title") or "")[:160]) if m.get("status") == "NOT_FOUND" else ""}
@@ -1461,6 +1486,8 @@ def requirement_tokens(card: dict) -> dict[str, int]:
 def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool = True,
          extra_searches: dict | None = None, exclude: tuple[str, ...] = ()) -> dict:
     qs = questions(node, spec)
+    if workspace:
+        load_ip_names(workspace)
     requirement_stories = (any(q["kind"] == "requirement" for q in qs)
                            and any(k.strip().lower() == "discovery information"
                                    for k in (node.get("facets") or {})))
@@ -1712,6 +1739,8 @@ def main(argv: list[str] | None = None) -> int:
         if terms.strip():
             extra.setdefault(qid.strip(), []).append(terms.strip())
     res = card(node, spec, a.workspace, evidence=not a.no_evidence, extra_searches=extra, exclude=tuple(a.exclude))
+    res["text"] = "\n".join(name_addresses(l) if l.lstrip().startswith(("- S", "- [", "-  S")) or "opens connections" in l else l
+                            for l in res["text"].split("\n"))
     if a.out:
         a.out.parent.mkdir(parents=True, exist_ok=True)
         a.out.write_text(res["text"], encoding="utf-8")

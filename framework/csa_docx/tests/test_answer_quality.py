@@ -326,3 +326,49 @@ def test_settings_that_say_nothing_is_configured_are_worded_so_they_cannot_be_mi
     assert T._finding_claim("Removable storage policy", "transfer.removable", "Not set in applied Group Policy", "A") == \
         "No removable storage restriction is set in the applied Group Policy of A"
     assert T._finding_claim("Shares", "storage.shares", "TetraFlex", "A") == "Shares on A: TetraFlex"
+
+
+def _rows_block(n, dropped=()):
+    b = _block()
+    b["rows"] = [["Aspect", "Observed", "Source"]] + [[f"a{i}", "x", "y"] for i in range(n)]
+    b["dropped"] = list(dropped)
+    return b
+
+
+def test_removing_two_or_more_table_rows_without_a_dropped_line_is_an_error():
+    from csa_docx import answer_sheet as A
+    old = {"B3": _rows_block(7)}
+    levels = lambda new: [(f["code"], f["level"]) for f in A.regression(old, new, {}, {}) if f["code"] == "ROWS_DROPPED"]
+    assert levels({"B3": _rows_block(2)}) == [("ROWS_DROPPED", "ERROR")]
+    assert levels({"B3": _rows_block(2, dropped=["a3 no longer applies"])}) == [("ROWS_DROPPED", "WARN")]
+    assert levels({"B3": _rows_block(6)}) == [("ROWS_DROPPED", "WARN")]
+    assert "ROWS_DROPPED" in A.RELAXED_HARD
+
+
+def test_every_all_the_same_without_an_exception_is_flagged():
+    from csa_docx import answer_sheet as A
+    q = {"id": "B2", "kind": "requirement", "text": "q"}
+    card = {"questions": [q]}
+    bad = {"B2": _block(story="Every group of local administrators includes the same four INTERNAL groups.")}
+    ok = {"B2": _block(story="Most hosts include the same four groups, except the Reveloc server, which has three.")}
+    assert [f["code"] for f in A.universal_claim_checks(bad, card)] == ["UNIVERSAL_CLAIM"] and A.universal_claim_checks(ok, card) == []
+
+
+def test_the_internal_domain_is_in_the_glossary_and_must_be_explained():
+    from csa_docx import answer_sheet as A
+    q = {"id": "B2", "kind": "requirement", "text": "q"}
+    card = {"questions": [q]}
+    assert [f["code"] for f in A.glossary_checks({"B2": _block(story="The groups sit in the INTERNAL domain.")}, card)] == ["TERM_NOT_EXPLAINED"]
+    done = {"B2": _block(story="The groups sit in the INTERNAL domain, the Active Directory domain that holds the user and group accounts.")}
+    assert A.glossary_checks(done, card) == []
+
+
+def test_card_names_a_host_known_only_by_address_and_the_table_history_keeps_the_richest_rows(tmp_path):
+    from csa_docx import section_card as S, answer_sheet as A
+    S._IP_NAMES = {"10.40.228.180": "ROKPRDOPS110"}
+    assert S.name_addresses("10.40.228.180 opens x") == "10.40.228.180 (ROKPRDOPS110) opens x"
+    assert S.name_addresses("10.40.228.180 (ROKPRDOPS110) opens x") == "10.40.228.180 (ROKPRDOPS110) opens x"
+    sheet = tmp_path / "K.answer.md"
+    A.best_rows_update(sheet, {"B3": {"rows": [["h"], ["a"], ["b"]]}})
+    A.best_rows_update(sheet, {"B3": {"rows": [["h"], ["a"]]}})
+    assert A.with_best_rows({"B3": {"rows": [["h"]]}}, sheet)["B3"]["rows"] == [["h"], ["a"], ["b"]]

@@ -46,6 +46,8 @@ Write Facts from this subsection's topic only (Owns / Must explain / Not here on
 
 ## Names and absence
 
+- Do not write "every", "all", "each" or "the same" about hosts, groups, shares or accounts unless the card lists every one and they all match. One that differs makes the sentence wrong: say "most" and name the exceptions (UNIVERSAL_CLAIM). A listener or a group on a host shows what is allowed, not how it is used: do not write that something is used "directly" or "without" another step unless a connection shows it.
+- A table row stays a row: when a re-answer removes two or more rows of the answer it replaces, each removed row needs a `Dropped: <row name> <why it no longer applies>` line (ROWS_DROPPED).
 - When the evidence shows something is absent, say so about the system and name the sources that were checked: "No isolation test record appears in the twelve discovery captures or the supplied documents." Never describe the framework's own search ("the matrix", "the index rows", "rows searched", "for this domain"). The reader has never seen them, and the framework refuses the sheet (PROCESS_AS_SUBJECT).
 - A SysVol share is served by a domain controller: call that server a domain controller (and give its name when the card does). Never call it a file server; the evidence does not say it is one.
 - When a host has a name, use the name exactly as the sources write it. Never rename or "correct" a host name (for example, RevViewer stays RevViewer).
