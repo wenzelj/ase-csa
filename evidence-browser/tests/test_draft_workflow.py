@@ -49,3 +49,22 @@ def test_snapshot_marks_answered_stale_and_open(tmp_path, monkeypatch):
     assert rows["DNS"]["state"] == "not-answered"
     assert snap["changes"]["rows"][0]["subsection"] == "3.4 Time (TIME)"
     assert snap["open_questions"]["total"] == 2 and snap["stage"] == "draft"
+
+
+def test_snapshot_carries_the_rating_history_and_the_blocks_that_got_worse(tmp_path, monkeypatch):
+    from csa_docx import rating_pass
+    work = tmp_path / "csa-work"
+    (work / "cards").mkdir(parents=True)
+    (work / "cards" / "TIME.manifest.json").write_text("{}")
+    for a, b in ((8.0, 7.0), (7.0, 7.0)):
+        rating_pass.record(work, "TIME", {"B1": {"score": a, "reason": "r"}, "B2": {"score": b, "reason": "r"}})
+
+    class Result:
+        parsed = {"nodes": [{"key": "TIME", "number": "3.1", "title": "Time", "kind": "subsection"},
+                            {"key": "NONE", "number": "3.2", "title": "None", "kind": "subsection"}]}
+        stderr = ""
+
+    monkeypatch.setattr(draft_workflow.commands, "execute", lambda *a, **k: Result())
+    rows = {r["key"]: r for r in draft_workflow.snapshot(AGENTS, {"key": "p", "work_dir": str(work)})["sections"]}
+    assert rows["TIME"]["rating"]["worse"] == ["B1"] and rows["TIME"]["rating"]["latest"] == 7.0
+    assert rows["NONE"]["rating"] is None

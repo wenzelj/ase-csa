@@ -4,7 +4,7 @@ Facts:
 - MOTPRDREV101 and MOTPRDLOG103 at Mackay take their time from ROTPRDSRV122 at Rockhampton. (E-005) {observed; MOTPRDREV101, MOTPRDLOG103}
 - The time sources sit at stratum 5 in the latest capture. (E-3173) {observed; MOTPRDSRV122}
 Summary: The time sources are domain controllers hosted in OT. The Mackay hosts depend on a source at another site. The requirement is Partially Met because the sources are OT-hosted but share one domain hierarchy.
-Story: Sources are OT domain controllers. Mackay uses the Rockhampton controller. Most hosts show stratum 5.
+Story: Sources are OT domain controllers. Mackay uses the Rockhampton controller. Stratum counts the steps a clock is from the reference clock. Most hosts show stratum 5.
 Rating: Partially Met
 Rating reason: Mackay takes its time from the Rockhampton controller (E-005), so the sites are not independent.
 

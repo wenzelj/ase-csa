@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { cancelJob, fetchDraft, fetchJob, fetchJobs, submitJob } from "../api";
 import { AGENT_CLIS, rememberedAgentCli, rememberAgentCli } from "../agentClis";
-import type { DraftSection, DraftSnapshot, ReviewJob } from "../types";
+import type { DraftRating, DraftSection, DraftSnapshot, ReviewJob } from "../types";
 import { Empty } from "./ui";
 import { PromptsPanel } from "./PromptsPanel";
 import { terminalReason } from "../jobReason";
@@ -9,6 +9,25 @@ import { terminalReason } from "../jobReason";
 const TERMINAL = ["succeeded", "failed", "cancelled", "interrupted"];
 const STATE_LABEL: Record<string, string> = { current: "Current", stale: "Evidence changed", answered: "Answered", "not-answered": "Not answered" };
 const OP_LABEL: Record<string, string> = { ingest: "Ingest new data", stale: "Check for stale answers", answer: "Answer", refresh_draft: "Refresh stale answers", freeze: "Freeze at V1" };
+
+/** Rating column: latest average, average of the kept runs, each question's latest score (red when it fell since the previous run).
+ *  The hover text lists the kept runs and the reason for each question's latest score. */
+export function ratingTitle(r: DraftRating): string {
+  const runs = r.runs.map(x => `${x.at.slice(0, 10)}  avg ${x.average}  (${Object.entries(x.blocks).map(([b, v]) => `${b} ${v}`).join(", ")})`);
+  const why = Object.entries(r.reasons).filter(([, v]) => v).map(([b, v]) => `${b}: ${v}`);
+  const tips = Object.entries(r.improve || {}).flatMap(([b, ts]) => ts.map(t => `${b}: ${t}`));
+  return [...runs, ...(why.length ? ["", ...why] : []), ...(tips.length ? ["", "Suggested improvements:", ...tips] : [])].join("\n");
+}
+export function RatingCell({ rating }: { rating?: DraftRating | null }) {
+  if (!rating) return <>—</>;
+  const latest = rating.runs[rating.runs.length - 1];
+  return <span className="draft-rating" title={ratingTitle(rating)}>
+    <strong className={rating.worse.length ? "draft-worse" : ""}>{rating.latest.toFixed(1)}</strong>
+    <small>avg {rating.average.toFixed(1)} of last {rating.runs.length}</small>
+    <span className="draft-rating-blocks">{Object.entries(latest.blocks).map(([b, v]) =>
+      <span key={b} className={rating.worse.includes(b) ? "draft-worse" : ""}>{b} {v.toFixed(1)}</span>)}</span>
+  </span>;
+}
 
 function when(value?: string | null) { if (!value) return "—"; const d = new Date(value); return isNaN(d.getTime()) ? value : d.toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }); }
 function phase(job: ReviewJob): string {
@@ -97,14 +116,15 @@ export function DraftLane({ system, focus = "", investigate }: { system: string;
     {snap.spec_error && <p className="desk-error">Section list unavailable: {snap.spec_error}</p>}
 
     <section className="decision-desk draft-desk"><header><div><h2>Subsections</h2><p>Answer one subsection at a time. A subsection with unaccepted tracked changes is refused until you accept or reject them in Word.</p></div><label className="draft-check"><input type="checkbox" checked={onlyOpen} onChange={e => setOnlyOpen(e.target.checked)} /> Only what needs an answer</label></header>
-      <table className="draft-table"><thead><tr><th>Section</th><th>State</th><th>Last answered</th><th>Open</th><th /></tr></thead><tbody>
+      <table className="draft-table"><thead><tr><th>Section</th><th>Rating</th><th>State</th><th>Last answered</th><th>Open</th><th /></tr></thead><tbody>
         {rows.map(row => <tr key={row.key} id={`draft-row-${row.key}`} className={focus && (focus === row.key || focus === row.number) ? "draft-focus" : ""}>
           <td><b>{row.number}</b> {row.title}<small>{row.key}</small></td>
+          <td><RatingCell rating={row.rating} /></td>
           <td><span className={`draft-pill draft-${row.state}`}>{STATE_LABEL[row.state] || row.state}</span></td>
           <td>{when(row.answered_at)}</td><td>{row.open || "—"}</td>
           <td><button onClick={() => answer(row)} disabled={running}>{row.state === "not-answered" ? "Answer" : "Answer again"}</button></td>
         </tr>)}
-        {!rows.length && <tr><td colSpan={5}>Nothing to show.</td></tr>}
+        {!rows.length && <tr><td colSpan={6}>Nothing to show.</td></tr>}
       </tbody></table>
     </section>
 

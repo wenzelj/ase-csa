@@ -94,6 +94,52 @@
         "internal\\\\"
       ],
       "plain": "the Active Directory that holds the user accounts and their permissions"
+    },
+    {
+      "term": "NTP",
+      "match": [
+        " ntp ",
+        " ntp,",
+        " ntp.",
+        "network time protocol"
+      ],
+      "plain": "the Network Time Protocol, the standard way computers keep their clocks in step with a time source"
+    },
+    {
+      "term": "stratum",
+      "match": [
+        "stratum"
+      ],
+      "plain": "how many steps a clock is from the original reference clock; a lower number is closer to it"
+    },
+    {
+      "term": "WinRM",
+      "match": [
+        "winrm",
+        "windows remote management"
+      ],
+      "plain": "Windows Remote Management, the Windows service for managing a server over the network"
+    },
+    {
+      "term": "VNC",
+      "match": [
+        "vnc"
+      ],
+      "plain": "a remote control tool that shows another computer's screen and lets a person operate it"
+    },
+    {
+      "term": "hosts file",
+      "match": [
+        "hosts file"
+      ],
+      "plain": "a text file on one computer that maps names to addresses without asking a DNS server"
+    },
+    {
+      "term": "DNS forwarder",
+      "match": [
+        "forwarder"
+      ],
+      "plain": "a DNS server that passes on to another server the name lookups it cannot answer itself"
     }
   ]
 }

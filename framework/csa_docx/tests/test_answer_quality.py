@@ -372,3 +372,67 @@ def test_card_names_a_host_known_only_by_address_and_the_table_history_keeps_the
     A.best_rows_update(sheet, {"B3": {"rows": [["h"], ["a"], ["b"]]}})
     A.best_rows_update(sheet, {"B3": {"rows": [["h"], ["a"]]}})
     assert A.with_best_rows({"B3": {"rows": [["h"]]}}, sheet)["B3"]["rows"] == [["h"], ["a"], ["b"]]
+
+
+def test_universal_claims_block_but_no_host_only_warns():
+    from csa_docx import answer_sheet as A
+    card = {"questions": [{"id": "B2", "kind": "requirement", "text": "q"}]}
+    lv = lambda story: [(f["level"], f["code"]) for f in A.universal_claim_checks({"B2": _block(story=story)}, card)]
+    assert lv("The same four enterprise groups plus a functional group are local administrators.") == [("ERROR", "UNIVERSAL_CLAIM")]
+    assert lv("The other nodes follow the Rockhampton one.") == [("ERROR", "UNIVERSAL_CLAIM")]
+    assert lv("No host in this group records a usable fallback.") == [("WARN", "UNIVERSAL_CLAIM")]
+    assert lv("All nine hosts listen on port 5985.") == [] and lv("Most hosts use it, except the Reveloc server.") == []
+    assert "UNIVERSAL_CLAIM" in A.RELAXED_HARD and "PROSE_NAME_UNSUPPORTED" in A.RELAXED_HARD
+
+
+def test_a_name_or_address_no_evidence_shows_is_an_error_and_two_values_for_one_host_are_flagged():
+    from csa_docx import answer_sheet as A
+    matrix = {"E-1": {"claim": "ROTPRDSRV122 answers on 10.40.228.9", "evidence_excerpt": "", "source_title": ""}}
+    fact = lambda t: (t, ["E-1"])
+    card = {"questions": [{"id": "B2", "kind": "requirement", "text": "q"}], "evidence": {}}
+    sheet = {"B2": _block(story="ROTPRDSRV122 is the server. MOTPRDSRV122 also answers.", facts=[fact("ROTPRDSRV122 is at 10.40.228.9.")])}
+    assert [f["message"].split(" named")[0] for f in A.prose_name_checks(sheet, card, matrix)] == ["MOTPRDSRV122"]
+    bad = {"B2": _block(facts=[fact("ROTPRDSRV122 is at 10.40.228.97.")])}
+    assert [f["code"] for f in A.facts_disagree_checks(bad, matrix)] == ["ADDRESS_NOT_IN_EVIDENCE"]
+    two = {"B2": _block(facts=[fact("ROTPRDSRV122 is at 10.40.228.9."), fact("ROTPRDSRV122 is at 10.40.228.97.")])}
+    assert [f["code"] for f in A.facts_disagree_checks(two, {})] == ["FACTS_DISAGREE"]
+    said = {"B2": _block(story="ROTPRDSRV122 has two addresses, 10.40.228.9 and 10.40.228.97.",
+                         facts=[fact("ROTPRDSRV122 is at 10.40.228.9."), fact("ROTPRDSRV122 is at 10.40.228.97.")])}
+    assert A.facts_disagree_checks(said, {}) == []
+
+
+def test_new_glossary_terms_must_be_explained():
+    from csa_docx import answer_sheet as A
+    card = {"questions": [{"id": "B2", "kind": "requirement", "text": "q"}]}
+    bad = A.glossary_checks({"B2": _block(story="The hosts show stratum 5 and use WinRM.")}, card)
+    assert "stratum" in bad[0]["message"] and "WinRM" in bad[0]["message"]
+
+
+def test_a_peer_address_is_named_from_evidence_rows_that_say_so():
+    from csa_docx import section_card as S
+    rows = [{"claim": "IPTPRDCCM202 is MECM 2 (Prod) at 10.89.161.67 (IPTPRDCCM202.internal.qr.com.au) and a further address 10.89.163.66"},
+            {"claim": "MOTPRDCLU103 has an established connection from System to 10.89.163.66 (name not captured) on port 445."},
+            {"claim": "ROTPRDCCM111 is a server at 10.89.163.73"},
+            {"claim": "AAAPRDBBB001 is at 10.1.1.1"}, {"claim": "CCCPRDDDD002 is at 10.1.1.1"}]
+    got = S.evidence_address_hosts(rows)
+    assert got["10.89.163.66"] == "IPTPRDCCM202" and got["10.89.163.73"] == "ROTPRDCCM111"
+    assert "10.1.1.1" not in got                    # two hosts claim it: not named
+
+
+def test_a_host_the_evidence_names_by_its_address_may_be_named_beside_that_address():
+    from csa_docx import answer_sheet as A
+    matrix = {"E-283": {"claim": "MOTPRDCLU103 has a connection to 10.89.163.66 (name not captured) on port 445"},
+              "E-3309": {"claim": "IPTPRDCCM202 is MECM 2 at 10.89.161.67 and a further address 10.89.163.66"}}
+    q = {"id": "B1", "kind": "requirement", "text": "q"}
+    sheet = {"B1": _block(facts=[("MOTPRDCLU103 opens connections to 10.89.163.66. (E-283)", ["E-283"])],
+                          story="MOTPRDCLU103 opens connections to the MECM server IPTPRDCCM202 at 10.89.163.66.")}
+    assert A.prose_name_checks(sheet, {"questions": [q]}, matrix) == []
+
+
+def test_an_address_cut_short_is_not_found_inside_the_longer_one():
+    from csa_docx import answer_sheet as A
+    assert A._has_name("DNS 10.40.228.97 and 10.45.228.97", "10.40.228.97")
+    assert not A._has_name("DNS 10.40.228.97 and 10.45.228.97", "10.40.228.9")
+    matrix = {"E-1": {"claim": "ROTPRDSRV122 (10.40.228.97) is the primary DNS server"}}
+    sheet = {"B1": _block(facts=[("The primary DNS server ROTPRDSRV122 (10.40.228.9) serves the hosts. (E-1)", ["E-1"])])}
+    assert [f["code"] for f in A.facts_disagree_checks(sheet, matrix)] == ["ADDRESS_NOT_IN_EVIDENCE"]

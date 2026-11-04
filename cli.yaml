@@ -94,3 +94,7 @@ answer_by_block_workers: 1
 # (cards/<KEY>.review.md and RESULT.md). It never edits the sheet. answer_reader_cli is the CLI that makes the call.
 answer_reader_pass: true
 answer_reader_cli: claude
+# After the reader pass, one more call scores each block 1 to 10 (cards/../ratings/<KEY>.json, last 3 runs kept; shown on the
+# Draft answers page). It never edits the sheet. answer_rating_cli is the CLI that makes the call.
+answer_rating_pass: true
+answer_rating_cli: claude

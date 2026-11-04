@@ -41,6 +41,8 @@ REGISTRY: dict[str, dict] = {
               "use": "The F1 block that lists which blocks answer each slot."},
     "fix": {"title": "Fix round", "kinds": [], "required": [],
             "use": "How to read the errors and rewrite only the listed blocks."},
+    "rating": {"title": "Answer rating", "kinds": [], "required": [],
+               "use": "The call after the answer that scores each block's quality 1 to 10 (shown on the Draft answers page). It never edits."},
     "review": {"title": "Reader review", "kinds": [], "required": [],
                "use": "The call after the answer that reads the whole sheet as the customer and reports problems. It never edits."},
 }

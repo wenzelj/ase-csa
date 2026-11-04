@@ -284,12 +284,39 @@ def load_ip_names(workspace) -> None:
                     _IP_NAMES.setdefault(ip, host)
     except Exception:                   # the card still builds without the names
         _IP_NAMES = {}
+    try:                                # hosts the register does not hold (an enterprise server a capture only connects to)
+        from csa_docx import evidence_live
+        for ip, host in evidence_address_hosts(evidence_live.get_verified_evidence(Path(workspace) / "csa-work" / "evidence-matrix.csv")).items():
+            _IP_NAMES.setdefault(ip, host)
+    except Exception:
+        pass
+
+
+_EV_HOST = re.compile(r"\b([A-Z]{3}[A-Z]{3}[A-Z]{3}\d{3})\b")
+_EV_ADDR = re.compile(r"(?:\bat|\bfurther address(?:es)?|\baddress(?:es)?)\s+(\d{1,3}(?:\.\d{1,3}){3})(?!\.?\d)")
+
+
+def evidence_address_hosts(rows) -> dict[str, str]:
+    """address -> host from evidence rows that say it outright: 'IPTPRDCCM202 is MECM 2 at 10.89.161.67 and a further address
+    10.89.163.66'. Only a row whose subject is its one named host counts, and an address two rows give to different hosts is dropped."""
+    seen: dict[str, set[str]] = {}
+    for r in rows:
+        c = " ".join((r.get("claim") or "").split())
+        hosts = set(_EV_HOST.findall(c))
+        if len(hosts) != 1:
+            continue
+        host = next(iter(hosts))
+        if not c.startswith(host):
+            continue
+        for m in _EV_ADDR.finditer(c):
+            seen.setdefault(m.group(1), set()).add(host)
+    return {ip: next(iter(h)) for ip, h in seen.items() if len(h) == 1}
 
 
 def name_addresses(claim: str) -> str:
     """'10.40.228.180 opened ...' -> '10.40.228.180 (ROKPRDOPS110) opened ...' for every address of a host with a name. The
     matrix is not changed: only the card shows it, so the writer cannot take an address for another host of the same role."""
-    return re.sub(r"(?<![\d.])(\d{1,3}(?:\.\d{1,3}){3})(?![\d.]|\s*\()", lambda m: f"{m.group(1)} ({_IP_NAMES[m.group(1)]})"
+    return re.sub(r"(?<![\d.])(\d{1,3}(?:\.\d{1,3}){3})(?![\d.]|\s*\([A-Z0-9]{7,}\))", lambda m: f"{m.group(1)} ({_IP_NAMES[m.group(1)]})"
                   if m.group(1) in _IP_NAMES and _IP_NAMES[m.group(1)] not in claim else m.group(1), claim)
 
 
@@ -1739,7 +1766,7 @@ def main(argv: list[str] | None = None) -> int:
         if terms.strip():
             extra.setdefault(qid.strip(), []).append(terms.strip())
     res = card(node, spec, a.workspace, evidence=not a.no_evidence, extra_searches=extra, exclude=tuple(a.exclude))
-    res["text"] = "\n".join(name_addresses(l) if l.lstrip().startswith(("- S", "- [", "-  S")) or "opens connections" in l else l
+    res["text"] = "\n".join(name_addresses(l) if (l.lstrip().startswith(("- S", "- [", "-  S")) or re.match(r"\s*- \d+\.\d+\.\d+\.\d+ ", l)) or "opens connections" in l else l
                             for l in res["text"].split("\n"))
     if a.out:
         a.out.parent.mkdir(parents=True, exist_ok=True)

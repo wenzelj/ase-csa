@@ -51,6 +51,11 @@ _QRELATIVE = re.compile(r",\s*(?:which|who)\b[^,]*?\b(?:could|can|would|will|sho
 _ANYID = re.compile(r"(?<![\w:-])" + _ID + r"\b")
 _HOST = re.compile(r"\b(?=[A-Z0-9]*\d)[A-Z][A-Z0-9]{6,}\b")
 _IP = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}(?:/\d{1,2})?\b")
+
+
+def _has_name(text: str, name: str) -> bool:
+    """name appears in text as a whole token: 10.40.228.9 is not found inside 10.40.228.97."""
+    return re.search(r"(?<![\w.])" + re.escape(name) + r"(?![\w]|\.\d)", text, re.I) is not None
 BASES = ("observed", "documented", "stated", "background")
 
 
@@ -235,7 +240,8 @@ HARD_CODES = {"CROSS_PROJECT_ONLY", "NOTE_TOO_LONG", "NOTE_NONE_AND_TEXT", "NOTE
               "SUMMARY_REPEATS_STORY", "SUMMARY_STORY_OVERLAP", "SUMMARY_NO_RATING_BASIS", "QUESTION_IN_SUMMARY",
               "STORY_NO_EVIDENCE_PATH", "STORY_STARTS_WITH_RATING", "STORY_RESTATES_RATING", "STORY_AND_TEXT",
               "STORY_SENTENCE_LONG", "STORY_LABEL", "STORY_PHRASE_REPEAT", "STORY_NOT_PARAGRAPHED", "STORY_SAME_OPENING",
-              "SETTING_NOT_STATED", "TERM_NOT_EXPLAINED", "ROWS_DROPPED"}
+              "SETTING_NOT_STATED", "TERM_NOT_EXPLAINED", "ROWS_DROPPED", "UNIVERSAL_CLAIM", "PROSE_NAME_UNSUPPORTED",
+              "ADDRESS_NOT_IN_EVIDENCE"}
 
 #: Relaxed draft lane (cli.yaml draft_strictness: relaxed, the default for csa answer): the answer's job is to answer the
 #: question from the evidence, so only what makes it wrong or unusable stops it: evidence it cannot cite, a missing or
@@ -249,7 +255,7 @@ RELAXED_HARD = {"CROSS_PROJECT_ONLY", "QUESTION_MISSING", "EMPTY_ANSWER", "FACT_
                 "SUMMARY_NO_RATING_BASIS", "SUMMARY_STORY_OVERLAP", "QUESTION_IN_SUMMARY",
                 "STORY_NO_EVIDENCE_PATH", "STORY_STARTS_WITH_RATING", "STORY_RESTATES_RATING",
                 "STORY_SENTENCE_LONG", "STORY_LABEL", "STORY_PHRASE_REPEAT", "STORY_NOT_PARAGRAPHED", "STORY_SAME_OPENING",
-              "SETTING_NOT_STATED", "TERM_NOT_EXPLAINED", "ROWS_DROPPED"}
+              "SETTING_NOT_STATED", "TERM_NOT_EXPLAINED", "ROWS_DROPPED", "UNIVERSAL_CLAIM", "PROSE_NAME_UNSUPPORTED", "ADDRESS_NOT_IN_EVIDENCE"}
 #: Of those, the ones the document cannot be written around: the answer cannot be rendered, or cites evidence that does
 #: not exist. Any other hard error left after the fix round is applied anyway and listed in RESULT.md.
 FATAL_CODES = {"NO_SHEET", "QUESTION_MISSING", "EMPTY_ANSWER", "FACT_NO_EVIDENCE", "UNKNOWN_EVIDENCE", "RATING_INVALID",
@@ -264,7 +270,7 @@ CONTENT_CODES = {"PART_MISATTRIBUTED", "PART_NOT_NAMED", "SLOT_NOT_ANSWERED", "S
                  "ATTEMPT_AS_ESTABLISHED", "ISOLATION_WRONG_SIDE",
                  "PRACTICE_NOT_ADDRESSED", "PRACTICE_ATTRIBUTION_DROPPED", "APPLICATION_ZONE_CLAIM", "QUESTION_BUNDLED",
                  "CROSS_PROJECT_ONLY", "BACKGROUND_AS_EVIDENCE", "FACT_OFF_TOPIC", "DRAWBRIDGE_FUNCTION_MISSING",
-                 "REASON_REPEATS_SUMMARY", "STORY_ENDS_BY_REPEATING", "REASON_DIFFERS_FROM_SUMMARY", "ABSENCE_WITHOUT_FACT", "DIRECTION_ASSUMED", "REPEATED_UNKNOWN", "UNIVERSAL_CLAIM",
+                 "REASON_REPEATS_SUMMARY", "STORY_ENDS_BY_REPEATING", "REASON_DIFFERS_FROM_SUMMARY", "ABSENCE_WITHOUT_FACT", "DIRECTION_ASSUMED", "REPEATED_UNKNOWN", "UNIVERSAL_CLAIM", "PROSE_NAME_UNSUPPORTED", "ADDRESS_NOT_IN_EVIDENCE", "FACTS_DISAGREE",
                  "HOST_IN_PROSE", "JARGON_SHORTHAND"}
 
 
@@ -670,28 +676,105 @@ def repeated_unknown_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
     return out
 
 
-_UNIVERSAL = re.compile(r"\b(?:every|all)\s+(?!case\b)(?:[\w-]+\s+){0,3}?(?:hosts?|servers?|nodes?|groups?|shares?|accounts?)\b"
-                        r"|\beach\s+(?!case\b)(?:[\w-]+\s+)?(?:hosts?|servers?|nodes?|groups?|accounts?)\b"
-                        r"|\bthe same (?:\w+ )?(?:groups?|accounts?|shares?|settings?)\b", re.I)
-_EXCEPTION = re.compile(r"\b(?:except|apart from|other than|but not|with the exception|excluding)\b", re.I)
+_POSITIVE_ALL = re.compile(r"\b(?:every|all)\s+(?!case\b|(?:two|three|four|five|six|seven|eight|nine|ten|\d+)\b)(?:[\w-]+\s+){0,3}?(?:hosts?|servers?|nodes?|groups?|shares?|accounts?)\b"
+                           r"|\beach\s+(?!case\b)(?:[\w-]+\s+)?(?:hosts?|servers?|nodes?|groups?|accounts?)\b"
+                           r"|\bthe same (?:\w+ ){0,3}?(?:groups?|accounts?|shares?|settings?|queries|names?)\b"
+                           r"|\bthe other (?:\w+ )?(?:hosts?|servers?|nodes?)\b|\ball run\b", re.I)
+_NEGATIVE_ALL = re.compile(r"\bno (?:other |OT |single )?(?:[\w-]+ ){0,2}?(?:hosts?|servers?|nodes?)\b|\bnone of (?:the|its|these)\b", re.I)
+_EXCEPTION = re.compile(r"\b(?:except|apart from|other than|but not|with the exception|excluding|only on|differs?)\b", re.I)
 
 
 def universal_claim_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
-    """UNIVERSAL_CLAIM (warning): the Summary, Story or Text says 'every host', 'all servers', 'each group' or 'the same groups'
-    with no exception named. One host or group that differs makes the sentence wrong (an earlier answer said every local
-    administrator group carries the same four groups while one host had three): say 'most' and name the exceptions."""
+    """UNIVERSAL_CLAIM: the Summary, Story or Text says 'every host', 'all servers', 'each group', 'the same groups', 'the other
+    nodes' with no exception named: ERROR, so the fix round rewrites it (one host or group that differs makes the sentence wrong:
+    say 'most' and name the exceptions). 'No host ...' and 'none of the ...' are WARN: they are right when the card's finding says
+    so ('No host has a proxy configured') and wrong when one host is the exception."""
     out: list[dict] = []
     for q in card.get("questions", []):
         if q.get("kind") not in ("requirement", "narrative"):
             continue
         b = sheet.get(q["id"]) or {}
-        prose = " ".join(x for x in (b.get("summary"), b.get("story"), b.get("text")) if x)
+        prose = " ".join([x for x in (b.get("summary"), b.get("story"), b.get("text")) if x]
+                         + [c for r in b.get("rows", [])[1:] for c in r[1:]])
+        hit = None
         for sent in re.split(r"(?<=[.!?])\s+|\n+", prose):
-            m = _UNIVERSAL.search(sent)
-            if m and not _EXCEPTION.search(sent):
-                out.append(_f("WARN", "UNIVERSAL_CLAIM", q["id"],
-                              f"\"{m.group(0)}\": say 'most' and name the exceptions unless the card lists every one and they all match: \"{sent[:90]}\""))
-                break
+            if _EXCEPTION.search(sent):
+                continue
+            for rx, level in ((_POSITIVE_ALL, "ERROR"), (_NEGATIVE_ALL, "WARN")):
+                m = rx.search(sent)
+                if m and (hit is None or level == "ERROR" and hit[2] == "WARN"):
+                    hit = (m.group(0), sent, level)
+        if hit:
+            out.append(_f(hit[2], "UNIVERSAL_CLAIM", q["id"],
+                          f"\"{hit[0]}\": say 'most' and name the exceptions unless the card lists every one and they all match: \"{hit[1][:90]}\""))
+    return out
+
+
+def prose_name_checks(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None) -> list[dict]:
+    """PROSE_NAME_UNSUPPORTED (error): a host name or IP address in a Summary, Story, Text or table row that no Fact, row or cited
+    evidence of the sheet mentions. The writer added a name the evidence does not give."""
+    matrix = matrix or {}
+    seen = []
+    for b in sheet.values():
+        for f in b.get("facts", []):
+            seen += [f["text"], f.get("scope", "")] + [" ".join(str((matrix.get(i.upper()) or {}).get(k, "")) for k in ("claim", "evidence_excerpt", "source_title"))
+                                                        for i in f["ids"]]
+        for r in b.get("rows", [])[1:]:             # a table row is checked like prose: only the evidence it cites supports it
+            seen += [" ".join(str((matrix.get(i.upper()) or {}).get(k, "")) for k in ("claim", "evidence_excerpt", "source_title"))
+                     for i in _EID.findall(" ".join(r))]
+    allowed = " ".join(seen).upper()
+    from csa_docx.section_card import evidence_address_hosts
+    allowed += " " + " ".join(h for ip, h in evidence_address_hosts(matrix.values()).items() if ip.upper() in allowed)   # the card names these
+    pack = " ".join(r.get("claim", "") for e in card.get("evidence", {}).values() for r in e.get("rows", [])).upper()
+    out: list[dict] = []
+    for q in card.get("questions", []):
+        if q.get("kind") not in ("requirement", "narrative"):
+            continue
+        b = sheet.get(q["id"]) or {}
+        prose = " ".join([x for x in (b.get("summary"), b.get("story"), b.get("text"), b.get("rating_reason")) if x]
+                         + [" ".join(c for c in r[1:]) for r in b.get("rows", [])[1:]])
+        names = sorted({n for n in _HOST.findall(prose) + [m.group(0).split("/")[0] for m in _IP.finditer(prose)]
+                        if not _has_name(allowed, n) and not _has_name(pack, n)})
+        if names:
+            out.append(_f("ERROR", "PROSE_NAME_UNSUPPORTED", q["id"],
+                          f"{', '.join(names[:6])} named in the answer text but in no Fact, table row or cited evidence: "
+                          "name only what a Fact shows, or remove it"))
+    return out
+
+
+_HOST_IP = re.compile(r"\b([A-Z][A-Z0-9]{6,})\b[^.;\n]{0,25}?\b(\d{1,3}(?:\.\d{1,3}){3})\b")
+_STRATUM = re.compile(r"\b([A-Z][A-Z0-9]{6,})\b[^.;\n]{0,60}?\bstratum (\d+)", re.I)
+
+
+def facts_disagree_checks(sheet: dict[str, dict], matrix: dict[str, dict] | None) -> list[dict]:
+    """Two checks on what the Facts say about one host.
+    ADDRESS_NOT_IN_EVIDENCE (error): a Fact gives a host an address that none of its cited evidence shows.
+    FACTS_DISAGREE (warning): two Facts give the same host different addresses or strata, and no Story or Text sentence mentions both
+    values or says they differ. (A host can have several addresses and a clock can change stratum, so this is for the writer to state.)"""
+    matrix = matrix or {}
+    out: list[dict] = []
+    values: dict[tuple[str, str], dict[str, str]] = {}
+    for qid, b in sheet.items():
+        for f in b.get("facts", []):
+            cited = " ".join(str((matrix.get(i.upper()) or {}).get(k, "")) for i in f["ids"] for k in ("claim", "evidence_excerpt"))
+            for host, ip in _HOST_IP.findall(f["text"]):
+                if matrix and cited.strip() and not _has_name(cited, ip):
+                    out.append(_f("ERROR", "ADDRESS_NOT_IN_EVIDENCE", qid,
+                                  f"{host} is given the address {ip}, which none of the cited evidence ({', '.join(f['ids'])}) shows"))
+                values.setdefault((host.upper(), "address"), {}).setdefault(ip, qid)
+            for host, st in _STRATUM.findall(f["text"]):
+                values.setdefault((host.upper(), "stratum"), {}).setdefault(st, qid)
+    prose = " ".join(x for b in sheet.values() for x in (b.get("story"), b.get("text")) if x)
+    sentences = re.split(r"(?<=[.!?])\s+|\n+", prose)
+    for (host, what), vals in values.items():
+        if len(vals) < 2:
+            continue
+        if any(all(v in s for v in vals) or (host in s.upper() and re.search(r"\b(?:differ|disagree|both|two (?:addresses|strata)|several)\w*", s, re.I)) for s in sentences):
+            continue
+        first = sorted(vals.items())[0][1]
+        out.append(_f("WARN", "FACTS_DISAGREE", first,
+                      f"{host} has more than one {what} in the Facts ({', '.join(sorted(vals))}): say that it has several, or "
+                      "state which one applies and why"))
     return out
 
 
@@ -734,6 +817,8 @@ def plain_language_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
         b = sheet.get(q["id"]) or {}
         pieces = [(w, b.get(k) or "") for w, k in (("Summary", "summary"), ("Story", "story"), ("Text", "text"))]
         pieces = [(w, t) for w, t in pieces if t.strip()]
+        if b.get("story") and b.get("text") == b.get("story"):      # parse() keeps the Story as the Text too: lint it once
+            pieces = [(w, t) for w, t in pieces if w != "Text"]
         asks = bool(_ASKS_FOR_HOSTS.search(q.get("text") or q.get("question") or ""))
         for where, t in pieces:
             hosts = sorted(set(_HOSTTOKEN.findall(t)))
@@ -2195,6 +2280,8 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
     findings += direction_checks(sheet, card)
     findings += glossary_checks(sheet, card)
     findings += universal_claim_checks(sheet, card)
+    findings += prose_name_checks(sheet, card, matrix)
+    findings += facts_disagree_checks(sheet, matrix)
     findings += repeated_unknown_checks(sheet, card)
     findings += practice_checks(sheet, card)
     findings += subject_checks(sheet, card)

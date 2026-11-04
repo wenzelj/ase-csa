@@ -2704,6 +2704,25 @@ def _reader_pass(work: Path, cards: Path, key: str, sheet: Path) -> None:
         print(f"{C['y']}Reader pass did not run: {res.get('message', res.get('status'))}{C['0']}", file=sys.stderr)
 
 
+def _rating_pass(work: Path, cards: Path, key: str, sheet: Path, card_json: Path) -> None:
+    """After the reader pass: one call scores each answer block 1 to 10; the last three runs are kept in
+    <work>/ratings/<KEY>.json and shown on the Draft answers page. Never edits the sheet.
+    cli.yaml: answer_rating_pass, answer_rating_cli."""
+    if str(settings().get("answer_rating_pass", "true")).strip().lower() not in ("1", "true", "yes", "on"):
+        return
+    cli = str(settings().get("answer_rating_cli", "claude") or "claude")
+    tmpl = settings().get(f"{cli}_headless")
+    if not tmpl or not shutil.which(shlex.split(tmpl)[0]):
+        return
+    print(f"{C['b']}Rating pass ({cli}): scoring each block 1 to 10...{C['0']}", flush=True)
+    res = _fw_json("csa_docx.rating_pass", "rate", "--work-dir", work, "--sheet", sheet, "--card", card_json, "--key", key,
+                   "--cwd", cards, "--template", tmpl)
+    if res.get("status") == "OK":
+        print(f"{C['b']}Answer rating: average {res.get('average')} (kept in ratings/{key}.json){C['0']}")
+    else:
+        print(f"{C['y']}Rating pass did not run: {res.get('message', res.get('status'))}{C['0']}", file=sys.stderr)
+
+
 def _write_answer_result(path, number, outcome, res, fixes, sheet, note):
     """One readable RESULT file per answer run: the outcome, why, and what is left, so a run never fails only in a log."""
     lines = [f"# csa answer {number}: {outcome}", "", note, "", f"Fix rounds used: {fixes}", f"Sheet: {sheet}", ""]
@@ -3380,6 +3399,7 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
             if draft:
                 _remember_tables(cards, key, card_json, sheet)
                 _reader_pass(work, cards, key, sheet)
+                _rating_pass(work, cards, key, sheet, card_json)
             break
         if rc != 0:
             latest = check()
@@ -3496,6 +3516,7 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
         if draft:
             _remember_tables(cards, key, card_json, sheet)
             _reader_pass(work, cards, key, sheet)
+            _rating_pass(work, cards, key, sheet, card_json)
         _fw_json("csa_docx.answer_cache", "write", sheet, "--card", card_json, "--matrix", matrix,
                  *(["--hosts", hosts_csv] if hosts_csv.is_file() else []), "--json")
     _fw_json("csa_docx.fact_store", "add", work, sheet, "--card", card_json)
