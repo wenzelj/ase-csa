@@ -313,6 +313,27 @@ def evidence_address_hosts(rows) -> dict[str, str]:
     return {ip: next(iter(h)) for ip, h in seen.items() if len(h) == 1}
 
 
+_HOST_RUN = re.compile(r"\b(?:[A-Z]{3}[A-Z]{3}[A-Z]{3}\d{3})(?:(?:, | and | and the )[A-Z]{3}[A-Z]{3}[A-Z]{3}\d{3})+\b")
+_ONE_HOST = re.compile(r"[A-Z]{3}[A-Z]{3}[A-Z]{3}\d{3}")
+
+
+def role_groups(line: str, host_roles: dict[str, str]) -> str:
+    """'Primary DNS server on MOTPRDCLU101, MOTPRDCLU103 and ROTPRDLOG102: X' -> 'Primary DNS server on 2 SQL Server cluster nodes and
+    1 OT TETRA Log Server: X'. A run of hosts that the register knows by role is shown by role and count, so a slot finding is read as
+    what a kind of machine does, not as a list of machines (the host names stay in the Host register). A run with a host the register
+    does not know is left as it is."""
+    def swap(m: re.Match) -> str:
+        names = _ONE_HOST.findall(m.group(0))
+        roles = [host_roles.get(n) for n in names]
+        if not all(roles):
+            return m.group(0)
+        counts: dict[str, int] = {}
+        for r in roles:
+            counts[r] = counts.get(r, 0) + 1
+        return " and ".join(f"{r} (x{n})" for r, n in counts.items())
+    return _HOST_RUN.sub(swap, line)
+
+
 def name_addresses(claim: str) -> str:
     """'10.40.228.180 opened ...' -> '10.40.228.180 (ROKPRDOPS110) opened ...' for every address of a host with a name. The
     matrix is not changed: only the card shows it, so the writer cannot take an address for another host of the same role."""
@@ -499,6 +520,34 @@ def superseded(row: dict, latest: dict[tuple[str, str], tuple[str, list[str]]]) 
     return sorted(newer)
 
 
+# Subject-area labels the matrix uses for one topic: older rows were written with another spelling of the same area.
+AREA_ALIASES = [
+    {"identity_and_authentication", "identity_authentication", "identity_and_access"},
+    {"internet_and_smtp", "internet_access_communications"},
+    {"asset_inventory", "general_asset_inventory"},
+    {"infrastructure_dependencies", "infrastructure_and_hosting"},
+    {"isolation_and_resilience", "availability_and_resilience"},
+    {"vendor_access", "operations_and_support"},
+]
+
+
+def topic_areas(title: str) -> set[str]:
+    """The matrix subject areas that belong to a subsection: the area its topic frame names, with every spelling of it. A topic whose
+    title is not spelled like its area ("Patch & Lifecycle Management" and patch_and_lifecycle) still finds its own rows."""
+    try:
+        from csa_docx import topic_frames
+        area = (topic_frames.frame_for(title) or {}).get("area") or ""
+    except Exception:
+        area = ""
+    if not area:
+        return set()
+    out = {area}
+    for group in AREA_ALIASES:
+        if area in group:
+            out |= group
+    return out
+
+
 def evidence_pack(node: dict, qs: list[dict], workspace: Path | None, extra_searches: dict | None = None,
                   exclude: tuple[str, ...] = (), skip: frozenset = frozenset(), terms: dict | None = None) -> dict:
     """{question id: {"rows", "cut", "candidates", "searched"}}, gathered before the AI starts.
@@ -522,8 +571,10 @@ def evidence_pack(node: dict, qs: list[dict], workspace: Path | None, extra_sear
     latest = _latest_capture(workspace)
     newer_of = {r["evidence_id"].upper(): superseded(r, latest) for r in rows}
     topic = _norm(node["title"])
+    areas = topic_areas(node["title"])
     own = [r for r in rows if r["evidence_id"].upper() not in rejected and r["evidence_id"].upper() not in skip and (
-        topic and (topic in _norm(r.get("section", "")) or _norm(r.get("csa_area", "")) in (topic, topic.replace(" and ", " "))))]
+        topic and (topic in _norm(r.get("section", "")) or _norm(r.get("csa_area", "")) in (topic, topic.replace(" and ", " "))
+                   or (r.get("csa_area") or "") in areas))]
     for q in qs:
         if q["kind"] == "comment":
             continue
@@ -981,7 +1032,7 @@ def note_candidates(node: dict, workspace: Path | None, reg: dict | None, rows: 
 
 
 _PEER_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9-]*\d[A-Za-z0-9-]*$")
-_ZONE_QUESTION = re.compile(r"\bzone\b|side of (?:the )?(?:OT|IT)\b|boundary|hosted in", re.I)
+_ZONE_QUESTION = re.compile(r"\bzones?\b|side of (?:the )?(?:OT|IT)\b|boundary|\bhosted\b|inside (?:the )?OT|\bsubnets?\b", re.I)
 
 
 def peer_identity(fr: dict | None, workspace: Path | None) -> dict:
@@ -1047,19 +1098,54 @@ def peer_identity(fr: dict | None, workspace: Path | None) -> dict:
                       "zone": zone or "zone not recorded", "site": (r.get("site") or "").strip() or "site not recorded",
                       "how": how, "known": identity})
     unknown = [h["host"] for h in hosts if not h["known"]]
+    known = [h["host"] for h in hosts if h["known"]]
+    entity_ids: list[str] = []
+    entity_lines: list[str] = []
+    servers = [h["host"] for h in hosts if not (reg.get(h["host"]) or {}).get("capture")]      # the servers the settings name, not the captured hosts
+    if servers:
+        from csa_docx import network_facts
+        try:
+            on_card = topic_frames.all_ids(fr)
+        except (KeyError, TypeError):
+            on_card = set()
+        try:
+            erows = network_facts.server_rows(work, servers, skip=on_card)
+        except OSError:
+            erows = []
+        if erows:
+            entity_ids = [r["id"] for r in erows]
+            entity_lines = ["", "## Evidence about the servers named above (who they are and where they sit)", "",
+                            "Use these rows for what a server is, its address, its AD site and which domain controller answered. They are not "
+                            "about what other hosts do.", ""]
+            entity_lines += [f"- {r['id']} VERIFIED: {name_addresses(r['claim'])}" for r in erows]
+    # One host the register does not hold (a stray name in a setting) must not hide the zone of the servers it does hold.
     answered = [s["id"] for s in fr.get("slots", [])
-                if not unknown and _ZONE_QUESTION.search(s.get("question", ""))]
+                if known and _ZONE_QUESTION.search(s.get("question", ""))]
     lines = ["", "## Hosts named as sources or peers (identity from the host register)", "",
              "Each host below is the value of one of this topic's host settings:", ""]
     for h in hosts:
         lines.append(f"- {h['host']}: role {h['role']}; zone {h['zone']}; site {h['site']}; {h['how']}")
+    lines += entity_lines
+    net_ids: list[str] = []
     if answered:
-        lines += ["", "Answered by the host register, not open: " + ", ".join(answered)
-                  + ". Do not write a QUESTION: line for the zone of these hosts."]
+        from csa_docx import network_facts
+        nf = network_facts.NetworkFacts(work)
+        shown = [h for h in known if nf.host(h)["known"] and nf.host(h)["zone"] and not (reg.get(h) or {}).get("capture")]   # the servers, not the captured hosts
+        if not shown:                 # the register places none of the servers: nothing is answered
+            answered = []
+        else:
+            net_ids = sorted({nf.host(h)["evidence"] for h in shown if nf.host(h)["evidence"] and not nf.host(h)["assumed"]})
+            lines += ["", "## Network answers (where the servers above sit, from the host register)", "",
+                      "These settle where the hosts listed here sit (slots " + ", ".join(answered) + "); any other host the slots name stays open. Write a Fact from each line that names an evidence row, with that "
+                      "row's ID and basis `stated`. Do not write a QUESTION: line for what a line answers. Where a line says the subnet "
+                      "is not recorded, write that as a QUESTION: line.", ""]
+            lines += [f"- {nf.line(h)}" for h in shown]
+            lines += ["", "Answered by the host register for the hosts above, not open: " + ", ".join(answered)
+                      + ". Do not write a QUESTION: line for the zone of these hosts."]
     if unknown:
         lines += ["", "Not in the host register (open question, Discovery Required): " + ", ".join(unknown)
                   + ". Write a QUESTION: line asking for the role and zone of each."]
-    return {"hosts": hosts, "lines": lines, "answered": answered, "open": unknown}
+    return {"hosts": hosts, "lines": lines, "answered": answered, "open": unknown, "network_ids": net_ids, "entity_ids": entity_ids}
 
 
 SHARED_HEAD = "## Shared enterprise services (other applications in the estate)"
@@ -1395,7 +1481,8 @@ def must_address_lines(items: list[dict], groups: list[dict] | None = None) -> l
     story_groups the findings are listed group by group, in the order the Story and the Facts follow."""
     if not items:
         return []
-    out = ["  Findings this block must cover (each is cited here or named in a QUESTION: line; SLOT_NOT_ANSWERED):"]
+    out = ["  Evidence findings for this block (use the ones that settle a condition, grouped by role: say what most hosts do and name the "
+           "exceptions. You need not cite every finding or list hosts one by one; a finding that settles nothing may be left out):"]
 
     def line(x: dict) -> str:
         ids = f" ({', '.join(x['ids'])})" if x["ids"] else ""
@@ -1585,16 +1672,18 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
         lines.append(f"- {q['id']} {q['text']}")
         if q.get("columns"):
             lines.append(f"  Columns: {' | '.join(q['columns'])}")
-        lines += must_address_lines(owed.get(q["id"], []), (fr or {}).get("story_groups"))
-        lines += db_lines.get(q["id"], [])
-        if q.get("kind") == "requirement" and q.get("req_id"):
+        if q.get("kind") == "requirement" and q.get("req_id"):       # the requirement and its conditions come first: they are the answer
             rtext = ""
             for p in node.get("parts", []):
                 if p.get("kind") == "requirement":
                     for r in p.get("requirements", []):
                         if r.get("id") == q["req_id"]:
                             rtext = r.get("text", "")
+            lines += ["  Answer the requirement first, in the system's terms: what is in place for this topic, which condition below it meets or "
+                      "misses, and what is not known. The findings that follow are the evidence for that answer, not the answer."]
             lines += condition_lines(q["req_id"], rtext)
+        lines += must_address_lines(owed.get(q["id"], []), (fr or {}).get("story_groups"))
+        lines += db_lines.get(q["id"], [])
         if q.get("req_id") and practice_view:
             from csa_docx.practice import card_lines as practice_card_lines
             lines += practice_card_lines(q["req_id"], practice_view)
@@ -1652,10 +1741,30 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
     frame = None
     if fr:
         from csa_docx import topic_frames
-        lines += topic_frames.card_lines(fr)
+        frame_lines = topic_frames.card_lines(fr)
+        lines += frame_lines
         peers = peer_identity(fr, workspace) if evidence else {"hosts": [], "lines": [], "answered": [], "open": []}
         lines += peers["lines"]
-        frame = {"peer_identity": peers["hosts"], "register_answered": peers["answered"],"slots": [s["id"] for s in fr["slots"]], "ids": sorted(topic_frames.all_ids(fr)),
+        if evidence and workspace:       # a peer the findings show only by address (the far end of a connection) is a server too
+            seen_hosts = {h["host"] for h in peers["hosts"]}
+            by_addr = {_IP_NAMES[ip] for ip in re.findall(r"(?<![\d.])(\d{1,3}(?:\.\d{1,3}){3})(?![\d.])", "\n".join(frame_lines)) if ip in _IP_NAMES}
+            captured = {h.upper() for h in (_file_rows(Path(workspace) / "csa-work", "hosts/hosts.csv") and
+                                            [r["host"] for r in _file_rows(Path(workspace) / "csa-work", "hosts/hosts.csv") if (r.get("capture") or "").strip()])}
+            register = {r["host"].strip().upper() for r in _file_rows(Path(workspace) / "csa-work", "hosts/hosts.csv") if (r.get("host") or "").strip()}
+            by_name = {h for h in re.findall(r"\b[A-Z]{3}PRD[A-Z]{3}\d{3}\b", "\n".join(frame_lines)) if h in register}     # named in the findings
+            extra = sorted(h for h in (by_addr | by_name) if h not in seen_hosts and h not in captured)
+            if extra:
+                from csa_docx import network_facts
+                try:
+                    on_card = set(topic_frames.all_ids(fr)) | set(peers.get("entity_ids", []))
+                    more = network_facts.server_rows(Path(workspace) / "csa-work", extra, skip=on_card)
+                except (OSError, KeyError, TypeError):
+                    more = []
+                if more:
+                    lines += ["", "## Evidence about the peers named by address (who they are)", ""] + \
+                             [f"- {r['id']} VERIFIED: {name_addresses(r['claim'])}" for r in more]
+                    peers["entity_ids"] = list(peers.get("entity_ids", [])) + [r["id"] for r in more]
+        frame = {"peer_identity": peers["hosts"], "register_answered": peers["answered"], "network_ids": peers.get("network_ids", []), "entity_ids": peers.get("entity_ids", []), "slots": [s["id"] for s in fr["slots"]], "ids": sorted(topic_frames.all_ids(fr)),
                  "coverage": topic_frames.coverage_targets(fr), "must_address": owed,
                  "context_ids": topic_frames.context_ids(fr), "zone_conflicts": fr.get("zone_conflicts", []),
                  "strict": fr.get("strict", False)}
@@ -1766,6 +1875,8 @@ def main(argv: list[str] | None = None) -> int:
         if terms.strip():
             extra.setdefault(qid.strip(), []).append(terms.strip())
     res = card(node, spec, a.workspace, evidence=not a.no_evidence, extra_searches=extra, exclude=tuple(a.exclude))
+    roles_of = {h: g["role"] for g in ((res.get("host_register") or {}).get("groups") or []) for h in g["hosts"]}
+    res["text"] = "\n".join(role_groups(l, roles_of) if roles_of and re.match(r"\s*- S\d+:", l) else l for l in res["text"].split("\n"))
     res["text"] = "\n".join(name_addresses(l) if (l.lstrip().startswith(("- S", "- [", "-  S")) or re.match(r"\s*- \d+\.\d+\.\d+\.\d+ ", l)) or "opens connections" in l else l
                             for l in res["text"].split("\n"))
     if a.out:

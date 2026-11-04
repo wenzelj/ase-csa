@@ -436,3 +436,20 @@ def test_an_address_cut_short_is_not_found_inside_the_longer_one():
     matrix = {"E-1": {"claim": "ROTPRDSRV122 (10.40.228.97) is the primary DNS server"}}
     sheet = {"B1": _block(facts=[("The primary DNS server ROTPRDSRV122 (10.40.228.9) serves the hosts. (E-1)", ["E-1"])])}
     assert [f["code"] for f in A.facts_disagree_checks(sheet, matrix)] == ["ADDRESS_NOT_IN_EVIDENCE"]
+
+
+def test_a_slot_finding_shows_a_run_of_hosts_by_role_and_leaves_unknown_hosts_alone():
+    from csa_docx import section_card as S
+    roles = {"MOTPRDCLU101": "SQL Server cluster node", "MOTPRDCLU103": "SQL Server cluster node", "ROTPRDLOG102": "OT TETRA Log Server"}
+    line = "- S1: Primary DNS server on MOTPRDCLU101, MOTPRDCLU103 and ROTPRDLOG102: ROTPRDSRV122 (E-1)"
+    assert S.role_groups(line, roles) == "- S1: Primary DNS server on SQL Server cluster node (x2) and OT TETRA Log Server (x1): ROTPRDSRV122 (E-1)"
+    unknown = "- S1: Secondary on MOTPRDCLU101 and ZZZPRDZZZ999: X"
+    assert S.role_groups(unknown, roles) == unknown
+
+
+def test_a_topic_finds_its_rows_under_every_spelling_of_its_subject_area():
+    from csa_docx import section_card as S
+    assert "patch_and_lifecycle" in S.topic_areas("Patch & Lifecycle Management")
+    assert {"identity_and_authentication", "identity_authentication", "identity_and_access"} <= S.topic_areas("Identity & Authentication")
+    assert "internet_access_communications" in S.topic_areas("Internet Access & Communications (Proxy / SMTP)")
+    assert S.topic_areas("A heading no frame knows") == set()

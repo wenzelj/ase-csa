@@ -251,7 +251,7 @@ HARD_CODES = {"CROSS_PROJECT_ONLY", "NOTE_TOO_LONG", "NOTE_NONE_AND_TEXT", "NOTE
 #: application (IAMPS consumes what this system produces: the text may say so).
 RELAXED_HARD = {"CROSS_PROJECT_ONLY", "QUESTION_MISSING", "EMPTY_ANSWER", "FACT_NO_EVIDENCE", "UNKNOWN_EVIDENCE",
                 "RATING_INVALID", "COLUMNS", "ROW_WIDTH", "NO_ROWS", "BACKGROUND_AS_EVIDENCE",
-                "ZONE_CONTRADICTED", "ISOLATION_WRONG_SIDE", "ATTEMPT_AS_ESTABLISHED",
+                "ZONE_CONTRADICTED", "QUESTION_ANSWERED_BY_REGISTER", "ZONE_FACT_NOT_BACKED", "NETWORK_ANSWER_UNUSED", "ISOLATION_WRONG_SIDE", "ATTEMPT_AS_ESTABLISHED",
                 "SUMMARY_NO_RATING_BASIS", "SUMMARY_STORY_OVERLAP", "QUESTION_IN_SUMMARY",
                 "STORY_NO_EVIDENCE_PATH", "STORY_STARTS_WITH_RATING", "STORY_RESTATES_RATING",
                 "STORY_SENTENCE_LONG", "STORY_LABEL", "STORY_PHRASE_REPEAT", "STORY_NOT_PARAGRAPHED", "STORY_SAME_OPENING",
@@ -266,12 +266,12 @@ FATAL_CODES = {"NO_SHEET", "QUESTION_MISSING", "EMPTY_ANSWER", "FACT_NO_EVIDENCE
 #: rewritten for any reason is sent its content warnings too.
 CONTENT_CODES = {"PART_MISATTRIBUTED", "PART_NOT_NAMED", "SLOT_NOT_ANSWERED", "SOURCE_DOWNGRADE", "CAPTURE_DROPPED",
                  "CAPTURE_LEFT_OUT", "EVIDENCE_DROPPED", "SUBJECT_NOT_THIS_SYSTEM", "FLOW_NOT_COVERED",
-                 "FRAME_UNCOVERED", "CITATION_OFF_TOPIC", "GAP_AS_FACT", "UNKNOWN_BUNDLED", "DIGEST_UNUSED", "BASIS_NOT_OBSERVED", "ZONE_CONTRADICTED",
+                 "FRAME_UNCOVERED", "CITATION_OFF_TOPIC", "GAP_AS_FACT", "UNKNOWN_BUNDLED", "DIGEST_UNUSED", "BASIS_NOT_OBSERVED", "ZONE_CONTRADICTED", "QUESTION_ANSWERED_BY_REGISTER",
                  "ATTEMPT_AS_ESTABLISHED", "ISOLATION_WRONG_SIDE",
                  "PRACTICE_NOT_ADDRESSED", "PRACTICE_ATTRIBUTION_DROPPED", "APPLICATION_ZONE_CLAIM", "QUESTION_BUNDLED",
                  "CROSS_PROJECT_ONLY", "BACKGROUND_AS_EVIDENCE", "FACT_OFF_TOPIC", "DRAWBRIDGE_FUNCTION_MISSING",
                  "REASON_REPEATS_SUMMARY", "STORY_ENDS_BY_REPEATING", "REASON_DIFFERS_FROM_SUMMARY", "ABSENCE_WITHOUT_FACT", "DIRECTION_ASSUMED", "REPEATED_UNKNOWN", "UNIVERSAL_CLAIM", "PROSE_NAME_UNSUPPORTED", "ADDRESS_NOT_IN_EVIDENCE", "FACTS_DISAGREE",
-                 "HOST_IN_PROSE", "JARGON_SHORTHAND"}
+                 "HOST_IN_PROSE", "JARGON_SHORTHAND", "NETWORK_ANSWER_UNUSED", "ZONE_FACT_NOT_BACKED"}
 
 
 def tier_of(finding: dict) -> str:
@@ -1228,6 +1228,74 @@ def zone_contradictions(sheet: dict[str, dict], card: dict) -> list[dict]:
     return out
 
 
+_ASKS_WHERE = re.compile(r"\b(?:inside|within|outside|in)\b[^?]{0,20}\bOT\b|\bOT zone\b|\bwhich zone\b|\bzone\b|\bhosted\b|\bsits?\b|\bwhich side\b", re.I)
+_SERVER_WORDS = re.compile(r"\b(?:dns|time|domain controller|name|ntp)\b[^?]{0,12}\b(?:servers?|sources?|controllers?)\b|\bdomain controllers?\b", re.I)
+_IN_OT = re.compile(r"\b(?:hosted |sits? |located )?(?:in|inside|within) (?:the )?OT\b|\bOT[- ]hosted\b", re.I)
+_OUTSIDE_OT = re.compile(r"\b(?:rather than|instead of|not|outside)\b[^.]{0,30}\bOT\b", re.I)
+
+
+def register_answer_checks(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None = None) -> list[dict]:
+    """QUESTION_ANSWERED_BY_REGISTER (hard): a QUESTION: line asks where a server sits (inside OT, which zone) when the host register already
+    places the servers the card names (the card's "Network answers"). ZONE_CONTRADICTED (hard): a sentence about those servers puts them outside OT
+    although the register puts them in OT. A zone the register only assumes still contradicts "outside OT", but a question about it is allowed."""
+    fr = card.get("frame") or {}
+    out0: list[dict] = []
+    for k, b in sheet.items():                  # a Fact that places hosts in OT may name only the hosts its cited rows are about
+        if k.startswith("F") or not matrix:
+            continue
+        for f in b.get("facts", []):
+            if not _IN_OT.search(f["text"]) or _OUTSIDE_OT.search(f["text"]):
+                continue
+            cited = " ".join(str((matrix.get(i.upper()) or {}).get("claim", "")) for i in f["ids"]).upper()
+            if not cited.strip():
+                continue
+            extra = sorted({h for h in _HOST.findall(f["text"]) if h.upper() not in cited})
+            if extra:
+                out0.append(_f("ERROR", "ZONE_FACT_NOT_BACKED", k, f"this Fact places {', '.join(extra)} in OT, but the row it cites "
+                               f"({', '.join(f['ids'])}) says that of other hosts only: leave {', '.join(extra)} out, or ask where it sits as a QUESTION: line: "
+                               f"\"{f['text'][:140]}\""))
+    peers = [h for h in fr.get("peer_identity", []) if h.get("known") and str(h.get("zone", "")).upper().startswith("OT")]
+    if not peers or not fr.get("register_answered"):
+        return out0
+    names = {h["host"].upper() for h in peers}
+    confirmed = {h["host"].upper() for h in peers if not str(h.get("how", "")).startswith("assumed")}
+    out: list[dict] = list(out0)
+    wanted = {i.upper() for i in fr.get("network_ids", [])}
+    used = {i.upper() for k, b in sheet.items() if not k.startswith("F") for f in b["facts"] for i in f["ids"]}
+    if wanted and not (wanted & used):
+        first = next((k for k in sheet if not k.startswith("F")), None)
+        out.append(_f("ERROR", "NETWORK_ANSWER_UNUSED", first,
+                      f"the card's Network answers place the servers ({', '.join(sorted(wanted))}) but no Fact cites that row: state where the servers "
+                      "sit as a Fact with that ID and basis stated, in the requirement block"))
+    for k, b in sheet.items():
+        if k.startswith("F"):
+            continue
+        for u in b.get("unknown", []):
+            if _ASKS_WHERE.search(u) and (_SERVER_WORDS.search(u) or any(n in u.upper() for n in confirmed)):
+                out.append(_f("ERROR", "QUESTION_ANSWERED_BY_REGISTER", k,
+                              "the host register already says where the servers sit (see Network answers on the card): state it from the "
+                              f"register row with its ID, and ask only for what is not recorded, such as the subnet: \"{u[:140]}\""))
+        net_ids = {i.upper() for i in fr.get("network_ids", [])}
+        for f in b["facts"]:                           # a Fact that places a register server in OT rests on the register's row
+            hit = [n for n in names if n in f["text"].upper()]
+            if hit and _IN_OT.search(f["text"]) and not _OUTSIDE_OT.search(f["text"]):
+                bad = [n for n in hit if n not in confirmed]
+                if bad:
+                    out.append(_f("ERROR", "ZONE_FACT_NOT_BACKED", k, f"{', '.join(bad)} is only assumed to be in OT in the host register (no evidence row): "
+                                  f"do not state it as a Fact, ask for the confirmation as a QUESTION: line: \"{f['text'][:140]}\""))
+                elif net_ids and not ({i.upper() for i in f["ids"]} & net_ids):
+                    out.append(_f("ERROR", "ZONE_FACT_NOT_BACKED", k, f"this Fact places {', '.join(hit)} in OT but cites none of the register's rows "
+                                  f"({', '.join(sorted(net_ids))}): cite the row that says so, with basis stated: \"{f['text'][:140]}\""))
+        texts = [b.get("text") or "", b.get("summary") or "", b.get("story") or ""] + [f["text"] for f in b["facts"]] + [" | ".join(r) for r in b["rows"]]
+        for sent in (x for t in texts for x in re.split(r"(?<=[.!?])\s+", t)):
+            if (_SERVER_WORDS.search(sent) or any(n in sent.upper() for n in names)) and _OUTSIDE_OT.search(sent):
+                out.append(_f("ERROR", "ZONE_CONTRADICTED", k,
+                              "the host register puts these servers in OT, but this says otherwise: "
+                              f"\"{sent[:170]}\". Write that they are hosted in OT, with the register row's ID"))
+                break
+    return out
+
+
 def flow_coverage(sheet: dict[str, dict], card: dict) -> list[dict]:
     """FLOW_NOT_COVERED (an error when the frame is "strict", else a warning): every flow that crosses the OT boundary (the frame's coverage targets) is cited in a
     requirement or narrative block (Drawbridge Impact), or named on an QUESTION: line there; a table row alone does not
@@ -1966,6 +2034,8 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
     # for length, not relevance, so citing one is allowed (UNKNOWN_EVIDENCE still checks the matrix)
     allowed |= {i.upper() for p in card.get("evidence", {}).values() for i in p.get("cut", [])}
     allowed |= {i.upper() for p in card.get("evidence", {}).values() for i in p.get("digest_ids", [])}
+    allowed |= {i.upper() for i in (card.get("frame") or {}).get("network_ids", [])}      # the register's own rows (Network answers)
+    allowed |= {i.upper() for i in (card.get("frame") or {}).get("entity_ids", [])}       # the rows about the servers the settings name
     allowed |= {i.upper() for i in (new_ids or set())}
     allowed |= {i.upper() for k in card.get("keep", []) for i in k.get("evidence_ids", [])}
     allowed |= {i.upper() for i in (card.get("frame") or {}).get("ids", [])}   # the analysis frame's findings
@@ -2282,6 +2352,7 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
     findings += universal_claim_checks(sheet, card)
     findings += prose_name_checks(sheet, card, matrix)
     findings += facts_disagree_checks(sheet, matrix)
+    findings += register_answer_checks(sheet, card, matrix)
     findings += repeated_unknown_checks(sheet, card)
     findings += practice_checks(sheet, card)
     findings += subject_checks(sheet, card)

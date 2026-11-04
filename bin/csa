@@ -4272,6 +4272,11 @@ def cmd_sync(a):
 def cmd_hosts(a):
     """Host-centred view of the evidence: register, facts per host, host-to-host links."""
     p = project(a.project)
+    if a.action in ("net-evidence", "net-check"):       # the network register: mark confirmed rows reviewed / list contradictions
+        argv = ["--work-dir", str(local_path(p["work_dir"])), "--evidence" if a.action == "net-evidence" else "--check"]
+        if a.action == "net-evidence" and not getattr(a, "dry_run", False):
+            argv.append("--apply")
+        return subprocess.call([framework_python(), "-m", "csa_docx.network_facts", *argv], cwd=str(FRAMEWORK))
     argv = [a.action] + ([a.host] if a.host else []) + ["--work-dir", str(local_path(p["work_dir"])),
                                                         "--workspace", str(local_path(p["project_root"]))]
     if getattr(a, "dry_run", False):
@@ -5735,7 +5740,7 @@ def main(argv=None) -> int:
     st = ps.add_parser("status", help="report practice question and observation lifecycle")
     st.add_argument("section", nargs="?"); st.add_argument("--json", action="store_true")
     s = sp("hosts", cmd_hosts, help="host register, facts per host and host-to-host links (build | list | show HOST | links [HOST] | group --attr ... | roles [--fix])")
-    s.add_argument("action", nargs="?", default="list", choices=["build", "list", "show", "links", "group", "graph", "unresolved", "system", "evidence", "roles"])
+    s.add_argument("action", nargs="?", default="list", choices=["build", "list", "show", "links", "group", "graph", "unresolved", "system", "evidence", "roles", "net-evidence", "net-check"])
     s.add_argument("host", nargs="?"); s.add_argument("--attr", action="append"); s.add_argument("--system")
     s.add_argument("--dry-run", action="store_true")
     s.add_argument("--json", action="store_true")

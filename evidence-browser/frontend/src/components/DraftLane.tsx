@@ -21,11 +21,19 @@ export function ratingTitle(r: DraftRating): string {
 export function RatingCell({ rating }: { rating?: DraftRating | null }) {
   if (!rating) return <>—</>;
   const latest = rating.runs[rating.runs.length - 1];
-  return <span className="draft-rating" title={ratingTitle(rating)}>
+  const why = Object.entries(rating.reasons || {}).filter(([, v]) => v);
+  const tips = Object.entries(rating.improve || {});
+  return <span className="draft-rating" tabIndex={0} aria-label={ratingTitle(rating)}>
     <strong className={rating.worse.length ? "draft-worse" : ""}>{rating.latest.toFixed(1)}</strong>
     <small>avg {rating.average.toFixed(1)} of last {rating.runs.length}</small>
     <span className="draft-rating-blocks">{Object.entries(latest.blocks).map(([b, v]) =>
       <span key={b} className={rating.worse.includes(b) ? "draft-worse" : ""}>{b} {v.toFixed(1)}</span>)}</span>
+    <span className="draft-rating-pop" role="tooltip">
+      <b>Kept runs</b>
+      {rating.runs.map(x => <span key={x.at}>{x.at.slice(0, 10)}  avg {x.average}  ({Object.entries(x.blocks).map(([b, v]) => `${b} ${v}`).join(", ")})</span>)}
+      {why.length > 0 && <><b>Why each block scored as it did</b>{why.map(([b, v]) => <span key={b}>{b}: {v}</span>)}</>}
+      {tips.length > 0 && <><b>Suggested improvements</b>{tips.flatMap(([b, ts]) => ts.map(t => <span key={b + t}>{b}: {t}</span>))}</>}
+    </span>
   </span>;
 }
 

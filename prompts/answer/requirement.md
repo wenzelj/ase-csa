@@ -1,3 +1,20 @@
+## Answer the requirement
+
+The subsection has four parts. Each has its own job; the requirement and its conditions set the topic.
+
+- **Current State cell (the Summary) and Rating.** The system's current state against the requirement, as the system named on the card: what it has in place for the topic, then `The requirement is <Rating> because ...` naming the condition that decides it.
+- **Discovery Information story (the Story).** The account of how the system got that rating. Go through the conditions on the card in order and say what the discovery shows for each, as plain observation: no verdict and no rating in the Story, because the Summary carries those. End with what is not known and who could answer it. Hosts and settings appear only as evidence for a condition. Isolation belongs in the Drawbridge Impact.
+- **Discovery Information table (a table block).** Discovery data about the topic that the role table does not already show: one row per point. See the table rules.
+- **Drawbridge Impact (a narrative block).** How losing the topic during isolation affects the application, function by function. See the narrative rules.
+
+For the Summary, the Story and the Facts:
+
+- Write from the point of view of the system on the card. The first sentence of the Summary and of the Story is about the system, in the terms of the requirement, never about a host or a role group.
+- Name machines in the Summary, Story and Text by role and site ("the Rockhampton DNS server"), not by host name or address, which belong in tables and Fact braces unless the question asks for them.
+- Write about the system's practice, not about each host. Say what most hosts do and name the exceptions by role. Do not list hosts one by one, and do not describe a host's settings unless that setting decides a condition.
+- Every Story paragraph is about the topic the requirement names, and each answers a condition or states what is unknown. A paragraph that only describes hosts, roles or settings belongs in the role table.
+- Use the findings that settle a condition; leave out the rest.
+
 ## Requirement blocks
 
 - Requirement blocks judge the organisation's practice: whether the tool or process exists (name it, or say none was identified), and rate on that.
@@ -8,11 +25,10 @@
 - **Summary** is the Current State table cell: say what is in place, then `The requirement is <Rating> because ...` naming the deciding condition. Keep it short and plain: no discovery questions, host inventories or evidence trail.
 - **Story** is read under the requirement title in Discovery Information by someone who has not seen the evidence. Tell it as an account a person can follow from start to finish, one `Story:` line per paragraph, in this order:
   1. What is true now, in plain words: the answer to the requirement's question, without the rating.
-  2. How it works, from the evidence: which parts, which connections, what was seen.
-  3. What that means for the system when OT is isolated from IT: what depends on what.
-  4. What is not known, and who could answer it (the network owner, the application owner), in words the Summary has not used.
+  2. How it works, from the evidence: for each condition of the requirement, what the discovery shows and whether it settles that condition.
+  3. What is not known, and who could answer it (the network owner, the application owner), in words the Summary has not used.
   Use fewer paragraphs when there is less to say, and merge related points instead of adding paragraphs. Each paragraph covers one point and its sentences follow on from one another; never give each sentence its own line.
-  - The card lists the findings under "Story paragraph 1", "Story paragraph 2" and so on. Write one paragraph for each, in that order, using only the findings under it.
+  - The card may list the findings under "Story paragraph 1", "Story paragraph 2" and so on. Use them to order the paragraphs, but let the requirement decide what each paragraph says: drop a paragraph whose findings settle no condition.
   - The last paragraph also says what the evidence leaves unknown, including the gap that decided the rating (for example, no documented fallback). Add a paragraph for it only if that keeps the Story at 4 or fewer. A `QUESTION:` line, if you write one, stays a separate line.
   - If the card has no such headings, group by point: where the data is held; how it crosses IT and OT or who else uses it; what protects it; what is unknown.
   - Leave out service settings (start mode, helper services) unless they decide the rating.

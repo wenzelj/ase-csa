@@ -58,7 +58,8 @@ def test_host_without_register_entry_is_not_recorded(tmp_path, monkeypatch):
     res = _run(monkeypatch, _ws(tmp_path, "ROTPRDSRV122, IPTPRDSRV224"))
     by = {h["host"]: h for h in res["hosts"]}
     assert by["IPTPRDSRV224"]["how"] == "not recorded" and by["IPTPRDSRV224"]["zone"] == "zone not recorded"
-    assert res["open"] == ["IPTPRDSRV224"] and res["answered"] == []
+    # one host the register does not hold stays open, but it must not hide the zone of the server it does hold
+    assert res["open"] == ["IPTPRDSRV224"] and res["answered"] == ["S3"]
     assert any("Discovery Required" in x for x in res["lines"])
 
 
