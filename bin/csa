@@ -3536,7 +3536,8 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
     cf_new = not cf.is_file()
     for attempt in (1, 2):
         out = _fw_json("csa_docx.answer_sheet", "render", sheet, "--card", card_json, "--docx", docx, "--section", sec,
-                       "--change-file", cf, "--app", _app_name(p, reviews))
+                       "--change-file", cf, "--app", _app_name(p, reviews),
+                       *(["--replace-bullets"] if draft else []))
         if out.get("status") == "ERROR":
             die(f"render failed: {out.get('message')}")
         if not out.get("scaffold") or attempt == 2 or (draft and getattr(a, "no_apply", False)):

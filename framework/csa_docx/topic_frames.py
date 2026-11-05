@@ -30,7 +30,8 @@ from csa_docx import host_settings
 FRAMES = Path(__file__).resolve().parents[2] / "references" / "topic-frames"
 MATRIX_SCRIPT = Path(__file__).resolve().parents[2] / "skills" / "csa-evidence-matrix" / "scripts" / "evidence_matrix.py"
 MAX_HOSTS_PER_ROW = 6
-LABELS = {"storage.database": "Database service", "storage.shares": "Shares", "transfer.tools": "File transfer tools installed",
+LABELS = {"gpo.applied": "Applied Group Policy objects", "gpo.not_applied": "Group Policy objects linked but not applied",
+          "storage.database": "Database service", "storage.shares": "Shares", "transfer.tools": "File transfer tools installed",
           "transfer.removable": "Removable storage policy", "transfer.proxy": "Proxy setting",
           "storage.share_access": "Who may open the shares", "transfer.smb_sessions": "File shares the host has open on other servers",
           "storage.backup_windows": "Windows Server Backup history",
@@ -145,6 +146,42 @@ PLAIN_FINDINGS = {
 def _finding_claim(label: str, attr: str, value: str, hosts: str) -> str:
     plain = PLAIN_FINDINGS.get((attr, value))
     return plain.format(hosts=hosts) if plain else f"{label} on {hosts}: {value}"
+
+
+def register_names(work_dir: Path, attr: str) -> list[str]:
+    """Every member of a list-valued host setting across all hosts (the frame's ``register_lists``): the register must have a row
+    for each, so none is left out when the answer groups the hosts."""
+    if not attr:
+        return []
+    names: dict[str, None] = {}
+    for _h, attrs in host_settings.load(work_dir).items():
+        v = (attrs.get(attr) or {}).get("value", "")
+        for n in v.split(", "):
+            if n.strip() and n.strip() != "None found":
+                names[n.strip()] = None
+    return sorted(names)
+
+
+def register_hosts(work_dir: Path, columns: dict) -> dict[str, dict[str, list[str]]]:
+    """{column heading: {name: [hosts]}} for a frame's ``register_host_columns`` ({"Applied on": "gpo.applied", ...}): which hosts
+    each listed name belongs to, so a register row that names a host the captures do not show can be rejected."""
+    out: dict[str, dict[str, list[str]]] = {}
+    data = host_settings.load(work_dir)
+    for head, attr in (columns or {}).items():
+        names: dict[str, list[str]] = {}
+        for h, attrs in sorted(data.items()):
+            for n in ((attrs.get(attr) or {}).get("value", "")).split(", "):
+                if n.strip() and n.strip() != "None found":
+                    names.setdefault(n.strip(), []).append(h)
+        out[head] = names
+    return out
+
+
+def hosts_covered(work_dir: Path, attr: str) -> list[str]:
+    """The hosts that have a row for ``attr`` (a capture was read), so the text can state exactly which hosts it covers."""
+    if not attr:
+        return []
+    return sorted(h for h, attrs in host_settings.load(work_dir).items() if attrs.get(attr))
 
 
 def settings_findings(work_dir: Path, attr: str, req: str, area: str, section: str) -> list[dict]:
@@ -374,7 +411,12 @@ def build(workspace: Path, heading: str, key: str = "", evidence: bool = True) -
                       "must_state": bool(s.get("must_state"))})
     res = {"status": "OK", "key": key, "heading": heading, "frame": fr.get("_file", ""), "slots": slots,
            "strict": bool(fr.get("strict")), "zone_conflicts": zone_conflicts(work),
-           "story_groups": fr.get("story_groups", [])}
+           "story_groups": fr.get("story_groups", []), "scope_note": fr.get("scope_note", ""), "scope_terms": fr.get("scope_terms", []),
+           "table_patterns": fr.get("table_patterns", []), "bullet_max": fr.get("bullet_max", []),
+           "register_names": register_names(work, fr.get("register_lists", "")),
+           "register_hosts": register_hosts(work, fr.get("register_host_columns", {})),
+           "max_text_sentences": int(fr.get("max_text_sentences") or 0),
+           "hosts_covered": hosts_covered(work, fr.get("register_lists", ""))}
     if evidence:
         _ensure_evidence(workspace, res)
         _verified_ids_only(work, res)
@@ -591,6 +633,11 @@ def all_ids(res: dict | None) -> set[str]:
 
 def card_lines(res: dict) -> list[str]:
     out = ["", "## Analysis frame (built by the framework from the captures)", ""]
+    if res.get("scope_note"):
+        out += [f"Scope of this subsection: {res['scope_note']}", ""]
+    if res.get("hosts_covered"):
+        out += [f"Hosts covered by the settings below ({len(res['hosts_covered'])}): {', '.join(res['hosts_covered'])}. "
+                "State this number and no other when you say how many hosts the evidence covers.", ""]
     if res.get("zone_conflicts"):
         out += ["Zone conflicts:"]
         out += [f"- {c['text']}" for c in res["zone_conflicts"]] + [""]

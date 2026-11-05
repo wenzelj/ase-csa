@@ -15,7 +15,7 @@ from pathlib import Path
 LIMIT = 8192
 SHARED_LIMIT = 2048
 COMMON_LIMIT = 6144
-ANSWER_CARD_RULES_LIMIT = 16384   # the card rules (prompts/answer) the V1 answer lane adds to its digest
+ANSWER_CARD_RULES_LIMIT = 20480   # the card rules (prompts/answer) the V1 answer lane adds to its digest (raised from 16384, 2026-11-05)
 COMMON_STAGES = ("answer", "draft")   # the card lanes share one file of cross-lane rules
 STAGES = ("answer", "writer", "author", "draft")
 DIGESTS = Path(__file__).resolve().parents[2] / "references" / "digests"

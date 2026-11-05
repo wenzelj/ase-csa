@@ -279,6 +279,57 @@ def _row(host, attr, value, cap, off, lines, topic):
             "excerpt": excerpt}
 
 
+def gpo_settings(caps: dict[str, dict[str, dict]]) -> list[dict]:
+    """gpo.applied / gpo.not_applied: the Group Policy objects the host's computer policy applied, and the named ones that were
+    linked but not applied (filtered out or access denied), read from the newest gpresult XML (ComputerResults) or, for the older
+    script, the "Applied Group Policy Objects" list of the verbose text. Unreadable GUID names (a deleted GPO) are left out."""
+    out = []
+    for h, cap in sorted(caps.get("gpo", {}).items()):
+        lines = cap["text"].splitlines()
+        applied: list[tuple[int, str]] = []
+        skipped: list[tuple[int, str]] = []
+        if cap["fname"].lower().endswith(".xml"):
+            # the discovery index keeps the XML as one "Element value" line per element, a GPO opening at a "GPO" line
+            start = next((i for i, l in enumerate(lines) if l.strip() == "ComputerResults"), 0)
+            blocks = [i for i in range(start, len(lines)) if lines[i].strip() == "GPO"]
+            for n, i in enumerate(blocks):
+                end = blocks[n + 1] if n + 1 < len(blocks) else min(len(lines), i + 60)
+                seen: dict[str, str] = {}
+                at = i
+                for k in range(i + 1, end):
+                    m = re.match(r"^(Name|IsValid|FilterAllowed|AccessDenied)\s+(.*)$", lines[k].strip())
+                    if m and m.group(1) not in seen:
+                        seen[m.group(1)] = m.group(2).strip()
+                        if m.group(1) == "Name":
+                            at = k
+                    if lines[k].strip() in ("ExtensionData", "SecurityFilter"):
+                        break
+                name = seen.get("Name", "")
+                if name and not re.fullmatch(r"\{[0-9A-Fa-f-]{36}\}", name):
+                    ok = seen.get("IsValid", "").lower() == "true" and seen.get("FilterAllowed", "").lower() == "true" \
+                        and seen.get("AccessDenied", "").lower() == "false"
+                    (applied if ok else skipped).append((at, name))
+        else:
+            at = next((i for i, l in enumerate(lines) if re.search(r"Applied Group Policy Objects", l)), None)
+            if at is not None:
+                for i in range(at + 2, len(lines)):
+                    if not lines[i].strip():
+                        break
+                    applied.append((i, lines[i].strip()))
+        if at_missing(cap):
+            continue
+        names = list(dict.fromkeys(n for _, n in applied))
+        out.append(_row(h, "gpo.applied", ", ".join(names) or "None found", cap, [i for i, _ in applied] if names else [], lines, "group_policy"))
+        snames = list(dict.fromkeys(n for _, n in skipped))
+        out.append(_row(h, "gpo.not_applied", ", ".join(snames) or "None found", cap, [i for i, _ in skipped] if snames else [], lines, "group_policy"))
+    return out
+
+
+def at_missing(cap: dict) -> bool:
+    """A verbose gpresult without an applied-objects list proves nothing."""
+    return not cap["fname"].lower().endswith(".xml") and "Applied Group Policy Objects" not in cap["text"]
+
+
 def storage_settings(caps: dict[str, dict[str, dict]]) -> list[dict]:
     """storage.* and transfer.* rows. ``caps`` maps a capture kind to latest_texts() output:
     services (32_services_inventory), sql (52_*sql*), shares (42_local_shares), software (67_installed_software),
@@ -1313,6 +1364,7 @@ def build(work_dir: Path, con=None, services: list[dict] | None = None) -> dict:
         storage_caps = read_captures(con, STORAGE_CAPTURES)
         gaps = capture_gaps(con, storage_caps)
         rows += storage_settings(storage_caps)
+        rows += gpo_settings(storage_caps)
         rows += agent_settings(read_captures(con, AGENT_CAPTURES))
         rows += newer_settings(read_captures(con, NEWER_CAPTURES))
         rows += identity_settings({k: latest_texts(con, like, keep_empty=k in ("admins", "rdp"))

@@ -582,10 +582,16 @@ def _align(node: dict, tparts: list[dict]) -> None:
     plain text; the template part in the same place (same columns, or same facet) says what each one is."""
     parts = node["parts"]
     used: set[int] = set()
+    try:                                  # a frame that names a register's real columns: the filled table still is that register
+        from csa_docx import topic_frames
+        renamed = (topic_frames.frame_for(node.get("title", "")) or {}).get("register_columns") or []
+    except Exception:                      # frames are optional
+        renamed = []
     for tp in tparts:
         if tp.get("columns"):
             for i, p in enumerate(parts):
-                if i not in used and p.get("columns") and _same_cols(p["columns"], tp["columns"]):
+                if i not in used and p.get("columns") and (_same_cols(p["columns"], tp["columns"])
+                                                           or (tp["kind"] == "register" and renamed and _same_cols(p["columns"], renamed))):
                     used.add(i)
                     if p["kind"] != "requirement":
                         p["kind"] = tp["kind"]

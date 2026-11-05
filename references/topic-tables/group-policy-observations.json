@@ -1,0 +1,14 @@
+{
+ "topic": "Group Policy Observations",
+ "key": "GPO",
+ "kind": "sets",
+ "headings": [
+  "Group Policy Observations"
+ ],
+ "requirements": [],
+ "attribute": "gpo.applied",
+ "attribute_not": "gpo.not_applied",
+ "title": "Group Policy objects by role group",
+ "columns": [],
+ "baseline_pattern": "^(\\d{4}) Prod - Baseline (GPO|Firewall|Restricted Groups)$"
+}

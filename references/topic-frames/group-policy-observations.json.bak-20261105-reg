@@ -1,0 +1,51 @@
+{
+  "topic": "Group Policy Observations",
+  "key": "GROUP_POLICY_OBSERVATIONS",
+  "strict": false,
+  "area": "identity_and_access",
+  "section": "group policy observations",
+  "headings": [
+    "Group Policy Observations"
+  ],
+  "basis": "Migration Discovery, Group Policy Observations: the Group Policy objects each host's computer policy applies, read from the newest gpresult capture of every host (migration-discovery-analysis skill). The move to the new OT domain replaces these objects, so the register must list every one with the hosts that apply it.",
+  "slots": [
+    {
+      "id": "S1",
+      "question": "Which Group Policy objects does each host's computer policy apply?",
+      "requirements": [],
+      "source": {
+        "settings": [
+          "gpo.applied"
+        ]
+      },
+      "search": [
+        "gpresult",
+        "Applied Group Policy Objects"
+      ]
+    },
+    {
+      "id": "S2",
+      "question": "Which Group Policy objects are linked to a host but not applied to it?",
+      "requirements": [],
+      "source": {
+        "settings": [
+          "gpo.not_applied"
+        ]
+      },
+      "search": [
+        "gpresult",
+        "filtered out"
+      ]
+    }
+  ],
+  "story_groups": [
+    {
+      "title": "the Group Policy objects the hosts apply",
+      "slots": [
+        "S1",
+        "S2"
+      ]
+    }
+  ],
+  "scope_note": "the Group Policy objects (GPOs) applied to each host and how the hosts differ. Every host that has a gpresult capture is covered, so do not say the evidence comes from one host. The register has one row per GPO name, with its category (baseline, firewall, restricted groups, antivirus, auditing, security fix, Windows Update and so on) and, for each group of hosts, whether it is applied. Name the hosts of each group in full."
+}

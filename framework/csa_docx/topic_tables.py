@@ -128,6 +128,8 @@ def build(work_dir: Path, heading: str, key: str = "", profile: dict | None = No
     profile = profile or profile_for(heading)
     if not profile:
         return {"status": "NO_PROFILE", "heading": heading}
+    if profile.get("kind") in ("matrix", "sets"):
+        return (build_matrix if profile["kind"] == "matrix" else build_sets)(work_dir, heading, key, profile)
     key = key or profile.get("key") or re.sub(r"[^A-Z0-9]+", "", heading.upper())[:6]
     hosts = register(work_dir) if hosts is None else hosts
     settings = host_settings.load(work_dir) if settings is None else settings
@@ -362,6 +364,158 @@ def build_flows(work_dir: Path, heading: str, profile: dict | None = None) -> di
             "warnings": []}
 
 
+_CATEGORIES = (("baseline", r"baseline"), ("firewall", r"firewall"), ("restricted groups", r"restric"),
+               ("local administrators", r"local admin"), ("local security", r"local sec"),
+               ("antivirus", r"crowdstrike|\bav\b"), ("auditing", r"audit"),
+               ("security fix", r"cve|spectre|meltdown|credssp|mitigation"), ("trust and identity", r"trust|hybrid join|domain"),
+               )
+
+
+def gpo_category(name: str) -> str:
+    low = name.lower()
+    for label, rx in _CATEGORIES:
+        if re.search(rx, low):
+            return label
+    return "other"
+
+
+def _role_short(role: str) -> str:
+    return re.sub(r"\s+", " ", role.split(",")[0]).strip() or "No role"
+
+
+def build_matrix(work_dir: Path, heading: str, key: str, profile: dict) -> dict:
+    """A names-by-role-groups matrix from one list-valued host setting (profile ``attribute``; ``attribute_not`` for the names that
+    are listed but not applied): one row per name that does not hold for every host, one narrow column per role group. A name every
+    host has goes into one sentence under the table. A cell is a mark when every host of the role group has the name, ``n/m`` when
+    only some do (named in a note under the table), and empty when none does. No model is involved."""
+    from csa_docx import host_settings
+    work_dir = Path(work_dir)
+    key = key or profile.get("key") or "MATRIX"
+    settings = host_settings.load(work_dir)
+    attr, attr_not = profile["attribute"], profile.get("attribute_not", "")
+    reg = {r["host"]: r for r in register(work_dir)}
+    covered = sorted(h for h, a in settings.items() if a.get(attr))
+    groups: dict[str, list[str]] = {}
+    unassigned = []
+    for h in covered:
+        if not (reg.get(h) or {}).get("role"):
+            unassigned.append(h)
+            continue
+        groups.setdefault(_role_short(reg[h]["role"]), []).append(h)
+    if not groups:
+        return {"status": "EMPTY", "heading": heading, "key": key}
+
+    def names(h: str, a: str) -> set[str]:
+        v = ((settings.get(h) or {}).get(a) or {}).get("value", "") if a else ""
+        return {n.strip() for n in v.split(", ") if n.strip() and n.strip() != "None found"}
+
+    have = {h: names(h, attr) for h in covered}
+    not_applied = {h: names(h, attr_not) for h in covered}
+    everywhere = set.intersection(*have.values()) if have else set()
+    all_names = set().union(*have.values(), *not_applied.values())
+    roles = sorted(groups)
+    rows, split = [], {}
+    order = {label: i for i, (label, _rx) in enumerate(_CATEGORIES)}
+    for name in sorted(all_names - everywhere, key=lambda n: (order.get(gpo_category(n), 99), n.lower())):
+        cells = []
+        for role in roles:
+            hs = groups[role]
+            on = [h for h in hs if name in have[h]]
+            off = [h for h in hs if name in not_applied[h] and name not in have[h]]
+            if on:
+                cells.append("●" if len(on) == len(hs) else f"{len(on)}/{len(hs)}")
+                if len(on) != len(hs):
+                    split.setdefault((role, tuple(on), tuple(h for h in hs if h not in on)), []).append(name)
+            elif off:
+                cells.append("○" if len(off) == len(hs) else f"○ {len(off)}/{len(hs)}")
+            else:
+                cells.append("")
+        rows.append({"role": name, "hosts": [], "first": True, "cells": cells, "sources": []})
+    partial = [f"{role}: {_join(ns)} applied on {_join(list(on))} but not on {_join(list(off))}."
+               for (role, on, off), ns in split.items()]
+    n = len(covered)
+    common = (f"Applied by all {n} hosts: " + "; ".join(sorted(everywhere, key=str.lower)) + ".") if everywhere else ""
+    markers = ["●: applied on every host of the role group. n/m: applied on n of the m hosts. ○: linked but not applied.",
+               "Hosts by role group: " + "; ".join(f"{r} ({', '.join(groups[r])})" for r in roles) + "."] + partial
+    return {"status": "OK", "matrix": True, "heading": heading, "key": key, "columns": ["Group Policy object", *roles], "rows": rows,
+            "common": common, "markers": markers, "gaps": [], "unassigned": unassigned, "warnings": [],
+            "evidence_title": profile.get("title") or f"{heading} by role group", "replace_observation_table": True,
+            "requirement": "", "hosts_covered": covered}
+
+
+def build_sets(work_dir: Path, heading: str, key: str, profile: dict) -> dict:
+    """The role table of a list-valued host setting (profile ``attribute``): one row per role group (split where its hosts differ), with
+    the names that form a set (``baseline_pattern``: a year and a member, such as "2019 Prod - Baseline Firewall") shown once as the
+    set, and the other names listed. Names every host has go into one sentence under the table; names that are listed but not applied
+    (``attribute_not``) go into notes. No model is involved."""
+    from csa_docx import host_settings
+    work_dir = Path(work_dir)
+    key = key or profile.get("key") or "SETS"
+    settings = host_settings.load(work_dir)
+    attr, attr_not = profile["attribute"], profile.get("attribute_not", "")
+    rx = re.compile(profile.get("baseline_pattern") or r"^(\d{4}) Prod - Baseline (GPO|Firewall|Restricted Groups)$", re.I)
+    reg = {r["host"]: r for r in register(work_dir)}
+    covered = sorted(h for h, a in settings.items() if a.get(attr))
+    unassigned = [h for h in covered if not (reg.get(h) or {}).get("role")]
+    covered_ok = [h for h in covered if h not in unassigned]
+    if not covered_ok:
+        return {"status": "EMPTY", "heading": heading, "key": key}
+
+    def names(h: str, a: str) -> set[str]:
+        v = ((settings.get(h) or {}).get(a) or {}).get("value", "") if a else ""
+        return {n.strip() for n in v.split(", ") if n.strip() and n.strip() != "None found"}
+
+    have = {h: names(h, attr) for h in covered}
+    not_applied = {h: names(h, attr_not) for h in covered}
+    everywhere = set.intersection(*have.values()) if have else set()
+    members: dict[str, set[str]] = {}
+    for h in covered:
+        for n in have[h]:
+            m = rx.match(n)
+            if m:
+                members.setdefault(m.group(1), set()).add(m.group(2).lower())
+    order = {label: i for i, (label, _rx) in enumerate(_CATEGORIES)}
+
+    def cells(h: str) -> tuple[str, str]:
+        mine: dict[str, set[str]] = {}
+        for n in have[h]:
+            m = rx.match(n)
+            if m:
+                mine.setdefault(m.group(1), set()).add(m.group(2).lower())
+        base = "; ".join(f"{y} baseline" + ("" if mine[y] == members[y] else f" ({', '.join(sorted(mine[y]))} only)")
+                         for y in sorted(mine)) or "None"
+        rest = sorted((n for n in have[h] if n not in everywhere and not rx.match(n)),
+                      key=lambda n: (order.get(gpo_category(n), 99), n.lower()))
+        return base, "; ".join(rest) or "None"
+
+    by_role: dict[str, list[str]] = {}
+    for h in covered_ok:
+        by_role.setdefault(_role_short(reg[h]["role"]), []).append(h)
+    rows = []
+    for role in sorted(by_role):
+        same: dict[tuple[str, str], list[str]] = {}
+        for h in by_role[role]:
+            same.setdefault(cells(h), []).append(h)
+        for i, (c, hs) in enumerate(sorted(same.items(), key=lambda kv: kv[1][0])):
+            rows.append({"role": role, "hosts": sorted(hs), "first": i == 0, "cells": list(c), "sources": []})
+    notes: dict[frozenset, list[str]] = {}
+    for n in sorted(set().union(*not_applied.values()) if not_applied else set()):
+        notes.setdefault(frozenset(h for h in covered if n in not_applied[h] and n not in have[h]), []).append(n)
+    markers = []
+    for hs, ns in notes.items():
+        if not hs:
+            continue
+        rest = [h for h in covered if h not in hs]
+        where = (f"every covered host except {_join(rest)}" if rest and len(hs) > len(covered) / 2 else _join(sorted(hs)))
+        markers.append(f"{_join(sorted(ns, key=str.lower))}: linked but not applied on {where}.")
+    n = len(covered)
+    common = (f"Applied by all {n} hosts: " + "; ".join(sorted(everywhere, key=str.lower)) + ".") if everywhere else ""
+    return {"status": "OK", "heading": heading, "key": key, "columns": ["Role", "Hosts", "Baseline set", "Role-specific policies"],
+            "rows": rows, "common": common, "markers": markers, "gaps": [], "unassigned": unassigned, "warnings": [],
+            "evidence_title": profile.get("title") or f"{heading} by role group", "replace_observation_table": True,
+            "after_text": True, "requirement": "", "hosts_covered": covered}
+
+
 def build_all(work_dir: Path, heading: str, key: str = "") -> list[dict]:
     """Every framework-built table for the topic.
 
@@ -372,6 +526,8 @@ def build_all(work_dir: Path, heading: str, key: str = "") -> list[dict]:
     profile = profile_for(heading)
     if not profile:
         return [{"status": "NO_PROFILE", "heading": heading}]
+    if profile.get("kind") in ("matrix", "sets"):
+        return [(build_matrix if profile["kind"] == "matrix" else build_sets)(work_dir, heading, key, profile)]
     specs = profile.get("evidence_tables") or []
     out: list[dict] = []
     if specs:
@@ -453,7 +609,8 @@ def markdown(t) -> str:
         return ""
     out = ["| " + " | ".join(t["columns"]) + " |", "| " + " | ".join("---" for _ in t["columns"]) + " |"]
     for r in t["rows"]:
-        out.append("| " + " | ".join([r["role"] if r["first"] else "", ", ".join(r["hosts"])] + r["cells"]) + " |")
+        lead = [r["role"]] if t.get("matrix") else [r["role"] if r["first"] else "", ", ".join(r["hosts"])]
+        out.append("| " + " | ".join(lead + r["cells"]) + " |")
     lines = [l for l in [t["common"], *t["markers"]] if l]
     return "\n".join(out + ([""] + lines if lines else []))
 
@@ -609,6 +766,8 @@ def _locate(xml: str, heading: str) -> tuple[int, int, int] | None:
             if l2 > lvl and _norm(t2) == "discovery information":
                 fend = next((h[0] for h in heads[k + 1:] if h[2] <= l2), end)
                 return e2, fend, lvl
+        if not any(h[0] < end and h[2] > lvl for h in heads[i + 1:]):
+            return e, end, lvl        # a flat subsection (Migration Discovery) has no Discovery Information heading: it goes under the heading itself
         return None
     return None
 
@@ -694,6 +853,39 @@ def table_xml(t: dict, reference: str, fill: str = "") -> str:
                  _cell(widths[1], ", ".join(r["hosts"]), ds, None, f)]
         cells += [_cell(w, v, ds, None, f) for w, v in zip(widths[2:], r["cells"])]
         out.append(f"<w:tr>{band[role_no % len(band)]}" + "".join(cells) + "</w:tr>")
+    return f"<w:tbl>{tblpr}{grid}{''.join(out)}</w:tbl>"
+
+
+def matrix_xml(t: dict, reference: str) -> str:
+    """The matrix as WordprocessingML: the first column holds the name, every other column is narrow, centred and headed with the
+    role group's name written upwards. Styled from ``reference`` like the role table."""
+    tblpr = re.search(r"<w:tblPr>.*?</w:tblPr>", reference, re.S)
+    tblpr = tblpr.group(0) if tblpr else '<w:tblPr><w:tblW w:w="9638" w:type="dxa"/></w:tblPr>'
+    tblpr = re.sub(r"<w:tblCaption\b[^>]*/>", "", tblpr).replace("</w:tblPr>", f'<w:tblCaption w:val="{CAPTION}"/></w:tblPr>')
+    total = sum(int(w) for w in re.findall(r'<w:gridCol w:w="(\d+)"', reference)) or 9638
+    rows = re.findall(r"<w:tr\b.*?</w:tr>", reference, re.S)
+    head_pr = (re.search(r"<w:trPr>.*?</w:trPr>", rows[0], re.S) or [""])[0] if rows else ""
+    if "<w:tblHeader" not in head_pr:
+        head_pr = "<w:trPr><w:cantSplit/><w:tblHeader/></w:trPr>"
+    style = lambda r, d: (re.search(r'<w:pStyle w:val="([^"]+)"', r) or [None, d])[1]      # noqa: E731
+    hs = style(rows[0], "TableHeader") if rows else "TableHeader"
+    ds = style(rows[1], "TableText") if len(rows) > 1 else "TableText"
+    n = len(t["columns"]) - 1
+    narrow = max(430, min(620, int(total * 0.52 / max(n, 1))))
+    widths = [total - narrow * n] + [narrow] * n
+    grid = "<w:tblGrid>" + "".join(f'<w:gridCol w:w="{w}"/>' for w in widths) + "</w:tblGrid>"
+
+    def cell(w: int, text: str, st: str, *, centre: bool = False, vertical: bool = False) -> str:
+        pr = f'<w:tcW w:w="{w}" w:type="dxa"/>' + ('<w:textDirection w:val="btLr"/><w:vAlign w:val="center"/>' if vertical else "")
+        jc = '<w:jc w:val="center"/>' if centre else ""
+        run = f'<w:r><w:t xml:space="preserve">{_esc(text)}</w:t></w:r>' if text else ""
+        return f'<w:tc><w:tcPr>{pr}</w:tcPr><w:p><w:pPr><w:pStyle w:val="{st}"/>{jc}</w:pPr>{run}</w:p></w:tc>'
+
+    out = [f"<w:tr>{head_pr}" + cell(widths[0], t["columns"][0], hs)
+           + "".join(cell(w, c, hs, centre=True, vertical=True) for w, c in zip(widths[1:], t["columns"][1:])) + "</w:tr>"]
+    for r in t["rows"]:
+        out.append("<w:tr><w:trPr><w:cantSplit/></w:trPr>" + cell(widths[0], r["role"], ds)
+                   + "".join(cell(w, v, ds, centre=True) for w, v in zip(widths[1:], r["cells"])) + "</w:tr>")
     return f"<w:tbl>{tblpr}{grid}{''.join(out)}</w:tbl>"
 
 
@@ -801,12 +993,18 @@ def place_xml(xml: str, t, heading: str, styles_xml: str = "") -> tuple[str, str
             story_ends[m.group(1).upper()] = story_end
     if story_ends:
         insert_at = max(story_ends.values())
+    elif any(x.get("matrix") or x.get("after_text") for x in tables):          # the text comes first, the table after it
+        for kind, _s, e, b in clean_blocks:
+            if kind != "p" or _heading_level(b) or not _text(b).strip() or re.search(r'<w:pStyle w:val="(?:Caption|TableNote)"', b):
+                break
+            insert_at = e
     sid = (re.search(r'<w:tblStyle w:val="([^"]+)"', reference) or [None, ""])[1]
 
     def rendered(x: dict, number: int) -> str:
         lines = [y for y in [x.get("common", ""), *x.get("markers", [])] if y] or [""]
         title = x.get("evidence_title") or f"{heading} discovery evidence"
-        return _caption(title, number) + table_xml(x, reference, band_fill(styles_xml, sid)) + "".join(_note(y) for y in lines)
+        body = matrix_xml(x, reference) if x.get("matrix") else table_xml(x, reference, band_fill(styles_xml, sid))
+        return _caption(title, number) + body + "".join(_note(y) for y in lines)
 
     insertions: dict[int, str] = {}
     positions = [(story_ends.get((x.get("requirement") or "").upper(), insert_at), x) for x in tables]

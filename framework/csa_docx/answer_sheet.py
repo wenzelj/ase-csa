@@ -235,7 +235,7 @@ HARD_CODES = {"CROSS_PROJECT_ONLY", "NOTE_TOO_LONG", "NOTE_NONE_AND_TEXT", "NOTE
               "SLOT_NOT_ANSWERED", "FLOW_NOT_COVERED", "ZONE_CONTRADICTED", "PART_NOT_NAMED", "ISOLATION_WRONG_SIDE",
               "PART_MISATTRIBUTED", "CITED_AND_DROPPED", "LABEL_AS_NAME", "PART_NAME_LIST", "SUBJECT_NOT_THIS_SYSTEM",
               "PRACTICE_NOT_ADDRESSED", "PRACTICE_ATTRIBUTION_DROPPED", "APPLICATION_ZONE_CLAIM",
-              "DRAWBRIDGE_CAUSAL_SCOPE",
+              "DRAWBRIDGE_CAUSAL_SCOPE", "SHARE_ACCESS_MISMATCH", "NAME_NOT_RECORDED", "UNNAMED_PEER", "DUPLICATE_BULLET", "OUT_OF_SCOPE", "REPEATS_TABLE", "ACRONYM_EXPANSION", "REGISTER_ROW_MISSING", "REGISTER_HOST_WRONG", "REGISTER_HOST_MISSING", "TEXT_TOO_LONG",
               "EXAMPLE_COPIED", "SUMMARY_MISSING", "STORY_MISSING", "SUMMARY_TOO_LONG", "SUMMARY_TOO_MANY_SENTENCES",
               "SUMMARY_REPEATS_STORY", "SUMMARY_STORY_OVERLAP", "SUMMARY_NO_RATING_BASIS", "QUESTION_IN_SUMMARY",
               "STORY_NO_EVIDENCE_PATH", "STORY_STARTS_WITH_RATING", "STORY_RESTATES_RATING", "STORY_AND_TEXT",
@@ -255,7 +255,8 @@ RELAXED_HARD = {"CROSS_PROJECT_ONLY", "QUESTION_MISSING", "EMPTY_ANSWER", "FACT_
                 "SUMMARY_NO_RATING_BASIS", "SUMMARY_STORY_OVERLAP", "QUESTION_IN_SUMMARY",
                 "STORY_NO_EVIDENCE_PATH", "STORY_STARTS_WITH_RATING", "STORY_RESTATES_RATING",
                 "STORY_SENTENCE_LONG", "STORY_LABEL", "STORY_PHRASE_REPEAT", "STORY_NOT_PARAGRAPHED", "STORY_SAME_OPENING",
-              "SETTING_NOT_STATED", "TERM_NOT_EXPLAINED", "ROWS_DROPPED", "UNIVERSAL_CLAIM", "PROSE_NAME_UNSUPPORTED", "ADDRESS_NOT_IN_EVIDENCE"}
+              "SETTING_NOT_STATED", "TERM_NOT_EXPLAINED", "ROWS_DROPPED", "UNIVERSAL_CLAIM", "PROSE_NAME_UNSUPPORTED", "ADDRESS_NOT_IN_EVIDENCE",
+                "SHARE_ACCESS_MISMATCH", "NAME_NOT_RECORDED", "UNNAMED_PEER", "DUPLICATE_BULLET", "OUT_OF_SCOPE", "REPEATS_TABLE", "ACRONYM_EXPANSION", "REGISTER_ROW_MISSING", "REGISTER_HOST_WRONG", "REGISTER_HOST_MISSING", "TEXT_TOO_LONG"}
 #: Of those, the ones the document cannot be written around: the answer cannot be rendered, or cites evidence that does
 #: not exist. Any other hard error left after the fix round is applied anyway and listed in RESULT.md.
 FATAL_CODES = {"NO_SHEET", "QUESTION_MISSING", "EMPTY_ANSWER", "FACT_NO_EVIDENCE", "UNKNOWN_EVIDENCE", "RATING_INVALID",
@@ -613,6 +614,233 @@ def direction_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
     return out
 
 
+_NAME_UNKNOWN = re.compile(r"\b(?:(?:host ?)?names?|zones?|(?:specific )?roles?)\b[^.;]{0,50}?\b(?:is|are) not (?:recorded|captured|known|established)\b"
+                           r"|\b(?:(?:host ?)?names?|zones?|(?:specific )?roles?)\b[^.;]{0,50}?\bnot (?:recorded|captured|known|established)\b", re.I)
+_ACCESS_CLAUSE = re.compile(r"\b(full|read-only|read)\b[^.;]*?\bon the ([^.;]*?) shares?\b", re.I)
+
+
+def _everyone_access(claim: str) -> dict[str, str]:
+    """{share name (lower): Everyone's access level (lower)} from a 'Who may open the shares on HOST: name: Everyone Read; ...' claim."""
+    out: dict[str, str] = {}
+    body = claim.split(":", 1)[1] if ":" in claim else ""
+    for part in body.split(";"):
+        name, _, entries = part.partition(":")
+        if not entries:
+            continue
+        m = re.search(r"\bEveryone (Full|Change|Read)\b", entries)
+        if m:
+            out[name.strip().lower()] = m.group(1).lower()
+    return out
+
+
+_EVERYONE_LEVEL = re.compile(r"\bEveryone\s+(?:with\s+|has\s+|have\s+|gets\s+)?(?:only\s+)?(full|read)\b", re.I)
+
+
+def _everyone_after_share(sentence: str, levels: dict[str, str], qid: str) -> list[dict]:
+    """SHARE_ACCESS_MISMATCH for the wording "offers the Newfolder share to <account> and Everyone with full access": the
+    first 'Everyone <full|read>' after a share's name, before the next share's name, is that share's level for Everyone."""
+    marks = sorted((m.start(), m.end(), name) for name in levels
+                   for m in re.finditer(rf"(?<![\w$]){re.escape(name)}(?![\w$])", sentence, re.I))
+    out: list[dict] = []
+    for i, (_s, e, name) in enumerate(marks):
+        stop = marks[i + 1][0] if i + 1 < len(marks) else len(sentence)
+        m = _EVERYONE_LEVEL.search(sentence[e:stop])
+        if m:
+            claimed = m.group(1).lower()
+            if levels[name] in ("full", "read") and claimed != levels[name]:
+                out.append(_f("ERROR", "SHARE_ACCESS_MISMATCH", qid,
+                              f"the bullet gives Everyone {claimed} access on the {name} share, but the cited row records "
+                              f"Everyone {levels[name]}: state each share's access as the row records it"))
+    return out
+
+
+def findings_block_checks(sheet: dict[str, dict], card: dict, matrix: dict) -> list[dict]:
+    """The bullets of a findings block (the other prose checks look only at requirement and narrative blocks):
+    UNNAMED_PEER / NAME_NOT_RECORDED: a bullet calls a peer unnamed or unidentified, or says a name is not recorded. A peer
+    with no name is written by its IP address, with nothing said about the missing name.
+    SHARE_ACCESS_MISMATCH: a bullet gives Everyone more access (full) or less (read) on a share than the cited
+    'who may open the shares' row records for that share."""
+    out: list[dict] = []
+    for q in card.get("questions", []):
+        if q.get("kind") != "findings":
+            continue
+        b = sheet.get(q["id"]) or {}
+        for bullet in b.get("bullets") or []:
+            for rx, code in ((_UNNAMED_PEER, "UNNAMED_PEER"), (_NAME_UNKNOWN, "NAME_NOT_RECORDED")):
+                m = rx.search(bullet)
+                if m:
+                    out.append(_f("ERROR", code, q["id"],
+                                  f"a bullet says \"{m.group(0)}\": name a peer by its IP address and say nothing about its name "
+                                  "being unrecorded, or by its role when the host register gives one"))
+            levels: dict[str, str] = {}
+            for eid in _EID.findall(bullet):
+                row = matrix.get(eid.upper()) or {}
+                if "who may open the shares" in (row.get("claim") or "").lower():
+                    levels.update(_everyone_access(row["claim"]))
+            if not levels:
+                continue
+            for sentence in re.split(r"(?<=[.!?])\s+", bullet):
+                if "everyone" not in sentence.lower():
+                    continue
+                out += _everyone_after_share(sentence, levels, q["id"])
+                for m in _ACCESS_CLAUSE.finditer(sentence):
+                    claimed = "full" if m.group(1).lower() == "full" else "read"
+                    for name in re.split(r",\s*|\s+and\s+", m.group(2)):
+                        have = levels.get(name.strip().lower())
+                        if have and have != claimed:
+                            out.append(_f("ERROR", "SHARE_ACCESS_MISMATCH", q["id"],
+                                          f"the bullet gives Everyone {claimed} access on the {name.strip()} share, but the cited row "
+                                          f"records Everyone {have}: state each share's access as the row records it"))
+    return out
+
+
+_HOST_OR_IP = re.compile(r"\b(?:[A-Z]{3,}[A-Z0-9]*\d{2,}|\d{1,3}(?:\.\d{1,3}){3})\b")
+
+
+def _bullet_key(bullet: str) -> str:
+    """The bullet's words without evidence IDs, punctuation, case or the filler words that vary between rewordings."""
+    t = _EID.sub(" ", bullet.lower())
+    return " ".join(w for w in re.findall(r"[a-z0-9$_.]+", t) if w not in ("the", "a", "an", "and", "of", "to", "its", "their"))
+
+
+def register_completeness_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
+    """REGISTER_ROW_MISSING (error): the frame lists every name a host setting holds (``register_names``, such as each applied
+    Group Policy object); a register with one row per name must have a row for each."""
+    names = (card.get("frame") or {}).get("register_names") or []
+    out: list[dict] = []
+    if not names:
+        return out
+    for q in card.get("questions", []):
+        if q.get("kind") != "register":
+            continue
+        rows = ((sheet.get(q["id"]) or {}).get("rows") or [])[1:]
+        have = {re.sub(r"\s+", " ", (r[0] if r else "")).strip().lower() for r in rows}
+        missing = [n for n in names if re.sub(r"\s+", " ", n).strip().lower() not in have]
+        if missing:
+            out.append(_f("ERROR", "REGISTER_ROW_MISSING", q["id"],
+                          f"{len(missing)} name(s) in the captures have no row: " + "; ".join(missing[:8]) + (" ..." if len(missing) > 8 else "")))
+    return out
+
+
+def register_host_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
+    """REGISTER_HOST_WRONG (error): a register row names, in a column the frame ties to a host setting (``register_host_columns``),
+    a host the captures do not show for that row's name, such as a host listed as applying a Group Policy object it does not apply."""
+    fr = card.get("frame") or {}
+    maps = fr.get("register_hosts") or {}
+    known = {h for names in maps.values() for hs in names.values() for h in hs} | set(fr.get("hosts_covered") or [])
+    out: list[dict] = []
+    if not maps or not known:
+        return out
+    rx = re.compile(r"\b(" + "|".join(re.escape(h) for h in sorted(known, key=len, reverse=True)) + r")\b", re.I)
+    for q in card.get("questions", []):
+        if q.get("kind") != "register":
+            continue
+        rows = ((sheet.get(q["id"]) or {}).get("rows") or [])
+        if not rows:
+            continue
+        head = [c.strip() for c in rows[0]]
+        for row in rows[1:]:
+            name = re.sub(r"\s+", " ", row[0]).strip().lower() if row else ""
+            for col, names in maps.items():
+                if col not in head or head.index(col) >= len(row):
+                    continue
+                allowed = {h.upper() for k, hs in names.items() if re.sub(r"\s+", " ", k).strip().lower() == name for h in hs}
+                named = {m.upper() for m in rx.findall(_EID.sub(" ", row[head.index(col)]))}
+                left_out = sorted(allowed - named) if named else []         # a row that names hosts names all of them
+                if left_out:
+                    out.append(_f("ERROR", "REGISTER_HOST_MISSING", q["id"],
+                                  f"row \"{row[0][:60]}\", column {col}: the row names hosts but leaves out {', '.join(left_out)}, "
+                                  "which the captures give for this name: name every host of each role group it lists"))
+                wrong = sorted(named - allowed)
+                if wrong:
+                    out.append(_f("ERROR", "REGISTER_HOST_WRONG", q["id"],
+                                  f"row \"{row[0][:60]}\", column {col}: {', '.join(wrong)} not in the captures for this name "
+                                  f"(the captures give: {', '.join(sorted(allowed)) or 'none'})"))
+    return out
+
+
+def text_length_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
+    """TEXT_TOO_LONG (error): the frame sets ``max_text_sentences`` for the subsection's text, so the paragraph stays a summary
+    and does not repeat the table the framework places under it."""
+    cap = int((card.get("frame") or {}).get("max_text_sentences") or 0)
+    out: list[dict] = []
+    if not cap:
+        return out
+    for q in card.get("questions", []):
+        if q.get("kind") not in ("narrative", "requirement"):
+            continue
+        text = ((sheet.get(q["id"]) or {}).get("text") or "").strip()
+        n = len(re.findall(r"[.!?](?=\s|$)", text))
+        if n > cap:
+            out.append(_f("ERROR", "TEXT_TOO_LONG", q["id"],
+                          f"the text has {n} sentences; this subsection allows {cap}: say what the table cannot show and leave "
+                          "the rest to the table and its notes"))
+    return out
+
+
+def acronym_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
+    """ACRONYM_EXPANSION (error): a block spells out a project acronym the card lists (csa-work/acronyms.json) with a
+    different meaning than the sources give, as "TGOIP (telephony gateway over IP)" or "TGOIP is a technology that ...".
+    The sources define few project acronyms, so a made-up expansion is the usual failure."""
+    out: list[dict] = []
+    for acr, expansion in (card.get("acronyms") or {}).items():
+        paren = re.compile(rf"\b{re.escape(acr)}\s*\(([^)]{{3,80}})\)", re.I)
+        defn = re.compile(rf"\b{re.escape(acr)}\s+(?:is|means|stands for|refers to)\b", re.I)
+        for qid, b in sheet.items():
+            for key, val in (b or {}).items():
+                for text in ([val] if isinstance(val, str) else [x for x in val if isinstance(x, str)] if isinstance(val, list) else []):
+                    for m in paren.finditer(text):
+                        if re.sub(r"\W+", " ", m.group(1)).strip().lower() != re.sub(r"\W+", " ", expansion).strip().lower():
+                            out.append(_f("ERROR", "ACRONYM_EXPANSION", qid,
+                                          f"{acr} is spelled out as \"{m.group(1)}\", but the sources give \"{expansion}\": "
+                                          "use that expansion or leave the acronym unexpanded"))
+                    if defn.search(text):
+                        out.append(_f("ERROR", "ACRONYM_EXPANSION", qid,
+                                      f"a block defines {acr} in its own words: the sources give only \"{expansion}\""))
+    return out
+
+
+def findings_scope_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
+    """DUPLICATE_BULLET (error): two bullets of one findings block say the same thing, either the same words, or
+    the same hosts and addresses with the same cited evidence in different words. The later one is dropped.
+    OUT_OF_SCOPE (error): the frame lists words that mark its subsection's topic (``scope_terms``); a bullet that
+    uses none of them belongs in another subsection."""
+    out: list[dict] = []
+    fr = card.get("frame") or {}
+    terms = [t.lower() for t in fr.get("scope_terms", [])]
+    table_rx = [re.compile(x, re.I) for x in fr.get("table_patterns", [])]
+    maxes = [(re.compile(d["match"], re.I), int(d.get("max", 1))) for d in fr.get("bullet_max", [])]
+    for q in card.get("questions", []):
+        if q.get("kind") != "findings":
+            continue
+        bullets = (sheet.get(q["id"]) or {}).get("bullets") or []
+        seen: list[tuple[int, str, frozenset, frozenset]] = []
+        for n, bullet in enumerate(bullets, 1):
+            key = _bullet_key(bullet)
+            hosts = frozenset(_HOST_OR_IP.findall(bullet))
+            cites = frozenset(e.upper() for e in _EID.findall(bullet))
+            for m, k2, h2, c2 in seen:
+                if key == k2 or (cites and cites == c2 and hosts and hosts == h2):
+                    out.append(_f("ERROR", "DUPLICATE_BULLET", q["id"],
+                                  f"bullet {n} repeats bullet {m}: say each finding once and remove the later bullet"))
+                    break
+            seen.append((n, key, hosts, cites))
+            if any(rx.search(bullet) for rx in table_rx):
+                out.append(_f("ERROR", "REPEATS_TABLE", q["id"],
+                              f"bullet {n} repeats what the table above the bullets already lists host by host: remove it, "
+                              "and keep only findings the table cannot show"))
+            if terms and not any(t in bullet.lower() for t in terms):
+                out.append(_f("ERROR", "OUT_OF_SCOPE", q["id"],
+                              f"bullet {n} does not concern this subsection's topic ({', '.join(terms[:6])} ...): "
+                              "move it to the subsection that owns it or remove it"))
+        for rx, cap in maxes:
+            hits = [n for n, b in enumerate(bullets, 1) if rx.search(b)]
+            for n in hits[cap:]:
+                out.append(_f("ERROR", "REPEATS_TABLE", q["id"],
+                              f"bullet {n} says again what bullet {hits[0]} says: give this kind of finding in one bullet"))
+    return out
+
+
 _GLOSS = None
 
 
@@ -828,6 +1056,11 @@ def plain_language_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
                 out.append(_f("WARN", "HOST_IN_PROSE", q["id"],
                               f"the {where} names {shown}: name the machine by its role and site, and keep host names and "
                               "addresses in the table unless the question asks for them"))
+            mu = _UNNAMED_PEER.search(t)
+            if mu:
+                out.append(_f("ERROR", "UNNAMED_PEER", q["id"],
+                              f"the {where} says \"{mu.group(0)}\": a peer with no recorded name is named by its IP address "
+                              "(for example 10.89.163.66); list the addresses and do not add that the name, zone or role is not recorded"))
             m = _SHORTHAND.search(t)
             if m:
                 out.append(_f("WARN", "JARGON_SHORTHAND", q["id"],
@@ -857,6 +1090,7 @@ def story_shape_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
 
 
 _RATING_ANY = re.compile(r"\b(?:Partially Met|Not Met|Not Applicable|Met|partially meets|does not meet|meets)\b", re.I)
+_UNNAMED_PEER = re.compile(r"\b(?:unnamed|unidentified|unknown)\s+(?:internal\s+|external\s+)?(?:peers?|addresses|address|endpoints?|hosts?|machines?)\b", re.I)
 _ENDPOINT_GAP = re.compile(r"\bunidentified\b|\bnot identified\b|\bzone not recorded\b", re.I)
 
 
@@ -2346,6 +2580,12 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
     findings += readability_checks(sheet, card)
     findings += story_shape_checks(sheet, card)
     findings += plain_language_checks(sheet, card)
+    findings += findings_block_checks(sheet, card, matrix)
+    findings += findings_scope_checks(sheet, card)
+    findings += acronym_checks(sheet, card)
+    findings += text_length_checks(sheet, card)
+    findings += register_completeness_checks(sheet, card)
+    findings += register_host_checks(sheet, card)
     findings += absence_checks(sheet, card)
     findings += direction_checks(sheet, card)
     findings += glossary_checks(sheet, card)
@@ -2431,13 +2671,17 @@ def requirement_story_title(req_id: str, fallback: str) -> str:
     return _REQ_TITLES.get(req_id, fallback.strip().rstrip("."))
 
 
+def _norm_bullet(s: str) -> str:
+    return " ".join((s or "").replace("’", "'").split()).strip().lower()
+
+
 def _quote(s: str, n: int = 90) -> str:
     s = " ".join((s or "").split()).replace('"', "'")
     return s[:n]
 
 
 def render_records(sheet: dict[str, dict], card: dict, node: dict, section: str, start: int,
-                   *, stories_only: bool = False) -> dict:
+                   *, stories_only: bool = False, replace_bullets: bool = False) -> dict:
     """Change-file records for a valid sheet. Returns {records: [markdown], open: [...], keep: [...],
     scaffold: [...], audit: [...]}. Anchors come from the document spec node."""
     recs, open_q, keep, scaffold, audit = [], [], [], [], []
@@ -2511,12 +2755,17 @@ def render_records(sheet: dict[str, dict], card: dict, node: dict, section: str,
                 scaffold.append({"kind": "rows", "table": p["table"], **(p.get("under") or {"heading": node["title"],
                                  "occurrence": 1, "table": 1}), "set_count": len(data)})
             texts = p.get("row_texts", [])
+            doc_cols = q.get("document_columns")
+            if doc_cols and [c.strip() for c in b["rows"][0]] != [c.strip() for c in doc_cols]:
+                record(f"{p.get('label') or p.get('facet') or node['title']}: column headings", f"{p['table']}-R1",
+                       " | ".join(doc_cols), [f"- [{q['id']}] {' | '.join(b['rows'][0])}"], " | ".join(b["rows"][0]),
+                       "The table's columns are named for what the rows show.", "Column headings of the table.")
             if have > len(data) and any(not t.startswith("[") for t in texts[len(data):]):
                 keep.append(f"- [{q['id']}] rows {len(data) + 1} to {have} of {p.get('label') or p.get('facet') or 'the table'} left as they are")
             for k, row in enumerate(data, start=2):
                 eid = record(f"{p.get('label') or p.get('facet') or node['title']}: row {k - 1}", f"{p['table']}-R{k}",
                              texts[k - 2] if k - 2 < len(texts) else "", [f"- [{q['id']}] {' | '.join(row)}"],
-                             " | ".join(no_ids(c) for c in row),
+                             " | ".join(no_ids(c).strip() or "-" for c in row),
                              f"Evidence {', '.join(sorted(set(_EID.findall(' '.join(row))))) or 'see the row'}.",
                              f"Row {k - 1} of {p.get('label') or p.get('facet') or 'the table'} from the evidence.")
         elif q["kind"] == "narrative":
@@ -2573,6 +2822,20 @@ def render_records(sheet: dict[str, dict], card: dict, node: dict, section: str,
             holders = [(pid, t) for pid, t in zip(p.get("pids", []), p.get("bullets", []))]
             free = [(pid, t) for pid, t in holders if t.startswith("[")]
             bullets = b["bullets"] or [_sentence(f) for f in b["facts"]]
+            if replace_bullets and bullets:
+                # Draft lane: the answer replaces every bullet under the heading (placeholders and the text an
+                # earlier run wrote), so a re-run never stacks a second copy beside the first.
+                if len(bullets) > len(holders):
+                    scaffold.append({"kind": "bullets", "heading": p.get("facet") or node["title"], "occurrence": 1,
+                                     "set_count": len(bullets)})
+                for (pid, cur), text in zip(holders, bullets):
+                    if _norm_bullet(cur) != _norm_bullet(no_ids(text)):
+                        record(f"{node['title']}: finding", pid, cur, facts, no_ids(text), why, f"Finding for {node['title']}.")
+                # last bullet first: a paragraph id is its position, so removing from the end keeps the ids ahead of it valid
+                for pid, cur in reversed(holders[len(bullets):]):
+                    record(f"{node['title']}: finding", pid, cur, [], "", "The answer replaces the earlier bullets under this heading.",
+                           "Earlier bullet removed.", do="Delete")
+                continue
             if len(bullets) > len(free):
                 scaffold.append({"kind": "bullets", "heading": p.get("facet") or node["title"], "occurrence": 1,
                                  "set_count": len(holders) - len(free) + len(bullets)})
@@ -2637,10 +2900,10 @@ def render_records(sheet: dict[str, dict], card: dict, node: dict, section: str,
 
 def render_change_file(sheet: dict[str, dict], card: dict, node: dict, spec: dict, *, app: str, docx_name: str,
                        section: str, start: int, brief: str, existing: str | None = None,
-                       stories_only: bool = False) -> dict:
+                       stories_only: bool = False, replace_bullets: bool = False) -> dict:
     """A new change file, or `existing` with the new records, audit rows, unchanged items and open questions added
     (earlier records are never touched; the brief is replaced by the one from the document)."""
-    r = render_records(sheet, card, node, section, start, stories_only=stories_only)
+    r = render_records(sheet, card, node, section, start, stories_only=stories_only, replace_bullets=replace_bullets)
     first, last = f"S{section}-E{start}", f"S{section}-E{r['next'] - 1}"
     change_set = f"{first} to {last}" if r["records"] else "none"
     if existing:
@@ -2938,6 +3201,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--section", help="render: framework section number (3)")
     ap.add_argument("--change-file", type=Path, help="render: the change file to write (merged when it exists)")
     ap.add_argument("--app", default="")
+    ap.add_argument("--replace-bullets", action="store_true",
+                    help="render: the answer replaces every bullet under a findings heading (draft lane)")
     ap.add_argument("--stories-only", action="store_true",
                     help="render only requirement-story title/body records")
     a = ap.parse_args(argv)
@@ -2985,7 +3250,7 @@ def main(argv: list[str] | None = None) -> int:
     start = next_edit_number(cf.parent, a.section) if cf else 1
     out = render_change_file(sheet, card, node, spec, app=a.app, docx_name=a.docx.name if a.docx else "",
                              section=a.section, start=start, brief=section_card.brief_markdown(node, spec), existing=existing,
-                             stories_only=a.stories_only)
+                             stories_only=a.stories_only, replace_bullets=a.replace_bullets)
     if cf and not out["scaffold"]:
         cf.parent.mkdir(parents=True, exist_ok=True)
         cf.write_text(out["text"], encoding="utf-8")

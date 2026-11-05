@@ -797,6 +797,26 @@ def filter_established(established: dict, pack: dict, fr: dict | None) -> dict:
     return out
 
 
+def project_acronyms(workspace) -> dict[str, str]:
+    """{acronym: expansion} the project's sources give (csa-work/acronyms.json): a card may spell one out only this way."""
+    if not workspace:
+        return {}
+    try:
+        data = json.loads((Path(workspace) / "csa-work" / "acronyms.json").read_text(encoding="utf-8")).get("acronyms", {})
+    except (OSError, ValueError, AttributeError):
+        return {}
+    return {k.upper(): (v.get("expansion") if isinstance(v, dict) else str(v)) for k, v in data.items() if v}
+
+
+def acronym_lines(text: str, acronyms: dict[str, str]) -> list[str]:
+    found = {k: v for k, v in acronyms.items() if re.search(rf"\b{re.escape(k)}\b", text, re.I)}
+    if not found:
+        return []
+    return ["", "## Project acronyms", "",
+            "Spell one out only as given here, or leave it unexpanded; never offer another meaning for it "
+            "(the answer check rejects one: ACRONYM_EXPANSION):", ""] + [f"- {k} = {v}" for k, v in found.items()]
+
+
 def glossary_lines(text: str) -> list[str]:
     """The card's plain-words glossary: standard technology terms that occur in the card, each with a short explanation for a
     customer who has never met it (references/glossary.json). The writer explains such a term the first time it appears.
@@ -948,8 +968,8 @@ def _register_lines(reg: dict) -> list[str]:
         many = [u for u in un if int(u.get("host_count") or 0) >= 2 and u.get("kind") == "private"]
         inbound = [u for u in un if u not in many and u.get("kind") == "private" and "inbound" in (u.get("directions") or "")]
         shown = (many + inbound)[:30]
-        out += ["", f"Peers seen only by address (name not captured; {len(un)} in total, not counted in the hosts above). "
-                    "Refer to one by its address and say its name was not captured:"]
+        out += ["", f"Peers seen only by address ({len(un)} in total, not counted in the hosts above). "
+                    "Refer to one by its address alone; do not say its name was not captured:"]
         for u in shown:
             ev = (u.get("evidence_ids") or "").split(";")
             out.append(f"- {u['address']} ({u['kind']}): from {u['host_count']} host(s) {u['seen_from'].replace(';', ', ')}; "
@@ -1048,7 +1068,8 @@ def peer_identity(fr: dict | None, workspace: Path | None) -> dict:
         return empty
     from csa_docx import host_settings, topic_frames, zones as zones_mod
     frame = topic_frames.frame_for(fr.get("heading", "")) or {}
-    attrs = [a for s in frame.get("slots", []) for a in (s.get("source") or {}).get("settings", [])]
+    attrs = [a for s in frame.get("slots", []) for a in (s.get("source") or {}).get("settings", [])
+             if not a.startswith("gpo.")]          # a Group Policy object's name is not a host the setting points at
     work = Path(workspace) / "csa-work"
     if not attrs:
         return empty
@@ -1600,6 +1621,16 @@ def requirement_tokens(card: dict) -> dict[str, int]:
 def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool = True,
          extra_searches: dict | None = None, exclude: tuple[str, ...] = ()) -> dict:
     qs = questions(node, spec)
+    from csa_docx import topic_frames as _tf
+    from csa_docx import topic_tables as _tt
+    if (_tt.profile_for(node.get("title", "")) or {}).get("kind") in ("matrix", "sets"):
+        qs = [q for q in qs if q["kind"] != "register"]        # the framework builds that table from the captures: no model rows
+    want = (_tf.frame_for(node.get("title", "")) or {}).get("register_columns")
+    for q in qs:                       # a frame may name the register's real columns where the template holds placeholders
+        if q["kind"] == "register" and want and len(want) == len(q.get("columns") or []):
+            q["document_columns"] = list(q["columns"])
+            q["columns"] = list(want)
+            q["text"] = f"{q['text'].rsplit(', with', 1)[0]}, with {', '.join(want[1:])}."
     if workspace:
         load_ip_names(workspace)
     requirement_stories = (any(q["kind"] == "requirement" for q in qs)
@@ -1767,7 +1798,11 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
         frame = {"peer_identity": peers["hosts"], "register_answered": peers["answered"], "network_ids": peers.get("network_ids", []), "entity_ids": peers.get("entity_ids", []), "slots": [s["id"] for s in fr["slots"]], "ids": sorted(topic_frames.all_ids(fr)),
                  "coverage": topic_frames.coverage_targets(fr), "must_address": owed,
                  "context_ids": topic_frames.context_ids(fr), "zone_conflicts": fr.get("zone_conflicts", []),
-                 "strict": fr.get("strict", False)}
+                 "strict": fr.get("strict", False), "scope_terms": fr.get("scope_terms", []),
+                 "table_patterns": fr.get("table_patterns", []), "bullet_max": fr.get("bullet_max", []),
+                 "register_names": fr.get("register_names", []), "register_hosts": fr.get("register_hosts", {}),
+                 "hosts_covered": fr.get("hosts_covered", []),
+                 "max_text_sentences": fr.get("max_text_sentences", 0)}
     if pview:
         lines += pview["lines"]
     lines += shared_lines
@@ -1818,6 +1853,8 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
                 lines.append(f"- more rows not shown: {', '.join(p['cut'])}")
             lines.append(f"- searched: {'; '.join(p['searched'])}")
     lines += glossary_lines("\n".join(lines))
+    acronyms = project_acronyms(workspace)
+    lines += acronym_lines("\n".join(lines), acronyms)
     for k in kinds:
         if k == "requirement":          # the requirement example is in the prompt digest with the rules
             continue
@@ -1834,7 +1871,7 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
             "keep": [{k: x[k] for k in ("question", "fact", "evidence_ids", "capture_ids")} for x in keep], "tokens": len(text) // 4,
             "correct": [{k: x[k] for k in ("question", "fact", "evidence_ids", "capture_ids", "contradicts")} for x in correct],
             "ratings": spec.get("ratings") or doc_spec.DEFAULT_RATINGS, "kinds": kinds, "host_register": reg,
-            "role_table": rtable, "role_tables": rtables or [], "frame": frame, "disagree": disagree,
+            "role_table": rtable, "role_tables": rtables or [], "frame": frame, "disagree": disagree, "acronyms": acronyms,
             "parts": {k: v for k, v in pview.items() if k != "lines"} if pview else None,
             "practice": practice_view, "requirement_stories": requirement_stories,
             "drawbridge_functions": {k: v for k, v in db_functions.items() if v}}
