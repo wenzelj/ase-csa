@@ -137,7 +137,11 @@ def preview_project_setup(payload: dict[str, Any], *, agents_dir: Path, base_dir
         _field(errors, "destination", "BAD_DESTINATION", f"The destination folder cannot be resolved ({error}).")
         root = base_dir / "new-project"
 
-    if destination.exists():
+    base_dir = base_dir.resolve()
+    if root.parent != base_dir:
+        _field(errors, "destination", "DESTINATION_OUTSIDE_WORKSPACE",
+               "The application folder must be a direct child of the CurrentStateAssessments folder.")
+    if root.exists():
         _field(errors, "destination", "DESTINATION_EXISTS",
                "The destination folder already exists; choose a new folder name.")
     else:
@@ -202,7 +206,7 @@ def preview_project_setup(payload: dict[str, Any], *, agents_dir: Path, base_dir
 
     lane = _text(payload.get("lane")).lower()
     if not lane:
-        lane = "build"
+        lane = "revise"
     if lane not in LANES:
         _field(errors, "lane", "BAD_LANE", f"The assessment lane must be one of: {', '.join(LANES)}.")
 
@@ -230,8 +234,16 @@ def preview_project_setup(payload: dict[str, Any], *, agents_dir: Path, base_dir
 
     template_path = project_path("template_docx", payload.get("template_docx"), allow_existing=True)
     legacy_docx = project_path("legacy_docx", payload.get("legacy_docx"), allow_existing=True)
-    working_docx = project_path("working_docx", payload.get("working_docx"), allow_existing=True)
+    working_docx = project_path("working_docx", payload.get("working_docx"))
+    build_output_docx = project_path("build_output_docx", payload.get("build_output_docx"))
     index_extra_sources = project_path("index_extra_sources", payload.get("index_extra_sources"), allow_existing=True)
+    if lane == "build":
+        if template_path is None:
+            _field(errors, "template_docx", "TEMPLATE_REQUIRED", "A build-lane template is required.")
+        elif not template_path.is_file():
+            _field(errors, "template_docx", "TEMPLATE_MISSING", "The selected build-lane template does not exist.")
+        if build_output_docx is None:
+            _field(errors, "build_output_docx", "OUTPUT_REQUIRED", "A build-lane output DOCX path is required.")
 
     context = _default_context_fields()
     raw_context = payload.get("context")
@@ -262,17 +274,19 @@ def preview_project_setup(payload: dict[str, Any], *, agents_dir: Path, base_dir
         registry["sites"] = sites
     if spec_mode != "off":
         registry["spec_mode"] = spec_mode
-    if lane == "revise":
-        registry["stage"] = "v1"
+    registry["assessment_lane"] = lane
+    registry["stage"] = stage
     if template_path is not None:
         registry["template_docx"] = str(template_path)
     if legacy_docx is not None:
         registry["legacy_docx"] = str(legacy_docx)
     if working_docx is not None:
         registry["working_docx"] = str(working_docx)
+    if build_output_docx is not None:
+        registry["build_output_docx"] = str(build_output_docx)
     if index_extra_sources is not None:
         registry["index_extra_sources"] = str(index_extra_sources)
-    registry["knowledge_dir"] = Path(knowledge_path).name
+    registry["knowledge_dir"] = str(knowledge_path.relative_to(root)) if _is_inside(knowledge_path, root) else ""
 
     return {
         "status": "READY" if not errors else "BLOCKED",
@@ -303,8 +317,8 @@ _ALWAYS_KEY_ORDER = ("key", "label", "project_root", "project_context",
                      "work_dir", "default_source_set")
 
 #: Optional registry fields, in the order they are written (only when selected).
-_OPTIONAL_KEY_ORDER = ("estate", "sites", "spec_mode", "stage", "template_docx",
-                       "legacy_docx", "working_docx", "index_extra_sources",
+_OPTIONAL_KEY_ORDER = ("estate", "sites", "spec_mode", "stage", "assessment_lane", "template_docx",
+                       "build_output_docx", "legacy_docx", "working_docx", "index_extra_sources",
                        "knowledge_dir")
 
 #: Top-level folders the commit creates when the upload did not include them.
@@ -403,8 +417,7 @@ def _context_file_text(context: dict[str, Any]) -> str:
                   "stakeholders", "required_deliverables"):
         if field in context:
             lines.append(f"  {field}: {json.dumps(context[field], ensure_ascii=False)}")
-    if context.get("application_skills"):
-        lines.append(f"  application_skills: {json.dumps(context['application_skills'], ensure_ascii=False)}")
+    lines.append(f"application_skills: {json.dumps(context.get('application_skills') or [], ensure_ascii=False)}")
     return "\n".join(lines) + "\n"
 
 

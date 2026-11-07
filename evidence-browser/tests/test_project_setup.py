@@ -40,8 +40,10 @@ def test_defaults_for_minimal_payload(tmp_path):
     assert values["registry"]["work_dir"] == str(root / "csa-work")
     assert values["registry"]["default_source_set"] == str(root / "Discovery")
     assert values["knowledge"] == {"documents": [], "system_terms": []}
-    assert values["lane"] == "build"
+    assert values["lane"] == "revise"
     assert values["stage"] == "draft"
+    assert values["registry"]["assessment_lane"] == "revise"
+    assert values["registry"]["stage"] == "draft"
     assert values["spec_mode"] == "off"
     assert values["project_context"]["assessment_type"] == "Current State Assessment"
     assert values["project_context"]["required_deliverables"] == ["detailed_current_state_assessment", "consumable_summary"]
@@ -78,6 +80,32 @@ def test_existing_destination_is_blocked(tmp_path):
         agents_dir=tmp_path / ".agents", base_dir=tmp_path)
     assert result["status"] == "BLOCKED"
     assert any(e["code"] == "DESTINATION_EXISTS" for e in result["errors"])
+
+
+def test_destination_must_be_directly_under_workspace(tmp_path):
+    for destination in (tmp_path.parent / "outside-app", tmp_path / "group" / "new-app"):
+        result = project_setup.preview_project_setup(
+            _payload(destination=str(destination)),
+            agents_dir=tmp_path / ".agents", base_dir=tmp_path)
+        assert result["status"] == "BLOCKED"
+        assert any(e["code"] == "DESTINATION_OUTSIDE_WORKSPACE" for e in result["errors"])
+
+
+def test_build_lane_requires_template_and_output(tmp_path):
+    root = tmp_path / "new-app"
+    missing = project_setup.preview_project_setup(
+        _payload(destination=str(root), lane="build"),
+        agents_dir=tmp_path / ".agents", base_dir=tmp_path)
+    assert {e["code"] for e in missing["errors"]} >= {"TEMPLATE_REQUIRED", "OUTPUT_REQUIRED"}
+    template = tmp_path / "template.dotx"
+    template.write_bytes(b"template")
+    ready = project_setup.preview_project_setup(
+        _payload(destination=str(root), lane="build", template_docx=str(template),
+                 build_output_docx=str(root / "assessment.docx")),
+        agents_dir=tmp_path / ".agents", base_dir=tmp_path)
+    assert ready["status"] == "READY", ready["errors"]
+    assert ready["values"]["registry"]["assessment_lane"] == "build"
+    assert ready["values"]["registry"]["build_output_docx"] == str(root / "assessment.docx")
 
 
 def test_destination_conflicting_an_existing_project_is_blocked(tmp_path):
@@ -215,6 +243,22 @@ def test_context_fields_override_defaults_and_unknown_fields_are_rejected(tmp_pa
     # untouched template defaults are preserved exactly
     assert context["assessment_type"] == "Current State Assessment"
     assert context["scope_in"] == []
+
+
+def test_application_skills_render_at_context_top_level(tmp_path):
+    text = project_setup._context_file_text({
+        "application": "New Application", "application_skills": ["new-app-skill"]})
+    assert "\napplication_skills: [\"new-app-skill\"]\n" in text
+    assert "  application_skills:" not in text
+
+
+def test_nested_knowledge_setting_keeps_full_relative_path(tmp_path):
+    root = tmp_path / "new-app"
+    result = project_setup.preview_project_setup(
+        _payload(destination=str(root), knowledge=str(root / "reference" / "00 Knowlege")),
+        agents_dir=tmp_path / ".agents", base_dir=tmp_path)
+    assert result["status"] == "READY"
+    assert result["values"]["registry"]["knowledge_dir"] == "reference/00 Knowlege"
 
 
 def test_bad_key_shape_is_blocked(tmp_path):

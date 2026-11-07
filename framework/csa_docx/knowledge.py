@@ -98,6 +98,8 @@ def knowledge_dir(workspace: Path | None) -> str:
     """The project's knowledge folder name. A registered project sets it with ``knowledge_dir:`` in
     PROJECTS.yaml (new projects may register ``00 Knowlege``); without the setting the folder is the
     historic ``00 Knowledge``. A configured path must stay inside the project root."""
+    if workspace is None:
+        return PROJECT_DIR
     ws = Path(workspace).resolve()
     for p in _registry():
         root = p.get("project_root")
@@ -113,10 +115,11 @@ def knowledge_dir(workspace: Path | None) -> str:
         if not name:
             return PROJECT_DIR
         path = Path(name)
-        if path.is_absolute() or (root_p / path).resolve() != root_p / path:
+        resolved = (root_p / path).resolve()
+        if path.is_absolute() or ".." in path.parts or resolved == root_p or root_p not in resolved.parents:
             raise ValueError("knowledge_dir must be a folder inside the project root: "
                              f"{ws / 'knowledge_dir'} resolves outside {root_p}")
-        return path.name
+        return str(resolved.relative_to(root_p))
     return PROJECT_DIR
 
 

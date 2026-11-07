@@ -156,6 +156,18 @@ def test_no_knowledge_dir_setting_keeps_the_historic_folder(tmp_path, monkeypatc
     assert K.build(root)["rebuilt"] is False
 
 
+def test_nested_knowledge_dir_keeps_relative_path(tmp_path, monkeypatch):
+    root, _ = _registered_project(tmp_path, monkeypatch, None)
+    import os
+    reg = Path(os.environ["CSA_PROJECTS_FILE"])
+    reg.write_text(reg.read_text(encoding="utf-8") + '    knowledge_dir: "references/00 Knowlege"\n',
+                   encoding="utf-8")
+    assert K.knowledge_dir(root) == "references/00 Knowlege"
+    nested = root / "references" / "00 Knowlege"
+    nested.mkdir(parents=True)
+    assert K.folders(root) == [("project", nested)]
+
+
 def test_knowledge_dir_signatures_differ_across_spellings(tmp_path, monkeypatch):
     a, _ = _registered_project(tmp_path, monkeypatch, "00 Knowledge")
     b, _ = _registered_project(tmp_path / "separate", monkeypatch, "00 Knowlege")
