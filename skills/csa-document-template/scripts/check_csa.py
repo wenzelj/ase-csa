@@ -254,6 +254,11 @@ def main() -> None:
         for name, cached in doc.field_caches(root):
             if name in props and cached != props[name]:
                 add("ERROR", "field-stale", f"{part}: DOCPROPERTY {name} shows {cached!r} but the property is {props[name]!r}; refresh fields")
+        if doc.comments is None:
+            orphan_count = sum(1 for kind in ("commentReference", "commentRangeStart", "commentRangeEnd")
+                               for _ in root.iter(q(kind)))
+            if orphan_count:
+                add("ERROR", "orphan-comment", f"{part}: {orphan_count} comment marker(s) have no comments part")
 
     # ---- requirement tables
     seen_reqs, unfilled_ratings, bad_ratings = set(), 0, []

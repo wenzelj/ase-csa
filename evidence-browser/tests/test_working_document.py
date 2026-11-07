@@ -219,5 +219,14 @@ def test_rms_local_template_creates_checked_working_docx_without_changing_dotx(t
     assert result["status"] == "READY", result
     assert result["template_check"] in ("PASS", "WARN")
     assert target.read_bytes() == original
-    assert (root / "02 Current State Assessment" / "02 New Template" / "Assessment.docx").is_file()
+    document = root / "02 Current State Assessment" / "02 New Template" / "Assessment.docx"
+    assert document.is_file()
+    with zipfile.ZipFile(document) as archive:
+        assert not any("comment" in name.lower() for name in archive.namelist())
+        for name in archive.namelist():
+            if name.startswith("word/") and name.endswith(".xml"):
+                xml = archive.read(name)
+                assert b"commentReference" not in xml
+                assert b"commentRangeStart" not in xml
+                assert b"commentRangeEnd" not in xml
     assert "working_docx:" in registry.read_text()
