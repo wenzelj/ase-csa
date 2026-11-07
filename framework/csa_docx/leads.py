@@ -144,15 +144,6 @@ def _identity(record: dict) -> tuple[str, str, str, str]:
     )
 
 
-def hit_has_secret(hit: dict) -> bool:
-    """True when a hit's excerpt, source_ref or source_title looks like it holds a credential value."""
-    if not isinstance(hit, dict):
-        return False
-    source_ref = hit.get("source_ref") or hit.get("source_title") or ""
-    excerpt = hit.get("evidence_excerpt", hit.get("excerpt", "")) or ""
-    return any(_looks_secret(v) for v in (source_ref, excerpt, hit.get("source_title", "") or "") if isinstance(v, str))
-
-
 def _validate_hit(hit: dict, *, migration: bool) -> None:
     if not isinstance(hit, dict):
         raise ValueError("each hit must be an object")
@@ -203,11 +194,6 @@ def add_leads(workspace: str | Path, dr_id: str, qid: str, question: str, hits: 
         raise ValueError("dr_id, qid and question are required")
     if not isinstance(hits, list):
         raise ValueError("hits must be a list")
-    # a hit whose text looks like a credential is skipped (never stored), so one such excerpt cannot fail the whole run
-    kept = [item for item in hits if not hit_has_secret(item)]
-    if len(kept) != len(hits):
-        print(f"leads: {len(hits) - len(kept)} hit(s) skipped for {dr_id}: excerpt looked like a credential value", file=sys.stderr)
-    hits = kept
     for item in hits:
         _validate_hit(item, migration=migration)
     _, lead_path, review_path, lock_path = _paths(workspace)

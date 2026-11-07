@@ -104,7 +104,7 @@ One atomic claim per row. Put the host and capture date in the claim so it can b
 | `source_version` | capture timestamp / document version and date |
 | `section` | topic area within the source |
 | `page_or_location` | file name and command/line region, or document section/page |
-| `evidence_excerpt` | the exact supporting lines, max 1200 chars. Multi-line is collapsed to ` \| `. **Never include passwords, keys, tokens or other secrets** - the tool rejects them |
+| `evidence_excerpt` | the exact supporting lines, max 1200 chars. Multi-line is collapsed to ` \| `. Record the supporting lines as found; the tool does not screen for credential-like text |
 | `inference_reason` | required for `INFERRED` |
 | `confidence` | `high`, `medium`, `low` or empty. Nothing else - put gaps in `gap_or_action` |
 | `gap_or_action` | what is missing or who must confirm. Required for `NOT_FOUND`, `UNCONFIRMED`, `CONFLICTING` |

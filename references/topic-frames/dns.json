@@ -77,11 +77,15 @@
     },
     {
       "id": "S4",
-      "question": "Do the application's own connections use host names or IP addresses (configuration, flow map)?",
+      "question": "Do the application's own connections use host names or IP addresses (configuration)?",
       "requirements": [
         "SEP-DNS-01"
       ],
-      "source": {},
+      "source": {
+        "settings": [
+          "dns.client_cache"
+        ]
+      },
       "search": [
         "hosts file",
         "FQDN"
@@ -100,7 +104,12 @@
       "requirements": [
         "SEP-DNS-01"
       ],
-      "source": {},
+      "source": {
+        "settings": [
+          "dns.hosts_file",
+          "capture.host_files"
+        ]
+      },
       "search": [
         "etc\\hosts",
         "DNS fallback"

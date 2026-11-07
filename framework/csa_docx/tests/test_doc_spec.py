@@ -152,7 +152,7 @@ def test_card_and_answer_sheet_round_trip():
     sheet = answer_sheet.parse("""## B1 SEP-TIME-01
 Facts:
 - Every host uses the enterprise time servers. (E-1) {observed; all hosts}
-    Summary: Every host uses enterprise time servers. The requirement is Not Met because no OT-resident source was identified.
+    Summary: The hosts use enterprise time servers. The requirement is Not Met because no OT-resident source was identified.
     Story: The hosts take their clock from servers on the corporate network. Whether any host keeps a usable clock during isolation was not established.
 Rating: Not Met
 Rating reason: no OT-resident source.

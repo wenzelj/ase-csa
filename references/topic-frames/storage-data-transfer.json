@@ -41,7 +41,12 @@
       ],
       "source": {
         "settings": [
-          "storage.shares"
+          "storage.shares",
+          "storage.share_access",
+          "transfer.smb_sessions",
+          "transfer.smb_inbound_sessions",
+          "transfer.smb_open_files",
+          "transfer.net_use"
         ]
       },
       "search": [
@@ -138,47 +143,6 @@
       ]
     },
     {
-      "id": "S5",
-      "bind": {
-        "ot_push": [
-          "SEP-STOR-03"
-        ],
-        "pull_into_ot": [
-          "SEP-STOR-03"
-        ],
-        "into_ot": [
-          "SEP-STOR-03"
-        ],
-        "unknown_zone": [
-          "SEP-STOR-03"
-        ],
-        "inside_ot": []
-      },
-      "question": "Which data flows does the system's flow map declare that the captures did not show?",
-      "requirements": [
-        "SEP-STOR-02",
-        "SEP-STOR-03"
-      ],
-      "source": {
-        "flows": {
-          "data": true,
-          "status": [
-            "declared"
-          ]
-        }
-      },
-      "search": [
-        "agentService"
-      ],
-      "look_for": [
-        "flow map",
-        "declared",
-        "expected flow",
-        "did not show",
-        "not observed"
-      ]
-    },
-    {
       "id": "S6",
       "baseline_values": [
         "None found"
@@ -212,7 +176,8 @@
       "search": [
         "USBSTOR",
         "RemovableStorageDevices"
-      ]
+      ],
+      "must_state": true
     },
     {
       "id": "S8",
@@ -228,7 +193,8 @@
       "search": [
         "ProxyServer",
         "WinHTTP proxy"
-      ]
+      ],
+      "must_state": true
     },
     {
       "id": "S9",
@@ -236,7 +202,15 @@
       "requirements": [
         "SEP-STOR-01"
       ],
-      "source": {},
+      "source": {
+        "settings": [
+          "storage.backup_windows",
+          "agent.backup",
+          "backup.sql_writer",
+          "backup.vss",
+          "backup.task_references"
+        ]
+      },
       "search": [
         "retention"
       ],
@@ -247,6 +221,36 @@
         "rebuild",
         "backup",
         "known-good"
+      ]
+    }
+  ],
+  "story_groups": [
+    {
+      "title": "where the data is held",
+      "slots": [
+        "S1",
+        "S2"
+      ]
+    },
+    {
+      "title": "how the data moves and who reaches it",
+      "slots": [
+        "S3",
+        "S4"
+      ]
+    },
+    {
+      "title": "how the data is kept and protected",
+      "slots": [
+        "S9"
+      ]
+    },
+    {
+      "title": "transfer tools and controls",
+      "slots": [
+        "S6",
+        "S7",
+        "S8"
       ]
     }
   ]

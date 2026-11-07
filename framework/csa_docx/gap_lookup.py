@@ -12,7 +12,7 @@ evidence does not answer it. This runs the framework's own lookups in the usual 
 
   Verdicts: ANSWERED (an explicit complete-resolution record matches the exact question), CANDIDATES
   (sources need review), NOT_FOUND (complete search found nothing), or INCOMPLETE (the evidence matrix lookup
-  is unavailable, or a named entity's own searches failed or reached the 50-result limit without yielding a
+  is unavailable, or a named entity's own searches failed or reached the result limit (50, or 200 for a host or IP) without yielding a
   relevant lead); saturation of generic queries, the candidate cap and the matrix 40-row cap are
   informational notes, not verdict blockers. A question's coverage is the coverage of its named entities: a
   named entity whose own searches completed with zero relevant hits is a normal scoped miss, never a verdict
@@ -494,6 +494,12 @@ def structured_host_hits(workspace: Path, dr_id: str, text: str, kind: str,
     return selected[:_MAX_CANDIDATES], set(hosts) <= covered
 
 
+# Results per index search. A search that names a host or IP gets the larger cap: such a name can appear in
+# hundreds of files, and a smaller cap leaves the question INCOMPLETE. Topic-only searches stay at the default.
+SEARCH_LIMIT = 50
+ENTITY_SEARCH_LIMIT = 200
+
+
 def _index_stage(workspace: Path, text: str, exclude: tuple[str, ...], kind: str = "system",
                  vocab: list[str] | None = None, dr_id: str = "") -> tuple[list[dict], list[str], IndexStatus]:
     structured, structured_complete = structured_host_hits(workspace, dr_id, text, kind, vocab)
@@ -508,10 +514,11 @@ def _index_stage(workspace: Path, text: str, exclude: tuple[str, ...], kind: str
     if len(query_list) < len(all_queries):
         notes.append(f"query limit omitted {len(all_queries) - len(query_list)} searches")
     for terms, path_like in query_list:
-        cmd = [sys.executable, str(INDEX_SCRIPT), "--workspace", str(workspace), "search", terms, "--limit", "50", "--per-file", "1"]
+        ent = next((e for e in entities if terms == e or terms.startswith(e + " ")), None)
+        limit = ENTITY_SEARCH_LIMIT if ent else SEARCH_LIMIT
+        cmd = [sys.executable, str(INDEX_SCRIPT), "--workspace", str(workspace), "search", terms, "--limit", str(limit), "--per-file", "1"]
         if path_like:
             cmd += ["--path-like", path_like]
-        ent = next((e for e in entities if terms == e or terms.startswith(e + " ")), None)
         res = _run(cmd)
         if not res or res.get("status") != "OK":
             if ent is None:
@@ -521,11 +528,11 @@ def _index_stage(workspace: Path, text: str, exclude: tuple[str, ...], kind: str
             continue
         ran.append(terms + (f" [{path_like}]" if path_like else ""))
         search_hits = res.get("results", [])
-        if len(search_hits) >= 50:
+        if len(search_hits) >= limit:
             if ent:
                 saturated_entities.setdefault(ent, []).append(terms)
             else:
-                notes.append(f"search reached 50-result limit: {terms}")
+                notes.append(f"search reached {limit}-result limit: {terms}")
         for h in search_hits:
             rel = h.get("rel_path", "")
             key = (rel, h.get("page_or_location"))
@@ -539,7 +546,7 @@ def _index_stage(workspace: Path, text: str, exclude: tuple[str, ...], kind: str
             hits.append(h)
     # A named entity whose searches completed with zero relevant hits is a scoped miss; only an entity whose
     # own searches failed or saturated AND that yielded no relevant lead makes the question incomplete.
-    failures = [f"{ent}: searches {', '.join(sorted(set(terms)))} failed or reached the 50-result limit "
+    failures = [f"{ent}: searches {', '.join(sorted(set(terms)))} failed or reached the result limit "
                 f"and yielded no relevant lead"
                 for ent, terms in sorted({**failed_entities, **saturated_entities}.items())
                 if not any(ent.lower() in str(h.get("evidence_excerpt", "")).lower() for h in hits)]
@@ -550,7 +557,7 @@ def _index_stage(workspace: Path, text: str, exclude: tuple[str, ...], kind: str
     covered = {e.lower() for e in entities
                if any(e.lower() in str(h.get("evidence_excerpt", "")).lower() for h in hits)}
     for ent in sorted(set(saturated_entities) & covered):
-        notes.append(f"search reached 50-result limit: {', '.join(sorted(set(saturated_entities[ent])))} "
+        notes.append(f"search reached the {ENTITY_SEARCH_LIMIT}-result limit: {', '.join(sorted(set(saturated_entities[ent])))} "
                      f"(this entity did yield leads, so coverage holds)")
     combined = structured + [h for h in ranked if h not in structured]
     return combined[:_MAX_CANDIDATES], ran, IndexStatus(not failures, failures, notes)
@@ -581,12 +588,6 @@ def lookup_gap(workspace: Path, dr_id: str, text: str, *, exclude: tuple[str, ..
     lead_ids: list[str] = []
     if hits:
         from csa_docx import leads
-        # a hit whose excerpt looks like a credential is withheld, never written to leads.jsonl; it must not abort the sweep
-        withheld = [h for h in hits if leads.hit_has_secret(h)]
-        if withheld:
-            hits = [h for h in hits if not leads.hit_has_secret(h)]
-            index_notes.append(f"{len(withheld)} index hit(s) withheld: excerpt looked like a credential value")
-    if hits:
         added = leads.add_leads(workspace, dr_id, _qid_from_dr_id(dr_id), text, hits)
         open_ids = {r["lead_id"] for r in leads.open_leads(workspace, dr_id)}
         lead_ids = [lead_id for lead_id in added if lead_id in open_ids]

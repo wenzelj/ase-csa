@@ -1,7 +1,8 @@
-import type { GapQuestion, IntakeSnapshot, ReviewJob } from "../types";
+import type { GapQuestion, IntakeErrors, IntakeRun, IntakeSnapshot, ReviewJob } from "../types";
+import { terminalReason } from "../jobReason";
 
 export type StepKey = "ingest" | "documents" | "gaps" | "settle" | "use";
-export type IntakeStep = { key: StepKey; title: string; status: "done" | "current" | "waiting" | "blocked"; detail: string };
+export type IntakeStep = { key: StepKey; title: string; status: "done" | "current" | "waiting" | "blocked" | "failed"; detail: string };
 
 const TERMINAL = ["succeeded", "failed", "cancelled", "interrupted"];
 const STEP_FOR_JOB: Record<string, StepKey> = { ingest: "ingest", intake: "documents", gap_check: "gaps", resolve_gaps: "settle" };
@@ -18,7 +19,7 @@ function when(value: string): string {
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 /** Where the Evidence intake page stands, step by step, and which step is next. */
-export function deriveIntakeSteps(snap: IntakeSnapshot, job: ReviewJob | null): { steps: IntakeStep[]; next: StepKey; busy: boolean; canResolve: boolean } {
+export function deriveIntakeSteps(snap: IntakeSnapshot, job: ReviewJob | null, errors?: IntakeErrors | null): { steps: IntakeStep[]; next: StepKey; busy: boolean; canResolve: boolean } {
   const rec = snap.intake;
   const readable = rec ? [...rec.added, ...rec.changed].filter(f => f.status === "indexed" && f.source_class !== "capture") : [];
   const added = snap.matrix.added_since_intake.length;
@@ -55,10 +56,23 @@ export function deriveIntakeSteps(snap: IntakeSnapshot, job: ReviewJob | null): 
   };
   const running = !!job && !TERMINAL.includes(job.state);
   const runningStep = running ? STEP_FOR_JOB[job!.operation] : undefined;
-  if (runningStep) { status[runningStep] = "blocked"; detail[runningStep] = "Running…"; }
   const order: StepKey[] = ["ingest", "documents", "gaps", "settle", "use"];
+  const runs = errors?.runs || [];
+  const finished = (r: IntakeRun) => !!r.state && TERMINAL.includes(r.state);
+  for (const key of order) {
+    const newest = runs.find(r => r.step === key && finished(r));
+    if (!newest || !newest.has_problems) continue;
+    const reason = newest.reason || (job && job.id === newest.id ? terminalReason(job) : "");
+    status[key] = "failed";
+    detail[key] = newest.exit_code === 0 ? `Finished with ${plural(newest.problem_count, "problem")}` : `Last run failed: ${reason || newest.state}`;
+  }
+  if (runningStep) {
+    status[runningStep] = "blocked";
+    const live = runs.find(r => r.id === job!.id);
+    detail[runningStep] = live && live.problem_count > 0 ? `Running… ${plural(live.problem_count, "problem")} so far` : "Running…";
+  }
   const steps = order.map(key => ({ key, title: TITLES[key], status: status[key], detail: detail[key] }));
-  const next = order.find(k => status[k] === "current") || "use";
+  const next = order.find((k, i) => status[k] === "current" || (status[k] === "failed" && !order.slice(i + 1).some(o => status[o] === "current"))) || "use";
   const canResolve = checkCurrent && (snap.open_leads.length > 0 || affected > 0);
   return { steps, next, busy: running, canResolve };
 }

@@ -56,6 +56,8 @@ class Zones:
         self.host_ips = {h.upper(): ips for h, ips in (host_ips or {}).items()}
 
     def of_ip(self, ip: str) -> dict:
+        if ip.strip().upper() in self.hosts:                       # a host rule keyed by address ("host:10.40.228.98") wins over a subnet
+            return self.hosts[ip.strip().upper()]
         try:
             a = ipaddress.ip_address(ip.split("%")[0])
         except ValueError:
@@ -86,6 +88,15 @@ def for_project(work_dir: Path) -> Zones:
         from csa_docx import modelstore
         for r in modelstore.read_csv(reg):
             ips[r["host"]] = [x for x in (r.get("ips") or "").split(";") if x]
+    try:                  # a host the register does not hold, named by an evidence row ("ROTPRDCCM111 is the OT Config Manager at 10.40.228.98")
+        from csa_docx import evidence_live
+        from csa_docx.section_card import evidence_address_hosts
+        for ip, host in evidence_address_hosts(evidence_live.get_verified_evidence(Path(work_dir) / "evidence-matrix.csv")).items():
+            if not ips.get(host):
+                ips.setdefault(host, [])
+                ips[host].append(ip)
+    except Exception:
+        pass
     return Zones(load(work_dir), ips)
 
 

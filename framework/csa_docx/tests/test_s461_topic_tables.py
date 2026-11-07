@@ -209,7 +209,8 @@ def test_no_attempted_sentence_when_no_row_attempted(tmp_path):
         tt.register = orig_register
     assert t["status"] == "OK"
     assert "Attempted" not in t["common"], f"unexpected Attempted sentence: {t['common']}"
-    assert "Seen means it appeared in the sampled process connections." in t["common"]
+    assert "Each connection appeared in the sampled process connections." in t["common"]
+    assert t["columns"] == ["Mechanism", "From (opens the connection)", "To", "Direction", "Port"]
     assert "From is the side that opens the connection." in t["common"]
     assert "Zones come from the project zone list." in t["common"]
 
@@ -279,3 +280,17 @@ def test_endpoints_label_used_for_end_names(tmp_path):
     assert t["status"] == "OK"
     dst = t["rows"][0]["cells"][0]
     assert "Azure Service Bus" in dst, f"expected endpoint label in dst, got: {dst}"
+
+
+def test_declared_only_flows_are_not_rows_and_the_flow_map_is_not_a_column(tmp_path):
+    wd = _work(tmp_path)
+    rows = [_flow_row("F001", "declared", "web/API", "ROTPRDREV102", "34.120.2.104", "443",
+                      "OT Rockhampton", "Internet", "ot", "internet", "yes")]
+    _write_flows(wd, rows)
+    orig_register = tt.register
+    tt.register = lambda work_dir: _HOSTS
+    try:
+        t = tt.build_flows(wd, "Storage & Data Transfer", STOR_PROFILE)
+    finally:
+        tt.register = orig_register
+    assert t["rows"] == [] and "Flow map" not in t["columns"]

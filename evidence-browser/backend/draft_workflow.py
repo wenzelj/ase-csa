@@ -11,10 +11,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from csa_docx import rating_pass
+
 from . import commands
 from .models import CommandRequest
 
-SKIP_KINDS = {"container", "reference", "controlled"}
+SKIP_KINDS = {"container", "reference", "controlled", "empty"}
 _BLOCK = re.compile(r"^##\s+([BC]\d+)\b", re.M)
 
 
@@ -93,6 +95,7 @@ def snapshot(agents_dir: Path, project: dict[str, str]) -> dict[str, Any]:
             row.update(state=state, answered_at=_iso(answered), open=_unknowns(cards / f"{key}.answer.md"))
         else:
             row.update(state="not-answered", answered_at=None, open=0)
+        row["rating"] = rating_pass.load_summary(work, key)
         sections.append(row)
     if not sections:   # no document spec: list what was answered
         for manifest in sorted(cards.glob("*.manifest.json")) if cards.is_dir() else []:
@@ -101,7 +104,8 @@ def snapshot(agents_dir: Path, project: dict[str, str]) -> dict[str, Any]:
             info = json.loads(card.read_text(encoding="utf-8")) if card.is_file() else {}
             sections.append({"number": info.get("number", ""), "key": key, "title": info.get("title", key), "kind": "",
                              "level": 2, "document_state": "", "state": "answered",
-                             "answered_at": _iso(manifest.stat().st_mtime), "open": _unknowns(cards / f"{key}.answer.md")})
+                             "answered_at": _iso(manifest.stat().st_mtime), "open": _unknowns(cards / f"{key}.answer.md"),
+                             "rating": rating_pass.load_summary(work, key)})
     counts: dict[str, int] = {}
     for row in sections:
         counts[row["state"]] = counts.get(row["state"], 0) + 1

@@ -1,12 +1,41 @@
 import { useEffect, useRef, useState } from "react";
 import { cancelJob, fetchDraft, fetchJob, fetchJobs, submitJob } from "../api";
 import { AGENT_CLIS, rememberedAgentCli, rememberAgentCli } from "../agentClis";
-import type { DraftSection, DraftSnapshot, ReviewJob } from "../types";
+import type { DraftRating, DraftSection, DraftSnapshot, ReviewJob } from "../types";
 import { Empty } from "./ui";
+import { PromptsPanel } from "./PromptsPanel";
+import { terminalReason } from "../jobReason";
 
 const TERMINAL = ["succeeded", "failed", "cancelled", "interrupted"];
 const STATE_LABEL: Record<string, string> = { current: "Current", stale: "Evidence changed", answered: "Answered", "not-answered": "Not answered" };
 const OP_LABEL: Record<string, string> = { ingest: "Ingest new data", stale: "Check for stale answers", answer: "Answer", refresh_draft: "Refresh stale answers", freeze: "Freeze at V1" };
+
+/** Rating column: latest average, average of the kept runs, each question's latest score (red when it fell since the previous run).
+ *  The hover text lists the kept runs and the reason for each question's latest score. */
+export function ratingTitle(r: DraftRating): string {
+  const runs = r.runs.map(x => `${x.at.slice(0, 10)}  avg ${x.average}  (${Object.entries(x.blocks).map(([b, v]) => `${b} ${v}`).join(", ")})`);
+  const why = Object.entries(r.reasons).filter(([, v]) => v).map(([b, v]) => `${b}: ${v}`);
+  const tips = Object.entries(r.improve || {}).flatMap(([b, ts]) => ts.map(t => `${b}: ${t}`));
+  return [...runs, ...(why.length ? ["", ...why] : []), ...(tips.length ? ["", "Suggested improvements:", ...tips] : [])].join("\n");
+}
+export function RatingCell({ rating }: { rating?: DraftRating | null }) {
+  if (!rating) return <>—</>;
+  const latest = rating.runs[rating.runs.length - 1];
+  const why = Object.entries(rating.reasons || {}).filter(([, v]) => v);
+  const tips = Object.entries(rating.improve || {});
+  return <span className="draft-rating" tabIndex={0} aria-label={ratingTitle(rating)}>
+    <strong className={rating.worse.length ? "draft-worse" : ""}>{rating.latest.toFixed(1)}</strong>
+    <small>avg {rating.average.toFixed(1)} of last {rating.runs.length}</small>
+    <span className="draft-rating-blocks">{Object.entries(latest.blocks).map(([b, v]) =>
+      <span key={b} className={rating.worse.includes(b) ? "draft-worse" : ""}>{b} {v.toFixed(1)}</span>)}</span>
+    <span className="draft-rating-pop" role="tooltip">
+      <b>Kept runs</b>
+      {rating.runs.map(x => <span key={x.at}>{x.at.slice(0, 10)}  avg {x.average}  ({Object.entries(x.blocks).map(([b, v]) => `${b} ${v}`).join(", ")})</span>)}
+      {why.length > 0 && <><b>Why each block scored as it did</b>{why.map(([b, v]) => <span key={b}>{b}: {v}</span>)}</>}
+      {tips.length > 0 && <><b>Suggested improvements</b>{tips.flatMap(([b, ts]) => ts.map(t => <span key={b + t}>{b}: {t}</span>))}</>}
+    </span>
+  </span>;
+}
 
 function when(value?: string | null) { if (!value) return "—"; const d = new Date(value); return isNaN(d.getTime()) ? value : d.toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }); }
 function phase(job: ReviewJob): string {
@@ -18,34 +47,7 @@ function phase(job: ReviewJob): string {
   return `${labels[key] || key} — ${detail}`;
 }
 
-function stripAnsi(value: string): string {
-  return value.replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "").replace(/\u001b[@-Z\\^_]/g, "").replace(/[\u0007\u009b]/g, "");
-}
-export function terminalReason(job: ReviewJob): string {
-  const clean = (value?: string | null) => stripAnsi(value || "").replace(/\s+\n/g, "\n").trim();
-  const message = clean(job.message);
-  if (message) return message;
-  const streams = [job.stderr_tail, job.stdout_tail].map(clean).filter(Boolean);
-  for (const stream of streams) {
-    const lines = stream.split("\n").map(l => l.trimEnd());
-    const meaningfulIdx = lines.map((l, i) => (l && (l.includes("csa:") || l.includes("Error:")) ? i : -1)).filter(i => i >= 0);
-    if (meaningfulIdx.length) {
-      const lastIdx = meaningfulIdx.at(-1)!;
-      // Include the actionable line plus any following guidance lines (until blank or end)
-      const parts: string[] = [];
-      for (let i = lastIdx; i < lines.length; i++) {
-        if (!lines[i]) break;
-        parts.push(lines[i]);
-      }
-      return parts.join("\n");
-    }
-  }
-  for (const stream of streams) {
-    const lines = stream.split("\n").map(l => l.trimEnd()).filter(Boolean);
-    if (lines.length) return lines.at(-1)!;
-  }
-  return "";
-}
+export { terminalReason };
 
 export function DraftLane({ system, focus = "", investigate }: { system: string; focus?: string; investigate: (query: string) => void }) {
   const [snap, setSnap] = useState<DraftSnapshot | null>(null); const [job, setJob] = useState<ReviewJob | null>(null);
@@ -117,18 +119,20 @@ export function DraftLane({ system, focus = "", investigate }: { system: string;
     <div className="draft-counts">{(["current", "stale", "answered", "not-answered"] as const).map(k => <div key={k} className={`draft-count draft-${k}`}><strong>{counts[k] || 0}</strong><span>{STATE_LABEL[k]}</span></div>)}<div className="draft-count"><strong>{snap.open_questions.total}</strong><span>Open questions</span></div></div>
 
     {error && <p className="desk-error" role="alert">{error}</p>}
+    <PromptsPanel system={system} cli={cli} busy={running} onJob={started => { setJob(started); setShowLog(true); watch(started.id); }} />
     {job && <div className={`draft-job draft-job-${job.state}`} role="status"><div><b>{OP_LABEL[job.operation] || job.operation}{jobTarget ? ` ${jobTarget}` : ""}</b><span>{running ? (job.operation === "answer" || job.operation === "refresh_draft" ? phase(job) : "Running…") : job.state === "succeeded" ? "Done" : <span>Stopped: {job.state}{jobReason && <> — {jobReason}</>}</span>}</span></div><div className="draft-job-buttons"><button className="quiet" onClick={() => setShowLog(!showLog)}>{showLog ? "Hide output" : "Show output"}</button>{running && <button className="quiet" onClick={() => void cancelJob(system, job.id)}>Cancel</button>}</div>{showLog && <pre>{(job.stdout_tail || "") + (job.stderr_tail ? "\n" + job.stderr_tail : "") || job.message || "Waiting for output…"}</pre>}</div>}
     {snap.spec_error && <p className="desk-error">Section list unavailable: {snap.spec_error}</p>}
 
     <section className="decision-desk draft-desk"><header><div><h2>Subsections</h2><p>Answer one subsection at a time. A subsection with unaccepted tracked changes is refused until you accept or reject them in Word.</p></div><label className="draft-check"><input type="checkbox" checked={onlyOpen} onChange={e => setOnlyOpen(e.target.checked)} /> Only what needs an answer</label></header>
-      <table className="draft-table"><thead><tr><th>Section</th><th>State</th><th>Last answered</th><th>Open</th><th /></tr></thead><tbody>
+      <table className="draft-table"><thead><tr><th>Section</th><th>Rating</th><th>State</th><th>Last answered</th><th>Open</th><th /></tr></thead><tbody>
         {rows.map(row => <tr key={row.key} id={`draft-row-${row.key}`} className={focus && (focus === row.key || focus === row.number) ? "draft-focus" : ""}>
           <td><b>{row.number}</b> {row.title}<small>{row.key}</small></td>
+          <td><RatingCell rating={row.rating} /></td>
           <td><span className={`draft-pill draft-${row.state}`}>{STATE_LABEL[row.state] || row.state}</span></td>
           <td>{when(row.answered_at)}</td><td>{row.open || "—"}</td>
           <td><button onClick={() => answer(row)} disabled={running}>{row.state === "not-answered" ? "Answer" : "Answer again"}</button></td>
         </tr>)}
-        {!rows.length && <tr><td colSpan={5}>Nothing to show.</td></tr>}
+        {!rows.length && <tr><td colSpan={6}>Nothing to show.</td></tr>}
       </tbody></table>
     </section>
 

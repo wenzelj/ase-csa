@@ -1,4 +1,4 @@
-import type { IntakeSnapshot, DraftSnapshot, WordReview, ReviewSubmit, ReviewJob, ReviewJobResponse, ReviewLatest, AuthorSetup, AuthorSubmit, AuthorJobResponse, AuthorOptions, CleanupSubmit, CleanupJobResponse, CleanupLatest, CleanupPreflight, BuildSetup, BuildOutcome, AuditSnapshot } from "./types";
+import type { PromptList, PromptPreview, JobLogPage, IntakeSnapshot, IntakeErrors, DraftSnapshot, WordReview, ReviewSubmit, ReviewJob, ReviewJobResponse, ReviewLatest, AuthorSetup, AuthorSubmit, AuthorJobResponse, AuthorOptions, CleanupSubmit, CleanupJobResponse, CleanupLatest, CleanupPreflight, BuildSetup, BuildOutcome, AuditSnapshot } from "./types";
 
 export async function api<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
@@ -103,9 +103,18 @@ export async function fetchJobs(system: string): Promise<ReviewJob[]> { const da
 export async function fetchJob(system: string, id: string): Promise<ReviewJob> { return api(`/api/systems/${system}/jobs/${id}`); }
 
 export async function fetchIntake(system: string): Promise<IntakeSnapshot> { return api(`/api/systems/${system}/intake`); }
+export async function fetchIntakeErrors(system: string): Promise<IntakeErrors> { return api(`/api/systems/${system}/intake/errors`); }
+export async function fetchJobLog(system: string, jobId: string, stream: "stdout" | "stderr", start: number, limit: number): Promise<JobLogPage> { return api(`/api/systems/${system}/jobs/${jobId}/log?stream=${stream}&start=${start}&limit=${limit}`); }
 export async function reviewEvidence(system: string, id: string, state: "rejected" | "reviewed", note: string): Promise<{ status: string; reviewed: string[]; state: string }> {
   return api(`/api/systems/${system}/evidence/${encodeURIComponent(id)}/review`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ state, note }) });
 }
 export async function reviewLead(system: string, id: string, state: "open" | "not_an_answer" | "resolved" | "retired", note: string, evidenceIds: string[] = []): Promise<{ status: string; reviewed: string[]; reused: string[]; state: string }> {
   return api(`/api/systems/${system}/leads/${encodeURIComponent(id)}/review`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ state, note, evidence_ids: evidenceIds }) });
 }
+
+const JSON_HEADERS = { "Content-Type": "application/json" };
+export async function fetchPrompts(system: string): Promise<PromptList> { return api(`/api/systems/${system}/prompts`); }
+export async function savePrompt(system: string, name: string, text: string, etag: string): Promise<{ saved: boolean; etag: string }> { return api(`/api/systems/${system}/prompts/${name}`, { method: "PUT", headers: JSON_HEADERS, body: JSON.stringify({ text, etag }) }); }
+export async function resetPrompt(system: string, name: string): Promise<{ reset: boolean }> { return api(`/api/systems/${system}/prompts/${name}`, { method: "DELETE" }); }
+export async function fetchPromptHistory(system: string, name: string): Promise<{ versions: { file: string; text: string }[] }> { return api(`/api/systems/${system}/prompts/${name}/history`); }
+export async function fetchPromptPreview(system: string, key: string, block: string): Promise<PromptPreview> { return api(`/api/systems/${system}/prompt-preview?key=${encodeURIComponent(key)}&block=${encodeURIComponent(block)}`); }

@@ -100,9 +100,9 @@ def test_answer_agent_runs_in_project_cards_folder_with_bare_names(tmp_path, mon
     prompt = CSA["build_prompt"](project, route, args, local=True)
     assert "WORKSPACE=." in prompt
     assert "CARD=TIME.focus-B1.md" in prompt
-    assert "REQUIRED_READING:" in prompt
-    assert "csa-card-rules.md" in prompt and "csa-writing-style" in prompt
-    assert "Do not read the full skill" not in prompt
+    assert "REQUIRED_READING:" not in prompt          # the draft lane's rules are in the prompt itself
+    assert "Split requirements" not in prompt or "Summary and Story" in prompt
+    assert "## Using the card" in prompt
     assert "SOURCE_SET=" not in prompt
     assert "CHANGE_FILE=" not in prompt
     assert "STABLE_SUBTREE=" not in prompt

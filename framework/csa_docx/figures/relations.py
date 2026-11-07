@@ -94,7 +94,9 @@ def _dns(ev: dict) -> list[dict]:
     out = []
     names = set(ev["register"])
     for r in ev["matrix"]:
-        if not _usable(r):
+        # Only a VERIFIED row states a resolver. An UNCONFIRMED "Possible answer" row quotes a source that lists
+        # many addresses (RADIUS, Splunk, web), and every address in it would otherwise be drawn as a DNS server.
+        if (r.get("status") or "").upper() != "VERIFIED":
             continue
         claim = r.get("claim") or ""
         if not DNS_ROW.search(claim):

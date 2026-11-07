@@ -365,7 +365,7 @@ def _smart_run(by_query, matrix_matches=None):
 
 
 SAT = [{"rel_path": f"s/{i}.txt", "page_or_location": f"line {i + 1}", "source_title": f"s/{i}.txt",
-        "source_version": "", "evidence_excerpt": "time source is a domain controller"} for i in range(50)]
+        "source_version": "", "evidence_excerpt": "time source is a domain controller"} for i in range(gl.ENTITY_SEARCH_LIMIT)]
 
 HOST_H = {"rel_path": "cap/ROTPRDLOG101/62_gpresult.html", "page_or_location": "line 5",
           "source_title": "cap/ROTPRDLOG101/62_gpresult.html", "source_version": "capture z",

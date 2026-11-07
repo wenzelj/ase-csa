@@ -54,6 +54,7 @@ projects:
     # indexed as evidence (owner decision). The extra source only adds the Radlink Scope of Work.
     default_source_set: "/Users/wenzel/Work/ASE/CurrentStateAssessments/TETRA/06 REVELOC TETRA/01 Current State AS Built/revloc-tetra"
     estate: "internal.qr.com.au"
+    application: "TETRA/Reveloc"
     index_extra_sources: "/Users/wenzel/Work/ASE/CurrentStateAssessments/TETRA/05 Revloc Tetra/01 Current State AS Built"
     legacy_docx: "/Users/wenzel/Work/ASE/CurrentStateAssessments/TETRA/05 Revloc Tetra/02 Current State Assessment/NetSeg_Current_State_Assessment_REVELOC_TETRA.docx"
     working_docx: "/Users/wenzel/Work/ASE/CurrentStateAssessments/TETRA/06 REVELOC TETRA/01 Current State AS Built/01 Final Version/Current State Assessment - Tetra Reveloc.docx"

@@ -4,7 +4,7 @@ from csa_docx import answer_sheet as A
 from csa_docx import evidence_digest as D
 from csa_docx import section_card
 
-CAPTURE = "REVELOC_discovery_IPTPRDAPP137_20260605T031609Z: 02_reveloc_expected_flow_map.txt"
+CAPTURE = "REVELOC_discovery_IPTPRDAPP137_20260605T031609Z: 23_process_connection_mapping.txt"
 PREV = "NetSeg_Current_State_Assessment_REVELOC_TETRA.docx | DNS"
 MATRIX = {
     "E-001": {"evidence_id": "E-001", "status": "VERIFIED", "source_title": PREV, "question": "", "gap_or_action": "", "claim": "x"},
@@ -209,3 +209,247 @@ def test_table_rows_are_stored_and_kept_but_never_offered_to_other_sections(tmp_
                                                           "columns": ["Aspect", "Configuration Observed", "Coverage / Source"]}],
               "evidence": {"B2": {"rows": [], "cut": [], "digest_ids": []}}}
     assert "CAPTURE_DROPPED" in _errors(A.validate(lost, card_d, MATRIX, draft=True))
+
+
+def test_count_mismatch_ignores_drive_letters_and_counts_of_other_things():
+    from csa_docx import answer_sheet as A
+    assert A.count_mismatch("The Rockhampton Reveloc application server holds 228 Windows Server Backup versions on its own C: drive, the latest from November 2018.") is None
+    assert A.count_mismatch("The host keeps 40 scheduled tasks: two for backup, one for logs.") is None
+    assert A.count_mismatch("Twelve hosts: two jump hosts, one server, six nodes") == "the parts add up to 9, not 12"
+
+
+def test_a_peer_known_only_by_address_is_named_by_its_address_without_a_warning():
+    from csa_docx import answer_sheet as A
+    card = {"parts": {"hosts": {"10.40.228.180": "general-purpose-jump-host", "ROKPRDOPS110": "general-purpose-jump-host"}}}
+    assert A.named_host_addresses(card) == {"10.40.228.180"}
+    sheet = {"B1": {"summary": "The nodes open SMB to 10.89.163.66.", "story": "", "text": ""}}
+    q = {"id": "B1", "kind": "requirement", "text": "Where is the data held?"}
+    out = A.plain_language_checks(sheet, {"questions": [q], **card})
+    assert not [f for f in out if f["code"] == "HOST_IN_PROSE"]
+    sheet = {"B1": {"summary": "The jump host 10.40.228.180 opens it.", "story": "", "text": ""}}
+    out = A.plain_language_checks(sheet, {"questions": [q], **card})
+    assert [f for f in out if f["code"] == "HOST_IN_PROSE"]
+
+
+def test_rating_reason_and_closing_paragraph_that_repeat_the_summary_are_flagged():
+    from csa_docx import answer_sheet as A
+    import inspect
+    src = inspect.getsource(A)
+    assert "REASON_REPEATS_SUMMARY" in src and "STORY_ENDS_BY_REPEATING" in src
+    assert {"REASON_REPEATS_SUMMARY", "STORY_ENDS_BY_REPEATING"} <= A.CONTENT_CODES
+
+
+def test_rows_quoting_the_scripts_expected_flow_list_are_not_offered_but_stay_in_the_matrix(tmp_path):
+    import csv
+    from csa_docx import evidence_live
+    m = tmp_path / "evidence-matrix.csv"
+    cols = ["evidence_id", "status", "review_state", "source_title", "page_or_location", "claim"]
+    rows = [["E-1", "VERIFIED", "reviewed", "REVELOC_discovery_A_20260605T010000Z: 02_reveloc_expected_flow_map.txt", "", "The expected flow map records R1."],
+            ["E-2", "VERIFIED", "reviewed", "REVELOC_discovery_A_20260605T010000Z: 23_process_connection_mapping.txt", "", "A opened a connection."],
+            ["E-3", "VERIFIED", "reviewed", "x.docx", "02_reveloc_expected_flow_map.txt, R1 entries", "R1 is core."]]
+    with m.open("w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh); w.writerow(cols); w.writerows(rows)
+    assert [r["evidence_id"] for r in evidence_live.get_verified_evidence(m)] == ["E-2"]
+    assert [r["evidence_id"] for r in evidence_live.read(m)] == ["E-1", "E-2", "E-3"]          # still in the matrix for every other reader
+
+
+def test_an_absence_claim_needs_a_fact_that_names_the_thing():
+    from csa_docx import answer_sheet as A
+    q = {"id": "B2", "kind": "requirement", "text": "Is there a controlled transfer pattern?"}
+    card = {"questions": [q]}
+    base = {"summary": "S.", "story": "No proxy, scanning service or other defined transfer path was identified.", "rating_reason": "", "unknown": []}
+    bad = {"B2": {**base, "facts": [{"text": "The jump host has WinSCP installed."}]}}
+    good = {"B2": {**base, "facts": [{"text": "No host has a proxy configured."}, {"text": "The scanning service is absent."}]}}
+    assert [f["code"] for f in A.absence_checks(bad, card)] == ["ABSENCE_WITHOUT_FACT"]
+    assert "proxy" in A.absence_checks(bad, card)[0]["message"]
+    assert A.absence_checks(good, card) == []
+
+
+def _block(story="", facts=(), summary="S.", reason=""):
+    return {"summary": summary, "story": story, "rating_reason": reason, "unknown": [], "dropped": [], "covers": [],
+            "facts": [{"text": t, "ids": i} for t, i in facts], "bullets": [], "rows": []}
+
+
+def test_a_must_state_setting_finding_left_out_is_an_error_and_stating_it_clears_it():
+    from csa_docx import answer_sheet as A
+    item = {"slot": "S8", "text": "Proxy setting on A, B: Direct, no WinHTTP proxy", "ids": ["E-2995"], "direction": "", "tokens": [],
+            "empty": False, "must_state": True, "far_unknown": False}
+    fr = {"must_address": {"B2": [item]}}
+    left_out = {"B2": _block(facts=[("A host has WinSCP.", ["E-1"])])}
+    stated = {"B2": _block(facts=[("No host has a proxy configured.", ["E-2995"])])}
+    assert [f["code"] for f in A.slot_answers(left_out, fr) if f["level"] == "ERROR"] == ["SETTING_NOT_STATED"]
+    assert not [f for f in A.slot_answers(stated, fr) if f["level"] == "ERROR"]
+    assert "SETTING_NOT_STATED" in A.RELAXED_HARD
+
+
+def test_saying_data_leaves_ot_while_the_far_end_zone_is_unknown_is_flagged():
+    from csa_docx import answer_sheet as A
+    q = {"id": "B3", "kind": "requirement", "text": "Does data only go outward?"}
+    card = {"questions": [q], "frame": {"must_address": {"B3": [{"slot": "S3", "far_unknown": True}]}}}
+    assert [f["code"] for f in A.direction_checks({"B3": _block(story="Some of that data leaves OT at the nodes' initiative.")}, card)] == ["DIRECTION_ASSUMED"]
+    assert A.direction_checks({"B3": _block(story="The nodes open the connection; the zone of 10.89.163.66 is not recorded.")}, card) == []
+    card_known = {"questions": [q], "frame": {"must_address": {"B3": [{"slot": "S3", "far_unknown": False}]}}}
+    assert A.direction_checks({"B3": _block(story="Some of that data leaves OT.")}, card_known) == []
+
+
+def test_a_glossary_term_must_be_explained_beside_its_first_mention_in_the_story():
+    from csa_docx import answer_sheet as A
+    q = {"id": "B2", "kind": "requirement", "text": "q"}
+    card = {"questions": [q]}
+    bare = {"B2": _block(story="Several servers hold connections open to the SysVol share on another server.")}
+    done = {"B2": _block(story="Several servers hold connections open to the SysVol share, the domain share that holds login scripts and policies.")}
+    summary_only = {"B2": _block(summary="They use Server Message Block.", story="Files sit in local shares.")}
+    assert [f["code"] for f in A.glossary_checks(bare, card)] == ["TERM_NOT_EXPLAINED"] and "SysVol" in A.glossary_checks(bare, card)[0]["message"]
+    assert A.glossary_checks(done, card) == [] and A.glossary_checks(summary_only, card) == []
+    assert "TERM_NOT_EXPLAINED" in A.RELAXED_HARD
+
+
+def test_saying_what_is_not_recorded_four_times_in_one_block_is_flagged():
+    from csa_docx import answer_sheet as A
+    q = {"id": "B3", "kind": "requirement", "text": "q"}
+    card = {"questions": [q]}
+    many = {"B3": _block(summary="The zone is not recorded.", story="The name is not recorded. The role is not known. Nothing more is established.", reason="The zone is not recorded.")}
+    once = {"B3": _block(summary="Partly met.", story="The nodes open the connection. The zone is not recorded.", reason="The zone decides it.")}
+    assert [f["code"] for f in A.repeated_unknown_checks(many, card)] == ["REPEATED_UNKNOWN"] and A.repeated_unknown_checks(once, card) == []
+
+
+def test_a_rating_reason_on_a_different_ground_from_the_summary_is_flagged():
+    from csa_docx import answer_sheet as A
+    import inspect
+    assert "REASON_DIFFERS_FROM_SUMMARY" in inspect.getsource(A) and "REASON_DIFFERS_FROM_SUMMARY" in A.CONTENT_CODES
+
+
+def test_settings_that_say_nothing_is_configured_are_worded_so_they_cannot_be_misread():
+    from csa_docx import topic_frames as T
+    assert T._finding_claim("Proxy setting", "transfer.proxy", "Direct, no WinHTTP proxy", "A and B") == \
+        "No web proxy is configured on A and B (WinHTTP uses direct access)"
+    assert T._finding_claim("Removable storage policy", "transfer.removable", "Not set in applied Group Policy", "A") == \
+        "No removable storage restriction is set in the applied Group Policy of A"
+    assert T._finding_claim("Shares", "storage.shares", "TetraFlex", "A") == "Shares on A: TetraFlex"
+
+
+def _rows_block(n, dropped=()):
+    b = _block()
+    b["rows"] = [["Aspect", "Observed", "Source"]] + [[f"a{i}", "x", "y"] for i in range(n)]
+    b["dropped"] = list(dropped)
+    return b
+
+
+def test_removing_two_or_more_table_rows_without_a_dropped_line_is_an_error():
+    from csa_docx import answer_sheet as A
+    old = {"B3": _rows_block(7)}
+    levels = lambda new: [(f["code"], f["level"]) for f in A.regression(old, new, {}, {}) if f["code"] == "ROWS_DROPPED"]
+    assert levels({"B3": _rows_block(2)}) == [("ROWS_DROPPED", "ERROR")]
+    assert levels({"B3": _rows_block(2, dropped=["a3 no longer applies"])}) == [("ROWS_DROPPED", "WARN")]
+    assert levels({"B3": _rows_block(6)}) == [("ROWS_DROPPED", "WARN")]
+    assert "ROWS_DROPPED" in A.RELAXED_HARD
+
+
+def test_every_all_the_same_without_an_exception_is_flagged():
+    from csa_docx import answer_sheet as A
+    q = {"id": "B2", "kind": "requirement", "text": "q"}
+    card = {"questions": [q]}
+    bad = {"B2": _block(story="Every group of local administrators includes the same four INTERNAL groups.")}
+    ok = {"B2": _block(story="Most hosts include the same four groups, except the Reveloc server, which has three.")}
+    assert [f["code"] for f in A.universal_claim_checks(bad, card)] == ["UNIVERSAL_CLAIM"] and A.universal_claim_checks(ok, card) == []
+
+
+def test_the_internal_domain_is_in_the_glossary_and_must_be_explained():
+    from csa_docx import answer_sheet as A
+    q = {"id": "B2", "kind": "requirement", "text": "q"}
+    card = {"questions": [q]}
+    assert [f["code"] for f in A.glossary_checks({"B2": _block(story="The groups sit in the INTERNAL domain.")}, card)] == ["TERM_NOT_EXPLAINED"]
+    done = {"B2": _block(story="The groups sit in the INTERNAL domain, the Active Directory domain that holds the user and group accounts.")}
+    assert A.glossary_checks(done, card) == []
+
+
+def test_card_names_a_host_known_only_by_address_and_the_table_history_keeps_the_richest_rows(tmp_path):
+    from csa_docx import section_card as S, answer_sheet as A
+    S._IP_NAMES = {"10.40.228.180": "ROKPRDOPS110"}
+    assert S.name_addresses("10.40.228.180 opens x") == "10.40.228.180 (ROKPRDOPS110) opens x"
+    assert S.name_addresses("10.40.228.180 (ROKPRDOPS110) opens x") == "10.40.228.180 (ROKPRDOPS110) opens x"
+    sheet = tmp_path / "K.answer.md"
+    A.best_rows_update(sheet, {"B3": {"rows": [["h"], ["a"], ["b"]]}})
+    A.best_rows_update(sheet, {"B3": {"rows": [["h"], ["a"]]}})
+    assert A.with_best_rows({"B3": {"rows": [["h"]]}}, sheet)["B3"]["rows"] == [["h"], ["a"], ["b"]]
+
+
+def test_universal_claims_block_but_no_host_only_warns():
+    from csa_docx import answer_sheet as A
+    card = {"questions": [{"id": "B2", "kind": "requirement", "text": "q"}]}
+    lv = lambda story: [(f["level"], f["code"]) for f in A.universal_claim_checks({"B2": _block(story=story)}, card)]
+    assert lv("The same four enterprise groups plus a functional group are local administrators.") == [("ERROR", "UNIVERSAL_CLAIM")]
+    assert lv("The other nodes follow the Rockhampton one.") == [("ERROR", "UNIVERSAL_CLAIM")]
+    assert lv("No host in this group records a usable fallback.") == [("WARN", "UNIVERSAL_CLAIM")]
+    assert lv("All nine hosts listen on port 5985.") == [] and lv("Most hosts use it, except the Reveloc server.") == []
+    assert "UNIVERSAL_CLAIM" in A.RELAXED_HARD and "PROSE_NAME_UNSUPPORTED" in A.RELAXED_HARD
+
+
+def test_a_name_or_address_no_evidence_shows_is_an_error_and_two_values_for_one_host_are_flagged():
+    from csa_docx import answer_sheet as A
+    matrix = {"E-1": {"claim": "ROTPRDSRV122 answers on 10.40.228.9", "evidence_excerpt": "", "source_title": ""}}
+    fact = lambda t: (t, ["E-1"])
+    card = {"questions": [{"id": "B2", "kind": "requirement", "text": "q"}], "evidence": {}}
+    sheet = {"B2": _block(story="ROTPRDSRV122 is the server. MOTPRDSRV122 also answers.", facts=[fact("ROTPRDSRV122 is at 10.40.228.9.")])}
+    assert [f["message"].split(" named")[0] for f in A.prose_name_checks(sheet, card, matrix)] == ["MOTPRDSRV122"]
+    bad = {"B2": _block(facts=[fact("ROTPRDSRV122 is at 10.40.228.97.")])}
+    assert [f["code"] for f in A.facts_disagree_checks(bad, matrix)] == ["ADDRESS_NOT_IN_EVIDENCE"]
+    two = {"B2": _block(facts=[fact("ROTPRDSRV122 is at 10.40.228.9."), fact("ROTPRDSRV122 is at 10.40.228.97.")])}
+    assert [f["code"] for f in A.facts_disagree_checks(two, {})] == ["FACTS_DISAGREE"]
+    said = {"B2": _block(story="ROTPRDSRV122 has two addresses, 10.40.228.9 and 10.40.228.97.",
+                         facts=[fact("ROTPRDSRV122 is at 10.40.228.9."), fact("ROTPRDSRV122 is at 10.40.228.97.")])}
+    assert A.facts_disagree_checks(said, {}) == []
+
+
+def test_new_glossary_terms_must_be_explained():
+    from csa_docx import answer_sheet as A
+    card = {"questions": [{"id": "B2", "kind": "requirement", "text": "q"}]}
+    bad = A.glossary_checks({"B2": _block(story="The hosts show stratum 5 and use WinRM.")}, card)
+    assert "stratum" in bad[0]["message"] and "WinRM" in bad[0]["message"]
+
+
+def test_a_peer_address_is_named_from_evidence_rows_that_say_so():
+    from csa_docx import section_card as S
+    rows = [{"claim": "IPTPRDCCM202 is MECM 2 (Prod) at 10.89.161.67 (IPTPRDCCM202.internal.qr.com.au) and a further address 10.89.163.66"},
+            {"claim": "MOTPRDCLU103 has an established connection from System to 10.89.163.66 (name not captured) on port 445."},
+            {"claim": "ROTPRDCCM111 is a server at 10.89.163.73"},
+            {"claim": "AAAPRDBBB001 is at 10.1.1.1"}, {"claim": "CCCPRDDDD002 is at 10.1.1.1"}]
+    got = S.evidence_address_hosts(rows)
+    assert got["10.89.163.66"] == "IPTPRDCCM202" and got["10.89.163.73"] == "ROTPRDCCM111"
+    assert "10.1.1.1" not in got                    # two hosts claim it: not named
+
+
+def test_a_host_the_evidence_names_by_its_address_may_be_named_beside_that_address():
+    from csa_docx import answer_sheet as A
+    matrix = {"E-283": {"claim": "MOTPRDCLU103 has a connection to 10.89.163.66 (name not captured) on port 445"},
+              "E-3309": {"claim": "IPTPRDCCM202 is MECM 2 at 10.89.161.67 and a further address 10.89.163.66"}}
+    q = {"id": "B1", "kind": "requirement", "text": "q"}
+    sheet = {"B1": _block(facts=[("MOTPRDCLU103 opens connections to 10.89.163.66. (E-283)", ["E-283"])],
+                          story="MOTPRDCLU103 opens connections to the MECM server IPTPRDCCM202 at 10.89.163.66.")}
+    assert A.prose_name_checks(sheet, {"questions": [q]}, matrix) == []
+
+
+def test_an_address_cut_short_is_not_found_inside_the_longer_one():
+    from csa_docx import answer_sheet as A
+    assert A._has_name("DNS 10.40.228.97 and 10.45.228.97", "10.40.228.97")
+    assert not A._has_name("DNS 10.40.228.97 and 10.45.228.97", "10.40.228.9")
+    matrix = {"E-1": {"claim": "ROTPRDSRV122 (10.40.228.97) is the primary DNS server"}}
+    sheet = {"B1": _block(facts=[("The primary DNS server ROTPRDSRV122 (10.40.228.9) serves the hosts. (E-1)", ["E-1"])])}
+    assert [f["code"] for f in A.facts_disagree_checks(sheet, matrix)] == ["ADDRESS_NOT_IN_EVIDENCE"]
+
+
+def test_a_slot_finding_shows_a_run_of_hosts_by_role_and_leaves_unknown_hosts_alone():
+    from csa_docx import section_card as S
+    roles = {"MOTPRDCLU101": "SQL Server cluster node", "MOTPRDCLU103": "SQL Server cluster node", "ROTPRDLOG102": "OT TETRA Log Server"}
+    line = "- S1: Primary DNS server on MOTPRDCLU101, MOTPRDCLU103 and ROTPRDLOG102: ROTPRDSRV122 (E-1)"
+    assert S.role_groups(line, roles) == "- S1: Primary DNS server on SQL Server cluster node (x2) and OT TETRA Log Server (x1): ROTPRDSRV122 (E-1)"
+    unknown = "- S1: Secondary on MOTPRDCLU101 and ZZZPRDZZZ999: X"
+    assert S.role_groups(unknown, roles) == unknown
+
+
+def test_a_topic_finds_its_rows_under_every_spelling_of_its_subject_area():
+    from csa_docx import section_card as S
+    assert "patch_and_lifecycle" in S.topic_areas("Patch & Lifecycle Management")
+    assert {"identity_and_authentication", "identity_authentication", "identity_and_access"} <= S.topic_areas("Identity & Authentication")
+    assert "internet_access_communications" in S.topic_areas("Internet Access & Communications (Proxy / SMTP)")
+    assert S.topic_areas("A heading no frame knows") == set()

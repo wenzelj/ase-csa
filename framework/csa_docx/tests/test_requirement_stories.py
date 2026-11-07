@@ -1,3 +1,4 @@
+from pathlib import Path
 from csa_docx import answer_sheet as A, doc_spec
 from csa_docx.engines.docxengine_adapter import Document
 
@@ -154,21 +155,6 @@ Rating reason: recovery was not established.
     assert "STORY_RESTATES_RATING" in {f["code"] for f in res2["findings"] if f["level"] == "ERROR"}
 
 
-def test_story_sentence_that_repeats_the_summary_is_rejected():
-    card = _card(two=False)
-    matrix = {"E-001": {"claim": "local storage"}}
-    raw = """## B1 SEP-X-01
-Facts:
-- The application uses local storage. (E-001) {observed; application}
-Summary: The application keeps its data on local storage and no restore test was recorded. The requirement is Partially Met because recovery was not established.
-Story: The application keeps its data on local storage and no restore test was recorded. The nightly job writes to a second disk on the same server.
-Rating: Partially Met
-Rating reason: recovery was not established.
-"""
-    res = A.validate(A.parse(raw), card, matrix, draft=True, relaxed=True)
-    assert "STORY_REPEATS_SUMMARY" in {f["code"] for f in res["findings"] if f["level"] == "ERROR"}
-
-
 def test_near_duplicate_summary_and_story_are_rejected():
     card = _card(two=False)
     matrix = {"E-001": {"claim": "local storage"}}
@@ -193,3 +179,113 @@ def test_discovery_question_is_not_rendered_into_current_state_cell():
     current_state_text = current_state.split("**Text:**", 1)[1].split("**Why:**", 1)[0]
     assert "QUESTION:" not in current_state_text
     assert any("Has recovery been tested?" in q for q in rendered["open"])
+
+
+def _story_codes(story):
+    card = _card(two=False)
+    matrix = {"E-001": {"claim": "local storage"}}
+    raw = f"""## B1 SEP-X-01
+Facts:
+- The application uses local storage. (E-001) {{observed; application}}
+Summary: Data stays on local disks. The requirement is Partially Met because recovery was not established.
+Story: {story}
+Rating: Partially Met
+Rating reason: recovery was not established.
+"""
+    res = A.validate(A.parse(raw), card, matrix, draft=True, relaxed=True)
+    return {f["code"] for f in res["findings"] if f["level"] == "ERROR"}
+
+
+def test_long_story_sentence_is_an_error():
+    long_s = " ".join(["The nightly job writes a copy of the files to a second disk"] * 1 + ["and then a further copy to a third disk on another server"] * 6) + "."
+    assert "STORY_SENTENCE_LONG" in _story_codes(long_s + " Restore was not tested.")
+    assert "STORY_SENTENCE_LONG" not in _story_codes("The nightly job copies the files to a second disk. Restore was not tested.")
+
+
+def test_same_long_phrase_twice_in_a_story_is_an_error():
+    s = "Nothing in the evidence reviewed shows that a restore was tested. Nothing in the evidence reviewed shows that a fallback was written down."
+    assert "STORY_PHRASE_REPEAT" in _story_codes(s)
+    assert "STORY_PHRASE_REPEAT" not in _story_codes("Nothing in the evidence reviewed shows that a restore was tested. No written fallback was found either.")
+
+
+def test_a_parts_name_and_a_short_parallel_phrase_are_not_a_repeated_phrase():
+    from csa_docx import story_shape
+    names = {"app": ["Reveloc application / TGOIP server"]}
+    s = ("The Reveloc application / TGOIP server at Mackay shares Users. The Reveloc application / TGOIP server at Rockhampton shares Tetra Share. "
+         "The Mackay host shares a Test folder with full access for everyone. Another shares a Temp folder with full access for everyone.")
+    assert not [c for c, _ in story_shape.findings(s, names) if c == "STORY_PHRASE_REPEAT"]
+
+
+def test_requirement_prompt_asks_for_a_readable_story():
+    from csa_docx import prompts
+    rules = prompts.assemble({"requirement"}, None)[0]
+    assert "Each paragraph covers one point" in rules and "What is true now, in plain words" in rules
+    assert "merge related points instead of adding paragraphs" in rules and "REASON_REPEATS_SUMMARY" in rules
+    assert "about 25 words" not in rules
+
+
+def test_discovery_story_record_gets_the_story_errors():
+    from csa_docx import check_change
+    from types import SimpleNamespace as NS
+    long_s = " ".join(f"w{i}" for i in range(65)) + "."
+    rec = NS(title="SEP-X-01 discovery story", text=long_s, edit_id="S3-E1")
+    assert {f["code"] for f in check_change.story_findings([rec])} == {"STORY_SENTENCE_LONG"}
+    assert check_change.story_findings([NS(title="SEP-X-01 row", text=long_s, edit_id="S3-E2")]) == []
+
+
+def test_one_block_story_must_be_paragraphed_and_paragraphs_are_kept():
+    one = " ".join(f"Sentence number {i} says something about item{i} here." for i in range(8))
+    assert "STORY_NOT_PARAGRAPHED" in _story_codes(one)
+    ok = "\nStory: ".join([" ".join(f"Sentence number {i} says something about item{i} here." for i in range(3)),
+                          "The second paragraph names a different thing entirely. It is short."])
+    assert "STORY_NOT_PARAGRAPHED" not in _story_codes(ok)
+    raw = f"## B1 SEP-X-01\nFacts:\n- Data sits on local disks. (E-001) {{observed; application}}\nSummary: S.\nStory: First para here.\nStory: Second para here.\n"
+    assert A.parse(raw)["B1"]["story"] == "First para here.\n\nSecond para here."
+
+
+def test_multi_paragraph_story_is_rendered_as_paragraphs_and_replaced_as_a_range():
+    from csa_docx import answer_sheet as AS
+    assert AS.no_ids("A (E-001).") == "A."
+    assert "\n\n".join(AS.no_ids(" ".join(x.split())) for x in "One two.\n\nThree four.".split("\n\n")) == "One two.\n\nThree four."
+    from csa_docx.engines import docxengine_adapter as ad
+    from types import SimpleNamespace as NS
+    assert ad._following_line_count(NS(action="Replace this paragraph and the following 3 lines")) == 3
+    assert ad._following_line_count(NS(action="Replace this paragraph and the following line")) == 1
+    assert ad._has_paragraph_plus_following_line_replacement(NS(action="Replace this paragraph and the following 3 lines"))
+
+
+def test_misspelled_slash_name_in_a_kept_fact_is_put_back():
+    from collections import Counter
+    from csa_docx import section_card
+    vocab = Counter({"TETRA/Reveloc": 50, "Tetra/Reveloc": 3, "TCP/IP": 9})
+    assert section_card._repair_slash_names("all 2ETRA/Reveloc data over TCP/IP", vocab) == "all TETRA/Reveloc data over TCP/IP"
+
+
+def test_a_sentence_naming_many_parts_is_no_longer_an_error():
+    from csa_docx import story_shape
+    names = {"a": ["OT Reveloc Server"], "b": ["Reveloc application"], "c": ["RevBroadcast Server"], "d": ["SQL Server"]}
+    s2 = "The OT Reveloc Server, the Reveloc application, the RevBroadcast Server and SQL Server share a path."
+    assert not [c for c, _ in story_shape.findings(s2, names)]
+
+
+def test_story_paragraphs_that_all_open_alike_are_flagged():
+    from csa_docx import story_shape
+    same = "\n\n".join(f"The item{i} sits on its own host here. It has one job." for i in range(3))
+    assert "STORY_SAME_OPENING" in {c for c, _ in story_shape.findings(same)}
+    varied = "\n\n".join(["At Mackay the data sits on one host. It has one job.", "Backups run nightly. They go to a second disk.",
+                          "Nothing shows a tested restore. That is still open."])
+    assert "STORY_SAME_OPENING" not in {c for c, _ in story_shape.findings(varied)}
+
+
+def test_story_of_one_sentence_paragraphs_is_rejected():
+    from csa_docx import story_shape
+    eight = "\n\n".join(f"Item{i} sits on its own host here." for i in range(8))
+    assert "STORY_NOT_PARAGRAPHED" in {c for c, _ in story_shape.findings(eight)}
+    six = "\n\n".join(f"Item{i} sits on its own host here. It has one job." for i in range(6))
+    assert "STORY_NOT_PARAGRAPHED" not in {c for c, _ in story_shape.findings(six)}
+
+
+def test_story_paragraph_opening_with_a_label_is_flagged():
+    from csa_docx import story_shape
+    assert "STORY_LABEL" in {c for c, _ in story_shape.findings("Where the data sits. The data is on local disks.")}
+    assert "STORY_LABEL" not in {c for c, _ in story_shape.findings("At Mackay the data sits on local disks. Backups run nightly.")}

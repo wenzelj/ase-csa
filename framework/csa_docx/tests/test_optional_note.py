@@ -4,8 +4,8 @@ import csv
 from csa_docx import answer_sheet as A
 from csa_docx import section_card
 
-ROWS = ["Time source | ROTPRDSRV122 for the Rockhampton hosts | nine captured hosts",
-        "Time service | Windows Time Service | all 12 captured hosts"]
+ROWS = ["Time source | ROTPRDSRV122 for the Rockhampton hosts | nine hosts",
+        "Time service | Windows Time Service | all 12 hosts"]
 PLACEHOLDER = "[Optional note: a finding that does not fit the table, in one or two sentences. Delete if not needed.]"
 
 
@@ -35,7 +35,7 @@ def _note_qid(card):
 def _sheet(card, note_block):
     qid = _note_qid(card)
     return A.parse(
-        "## B1 SEP-TIME-01\nFacts:\n- Every captured host takes its time from an enterprise server. (E-001) {observed; all 12 hosts}\n"
+        "## B1 SEP-TIME-01\nFacts:\n- Every host takes its time from an enterprise server. (E-001) {observed; all 12 hosts}\n"
         "Rating: Not Met\nRating reason: no OT source was identified.\n\n"
         "## B2 Discovery Information\nRows:\n| Aspect | Configuration Observed | Coverage / Source |\n"
         "| Time source | ROTPRDSRV122 for the Rockhampton hosts | the RevServer and RevBroadcast nodes (E-001) |\n\n"
@@ -59,12 +59,12 @@ def test_the_note_is_asked_after_the_other_questions_so_their_numbers_do_not_mov
 def test_none_removes_the_placeholder():
     node = _node()
     card = _card(node)
-    sheet = _sheet(card, "None: every captured host fits a row of the table.")
+    sheet = _sheet(card, "None: every host fits a row of the table.")
     assert A.validate(sheet, card)["status"] == "OK"
     recs = A.render_records(sheet, card, node, "3", 10)["records"]
     note = [r for r in recs if "@H3.4.1-P1" in r]
     assert len(note) == 1 and "**Do:** Delete" in note[0] and "**Text:**" not in note[0]
-    assert "every captured host fits a row" in note[0]
+    assert "every host fits a row" in note[0]
 
 
 def test_a_note_replaces_the_placeholder():
@@ -99,7 +99,7 @@ def test_a_long_note_is_refused_even_in_the_draft_lane():
 
 def test_a_note_that_repeats_a_row_is_refused():
     card = _card(_node())
-    sheet = _sheet(card, "Facts:\n- Windows Time Service runs on all 12 captured hosts. (E-004) {observed; all 12 captured hosts}")
+    sheet = _sheet(card, "Facts:\n- Windows Time Service runs on all 12 hosts. (E-004) {observed; all 12 hosts}")
     assert "NOTE_REPEATS_ROW" in _codes(A.validate(sheet, card))
 
 
@@ -202,16 +202,16 @@ def test_note_candidates_find_a_role_group_member_that_differs(tmp_path):
 
 
 def test_a_kept_fact_that_counts_hosts_is_marked_for_restating():
-    hint = section_card.count_hint("Nine captured hosts synchronise from ROTPRDSRV122.")
-    assert 'restate without "Nine captured hosts"' in hint and "role group" in hint
+    hint = section_card.count_hint("Nine hosts synchronise from ROTPRDSRV122.")
+    assert 'restate without "Nine hosts"' in hint and "role group" in hint
     assert section_card.count_hint("The RevServer nodes synchronise from ROTPRDSRV122.") == ""
 
 
 def test_a_restated_kept_fact_passes_when_it_cites_the_same_capture():
     node = _node()
     card = _card(node)
-    card["keep"] = [{"question": "B1", "fact": "Nine captured hosts synchronise from ROTPRDSRV122.",
+    card["keep"] = [{"question": "B1", "fact": "Nine hosts synchronise from ROTPRDSRV122.",
                      "evidence_ids": ["E-001"], "capture_ids": ["E-001"]}]
-    sheet = _sheet(card, "None: every captured host fits a row of the table.")
+    sheet = _sheet(card, "None: every host fits a row of the table.")
     res = A.validate(sheet, card)
     assert "CAPTURE_DROPPED" not in _codes(res) and "NO_TOTALS" not in _codes(res)

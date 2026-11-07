@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import signal
+import sys
 import subprocess
 import threading
 import time
@@ -16,8 +18,17 @@ from fastapi import HTTPException
 from . import commands
 from .models import CommandRequest, JobRecord
 
+FRAMEWORK = Path(__file__).resolve().parents[2] / "framework"
+if str(FRAMEWORK) not in sys.path:
+    sys.path.insert(0, str(FRAMEWORK))
+from csa_docx import leads as lead_store
+
 
 TAIL_LIMIT = 64 * 1024
+LOG_PAGE_MAX = 500
+LOG_LINE_MAX = 2000
+LOG_WITHHELD = "[withheld: looked like a credential]"
+_JOB_ID = re.compile(r"^[0-9a-f-]{36}$")
 TERMINAL_STATES = frozenset({"succeeded", "failed", "cancelled", "interrupted"})
 
 
@@ -103,6 +114,13 @@ class JobManager:
             _atomic_text(folder / "stdout.log", stdout)
         if stderr is not None:
             _atomic_text(folder / "stderr.log", stderr)
+        _atomic_json(folder / "metadata.json", job.model_dump())
+
+    def _append_log(self, project: dict[str, str], job: JobRecord, name: str, text: str) -> None:
+        folder = self._folder(project, job.id)
+        folder.mkdir(parents=True, exist_ok=True)
+        with open(folder / f"{name}.log", "a", encoding="utf-8") as handle:
+            handle.write(text)
         _atomic_json(folder / "metadata.json", job.model_dump())
 
     def _load_project(self, project: dict[str, str]) -> None:
@@ -210,7 +228,7 @@ class JobManager:
                         current = self._jobs[job_id]
                         current.stdout_tail = _tail("".join(chunks["stdout"]))
                         current.stderr_tail = _tail("".join(chunks["stderr"]))
-                        self._persist(project, current, "".join(chunks["stdout"]), "".join(chunks["stderr"]))
+                        self._append_log(project, current, name, text)
                 stream.close()
 
             readers = [threading.Thread(target=drain, args=("stdout", process.stdout), daemon=True),
@@ -262,6 +280,47 @@ class JobManager:
             if job is None or job.project_key != project["key"]:
                 raise HTTPException(404, "Job not found")
             return job.model_copy(deep=True)
+
+    def read_log(self, project: dict[str, str], job_id: str, stream: str, start: int = 1,
+                 limit: int = 200) -> dict:
+        if stream not in ("stdout", "stderr"):
+            raise HTTPException(400, "stream must be stdout or stderr")
+        self._load_project(project)
+        with self._condition:
+            known = job_id in self._jobs
+        if not known and not _JOB_ID.match(str(job_id)):
+            raise HTTPException(404, "Job not found")
+        self.get(project, job_id)
+        start = max(1, int(start))
+        limit = max(1, min(int(limit), LOG_PAGE_MAX))
+        path = self._folder(project, job_id) / (stream + ".log")
+        lines: list[dict] = []
+        total = 0
+        truncated = False
+        if path.is_file():
+            with path.open("r", encoding="utf-8", errors="replace", newline="") as handle:
+                while True:
+                    text = handle.readline(LOG_LINE_MAX + 1)
+                    if not text:
+                        break
+                    cut = False
+                    if len(text) > LOG_LINE_MAX and not text.endswith("\n"):
+                        cut = True
+                        while True:                      # discard the rest of an over-long line
+                            rest = handle.readline(65536)
+                            if not rest or rest.endswith("\n"):
+                                break
+                    total += 1
+                    if total < start or len(lines) >= limit:
+                        continue
+                    text = text.rstrip("\r\n")
+                    if len(text) > LOG_LINE_MAX:
+                        text, cut = text[:LOG_LINE_MAX], True
+                    truncated = truncated or cut
+                    if lead_store._looks_secret(text):
+                        text = LOG_WITHHELD
+                    lines.append(dict(n=total, text=text))
+        return dict(stream=stream, total_lines=total, start=start, lines=lines, truncated=truncated)
 
     def cancel(self, project: dict[str, str], job_id: str) -> JobRecord:
         self._load_project(project)

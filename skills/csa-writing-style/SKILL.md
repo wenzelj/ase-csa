@@ -21,7 +21,7 @@ Match the register (formality, level of detail), not the structural habits. Spel
 
 A reader must not have to decode an abbreviation to understand a heading or a short passage.
 
-- Write technical terms in full in headings, captions, table headers and finding labels. Prefer `Server Message Block connections to unnamed peers`, not `SMB connections to unnamed peers`.
+- Write technical terms in full in headings, captions, table headers and finding labels. Prefer `Server Message Block connections to 10.89.163.66`, not `SMB connections to 10.89.163.66`.
 - In body prose, use the full term without an abbreviation when the term appears only once.
 - Introduce an abbreviation only when it will be reused. On first use in each independently readable subsection, write the full term followed by the abbreviation in parentheses, for example `Server Message Block (SMB)`. Use the abbreviation alone only after that introduction.
 - Do not assume that a glossary makes an unexplained abbreviation clear at the point of reading.
@@ -62,13 +62,13 @@ Prose that explains how the system works names a machine by what it does. A host
 - **Same role, several hosts: the group.** "The two RevViewer Jump Hosts", "the six SQL Server cluster nodes". Add the site only when the sites differ ("the Mackay RevViewer Jump Host"). The member names go in the table row for that role group.
 - **Add the host name in prose only when** (a) the finding is about one specific host and the reader must act on it or find it (an exception, a gap, a host that differs from its peers), or (b) the role and site still leave two hosts indistinguishable. Give it once, on first mention in that paragraph, as "role (NAME)": "the Mackay RevViewer Jump Host (MKYPRDOPS110)", then the role alone afterwards. Never repeat a host name sentence after sentence.
 - **No role in the evidence: use the name.** Never invent or infer a function. If the register has no role for a host, use its name exactly as the sources write it and let the unknown be stated once.
-- **IP address in prose only for a machine with no name and no known role**, written as "an unnamed internal peer (10.40.228.132)". Never give a name and an address together in prose, and never an address for a host that has a name. Leave subnets and address ranges to the tables.
+- **IP address in prose only for a machine with no name and no known role**, written as the address alone ("the peer at 10.40.228.132"), never as "an unnamed internal peer" or "unidentified peers". When several are meant, list their addresses. Write the address alone: never add that the name, zone or role is not recorded or not captured. Never give a name and an address together in prose, and never an address for a host that has a name. Leave subnets and address ranges to the tables.
 - **Tables give both**, one row per role group: `MOTPRDREV101 (10.20.1.5)`. Write names exactly as the sources do, never renamed (RevViewer stays RevViewer).
 - **Ports where they matter.** Give a port or protocol where it explains how components connect ("RDP (mstsc)", "tcp/9997"); put full port lists in a table.
 
-Before: "ROKPRDOPS110 initiates RDP (mstsc) sessions into ROKPRDOPS112 and into unnamed internal peers at 10.40.228.132 and 10.40.228.211. MKYPRDOPS110 and ROKPRDOPS110 each establish sessions to MOTPRDSRV122 and ROTPRDSRV122."
+Before: "ROKPRDOPS110 initiates RDP (mstsc) sessions into ROKPRDOPS112 and into the peers at 10.40.228.132 and 10.40.228.211. MKYPRDOPS110 and ROKPRDOPS110 each establish sessions to MOTPRDSRV122 and ROTPRDSRV122."
 
-After: "The RevViewer Jump Hosts are the administrative entry point. The Rockhampton jump host starts RDP (mstsc) sessions into the Radio Management host and two unnamed internal peers (10.40.228.132, 10.40.228.211), and both jump hosts authenticate against the enterprise domain controllers."
+After: "The RevViewer Jump Hosts are the administrative entry point. The Rockhampton jump host starts RDP (mstsc) sessions into the Radio Management host and the peers at 10.40.228.132 and 10.40.228.211, and both jump hosts authenticate against the enterprise domain controllers."
 
 ### Identifier budget
 
@@ -110,6 +110,7 @@ A Current State Assessment (CSA) gives decision-makers an evidenced baseline: wh
 
 - **The subject is the system, not the evidence.** The subject of a sentence is the application, a component, a service, or a dependency -- never "the discovery data", "the table", "the workbook", "the capture", "the script output". Evidence supports the statement; it does not become its subject. Full rules and before/after examples: `csa-section-writer/references/current-state-reasoning.md`.
 - **Answer first.** The first sentence of a section or subsection states its conclusion. (In a requirement block the Summary answers first. The Story then tells how the capability works now and what the evidence leaves unknown. It does not restate the rating or repeat the Summary.) Supporting facts follow; raw detail goes in a table or the appendix. Do not build up to the conclusion through a chain of "This confirms... As a result..." steps.
+- **Story readability.** A requirement Story is checked by the framework and sent back if it breaks the rules in `.agents/references/story-rules.md` (sentence length, parts per sentence, repeated names, repeating the Summary, order). Read that file before writing a Story.
 - **Each fact once.** A fact (a host list, a server name, an IP address, a dependency, a consequence) is stated in the one place that owns it. Everywhere else, refer to it ("the two enterprise time servers", or a finding ID) rather than listing it again. When Findings, Assessment, Operational Behaviour and Impact subsections all restate the same dependency, each keeps only what is new to it.
 - **State, don't announce.** Delete lead-ins that announce a conclusion instead of stating it: "This confirms that", "This indicates", "This establishes that", "This results in:", "This represents", "As a result:", "The following findings are derived from...", "The analysis focuses on...". Write the conclusion itself as the sentence.
 - **Sentences, not fragments.** Write full sentences in paragraphs. Use a bullet list only for three or more parallel items a reader will scan (hosts, services, requirements). Never split one sentence across a lead-in line and bullets ("Loss of:" followed by "- ongoing time synchronisation"). No nested bullets.

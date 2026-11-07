@@ -24,26 +24,18 @@ def _template() -> Path:
     return p
 
 
-EXPECTED_BODY = (
-    "For every requirement block write both `Summary:` and `Story:`. Do not put the SEP label or a title in either field; the framework adds a bold title from the requirement ID and wording.\n"
-    "- Summary is the Current State table cell. It is decision-first: state the observed control or practice, then finish with `The requirement is <Rating> because ...` and name the decisive requirement condition. Use one to three sentences and at most 80 words. Do not put discovery questions, host inventories or the detailed evidence trail in Summary.\n"
-    "- Story is the paragraph under its requirement title in Discovery Information. It is evidence-first and tells how the assessment reached the rating to a reader who has not seen the evidence:\n"
-    "  1. Start with how the capability or practice currently operates. Do not start with the rating.\n"
-    "  2. Explain the relevant coverage, behaviour and gaps in a logical order. Name at most three parts in a sentence, by their display names.\n"
-    "  3. State any material limitation as a factual unknown. Keep the corresponding `QUESTION:` line separate so the framework sends it to Discovery Required.\n"
-    "  4. Finish with what the evidence leaves unknown or the gap that decided the rating, in words the Summary does not use. Do not state the rating and do not repeat a Summary sentence: the reader has just read the Summary on the same page.\n"
-    "  No word limit: write as much as a good explanation needs. A longer Story is right when each sentence tells the reader something new, and wrong when it pads. Story must add the evidence path, not paraphrase Summary: every sentence says something the Summary does not. Say nothing about another requirement's conditions. Hosts, ports and inventories stay in the tables."
-)
-
-
-def test_the_stor_card_carrying_the_new_story_contract_exactly():
+def test_the_stor_card_carries_no_writing_rules_and_the_digest_carries_the_story_contract():
     spec = doc_spec.read(_template())
     node = doc_spec.resolve(spec, "STOR")
-    text = section_card.card(node, spec, None, evidence=False)["text"]
-    assert "## Requirement summaries and stories" in text
-    assert EXPECTED_BODY in text
-    # and the old "fuller" description is gone
-    assert "fuller evidence-backed operational narrative" not in text
+    made = section_card.card(node, spec, None, evidence=False)
+    assert made["requirement_stories"] is True
+    assert "## Requirement summaries and stories" not in made["text"]
+    assert "## Rules from the template" not in made["text"]
+    from csa_docx import prompts
+    rules = prompts.assemble({"requirement"}, None)[0]
+    assert "## Summary and Story" in rules
+    assert "**Summary** is the Current State table cell" in rules
+    assert "fuller evidence-backed operational narrative" not in made["text"] + rules
 
 
 def test_every_section_3_requirement_block_uses_the_same_summary_story_contract():
@@ -54,12 +46,12 @@ def test_every_section_3_requirement_block_uses_the_same_summary_story_contract(
     for node in domains:
         made = section_card.card(node, spec, None, evidence=False)
         assert made["requirement_stories"] is True, node["number"]
-        assert EXPECTED_BODY in made["text"], node["number"]
+        assert "## Requirement summaries and stories" not in made["text"], node["number"]
 
 
-def test_the_draft_agent_step_points_to_the_card_shape_and_no_longer_describes_the_fuller_paragraph():
+def test_the_draft_agent_holds_no_writing_rules_and_the_requirement_prompt_holds_the_story_contract():
     md = (Path(__file__).resolve().parents[3] / "csa-draft-agent.md").read_text(encoding="utf-8")
-    step = next(l for l in md.splitlines() if l.startswith("3. "))
-    assert 'write Summary: and Story: exactly in the shape that section gives.' in step
-    assert "the fuller paragraph" not in step
-    assert "For every other prose block" in step
+    assert "Story" not in md and "Summary" not in md and "the fuller paragraph" not in md
+    from csa_docx import prompts
+    rules = prompts.assemble({"requirement"}, None)[0]
+    assert "Write both `Summary:` and `Story:`" in rules

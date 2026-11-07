@@ -6,7 +6,8 @@ from csa_docx import rules_digest as rd
 @pytest.mark.parametrize("stage", rd.STAGES)
 def test_digest_exists_small_and_mentions_check_change(stage):
     text = rd.digest(stage)
-    assert len(text.encode("utf-8")) <= rd.LIMIT + rd.COMMON_LIMIT + rd.SHARED_LIMIT + 4
+    extra = rd.ANSWER_CARD_RULES_LIMIT if stage == "answer" else 0     # the V1 answer lane also gets the card rules
+    assert len(text.encode("utf-8")) <= rd.LIMIT + rd.COMMON_LIMIT + rd.SHARED_LIMIT + extra + 4
     assert len(rd.digest_path(stage).read_bytes()) <= rd.LIMIT
     assert "check-change" in text
 

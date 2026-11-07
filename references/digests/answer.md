@@ -9,7 +9,7 @@ The card (`CARD=`) is your whole input. Write the answer sheet (`SHEET=`) and st
 - Basis is `observed` (a capture shows it), `documented` (a document says it), or `stated` (a person said it). `background` is only for a knowledge (K-) fact. There is no `inferred`.
 - `Rows:` starts with the table's header row exactly as the card gives the columns, then one row per aspect, host or item. Evidence IDs go in brackets in the last cell.
 - The optional note under a table (`note`): `None: <why>` removes it, or one or two evidenced sentences of a fact the rows cannot show (a host unlike its group, sources that disagree, fewer hosts covered). Start from the card's "Note candidates". Facts only, never a repeat of a row.
-- Split requirements: `Summary:` is decision-first table prose (up to three sentences and 80 words) ending `The requirement is <Rating> because ...`. `Story:` tells how the capability works now and ends with what the evidence leaves unknown or the gap that decided the rating. It does not state the rating, and every sentence says something the Summary does not (STORY_RESTATES_RATING, STORY_REPEATS_SUMMARY). Keep `QUESTION:` separate.
+- Split requirements: `Summary:` is decision-first table prose (up to three sentences and 80 words) ending `The requirement is <Rating> because ...`. `Story:` tells how the capability works now and ends with what the evidence leaves unknown or the gap that decided the rating. It does not state the rating, and every sentence says something the Summary does not (STORY_RESTATES_RATING). Write the Story as 2 to 4 short paragraphs, one `Story:` line each. Story rules: `.agents/references/story-rules.md` (read it before writing a Story). Keep `QUESTION:` separate.
 - Rating is one of the ratings on the card, judged against the requirement text, with a one-sentence reason. Not Applicable needs a reason that says why the requirement does not apply.
 
 ## Naming
@@ -17,6 +17,10 @@ The card (`CARD=`) is your whole input. Write the answer sheet (`SHEET=`) and st
 - In facts, name a host by its role from the Host register and keep the host name in the fact for the table; the Writer chooses the prose form. Use an IP address only where no host name is known.
 
 ## Errors the framework reports (fix every one)
+
+Register blocks need `Rows:` with the card's column header and at least one data row. Facts or Text alone
+do not answer a register. Start each table line with `|` and separate its cells with `|`. If blocking errors
+remain after the repair rounds, the framework keeps the sheet and stops with `NOT APPLIED`.
 
 QUESTION_MISSING, EXTRA_BLOCK, EMPTY_ANSWER, REQUIREMENT_NO_FACTS, FACT_NO_EVIDENCE, UNKNOWN_EVIDENCE, EVIDENCE_NOT_ON_CARD, BAD_BASIS, SCOPE_OUTSIDE_EVIDENCE (a host in the fact's scope is not in the cited evidence), RATING_INVALID, RATING_NO_REASON, COLUMNS and ROW_WIDTH (table shape), NO_ROWS, IP_IN_PROSE, COUNT_MISMATCH (a total whose parts do not add up), HOSTS_NOT_GROUPED (one role spread over several rows), HOSTS_MISSING (a captured host left out of a host table), SOURCE_AS_SUBJECT (the sentence is about the matrix, capture or host map: rewrite it about the system), SEMICOLON (a semicolon in a fact, Text or bullet: write two sentences, or join the parts with a comma and "and" or "but"). NEEDS_SEARCH means a `Search:` line was written: the framework adds results once.
 

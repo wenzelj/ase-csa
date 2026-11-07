@@ -18,7 +18,10 @@
       "source": {
         "settings": [
           "agent.backup",
-          "storage.database"
+          "storage.database",
+          "backup.services",
+          "backup.sql_writer",
+          "backup.vss"
         ]
       },
       "search": [
@@ -41,7 +44,12 @@
             "both",
             "declared"
           ]
-        }
+        },
+        "settings": [
+          "backup.destination_clues",
+          "backup.task_references",
+          "transfer.smb_sessions"
+        ]
       },
       "search": [
         "backup server",
@@ -78,7 +86,13 @@
       "requirements": [
         "SEP-BAK-01"
       ],
-      "source": {},
+      "source": {
+        "settings": [
+          "storage.backup_windows",
+          "backup.task_references",
+          "backup.destination_clues"
+        ]
+      },
       "search": [
         "backup job",
         "retention"
@@ -98,7 +112,12 @@
       "requirements": [
         "SEP-BAK-02"
       ],
-      "source": {},
+      "source": {
+        "settings": [
+          "storage.backup_windows",
+          "backup.vss"
+        ]
+      },
       "search": [
         "restore test",
         "offline copy"

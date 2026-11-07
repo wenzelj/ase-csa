@@ -8,6 +8,7 @@ Checks:
   structure    heading numbers that do not match their level or parent, duplicates, headings ending ':'
   requirements every SEP requirement row: present, Current State filled, rating valid
   domains      each requirement domain has Discovery and Drawbridge Impact subsections
+  topic_tables DUPLICATE_TOPIC_TABLE (warning): two framework topic tables in one section that repeat each other
   placeholders [..], TBC/TBD, XX, empty table rows
   unknowns     'not confirmed / could not / not established ...' statements by section
   appendix_d   Discovery-required rows and their status; gap-register verdicts when present
@@ -66,7 +67,11 @@ def read_units(docx: Path) -> list[dict]:
             path = [(l, h) for l, h in path if l < lvl] + [(lvl, text)]
             units.append({"kind": "heading", "level": lvl, "text": text, "path": [h for _, h in path]})
         elif text:
-            units.append({"kind": "para", "text": text, "path": [h for _, h in path]})
+            style = re.search(r'<w:pStyle w:val="([^"]+)"', s)
+            u = {"kind": "para", "text": text, "path": [h for _, h in path]}
+            if style:
+                u["style"] = style.group(1)
+            units.append(u)
     return units
 
 
@@ -183,6 +188,44 @@ def check_domains(units, domains: list[dict]):
     return out
 
 
+def check_duplicate_topic_tables(docx: Path):
+    """DUPLICATE_TOPIC_TABLE (warning): two csa-topic-table tables in one section that repeat each other.
+
+    A pair is a duplicate when the first two column labels match, or when more than half of the labels of the
+    smaller table appear in the other. The section is the nearest heading of level 2 or above."""
+    x = zipfile.ZipFile(docx).read("word/document.xml").decode("utf-8")
+    body = x[x.find("<w:body"):]
+    section, found = "(front matter)", defaultdict(list)
+    for tok in re.finditer(r"<w:tbl>.*?</w:tbl>|<w:p\b[^>]*/>|<w:p\b[^>]*>.*?</w:p>", body, re.S):
+        s = tok.group(0)
+        if s.startswith("<w:tbl"):
+            if 'w:tblCaption w:val="csa-topic-table"' not in s:
+                continue
+            rows = re.findall(r"<w:tr[ >].*?</w:tr>", s, re.S)
+            if not rows:
+                continue
+            labels = [_t(c) for c in re.findall(r"<w:tc>.*?</w:tc>", rows[0], re.S)]
+            found[section].append({"columns": labels, "rows": len(rows) - 1})
+            continue
+        m = re.search(r'<w:pStyle w:val="(?:Heading|heading)\s?(\d)"', s)
+        if m and int(m.group(1)) <= 2 and _t(s):
+            section = _t(s)
+    out = []
+    for sec, tables in found.items():
+        for i, a in enumerate(tables):
+            for b in tables[i + 1:]:
+                la, lb = [c.lower() for c in a["columns"]], [c.lower() for c in b["columns"]]
+                small, big = (la, lb) if len(la) <= len(lb) else (lb, la)
+                same_lead = len(la) >= 2 and len(lb) >= 2 and la[:2] == lb[:2]
+                if same_lead or (small and sum(c in big for c in small) * 2 > len(small)):
+                    out.append({"issue": "DUPLICATE_TOPIC_TABLE", "severity": "warning", "section": sec,
+                                "tables": [a, b],
+                                "detail": (f"{sec}: two framework tables repeat each other: "
+                                           f"[{', '.join(a['columns'])}] ({a['rows']} rows) and "
+                                           f"[{', '.join(b['columns'])}] ({b['rows']} rows)")})
+    return out
+
+
 def check_placeholders_unknowns(units):
     ph, unk = [], defaultdict(list)
     for u in units:
@@ -216,6 +259,78 @@ def appendix_d(units, work_dir: Path):
         if not re.match(r"^DR-\d+$", r["id"]):
             r["id_issue"] = "ID does not follow DR-nn"
     return rows
+
+
+def _prose_sentences(text: str) -> list[str]:
+    """Sentences of one paragraph, normalised (IDs, punctuation and case removed), for DUPLICATE_PROSE."""
+    t = re.sub(r"\b(?:[\w-]+:)?(?:E-\d+|K-[0-9A-F]{6})\b", " ", text or "")
+    out = []
+    for s in re.split(r"(?<=[.!?])\s+|\n+", t):
+        w = " ".join(re.findall(r"[a-z0-9]+", s.lower()))
+        if w:
+            out.append(w)
+    return out
+
+
+def _section_of_path(path: list[str]) -> str:
+    """The top-level section (3.n) a unit belongs to: its domain heading, or the document section above it."""
+    for h in path:
+        if re.match(r"^[1-9](?:\.\d+)*\s", h):
+            return h
+    return path[-1] if path else "(front matter)"
+
+
+def check_duplicate_prose(units) -> list[dict]:
+    """DUPLICATE_PROSE (warning): two paragraphs of one section that hold the same normalised sentence.
+
+    Table cells and table captions are ignored (they are not prose). Requirement text that a requirement story
+    title repeats is also ignored: that is how the section works. Framework-managed table notes (TableNote
+    style) are left out: they belong to the framework, not to the section prose."""
+    by_section: dict[str, list[dict]] = defaultdict(list)
+    for u in units:
+        if u["kind"] != "para" or u.get("style") == "TableNote":
+            continue
+        sents = _prose_sentences(u["text"])
+        if sents:
+            by_section.setdefault(_section_of_path(u["path"]), []).append({**u, "sentences": sents})
+    req_rows: set[str] = set()
+    for u in units:
+        if u["kind"] != "row":
+            continue
+        cells = u["cells"]
+        m = REQ_RE.match(cells[0]) if cells else None
+        if not m:
+            continue
+        for c in cells[1:]:
+            if c.strip():
+                req_rows.add(" ".join(re.findall(r"[a-z0-9]+", c.lower())))
+    out: list[dict] = []
+    seen: dict[str, list[str]] = {}
+    for sec, paras in sorted(by_section.items()):
+        for u in paras:
+            for s in u["sentences"]:
+                if s in req_rows:
+                    continue
+                if s in seen:
+                    if u["text"] not in seen[s]:
+                        first = seen[s][0]
+                        detail = f"{sec}: a sentence appears in two paragraphs: \'{_clip(s, 90)}\'"
+                        if not any(x["detail"] == detail for x in out):
+                            out.append({"issue": "DUPLICATE_PROSE", "severity": "warning", "section": sec,
+                                        "paragraphs": [first[:300], u["text"][:300]], "detail": detail})
+                        seen[s].append(u["text"])
+                else:
+                    seen[s] = [u["text"]]
+    return out
+
+
+def _norm_sentence_for_prose(text: str) -> str:
+    return " ".join(re.findall(r"[a-z0-9]+", (text or "").lower()))
+
+
+def _clip(s: str, n: int = 90) -> str:
+    s = " ".join((s or "").split())
+    return s[:n]
 
 
 def run_lints(docx: Path):
@@ -302,6 +417,8 @@ def mechanical_markdown(a: dict) -> str:
     for x in a["domains"]:
         bits = ([f"missing {', '.join(x['missing_subsections'])}"] if x.get("missing_subsections") else []) + x.get("notes", []) + ([x["issue"]] if x.get("issue") else [])
         L.append(f"- {x['domain']}: {'; '.join(bits) or 'complete'} ({x.get('words', 0)} words)")
+    L += ["", "## Topic tables", ""] + ([f"- {x['issue']} (warning): {x['detail']}" for x in a.get("topic_tables", [])] or ["- No issues."])
+    L += ["", "## Duplicate prose", ""] + ([f"- {x['detail']}" for x in a.get("duplicate_prose", [])] or ["- No issues."])
     L += ["", "## Placeholders", ""] + ([f"- {p['section']}: {p['text']}" for p in a["placeholders"]] or ["- None."])
     L += ["", "## Declared unknowns by section", ""]
     for s, v in a["unknowns"].items():
@@ -371,6 +488,8 @@ def run(docx: Path, work_dir: Path, label: str = "") -> dict:
         "structure": check_structure(units),
         "requirements": check_requirements(units, expected),
         "domains": check_domains(units, blocks.get("domains", [])),
+        "topic_tables": check_duplicate_topic_tables(docx),
+        "duplicate_prose": check_duplicate_prose(units),
         "placeholders": ph, "unknowns": unk,
         "appendix_d": appendix_d(units, work_dir),
         "lints": run_lints(docx),

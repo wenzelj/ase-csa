@@ -1,5 +1,5 @@
 import { deriveIntakeSteps, gapFindings, resumableJob, settleTarget } from "../components/intakeSteps";
-import type { IntakeSnapshot, IntakeFile, ReviewJob } from "../types";
+import type { IntakeSnapshot, IntakeFile, IntakeErrors, IntakeRun, ReviewJob } from "../types";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -108,3 +108,48 @@ assert(current.possible.join() === "E-1" && current.answers.length === 0 && curr
 const earlier = gapFindings({ ...gq, verdict: "ANSWERED", answer_evidence_ids: ["E-3"], related_evidence_ids: [], lead_ids: [], evidence_ids: ["E-3"] });
 assert(earlier.answers.join() === "E-3" && earlier.possible.length === 0, "earlier shape: answered evidence is verified");
 assert(gapFindings({ ...gq, verdict: "NOT_FOUND" }).related.length === 0, "missing fields do not throw");
+
+// Failed state from the intake errors.
+const run = (over: Partial<IntakeRun>): IntakeRun => ({ id: "r1", operation: "intake", step: "documents", state: "failed", exit_code: 1, reason: "", problems: [], problem_count: 0, has_problems: true, log_truncated: false, ...over });
+const errs = (...runs: IntakeRun[]): IntakeErrors => ({ generated_at: "2026-10-12T06:00:00Z", runs, warnings: [] });
+const failedSteps = deriveIntakeSteps(fresh, null, errs(run({ reason: "csa: no model" })));
+assert(failedSteps.steps[1].status === "failed" && failedSteps.steps[1].detail === "Last run failed: csa: no model", "failed run marks its step failed with the reason");
+assert(failedSteps.next === "documents", "failed step that is also current is next");
+const exitZero = deriveIntakeSteps(fresh, null, errs(run({ exit_code: 0, state: "succeeded", problem_count: 2 })));
+assert(exitZero.steps[1].status === "failed" && exitZero.steps[1].detail === "Finished with 2 problems", "exit 0 with problems is reported as problems");
+const cleared = deriveIntakeSteps(fresh, null, errs(run({ id: "r2", state: "succeeded", exit_code: 0, has_problems: false }), run({})));
+assert(cleared.steps[1].status !== "failed", "a later clean run clears the failure");
+const runningBad = deriveIntakeSteps(fresh, job("intake"), errs(run({ id: "j1", state: "running", exit_code: null, problem_count: 3 })));
+assert(runningBad.steps[1].status === "blocked" && runningBad.steps[1].detail === "Running… 3 problems so far", "running with problems stays blocked");
+assert(JSON.stringify(deriveIntakeSteps(fresh, null)) === JSON.stringify(deriveIntakeSteps(fresh, null, undefined)), "no errors argument is unchanged");
+const warned = deriveIntakeSteps(fresh, null, { ...errs(), warnings: [{ step: "documents", severity: "warning", code: "x", message: "m", count: 1 }] });
+assert(warned.steps[1].status === "current", "warnings do not change status");
+const earlierFailed = deriveIntakeSteps(evidenced, null, errs(run({ step: "ingest", operation: "ingest", reason: "boom" })));
+assert(earlierFailed.steps[0].status === "failed" && earlierFailed.next === "gaps", "failed step is skipped when a later step is current");
+
+// The checks above run when the file loads (a failed one fails the suite); vitest needs at least one test.
+import { it, vi } from "vitest";
+import { refreshWhileRunning, runningText } from "../components/EvidenceIntake";
+it("intake steps derive as expected", () => { assert(true, "loaded"); });
+it("errors reload every 10 seconds only while a job runs", () => {
+  vi.useFakeTimers();
+  const state = { n: 0, fail: false };
+  const n = (): number => state.n;
+  const refresh = () => { state.n++; return state.fail ? Promise.reject(new Error("down")) : Promise.resolve(); };
+  refreshWhileRunning(false, refresh);
+  vi.advanceTimersByTime(30000); assert(n() === 0, "idle page never refreshes");
+  const stop = refreshWhileRunning(true, refresh);
+  vi.advanceTimersByTime(9999); assert(n() === 0, "nothing before 10 seconds");
+  vi.advanceTimersByTime(1); assert(n() === 1, "refresh at 10 seconds");
+  state.fail = true; vi.advanceTimersByTime(10000); assert(n() === 2, "a failed refresh does not stop the timer");
+  state.fail = false; vi.advanceTimersByTime(10000); assert(n() === 3, "the next tick tries again");
+  stop(); vi.advanceTimersByTime(60000); assert(n() === 3, "no timer left after stop");
+  assert(vi.getTimerCount() === 0, "no timers pending");
+  vi.useRealTimers();
+});
+it("running text shows problems so far", () => {
+  const e = errs(run({ id: "j1", state: "running", exit_code: null, problem_count: 3 }));
+  assert(runningText("j1", e) === "Running… 3 problems so far", "plural");
+  assert(runningText("j1", errs(run({ id: "j1", state: "running", problem_count: 1 }))) === "Running… 1 problem so far", "singular");
+  assert(runningText("j1", null) === "Running…" && runningText("zz", e) === "Running…", "no problems or no run");
+});

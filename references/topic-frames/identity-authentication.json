@@ -18,7 +18,8 @@
       "source": {
         "settings": [
           "identity.domain",
-          "identity.kdc"
+          "identity.kdc",
+          "identity.computer_domain"
         ]
       },
       "search": [

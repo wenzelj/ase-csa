@@ -10,6 +10,7 @@ The author has written the change file; you rewrite only the `**Text:**` of pros
 - Rewrite only `**Text:**`. Do not change `Where`, `Do`, `Facts`, `Why` or `Note`. Leave applied records alone.
 - A requirement row is written as `<current state> | <rating>` or as `Observed:` and `Assessment:` lines. Rating is one of the document's own: Met, Partially Met, Not Met, Not Applicable. Req ID and Requirement are never rewritten.
 - If the facts need more than one paragraph, use more than one.
+- Story rules: `.agents/references/story-rules.md` (read it before writing a Story).
 
 ## Never infer
 

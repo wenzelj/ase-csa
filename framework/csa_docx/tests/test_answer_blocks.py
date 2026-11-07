@@ -119,7 +119,7 @@ Keep these:
 - B1: database fact (E-001)
 - B2: transfer fact (E-002)
 
-## Host register (captured hosts, grouped by role)
+## Host register (hosts grouped by role)
 
 - SQL Server: SQL1
 - Jump Host: JUMP1

@@ -19,7 +19,7 @@ def test_the_card_line_is_about_the_facts_and_lists_display_names():
     assert len(lines) == 1
     assert "Parts to name in the Text" not in lines[0]
     assert lines[0].startswith(
-        "  Parts these findings are about (name them in the Facts; in the Story name only the parts that decide the rating, by their display name): ")
+        "  Parts these findings are about (display names): ")
     assert lines[0].endswith(": OT TETRA Log Server")
     assert "DAAM Node Controller" not in lines[0]
     assert "A, B" not in lines[0]
