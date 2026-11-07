@@ -37,3 +37,8 @@
 .new-app-document-choice select, .new-app-document-choice input { width: 100%; box-sizing: border-box; padding: .6rem; border: 1px solid var(--ase-line); border-radius: 6px; }
 .new-app-document-settings button { padding: .65rem 1rem; border: 0; border-radius: 7px; background: var(--ase-operational); color: #fff; cursor: pointer; }
 .new-app-document-settings button:disabled { opacity: .45; cursor: default; }
+.new-app-template-create { display: grid; gap: .65rem; margin-top: .5rem; padding-top: 1rem; border-top: 1px solid var(--ase-line); }
+.new-app-template-create h4 { margin: 0; }
+.new-app-template-create label { display: grid; gap: .3rem; }
+.new-app-template-create input, .new-app-template-create select { box-sizing: border-box; width: 100%; padding: .6rem; border: 1px solid var(--ase-line); border-radius: 6px; }
+.new-app-template-create button { justify-self: start; }

@@ -10,6 +10,8 @@ The application appears in the selector immediately after creation. Its setup pa
 
 Use **Application setup** or **Assessment** to choose the working DOCX after registration. The browser lists DOCX files already in the application folder, or you can upload one (up to 50 MiB). The explicit selection is recorded as `working_docx` in `PROJECTS.yaml`; it does not change the DOCX content. Evidence intake remains available before indexing, while views that require an index explain the missing prerequisite in their own area.
 
+A `.dotx` is a template, not a working document. **Create a DOCX from a DOTX template** lists templates in the application folder and the shared `CSA Template` folder. The browser creates a new DOCX with the framework's `new_csa.py`, checks it against the chosen template, then records it as the working document. It refuses to overwrite a DOCX or register an incompatible template result. The original DOTX is read only. For RMS, the shared v1.6 template passes the check; the local `Current_State_Assessment_Template.dotx` has missing cached fields and fails validation.
+
 Uploads use 4 MiB request chunks and the per-file and total limits reported by `/api/new-application/defaults`. The interface reports validation or transfer failures while retaining the selected folder for retry.
 
 Local evidence inventory, matrix-first search, source preview and reviewed evidence append for IAMPS, UTC DTC and TETRA.

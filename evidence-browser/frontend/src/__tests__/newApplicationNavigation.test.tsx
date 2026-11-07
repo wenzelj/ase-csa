@@ -1,7 +1,8 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it, vi } from "vitest";
 import App, { FirstRunSetup, loadCreatedApplication, setupScreen } from "../App";
-import { fetchWorkingDocumentOptions, selectWorkingDocument, uploadWorkingDocument } from "../api";
+import { createWorkingDocumentFromTemplate, fetchWorkingDocumentOptions, selectWorkingDocument, uploadWorkingDocument, type WorkingDocumentOptions } from "../api";
+import { preferredTemplate } from "../components/WorkingDocumentSettings";
 
 it("keeps New application in navigation outside a selected system", () => {
   vi.stubGlobal("location", { search: "?view=new-application" });
@@ -54,6 +55,26 @@ it("loads DOCX choices and sends an explicit selection or upload", async () => {
     await uploadWorkingDocument("my-app", file);
     expect(fetchMock.mock.calls[2][0]).toContain("filename=new.docx");
     expect(fetchMock.mock.calls[2][1].method).toBe("PUT");
+  } finally { vi.unstubAllGlobals(); }
+});
+
+it("offers the shared DOTX separately and confirms creation of a new DOCX", async () => {
+  const options: WorkingDocumentOptions = { project_key: "rms", project_root: "/assessment/RMS",
+    configured_path: "", candidates: [], max_upload_bytes: 1000,
+    templates: [
+      { id: "project:02 Current State Assessment/Current_State_Assessment_Template.dotx", label: "RMS template", source: "application" },
+      { id: "shared:CSA_Template_v1.6.dotx", label: "Shared CSA template", source: "shared" },
+    ], suggested_output: "02 Current State Assessment/02 New Template/Current State Assessment - RMS.docx" };
+  expect(preferredTemplate(options)).toBe("shared:CSA_Template_v1.6.dotx");
+  expect(options.candidates).toEqual([]);
+  const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ status: "READY", working_docx: "/assessment/RMS/new.docx" }) });
+  vi.stubGlobal("fetch", fetchMock);
+  try {
+    await createWorkingDocumentFromTemplate("rms", preferredTemplate(options), options.suggested_output, "RMS");
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/systems/rms/working-document/from-template");
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body).toEqual({ template_id: "shared:CSA_Template_v1.6.dotx", output_path: options.suggested_output,
+      system_name: "RMS", confirmed: true });
   } finally { vi.unstubAllGlobals(); }
 });
 

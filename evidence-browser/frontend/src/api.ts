@@ -14,7 +14,7 @@ export type NewApplicationResult = { status: "READY" | "OK" | "BLOCKED" | "ERROR
 export type NewApplicationDefaults = { workspace_root: string; discovery_name: string; knowledge_name: string; max_file_bytes: number; max_total_bytes: number; chunk_bytes: number; defaults: { lane: string; stage: string; spec_mode: string }; templates: string[] };
 export type NewApplicationPreview = { status: "READY" | "BLOCKED"; errors: { field: string; code: string; message: string }[]; values: { paths: Record<string, string>; registry: Record<string, unknown>; project_context: Record<string, unknown>; knowledge: Record<string, unknown> } };
 export type NewApplicationCommit = { status: "READY" | "BLOCKED" | "ERROR"; errors?: { field: string; code: string; message: string }[]; project_key?: string; paths?: Record<string, string> };
-export type WorkingDocumentOptions = { project_key: string; project_root: string; configured_path: string; candidates: { relative_path: string; size: number }[]; max_upload_bytes: number };
+export type WorkingDocumentOptions = { project_key: string; project_root: string; configured_path: string; candidates: { relative_path: string; size: number }[]; max_upload_bytes: number; templates: { id: string; label: string; source: "application" | "shared" }[]; suggested_output: string };
 export type WorkingDocumentResult = { status: "READY" | "BLOCKED"; project_key?: string; working_docx?: string; errors?: { field: string; code: string; message: string }[] };
 
 export function fetchWorkingDocumentOptions(system: string) {
@@ -30,6 +30,13 @@ export function selectWorkingDocument(system: string, relativePath: string) {
 export function uploadWorkingDocument(system: string, file: File) {
   return api<WorkingDocumentResult>(`/api/systems/${encodeURIComponent(system)}/working-document/upload?filename=${encodeURIComponent(file.name)}`, {
     method: "PUT", headers: { "Content-Type": "application/octet-stream" }, body: file,
+  });
+}
+
+export function createWorkingDocumentFromTemplate(system: string, templateId: string, outputPath: string, systemName: string) {
+  return api<WorkingDocumentResult>(`/api/systems/${encodeURIComponent(system)}/working-document/from-template`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ template_id: templateId, output_path: outputPath, system_name: systemName, confirmed: true }),
   });
 }
 
