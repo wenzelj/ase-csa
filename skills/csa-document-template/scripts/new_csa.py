@@ -87,14 +87,30 @@ def set_custom_property(xml: str, name: str, value: str) -> tuple[str, bool]:
 
 
 def set_field_cache(xml: str, name: str, value: str) -> tuple[str, int]:
-    """Replace the cached result text of every DOCPROPERTY "<name>" complex field."""
-    rpr = r"(?:<w:rPr>(?:(?!</w:rPr>).)*</w:rPr>)?"
-    pat = re.compile(
-        r'(DOCPROPERTY "%s"[^<]*</w:instrText></w:r><w:r>%s<w:fldChar w:fldCharType="separate"/></w:r><w:r>%s<w:t(?: [^>]*)?>)(.*?)(</w:t>)'
-        % (re.escape(name), rpr, rpr),
-        re.S,
-    )
-    return pat.subn(lambda m: m.group(1) + escape(value) + m.group(3), xml)
+    """Refresh cached text in Word's simple and complex DOCPROPERTY fields.
+
+    Word may add run attributes such as ``w:rsidR`` or store a field as
+    ``w:fldSimple``. Keep the surrounding XML verbatim and change only the
+    cached ``w:t`` text so the template's styles and layout remain intact.
+    """
+    encoded = escape(value)
+    complex_field = re.compile(
+        r'(<w:instrText\b[^>]*>[^<]*DOCPROPERTY\s+(?:"|&quot;)?%s(?:"|&quot;)?[^<]*</w:instrText>'
+        r'(?:(?!</w:p>).)*?<w:fldChar\b[^>]*w:fldCharType="separate"[^>]*/>'
+        r'(?:(?!</w:p>).)*?<w:t(?: [^>]*)?>)(.*?)(</w:t>)' % re.escape(name), re.S)
+    xml, complex_count = complex_field.subn(lambda m: m.group(1) + encoded + m.group(3), xml)
+
+    simple_field = re.compile(
+        r'(<w:fldSimple\b(?=[^>]*w:instr="[^"]*DOCPROPERTY\s+(?:&quot;)?%s(?:&quot;)?[^"]*")[^>]*>)'
+        r'(.*?)(</w:fldSimple>)' % re.escape(name), re.S)
+    text_node = re.compile(r'(<w:t(?: [^>]*)?>)(.*?)(</w:t>)', re.S)
+
+    def refresh_simple(match: re.Match[str]) -> str:
+        inner, count = text_node.subn(lambda item: item.group(1) + encoded + item.group(3), match.group(2), count=1)
+        return match.group(1) + inner + match.group(3) if count else match.group(0)
+
+    xml, simple_count = simple_field.subn(refresh_simple, xml)
+    return xml, complex_count + simple_count
 
 
 def strip_comments(doc_xml: str) -> str:

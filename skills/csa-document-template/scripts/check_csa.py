@@ -32,7 +32,7 @@ NS = {"w": W}
 q = lambda t: f"{{{W}}}{t}"
 GUIDANCE_AUTHOR = "CSA Template"
 RATINGS = {"Met", "Partially Met", "Not Met", "Not Applicable"}
-ALLOWED_TABLE_STYLES = {"CSATable", "CSACover"}
+ALLOWED_TABLE_STYLES = {"CSATable", "CSACover", "CSACoverBlock"}
 DIRECT_RUN_PROPS = {"rFonts", "sz", "szCs", "color", "b", "bCs", "i", "iCs", "u", "highlight", "shd", "caps", "smallCaps"}
 DIRECT_PARA_PROPS = {"spacing", "ind", "jc", "pBdr", "shd", "tabs", "keepNext", "keepLines", "pageBreakBefore"}
 

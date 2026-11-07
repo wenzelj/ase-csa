@@ -202,7 +202,7 @@ def test_template_creation_rejects_invalid_template_and_unsafe_output(tmp_path, 
     assert "working_docx:" not in registry.read_text()
 
 
-def test_rms_local_template_fails_validation_without_becoming_working_docx(tmp_path, monkeypatch):
+def test_rms_local_template_creates_checked_working_docx_without_changing_dotx(tmp_path, monkeypatch):
     source = Path(os.environ.get("CSA_TEST_OLD_TEMPLATE") or
                   Path(__file__).resolve().parents[3] / "RMS" / "02 Current State Assessment" /
                   "01 Final Version" / "Current_State_Assessment_Template.dotx")
@@ -212,9 +212,12 @@ def test_rms_local_template_fails_validation_without_becoming_working_docx(tmp_p
     target = root / "02 Current State Assessment" / "01 Final Version" / source.name
     target.parent.mkdir(parents=True)
     shutil.copy2(source, target)
+    original = target.read_bytes()
     result = working_document.create_from_template(app.system_project("my-app"), agents, {
         "template_id": "project:02 Current State Assessment/01 Final Version/Current_State_Assessment_Template.dotx",
         "output_path": "02 Current State Assessment/02 New Template/Assessment.docx", "confirmed": True})
-    assert result["status"] == "BLOCKED"
-    assert result["errors"][0]["code"] == "TEMPLATE_FIELDS_MISSING"
-    assert "working_docx:" not in registry.read_text()
+    assert result["status"] == "READY", result
+    assert result["template_check"] in ("PASS", "WARN")
+    assert target.read_bytes() == original
+    assert (root / "02 Current State Assessment" / "02 New Template" / "Assessment.docx").is_file()
+    assert "working_docx:" in registry.read_text()
