@@ -46,10 +46,38 @@ def test_defaults_for_minimal_payload(tmp_path):
     assert values["registry"]["stage"] == "draft"
     assert values["spec_mode"] == "off"
     assert values["project_context"]["assessment_type"] == "Current State Assessment"
+    assert values["project_context"]["working_preferences"] == project_setup.WORKING_PREFERENCES
     assert values["project_context"]["required_deliverables"] == ["detailed_current_state_assessment", "consumable_summary"]
     # nothing was written anywhere
     assert not (tmp_path / "new-app").exists()
     assert not (tmp_path / ".agents" / "csa-context" / "NEW_APP_PROJECT_CONTEXT.yaml").exists()
+
+
+def test_working_preferences_preview_and_validation(tmp_path):
+    payload = _payload(destination=str(tmp_path / "new-app"),
+                       working_preferences={"evidence_only_factual_claims": False})
+    ready = project_setup.preview_project_setup(payload, agents_dir=tmp_path / ".agents", base_dir=tmp_path)
+    assert ready["status"] == "READY"
+    assert ready["values"]["project_context"]["working_preferences"]["evidence_only_factual_claims"] is False
+    assert ready["values"]["project_context"]["working_preferences"]["preserve_existing_document_structure"] is True
+    bad = project_setup.preview_project_setup(
+        _payload(destination=str(tmp_path / "new-app"),
+                 working_preferences={"unknown": True, "evidence_only_factual_claims": "no"}),
+        agents_dir=tmp_path / ".agents", base_dir=tmp_path)
+    assert bad["status"] == "BLOCKED"
+    assert {e["code"] for e in bad["errors"]} == {"UNKNOWN_FIELD", "BAD_VALUE"}
+
+
+def test_working_preferences_are_written_on_commit(tmp_path):
+    agents = _setup_agents(tmp_path)
+    staging_root, sid = _staged_session(tmp_path)
+    result = project_setup.commit_project_setup(
+        _payload(working_preferences={"evidence_only_factual_claims": False}),
+        agents_dir=agents, base_dir=tmp_path, staging_root=staging_root, session_id=sid)
+    assert result["status"] == "READY", result
+    context = (agents / "csa-context" / "NEW_APP_PROJECT_CONTEXT.yaml").read_text()
+    assert 'working_preferences: {' in context
+    assert '"evidence_only_factual_claims": false' in context
 
 
 def test_explicit_discovery_and_knowledge_defaults_are_exact(tmp_path):

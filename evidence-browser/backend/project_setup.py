@@ -38,6 +38,13 @@ CONTEXT_TEMPLATE_FIELDS = (
 )
 KEY = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
 SITE_ENTRY = re.compile(r"^[A-Z0-9]+=[^\s=,]+$")
+WORKING_PREFERENCES = {
+    "evidence_only_factual_claims": True,
+    "expand_abbreviations_on_first_use": True,
+    "explain_ot_concepts_separately": True,
+    "preserve_existing_document_structure": True,
+    "do_not_design_future_state_unless_requested": True,
+}
 
 
 def _text(value: Any) -> str:
@@ -83,6 +90,7 @@ def _default_context_fields() -> dict[str, Any]:
         "stakeholders": [],
         "required_deliverables": ["detailed_current_state_assessment", "consumable_summary"],
         "application_skills": [],
+        "working_preferences": copy.deepcopy(WORKING_PREFERENCES),
         "template_file": str(template),
     }
 
@@ -259,6 +267,18 @@ def preview_project_setup(payload: dict[str, Any], *, agents_dir: Path, base_dir
     application = _text(payload.get("application"))
     if application:
         context["application"] = application
+    preferences = payload.get("working_preferences")
+    if preferences is not None:
+        if not isinstance(preferences, dict):
+            _field(errors, "working_preferences", "BAD_SHAPE", "Working preferences must be an object.")
+        else:
+            for field, value in preferences.items():
+                if field not in WORKING_PREFERENCES:
+                    _field(errors, f"working_preferences.{field}", "UNKNOWN_FIELD", "Unknown working preference.")
+                elif not isinstance(value, bool):
+                    _field(errors, f"working_preferences.{field}", "BAD_VALUE", "Working preference must be true or false.")
+                else:
+                    context["working_preferences"][field] = value
 
     registry: dict[str, Any] = {
         "key": key,
@@ -418,6 +438,7 @@ def _context_file_text(context: dict[str, Any]) -> str:
         if field in context:
             lines.append(f"  {field}: {json.dumps(context[field], ensure_ascii=False)}")
     lines.append(f"application_skills: {json.dumps(context.get('application_skills') or [], ensure_ascii=False)}")
+    lines.append(f"working_preferences: {json.dumps(context.get('working_preferences') or WORKING_PREFERENCES, ensure_ascii=False)}")
     return "\n".join(lines) + "\n"
 
 
