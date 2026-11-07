@@ -29,6 +29,26 @@ it("reports a missing knowledge folder and a browser that loses paths", () => {
   expect(() => selectionFromPicker([fakeFile("")])).toThrow();
 });
 
+it("skips nested Finder metadata from folder-picker manifest, size and transfer list", () => {
+  const selection = selectionFromPicker([
+    fakeFile("My App/.DS_Store", 150), fakeFile("My App/Discovery/.DS_Store", 150),
+    fakeFile("My App/Discovery/hosts/one.txt"), fakeFile("My App/00 Knowlege/.DS_Store", 150),
+    fakeFile("My App/00 Knowlege/vendor/guide.md"),
+  ]);
+  expect(selectionIssue(selection, defaults)).toBe(null);
+  expect(selection.files.length).toBe(2);
+  expect(selectionManifest(selection).some(item => item.path.includes(".DS_Store"))).toBe(false);
+  expect(selection.notice).toContain("Skipped 3 Finder metadata items");
+});
+
+it("keeps a required folder that contains only Finder metadata in picker mode", () => {
+  const selection = selectionFromPicker([
+    fakeFile("My App/Discovery/.DS_Store"), fakeFile("My App/00 Knowlege/guide.md"),
+  ]);
+  expect(selection.directories).toContain("Discovery");
+  expect(selectionIssue(selection, defaults)).toBe(null);
+});
+
 it("reads a dropped folder including an empty directory", async () => {
   const file = fakeFile("", 4);
   const item = (name: string) => ({ name, isFile: true, isDirectory: false, file: (done: (file: File) => void) => done(file) });
@@ -40,6 +60,21 @@ it("reads a dropped folder including an empty directory", async () => {
   const selection = await selectionFromDrop([{ kind: "file", webkitGetAsEntry: () => root } as unknown as DataTransferItem]);
   expect(selection.directories).toContain("00 Knowlege/empty");
   expect(selectionManifest(selection).some(entry => entry.path === "Discovery/host.txt")).toBe(true);
+});
+
+it("skips unreadable Finder metadata during folder drop traversal", async () => {
+  const item = (name: string) => ({ name, isFile: true, isDirectory: false,
+    file: (done: (file: File) => void) => { if (name === ".DS_Store") throw new Error("Finder metadata read attempted"); done(fakeFile("")); } });
+  const directory = (name: string, children: any[]) => ({ name, isFile: false, isDirectory: true,
+    createReader: () => { let sent = false; return { readEntries: (done: (entries: any[]) => void) => {
+      done(sent ? [] : children); sent = true;
+    } }; } });
+  const root = directory("My App", [item(".DS_Store"), directory("Discovery", [item(".DS_Store"), item("host.txt")]),
+    directory("00 Knowlege", [item("guide.md")])]);
+  const selection = await selectionFromDrop([{ kind: "file", webkitGetAsEntry: () => root } as unknown as DataTransferItem]);
+  expect(selection.files.map(item => item.path)).toEqual(["00 Knowlege/guide.md", "Discovery/host.txt"]);
+  expect(selectionManifest(selection).some(item => item.path.includes(".DS_Store"))).toBe(false);
+  expect(selection.notice).toContain("Skipped 2 Finder metadata items");
 });
 
 it("renders the drop area before a folder is selected", () => {

@@ -20,11 +20,19 @@ function parents(path: string): string[] {
   return result;
 }
 
-function normaliseSelection(folderName: string, files: SelectedFile[], directories: string[], notice?: string): FolderSelection {
+function isFinderMetadata(path: string): boolean {
+  return path.split("/").some(part => part.toLowerCase() === ".ds_store");
+}
+
+function normaliseSelection(folderName: string, files: SelectedFile[], directories: string[], notice?: string, ignored = 0): FolderSelection {
   const all = new Set(directories);
   files.forEach(item => parents(item.path).forEach(path => all.add(path)));
-  return { folderName, files: files.sort((a, b) => a.path.localeCompare(b.path)),
-    directories: [...all].sort(), notice };
+  const keptFiles = files.filter(item => !isFinderMetadata(item.path));
+  ignored += files.length - keptFiles.length;
+  const skipped = ignored ? `Skipped ${ignored} Finder metadata item${ignored === 1 ? "" : "s"} named .DS_Store.` : "";
+  return { folderName, files: keptFiles.sort((a, b) => a.path.localeCompare(b.path)),
+    directories: [...all].filter(path => !isFinderMetadata(path)).sort(),
+    notice: [notice, skipped].filter(Boolean).join(" ") || undefined };
 }
 
 export function selectionFromPicker(files: File[]): FolderSelection {
@@ -41,7 +49,8 @@ function entriesFrom(reader: DirectoryReader): Promise<FolderEntry[]> {
   return new Promise((resolve, reject) => reader.readEntries(resolve, reject));
 }
 
-async function walk(entry: FolderEntry, relative: string, files: SelectedFile[], dirs: string[]): Promise<void> {
+async function walk(entry: FolderEntry, relative: string, files: SelectedFile[], dirs: string[], ignored: { count: number }): Promise<void> {
+  if (entry.name.toLowerCase() === ".ds_store") { ignored.count++; return; }
   if (entry.isDirectory) {
     if (relative) dirs.push(relative);
     if (!entry.createReader) throw new Error(`Cannot read folder ${entry.name}.`);
@@ -49,7 +58,7 @@ async function walk(entry: FolderEntry, relative: string, files: SelectedFile[],
     for (;;) {
       const batch = await entriesFrom(reader);
       if (!batch.length) break;
-      for (const child of batch) await walk(child, relative ? `${relative}/${child.name}` : child.name, files, dirs);
+      for (const child of batch) await walk(child, relative ? `${relative}/${child.name}` : child.name, files, dirs, ignored);
     }
   } else if (entry.isFile) {
     if (!entry.file) throw new Error(`Cannot read file ${entry.name}.`);
@@ -66,9 +75,9 @@ export async function selectionFromDrop(items: DataTransferItem[]): Promise<Fold
     if (entry) roots.push(entry as FolderEntry);
   }
   if (roots.length !== 1 || !roots[0].isDirectory) throw new Error("Drop one application folder, including its Discovery and 00 Knowlege folders.");
-  const files: SelectedFile[] = []; const dirs: string[] = [];
-  await walk(roots[0], "", files, dirs);
-  return normaliseSelection(roots[0].name, files, dirs);
+  const files: SelectedFile[] = []; const dirs: string[] = []; const ignored = { count: 0 };
+  await walk(roots[0], "", files, dirs, ignored);
+  return normaliseSelection(roots[0].name, files, dirs, undefined, ignored.count);
 }
 
 export function selectionManifest(selection: FolderSelection): NewApplicationManifestEntry[] {
