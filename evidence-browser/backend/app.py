@@ -16,12 +16,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import FastAPI, HTTPException, Query, Response
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import intake_errors, apply_workflow, audit_workflow, author_workflow, intake_workflow, build_workflow, cleanup_workflow, commands, documents, draft_workflow, prompts_workflow, explorer, csa_figures, network, pipeline, proposals, review_workflow, sections, validation, word_review
+from . import intake_errors, apply_workflow, audit_workflow, author_workflow, intake_workflow, build_workflow, cleanup_workflow, commands, documents, draft_workflow, prompts_workflow, explorer, csa_figures, network, pipeline, project_setup, project_upload, proposals, review_workflow, sections, validation, word_review
 from .jobs import JobManager
 from .models import CommandRequest, IntakeErrorsResponse, JobCreateRequest
 
@@ -492,6 +492,121 @@ def render_office(path: Path) -> Path:
 
 app = FastAPI(title="CSA Evidence Workspace", version="0.1.0")
 job_manager = JobManager(agents_dir())
+
+
+def _new_application_staging_root() -> Path:
+    return agents_dir() / ".state" / "new-application-uploads"
+
+
+def new_application_defaults() -> dict[str, Any]:
+    base = agents_dir().parent
+    return {"workspace_root": str(base), "discovery_name": project_setup.DISCOVERY_DEFAULT,
+            "knowledge_name": project_setup.KNOWLEDGE_DEFAULT,
+            "max_file_bytes": project_upload.MAX_FILE_BYTES,
+            "max_total_bytes": project_upload.MAX_TOTAL_BYTES,
+            "chunk_bytes": project_upload._CHUNK_SIZE,
+            "defaults": {"lane": "revise", "stage": "draft", "spec_mode": "off"},
+            "templates": [str(p) for p in sorted((base / "CSA Template").glob("CSA_Template_v*.dotx"))]}
+
+
+def new_application_preview(config: dict[str, Any]) -> dict[str, Any]:
+    registered = projects()
+    return project_setup.preview_project_setup(
+        config, agents_dir=agents_dir(), base_dir=agents_dir().parent,
+        existing_keys=list(registered),
+        existing_project_roots=[p["project_root"] for p in registered.values() if p.get("project_root")])
+
+
+def new_application_create_upload(payload: dict[str, Any]) -> dict[str, Any]:
+    return project_upload.create_session(payload.get("manifest"), staging_root=_new_application_staging_root())
+
+
+def new_application_upload_status(session_id: str) -> dict[str, Any]:
+    return project_upload.get_status(session_id, staging_root=_new_application_staging_root())
+
+
+def new_application_write_chunk(session_id: str, file_path: str, chunk_index: int, data: bytes) -> dict[str, Any]:
+    return project_upload.write_chunk(session_id, file_path, chunk_index, data,
+                                      staging_root=_new_application_staging_root())
+
+
+def new_application_finalise_upload(session_id: str) -> dict[str, Any]:
+    return project_upload.finalise(session_id, staging_root=_new_application_staging_root())
+
+
+def new_application_cancel_upload(session_id: str) -> dict[str, Any]:
+    status = new_application_upload_status(session_id)
+    if status.get("effective_status") == "committed":
+        return {"status": "BLOCKED", "errors": [{"field": "session_id", "code": "ALREADY_COMMITTED",
+                                                  "message": "A committed application cannot be cancelled."}]}
+    return project_upload.cancel_session(session_id, staging_root=_new_application_staging_root())
+
+
+def new_application_commit(payload: dict[str, Any]) -> dict[str, Any]:
+    if payload.get("confirmed") is not True:
+        return {"status": "BLOCKED", "errors": [{"field": "confirmed", "code": "CONFIRMATION_REQUIRED",
+                                                  "message": "Review and confirm the application setup first."}]}
+    session_id = payload.get("session_id")
+    config = payload.get("config")
+    if not isinstance(session_id, str) or not isinstance(config, dict):
+        return {"status": "BLOCKED", "errors": [{"field": "request", "code": "BAD_SHAPE",
+                                                  "message": "session_id and config are required."}]}
+    status = new_application_upload_status(session_id)
+    if status.get("effective_status") != "complete":
+        return {"status": "BLOCKED", "errors": [{"field": "session_id", "code": "UPLOAD_NOT_COMPLETE",
+                                                  "message": "Finish the folder upload before creating the application."}]}
+    return project_setup.commit_project_setup(
+        config, agents_dir=agents_dir(), base_dir=agents_dir().parent,
+        staging_root=_new_application_staging_root(), session_id=session_id)
+
+
+@app.get("/api/new-application/defaults")
+def get_new_application_defaults() -> dict[str, Any]:
+    return new_application_defaults()
+
+
+@app.post("/api/new-application/preview")
+def preview_new_application(config: dict[str, Any]) -> dict[str, Any]:
+    return new_application_preview(config)
+
+
+@app.post("/api/new-application/uploads")
+def create_new_application_upload(payload: dict[str, Any]) -> dict[str, Any]:
+    return new_application_create_upload(payload)
+
+
+@app.get("/api/new-application/uploads/{session_id}")
+def get_new_application_upload(session_id: str) -> dict[str, Any]:
+    return new_application_upload_status(session_id)
+
+
+@app.put("/api/new-application/uploads/{session_id}/files/{file_path:path}")
+async def upload_new_application_chunk(session_id: str, file_path: str, request: Request,
+                                       index: int = Query(ge=0)) -> dict[str, Any]:
+    limit = project_upload._CHUNK_SIZE
+    if request.headers.get("content-length") and int(request.headers["content-length"]) > limit:
+        raise HTTPException(413, "Upload chunk exceeds the size limit")
+    body = bytearray()
+    async for part in request.stream():
+        body.extend(part)
+        if len(body) > limit:
+            raise HTTPException(413, "Upload chunk exceeds the size limit")
+    return new_application_write_chunk(session_id, file_path, index, bytes(body))
+
+
+@app.post("/api/new-application/uploads/{session_id}/finalise")
+def finalise_new_application_upload(session_id: str) -> dict[str, Any]:
+    return new_application_finalise_upload(session_id)
+
+
+@app.delete("/api/new-application/uploads/{session_id}")
+def cancel_new_application_upload(session_id: str) -> dict[str, Any]:
+    return new_application_cancel_upload(session_id)
+
+
+@app.post("/api/new-application/commit")
+def commit_new_application(payload: dict[str, Any]) -> dict[str, Any]:
+    return new_application_commit(payload)
 
 
 @app.get("/api/systems")

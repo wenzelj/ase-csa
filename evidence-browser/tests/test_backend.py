@@ -6,10 +6,47 @@ from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
 
 from backend import app as workspace
 from backend import word_review
 from backend.models import PipelineDocument, PipelineIssue, PipelineSection, PipelineSnapshot
+
+
+def test_new_application_api_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    agents = tmp_path / ".agents"
+    (agents / "csa-context").mkdir(parents=True)
+    (agents / "csa-context" / "PROJECTS.yaml").write_text("projects:\n", encoding="utf-8")
+    monkeypatch.setenv("CSA_AGENTS_DIR", str(agents))
+    monkeypatch.delenv("CSA_PROJECTS_FILE", raising=False)
+    client = TestClient(workspace.app)
+    defaults = client.get("/api/new-application/defaults").json()
+    assert defaults["workspace_root"] == str(tmp_path)
+    assert defaults["knowledge_name"] == "00 Knowlege"
+    manifest = [
+        {"path": "Discovery", "kind": "dir"},
+        {"path": "00 Knowlege", "kind": "dir"},
+        {"path": "Discovery/host.txt", "kind": "file", "size": 4},
+        {"path": "00 Knowlege/guide.txt", "kind": "file", "size": 5},
+    ]
+    created = client.post("/api/new-application/uploads", json={"manifest": manifest}).json()
+    assert created["status"] == "READY"
+    sid = created["session_id"]
+    for path, data in (("Discovery/host.txt", b"host"), ("00 Knowlege/guide.txt", b"guide")):
+        response = client.put(f"/api/new-application/uploads/{sid}/files/{path}?index=0", content=data)
+        assert response.json()["status"] == "OK", response.text
+        assert client.put(f"/api/new-application/uploads/{sid}/files/{path}?index=0", content=data).json()["already_received"]
+    assert client.get(f"/api/new-application/uploads/{sid}").json()["received_bytes"] == 9
+    assert client.post(f"/api/new-application/uploads/{sid}/finalise").json()["status"] == "READY"
+    config = {"key": "new-app", "label": "New Application", "destination": "new-app"}
+    assert client.post("/api/new-application/preview", json=config).json()["status"] == "READY"
+    assert client.post("/api/new-application/commit", json={"session_id": sid, "config": config}).json()["status"] == "BLOCKED"
+    committed = client.post("/api/new-application/commit", json={
+        "session_id": sid, "config": config, "confirmed": True}).json()
+    assert committed["status"] == "READY", committed
+    assert (tmp_path / "new-app" / "Discovery" / "host.txt").read_bytes() == b"host"
+    assert (tmp_path / "new-app" / "00 Knowlege" / "guide.txt").read_bytes() == b"guide"
+    assert any(item["key"] == "new-app" for item in client.get("/api/systems").json()["systems"])
 
 
 def make_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
