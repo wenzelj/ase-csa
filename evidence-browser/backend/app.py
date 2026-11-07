@@ -21,7 +21,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import intake_errors, apply_workflow, audit_workflow, author_workflow, intake_workflow, build_workflow, cleanup_workflow, commands, documents, draft_workflow, prompts_workflow, explorer, csa_figures, network, pipeline, project_setup, project_upload, proposals, review_workflow, sections, validation, word_review
+from . import intake_errors, apply_workflow, audit_workflow, author_workflow, intake_workflow, build_workflow, cleanup_workflow, commands, documents, draft_workflow, prompts_workflow, explorer, csa_figures, network, pipeline, project_setup, project_upload, proposals, review_workflow, sections, validation, word_review, working_document
 from .jobs import JobManager
 from .models import CommandRequest, IntakeErrorsResponse, JobCreateRequest
 
@@ -635,6 +635,29 @@ def get_systems() -> dict[str, Any]:
 @app.get("/api/systems/{system_key}/setup")
 def system_setup_status(system_key: str) -> dict[str, Any]:
     return system_setup(system_key)
+
+
+@app.get("/api/systems/{system_key}/working-document")
+def working_document_options(system_key: str) -> dict[str, Any]:
+    return working_document.options(system_project(system_key))
+
+
+@app.post("/api/systems/{system_key}/working-document")
+def select_working_document(system_key: str, payload: dict[str, Any]) -> dict[str, Any]:
+    return working_document.select(system_project(system_key), agents_dir(), str(payload.get("relative_path") or ""))
+
+
+@app.put("/api/systems/{system_key}/working-document/upload")
+async def upload_working_document(system_key: str, request: Request, filename: str = Query()) -> dict[str, Any]:
+    limit = working_document.MAX_UPLOAD_BYTES
+    if request.headers.get("content-length") and int(request.headers["content-length"]) > limit:
+        raise HTTPException(413, "Working DOCX exceeds the upload size limit")
+    body = bytearray()
+    async for part in request.stream():
+        body.extend(part)
+        if len(body) > limit:
+            raise HTTPException(413, "Working DOCX exceeds the upload size limit")
+    return working_document.upload(system_project(system_key), agents_dir(), filename, bytes(body))
 
 
 @app.get("/api/systems/{system_key}/prompts")

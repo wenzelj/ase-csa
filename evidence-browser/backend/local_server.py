@@ -75,6 +75,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self.dispatch_result(api.new_application_upload_status(match.group(1)))
             if path == "/api/systems":
                 return self.dispatch_result(api.get_systems())
+            match = re.fullmatch(r"/api/systems/([^/]+)/setup", path)
+            if match:
+                return self.dispatch_result(api.system_setup_status(match.group(1)))
+            match = re.fullmatch(r"/api/systems/([^/]+)/working-document", path)
+            if match:
+                return self.dispatch_result(api.working_document_options(match.group(1)))
             match = re.fullmatch(r"/api/systems/([^/]+)/summary", path)
             if match:
                 return self.dispatch_result(api.get_summary(match.group(1)))
@@ -225,6 +231,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self.dispatch_result(api.new_application_finalise_upload(match.group(1)))
             if path == "/api/new-application/commit":
                 return self.dispatch_result(api.new_application_commit(payload))
+            match = re.fullmatch(r"/api/systems/([^/]+)/working-document", path)
+            if match:
+                return self.dispatch_result(api.select_working_document(match.group(1), payload))
             match = re.fullmatch(r"/api/systems/([^/]+)/figures/refresh", parsed.path)
             if match:
                 return self.dispatch_result(api.figure_refresh(match.group(1)))
@@ -295,9 +304,17 @@ class Handler(BaseHTTPRequestHandler):
             self.fail(error)
 
     def do_PUT(self) -> None:
-        path = unquote(urlparse(self.path).path)
+        parsed = urlparse(self.path)
+        path = unquote(parsed.path)
         try:
             length = int(self.headers.get("Content-Length", "0"))
+            match = re.fullmatch(r"/api/systems/([^/]+)/working-document/upload", path)
+            if match:
+                if length > api.working_document.MAX_UPLOAD_BYTES:
+                    return self.send_json({"detail": "Working DOCX exceeds the upload size limit"}, 413)
+                filename = scalar(parse_qs(parsed.query), "filename")
+                return self.dispatch_result(api.working_document.upload(
+                    api.system_project(match.group(1)), api.agents_dir(), filename, self.rfile.read(length)))
             match = re.fullmatch(r"/api/new-application/uploads/([^/]+)/files/(.+)", path)
             if match:
                 if length > api.project_upload._CHUNK_SIZE:
