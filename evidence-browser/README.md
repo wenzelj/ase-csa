@@ -1,5 +1,15 @@
 # CSA Evidence Workspace
 
+## Add an application
+
+Open **New application** in the left rail. Drop one application folder (or choose it with the folder picker). The folder must already contain `Discovery` and `00 Knowlege`, including the files and subfolders you want to retain. The browser uploads the entire tree into a temporary session. The folder picker cannot report empty directories; dragging the folder preserves them when the browser supports directory entries.
+
+Review the detected files and configure the project key, scope, source paths, knowledge metadata, assessment lane and document paths, estate, sites, skills and working preferences. **Validate and preview** shows the paths and context that will be registered. **Create application** is a separate explicit action. An existing `00 Knowlege/sources.json` is retained; optional metadata must agree with it. The spelling `00 Knowlege` is the compatibility default used by the framework.
+
+The application appears in the selector immediately after creation. Its setup page shows the next independent steps: run discovery ingest to build the index and prepare a working DOCX through the CSA document workflow. Registration itself does not index files or create an assessment document.
+
+Uploads use 4 MiB request chunks and the per-file and total limits reported by `/api/new-application/defaults`. The interface reports validation or transfer failures while retaining the selected folder for retry.
+
 Local evidence inventory, matrix-first search, source preview and reviewed evidence append for IAMPS, UTC DTC and TETRA.
 
 ## Build
