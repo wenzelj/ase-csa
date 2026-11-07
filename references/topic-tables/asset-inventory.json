@@ -1,0 +1,41 @@
+{
+ "topic": "General / Asset Inventory",
+ "key": "GEN",
+ "headings": [
+  "General / Asset Inventory",
+  "General and Asset Inventory",
+  "Asset Inventory"
+ ],
+ "requirements": [
+  "SEP-GEN-01",
+  "SEP-GEN-03"
+ ],
+ "columns": [
+  {
+   "label": "Platform",
+   "attribute": "platform.hardware",
+   "explains": "physical server or virtual machine",
+   "common": "run as a {value}"
+  },
+  {
+   "label": "Operating system",
+   "attribute": "platform.os",
+   "explains": "what the host runs",
+   "common": "run {value}"
+  }
+ ],
+ "flows": {
+  "cross_zone": [
+   "yes"
+  ],
+  "status": [
+   "observed",
+   "both",
+   "declared",
+   "attempted"
+  ],
+  "exclude_mechanisms": [
+   "other"
+  ]
+ }
+}

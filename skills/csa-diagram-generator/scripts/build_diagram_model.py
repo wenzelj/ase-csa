@@ -389,6 +389,21 @@ def cmd_build(args):
 
     all_nodes = load_rows(paths["nodes_path"], NODE_COLUMNS)
     all_edges = load_rows(paths["edges_path"], EDGE_COLUMNS)
+    # Honour graph/graph-reviews.jsonl (graph_store.py review): rejected nodes and edges,
+    # and edges touching a rejected node, are never drawn.
+    import json as _json
+    _log = paths["nodes_path"].parent / "graph-reviews.jsonl"
+    _state = {}
+    if _log.is_file():
+        for _l in _log.read_text(encoding="utf-8").splitlines():
+            try:
+                _r = _json.loads(_l); _state[_r["id"]] = _r["state"]
+            except (ValueError, KeyError):
+                pass
+    _gone = {n["node_id"] for n in all_nodes if _state.get(n["node_id"]) == "rejected"}
+    all_nodes = [n for n in all_nodes if n["node_id"] not in _gone]
+    all_edges = [e for e in all_edges if _state.get(e["edge_id"]) != "rejected"
+                 and e["source_node_id"] not in _gone and e["target_node_id"] not in _gone]
 
     if entry["spec"]["kind"] == "executive_summary":
         diagrams_dir = paths["diagrams_dir"]

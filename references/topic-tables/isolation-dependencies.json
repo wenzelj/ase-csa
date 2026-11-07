@@ -1,0 +1,52 @@
+{
+ "topic": "Isolation",
+ "key": "ISO",
+ "headings": [
+  "Isolation & Resilience Validation (“Drawbridge”)",
+  "Isolation & Resilience Validation (\"Drawbridge\")",
+  "Isolation and Resilience Validation (Drawbridge)",
+  "Isolation & Resilience Validation",
+  "Isolation (\"Drawbridge\")"
+ ],
+ "requirements": [
+  "SEP-ISO-01",
+  "SEP-ISO-02"
+ ],
+ "columns": [
+  {
+   "label": "Directory, time and DNS",
+   "attribute": "iso.core",
+   "explains": "who the host asks for logon, time and names",
+   "common": "take directory, time and DNS from {value}"
+  },
+  {
+   "label": "Patching",
+   "attribute": "iso.patch",
+   "explains": "where updates come from",
+   "common": "take updates from {value}"
+  },
+  {
+   "label": "Monitoring and logs",
+   "attribute": "iso.monitoring",
+   "explains": "where the host sends monitoring, logs and telemetry (seen)",
+   "common": "send monitoring and logs to {value}",
+   "common_none": "have no monitoring or log connections seen"
+  },
+  {
+   "label": "Backup taken by",
+   "attribute": "iso.backup",
+   "explains": "which system pulls the host's backup (seen)",
+   "common": "are backed up by {value}",
+   "common_none": "have no backup connection seen"
+  },
+  {
+   "label": "Certificates from",
+   "attribute": "iso.cert",
+   "explains": "the CA that issued the machine certificate",
+   "common": "hold machine certificates from {value}"
+  }
+ ],
+ "common_values": {
+  "None seen": "have none of these seen"
+ }
+}

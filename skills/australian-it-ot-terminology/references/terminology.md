@@ -2,7 +2,7 @@
 
 Part of `australian-it-ot-terminology`. Choose the term from what is being described (SKILL.md part 1), then check it here. This is guidance for choosing words, not a find-and-replace list. Sources are in `sources.md`; "ISM" means the ASD Information Security Manual glossary, "OT principles" means ASD/ACSC *Principles of operational technology cyber security*, "OT architecture" means ASD/ACSC *Creating and maintaining a definitive view of your OT architecture*.
 
-`scripts/term_lint.py` reads two tables in this file: **Terms that need review** and **Australian spelling**. Keep their column layout.
+`scripts/term_lint.py` reads the **Terms that need review**, **Abbreviations requiring expansion**, and **Australian spelling** tables in this file. Keep their column layout.
 
 ## 1. Application and its parts
 
@@ -193,7 +193,32 @@ Part of `australian-it-ot-terminology`. Choose the term from what is being descr
 | Operations personnel / operators / controllers | People running the system | "users" when operators are meant | |
 | OT engineering / IT operations | Teams | | |
 
-## 12. Terms that need review
+## 12. Abbreviations requiring expansion
+
+The lint checks these terms at the point of reading. A heading, caption, table header or finding label uses the full term, without relying on a glossary. In body prose, use the full term alone when it appears once. If the abbreviation will be reused, introduce it as `Full term (ABC)` on first use in each independently readable subsection.
+
+| Abbreviation | Full term |
+| --- | --- |
+| SMB | Server Message Block |
+| RDP | Remote Desktop Protocol |
+| DNS | Domain Name System |
+| NTP | Network Time Protocol |
+| DHCP | Dynamic Host Configuration Protocol |
+| TCP | Transmission Control Protocol |
+| UDP | User Datagram Protocol |
+| OT | operational technology |
+| IT | information technology |
+| MFA | multi-factor authentication |
+| PKI | public key infrastructure |
+| SIEM | security information and event management |
+| EDR | endpoint detection and response |
+| SCADA | supervisory control and data acquisition |
+| PLC | programmable logic controller |
+| RTU | remote terminal unit |
+| HMI | human-machine interface |
+| DR | disaster recovery |
+
+## 13. Terms that need review
 
 The lint reports these as `TERM_REVIEW_REQUIRED` in CSA narrative. They are not banned: each can be right when it really describes the subject. The writer or reviewer decides what technical concept is meant and names it. Column 1 is matched case-insensitively as a whole phrase.
 
@@ -232,7 +257,7 @@ The lint reports these as `TERM_REVIEW_REQUIRED` in CSA narrative. They are not 
 | sampled | Data-analysis framing ("39 sampled hosts"); often a stale count | Which hosts, captured when? |
 | to-be | Consulting | Target state (program term) |
 
-## 13. Evidence-centric phrases
+## 14. Evidence-centric phrases
 
 The lint counts these per section and flags them as `EVIDENCE_CENTRIC` when they open a sentence or appear three or more times in one section. One qualified use is often right (SKILL.md part 5). Column 1 is a regular expression, matched case-insensitively.
 
@@ -264,7 +289,7 @@ The lint counts these per section and flags them as `EVIDENCE_CENTRIC` when they
 | the discovery scripts? |
 | the capture set shows |
 
-## 14. Australian spelling
+## 15. Australian spelling
 
 The lint flags the US form as `AU_SPELLING` outside code spans, quotes, file names and the product names listed in its allow-list. Column 1 is a regular-expression stem matched as a word start.
 

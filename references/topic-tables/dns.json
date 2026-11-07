@@ -1,0 +1,12 @@
+{
+ "topic": "DNS",
+ "key": "DNS",
+ "headings": ["DNS", "DNS / Name Resolution", "Name Resolution", "DNS and Name Resolution"],
+ "requirements": ["SEP-DNS-01"],
+ "columns": [
+  {"label": "Primary resolver", "attribute": "dns.primary", "explains": "which DNS server each host asks first",
+   "common": "ask {value} first"},
+  {"label": "Secondary resolver", "attribute": "dns.secondary", "explains": "which DNS server each host falls back to",
+   "common": "fall back to {value}"}
+ ]
+}

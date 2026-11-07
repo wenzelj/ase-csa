@@ -1,0 +1,35 @@
+{
+ "topic": "PKI / Certificates",
+ "key": "PKI",
+ "headings": [
+  "PKI / Certificates",
+  "PKI and Certificates",
+  "PKI & Certificates"
+ ],
+ "requirements": [
+  "SEP-PKI-01",
+  "SEP-PKI-02"
+ ],
+ "columns": [
+  {
+   "label": "Machine certificate",
+   "attribute": "cert.machine",
+   "explains": "the host's own certificate: issuing CA and expiry",
+   "noun": "machine certificate"
+  },
+  {
+   "label": "Other certificates",
+   "attribute": "cert.other",
+   "explains": "other certificates in the machine store",
+   "noun": "other machine-store certificate"
+  },
+  {
+   "label": "Private roots trusted",
+   "attribute": "cert.private_roots",
+   "explains": "non-public root CAs the host trusts",
+   "list": true,
+   "common_shared": "trust the private root{s} {value}",
+   "rest_none": "No others"
+  }
+ ]
+}

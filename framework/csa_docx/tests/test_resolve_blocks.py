@@ -1,0 +1,66 @@
+"""csa resolve-gaps re-answers only the answered blocks, and the repair is told which question the evidence now answers."""
+import re
+import json
+from pathlib import Path
+
+SRC = (Path(__file__).resolve().parents[3] / "bin" / "csa").read_text(encoding="utf-8")
+ns = {"re": re}
+exec(SRC[SRC.index("def answered_blocks"):SRC.index("def cmd_resolve_gaps")], ns)
+
+Q = [
+    {"verdict": "ANSWERED", "key": "SUPPLY", "number": "3.16", "title": "Supply", "qid": "B1", "text": "Which vendors support it?", "answer_evidence_ids": ["E-2777", "E-2778"], "lead_ids": []},
+    {"verdict": "ANSWERED", "key": "DNS", "number": "3.5", "title": "DNS", "qid": "F03", "text": "figure gap", "answer_evidence_ids": ["E-1"], "lead_ids": []},
+    {"verdict": "CANDIDATES", "key": "STOR", "number": "3.7", "title": "Storage", "qid": "B2", "text": "open", "answer_evidence_ids": [], "lead_ids": ["L-000002"]},
+    {"verdict": "ANSWERED", "key": "SUPPLY", "number": "3.16", "title": "Supply", "qid": "B3", "text": "Fallback?", "answer_evidence_ids": ["E-9"], "lead_ids": []},
+]
+
+
+def test_only_answered_sheet_blocks_count_and_figure_gaps_do_not():
+    res = ns["answered_blocks"](Q)
+    assert list(res) == ["SUPPLY"] and res["SUPPLY"]["blocks"] == {"B1", "B3"}
+
+
+def test_the_repair_line_names_the_question_and_the_rows():
+    line = ns["resolved_lines"](ns["answered_blocks"](Q)["SUPPLY"]["resolved"])[0]
+    assert line.startswith("- ANSWERED B1:") and "Which vendors support it?" in line and "E-2777, E-2778" in line
+    assert "remove that QUESTION: line" in line
+
+
+def test_a_question_with_no_evidence_gives_no_line():
+    assert ns["resolved_lines"]([{"qid": "B1", "text": "x", "ids": []}]) == []
+
+
+def test_only_verified_evidence_is_named_and_a_question_with_none_is_not_answered():
+    q = [{"verdict": "ANSWERED", "key": "DNS", "number": "3.5", "title": "DNS", "qid": "B1", "text": "t", "answer_evidence_ids": ["E-1", "E-2620"], "lead_ids": ["L-000001"]},
+         {"verdict": "ANSWERED", "key": "TIME", "number": "3.4", "title": "Time", "qid": "B3", "text": "t", "answer_evidence_ids": ["E-2670"], "lead_ids": []}]
+    res = ns["answered_blocks"](q, {"E-1"})
+    assert list(res) == ["DNS"] and res["DNS"]["resolved"][0]["ids"] == ["E-1"]
+
+
+def test_no_answer_block_message_reports_answered_figure_questions_truthfully():
+    message = ns["no_answer_block_message"](Q[1:3])
+    assert message == ("1 question resolved by evidence, but none maps to an answer-sheet block; "
+                       "1 remain open. The working document was not changed.")
+
+
+def test_no_answer_block_message_reports_when_nothing_resolved():
+    message = ns["no_answer_block_message"]([Q[2]])
+    assert message == "No question was resolved by evidence; 1 remain open. The working document was not changed."
+
+
+def test_saved_pre_stable_identity_gap_check_requires_a_fresh_sweep(tmp_path):
+    work = tmp_path / "csa-work"
+    (work / "intake").mkdir(parents=True)
+    (work / "intake" / "gap-check-latest.json").write_text(
+        json.dumps({"schema_version": 3, "questions": []}), encoding="utf-8")
+    local = {"json": json, "re": re, "local_path": Path, "resolve_target": lambda *a: {"status": "OK", "key": ""}}
+    local["die"] = lambda message: (_ for _ in ()).throw(RuntimeError(message))
+    start = SRC.index("def _latest_gap_check")
+    end = SRC.index("def answered_blocks")
+    exec(SRC[start:end], local)
+    try:
+        local["_latest_gap_check"]({"work_dir": str(work)}, "")
+    except RuntimeError as exc:
+        assert "stable question identities" in str(exc) and "csa gap-check" in str(exc)
+    else:
+        raise AssertionError("pre-stable-identity record was accepted")

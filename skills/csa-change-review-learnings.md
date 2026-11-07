@@ -115,3 +115,158 @@ Confirm every review iteration writes durable evidence: reviewed DOCX path, curr
 - MINOR (noted): §14 "This results in:" promoted to H3; §11 bare non-heading "Recommendations" line under container.
 - NOT defects (do not re-flag): <Image place holder> (keep); 16× TBA in §1 (governance); §15/§16 table-only content; standalone H2 Recommendations/Assessment (acceptable per scope map).
 - Applied earlier this session (backup .before_findings_heading_rename_20260924.bak): normalised 9 findings-heading variants + 'Benefit: Achieves:' dangling colon; then renamed headings to 'Findings and Recommendations' (may be walked back per user query).
+
+## 2026-10-01 - Replacement of text already inside a tracked insertion
+
+- **Context:** REVELOC TETRA subsection 3.5, where a correction targeted text that was itself still inside an earlier `w:ins` revision.
+- **Risk observed:** The later replace operation added a second `w:ins` beside the first without deleting or superseding the earlier insertion. The requested wording was present, but accepting all revisions would retain both versions and duplicate the paragraph or table-cell content.
+- **Review approach:** For a replacement whose current anchor contains tracked markup, inspect the complete paragraph or cell and model the accepted result. Presence of the new text is insufficient; verify that no superseded `w:ins` remains as accepted content.
+- **Validation:** Check neighbouring `w:ins` and `w:del` elements at the stable-ID anchor, then confirm that accepting all revisions yields exactly one authorised final version.
+
+## 2026-10-01 - Subsection review state and concurrent changes
+
+- Context: A labelled subsection change file was reused after an earlier review, while its review run-state still described older edit IDs.
+- Risk: Trusting the stale run-state can review or sign off the wrong inventory; comparing a pre-change backup to a later working DOCX can also misclassify a separately approved concurrent edit as unauthorised.
+- Corrected approach: Reconcile the live approved change file and Changes Report before using existing run-state, replace stale inventory with the current edit IDs, and classify backup differences by revision timestamp, edit ID and section scope.
+- Validation next time: Confirm the run-state inventory equals the change file inventory, list current revisions, and verify every accepted-view difference against the reviewed edit or another approved change report.
+
+## 2026-10-01 - DNS apex address overlap does not establish server role
+
+- Context: A discovery-table change correlated configured resolver addresses with addresses returned for an Active Directory DNS domain apex.
+- Risk: Address overlap can be correctly observed while the conclusion that the endpoints are domain controllers remains unsupported. An apex A-record response is not a role-aware domain-controller lookup.
+- Review approach: Treat resolver configuration, domain apex responses and server role as separate claims. Require role-aware records or another direct source before describing an endpoint as a domain controller, even with qualifiers such as "likely".
+- Validation next time: Check the exact query type and returned record, then look for domain-controller service records, authoritative inventory or direct server identification before accepting a role statement.
+## 2026-10-01 — Cumulative subsection review after a later apply
+
+- Context: A later correction batch reused a change file whose earlier edit had already been reviewed.
+- Risk observed: The earlier tracked replacement was no longer present in the live accepted view, while its Word comment and the cumulative Applied list remained, so trusting prior run-state would have produced a false pass.
+- Corrected approach: For cumulative change files, review the next unreviewed batch but also recheck the live accepted view of earlier approved edits when the latest Changes Report still claims they are applied.
+- Validation next time: Compare each cumulatively reported applied edit against the refreshed stable-ID manifest and accepted OOXML view; a surviving comment does not prove the tracked content remains applied.
+
+## 2026-10-01 — Rejected records are not part of the approved review inventory
+
+- Context: A subsection change file retained an older record under a `REJECTED` heading while its cumulative implementation report still listed that ID as applied.
+- Risk observed: Treating every historical record or cumulative Applied entry as approved can create a false failure when rejected wording is absent from the live accepted view.
+- Corrected approach: Build the verification inventory from the current approval status and record headings first. Review only approved IDs; report a rejected ID in the Applied list as a report-accuracy note, not as a missing approved edit.
+- Validation next time: Reconcile the status line, `REJECTED` headings, current-iteration IDs and detailed edit results before selecting the review batch or granting cleanup sign-off.
+
+## 2026-10-01 — Backup change files can block manifest preparation
+
+- Context: A section review's mandatory preparation gate found the live approved change file and an identically named copy under a project backup directory.
+- Risk observed: Recursive change-file discovery treated a recoverable backup as a second live record and refused to trust the stable-ID manifest.
+- Corrected review approach: Stop before DOCX inspection, preserve the backup, record a P0 preparation blocker, and require the framework's discovery scope to exclude backup directories.
+- Validation next time: Run `csa prepare` first and confirm exactly one live section change file resolves before selecting anchors or reviewing comments.
+## 2026-10-02 - Discovery Required table: `NOT_FOUND`/`pending` evidence is correct, not a finding
+
+- **Context:** REVELOC TETRA Section 8 (Discovery Required), 8 edits S8-E18-S8-E25, all evidence E-ids in the matrix are `NOT_FOUND`/`pending`.
+- **Issue or risk observed:** A reviewer seeing 8 consecutive `NOT_FOUND`/`pending` rows could misread this as an evidence gap and escalate it as a P2/P3 finding, when it is the expected and correct state for a Discovery Required table. The evidence rows document what was searched and not found; the "discovery" is the open question the table itself raises.
+- **Evidence used:** `csa ev get E-134 --brief` through `csa ev get E-060 --brief` — all 8 return `status: NOT_FOUND`, `review_state: pending`, with the `claim` field describing the exact question the table row asks. The matrix rows are well-formed and the `source` field shows the searches that were run.
+- **Improved review approach:** For any section titled "Discovery Required" or whose approved text is an open question (not an assertion of fact), treat `NOT_FOUND`/`pending` evidence as the correct and expected state. Report it as a transparency note in the `Evidence` column, not as a finding. Only escalate to P3/P2 if the `claim` in the matrix row contradicts what the table row actually asks.
+- **Validation next time:** Check the section title and the nature of the approved text (open question vs. factual assertion) before interpreting evidence status. A `NOT_FOUND` row for a factual assertion is a P3 note; a `NOT_FOUND` row for an open question is correct.
+
+## 2026-10-02 - REVELOC TETRA Section 3.6: comment generation regression between apply and review
+
+- **Situation:** Implementation report claimed comment ID 94 added for S3-E18 and passed comment validation; the current DOCX (modified 12 minutes after the documented apply run, with no new backup) contained no S3-E16/17/18 comments, no tracked changes at all, and a *different generation* of the comment set (S8 section-file comments 74-91 and Section 3.1 comments 9-11 lost; IDs 25/26/53-65 not present in the pre-edit backup). Body text for the batch edits was correct.
+- **Improved review approach:** A `SECTION_COMPLETE` report that claims comments added must be checked against `word/comments.xml` comment IDs and their Note text (Ref S<n>-E<m>), never just the count or relations. To detect a comment-set generation change, diff the sorted comment-ID sets of the pre-edit backup against the current DOCX and classify lost/added IDs - a mix of both directions is a red flag that an unauthorised or out-of-sequence operation rewrote the file. Also check `w:ins`/`w:del` counts in both files: zero tracked changes in the current file while the backup carried the batch's tracked-change pairs means the edits were accepted or re-applied destructively, which removes the human review step and is a P1 finding on its own.
+- **Validation next time:** Before finalising a FAIL, establish the DOCX mtime against the apply-run backup mtime and list every file newer than the backup; if the DOCX is newer with no new backup, the review baseline itself is in question and the report should name the suspected regression (restore from the documented backup, re-apply lost work, then re-review) rather than just listing comment losses.
+
+## 2026-10-06 - REVELOC TETRA Section 3.1: a blocked mid-file apply leaves the DOCX untouched, and the stale anchor may be an earlier applied edit's own text
+
+- **Context:** Section 3.1 batch S3-E88/S3-E89. The apply run reported BLOCKED at S3-E88 (anchor @H3.1.2-P1 "currently" quote matched 0 paragraphs). Live inspection showed the paragraph reads the already-applied S3-E62 wording (bookmark CSA_S3_E62, tracked ins ids 120/123/125); S3-E88 and S3-E102 restate the same B5 Drawbridge open question with different phrasing. The working DOCX was byte-identical (130005 bytes, same mtime) to the documented pre-apply backup, and S3-E89/S3-E90 approved text was absent from both SEP-GEN rows (rows still carried earlier applied wording plus stacked "Not Met" insertions from three generations).
+- **Risk observed:** Calling the live sentence "unauthorised content" or reporting S3-E89 as applied because a "Not Met" rating is present. The live sentence belongs to an earlier *applied* edit, and the rating on those rows has been "Not Met" since the first generation, so a rating match is not evidence the current batch applied.
+- **Improved review approach:** When an apply batch BLOCKS mid-file, (1) diff the working DOCX against the documented pre-apply backup — byte-identity proves the blocked attempt made no change, so the only finding is the blocked edit, not unauthorised modification; (2) before judging a stale anchor, identify which *applied* edit owns the live sentence (bookmark name CSA_S<n>_E<m> + ins ids) and record it as "owned by applied S-x-Em"; (3) for "Replace row" edits, verify the approved text string is literally present in the live row — a matching rating word is insufficient; (4) treat repeated same-rating insertions on one row as a P3 cleanup note, not a P1, when every generation's rating agrees.
+- **Validation next time:** `cmp` DOCX vs backup; grep the live document.xml for the approved text string; read the CSA_* bookmark owner before classifying anchor staleness; check evidence matrix statuses (E-043/E-044/E-258/E-271/E-342/E-372 all VERIFIED here, so the missing S3-E89 text is fully supportable once the anchor is resolved).
+- 2026-10-06 tetra-reveloc 3.1: re-check DOCX size/mtime against the backup before reusing a previous review's 'byte-identical' claim; the DOCX can be restored between runs.
+
+## 2026-10-07 - REVELOC TETRA Section 3.4: a change file with "Status: Proposed changes" and no `## Changes Report` means the implementation step has not run; review is BLOCKED, not FAIL
+
+- **Context:** Subsection 3.4 Time Synchronisation, batch S3-E141..S3-E147 (7 edits). `prepareDocument()` READY, all OOXML checks Pass, all seven `Where:` anchors resolved, but every anchor still returned its pre-change text (two rows were literal `[Aspect] | [Configuration Observed] | [Coverage / Source]` placeholders). `word/document.xml` had zero occurrences of any approved text marker and zero `CSA_S3_E14x` bookmarks; the document did carry 10 pending tracked-change marks belonging to *other* batches (CSA_S3_E3, CSA_S3_E8, CSA_S3_E15).
+- **Risk observed:** (1) Reporting the batch as FAIL/MISSING-as-defect when the pipeline simply has not reached the apply step for this change file; (2) mis-attributing the document's existing tracked changes to this batch; (3) trusting the stale implementation run-state, which said `SECTION_COMPLETE` for `S3-E8` (an earlier October 1 iteration of a different change set) and could read like proof this file was applied.
+- **Improved review approach:** Before a deep review, check the change file header for `Status:` and the presence of a `## Changes Report`; if it says "Proposed changes" with no report, verify implementation state with a triple check: (a) `lookupStableId` on every `Where:` anchor still returns old text; (b) grep `word/document.xml` for each approved text marker and the `CSA_S<n>_E<m>` bookmark names — all zero; (c) confirm any `w:ins`/`w:del`/bookmarks present belong to *other* edit IDs. Then record the review as `BLOCKED` (not FAIL), sign off `NO` / nothing to sign, state the missing step and the exact resume command (`csa apply <section>` then re-run review), and list all evidence rows as VERIFIED so the next run can go straight to content verification.
+- **Validation next time:** The re-run should find the anchors carrying the approved text, `CSA_S3_E141`..`CSA_S3_E147` bookmarks present, and a `## Changes Report` in the change file — if any of those are still absent, the apply step again did not run and the review stays BLOCKED.
+
+## 2026-10-07 — REVELOC TETRA Section 3.4 (Time Synchronisation) — stacked insertions read as duplication in accepted view
+
+Context:
+Reviewed S3-E141..S3-E147 for REVELOC TETRA subsection 3.4 (`@H3.4`) after `csa apply` reported `SECTION_COMPLETE`. Two cells (S3-E141 current-state cell, S3-E142 row 1 of the Discovery Information table) showed the approved text appearing twice in the accepted view.
+
+Issue or risk observed:
+A reviewer can mistake stacked tracked insertions (two separate `w:ins` blocks with identical text, one per apply generation) for a content defect or an incorrect edit, and either block the review or flag it as `INCORRECT`. In this case the duplication pre-dated the current apply run (present in the `before_section_3_20261007-142040.bak` backup) — the current apply replaced text over an already-duplicated cell rather than introducing the duplication.
+
+Evidence used:
+- Backup `before_section_3_20261007-142040.bak` pre-apply accepted view already showed the duplicated sentence in both cells.
+- Raw XML inspection of the working DOCX confirmed two separate `w:ins` blocks per cell (not one `w:ins` containing duplicated text).
+- All other rows (S3-E143..S3-E146) and the paragraph (S3-E147) showed a single `w:ins` per cell with no duplication.
+
+Improved review approach:
+When an accepted-view cell reads as duplicated, check the pre-apply backup's accepted view and the raw `w:ins` block count in the working DOCX before classifying the edit. If the duplication pre-exists the current apply run and the approved text is present and correct, record the edit as `CORRECT WITH NOTE` (not `INCORRECT`) and note that the dedup should happen in the post-accept cleanup pass. Do not block sign-off on a pre-existing stacked-insertion artefact.
+
+Validation:
+Confirm the pre-apply backup's accepted view matches the working DOCX's accepted view for the duplicated cell (i.e. the current apply did not introduce the duplication), and confirm the approved text from the change file is present and correct in the working DOCX.
+
+## 2026-10-07 — REVELOC TETRA Section 3.4 — Changes Report claims APPLIED for edit IDs with no approved records in the change file
+
+- **Context:** Subsection 3.4 (`@H3.4`), batch S3-E141..S3-E147 (7 approved records). A second `csa apply` run at 18:21 reported S3-E148 and S3-E149 as APPLIED (de-duplication fix), updated the `## Changes Report` and the approval JSON with hashes for both IDs, and added comments 81/82 to the DOCX.
+- **Risk observed:** The prior review (for the 7-edit batch) had already signed off `PASS WITH NOTES` for S3-E141..S3-E147. A re-review that only checks whether S3-E141..S3-E147 are still correct would miss the unrecorded S3-E148/S3-E149 changes and could re-sign-off while the source of truth is missing two edit records.
+- **Improved review approach:** Before signing off, cross-check the `## Changes Report` "Applied:" list and the approval JSON `hashes` keys against the actual `### S<n>-E<m>` records present in the change file. Any ID that appears in the report/JSON but has no approved record is a P1 `change-report inaccuracy` — the edit cannot be verified against approved text, and sign-off is withheld for that ID. This is distinct from a blocked/missing-apply situation (where no changes were made at all).
+- **Validation next time:** `grep -c "^### S3-E" change-file.md` should equal the count of IDs in the "Applied:" line of `## Changes Report`. If it does not, list the missing IDs and flag P1 before any sign-off.
+
+## 2026-10-08 - Cross-host absence claims require source-by-source checking
+
+Context:
+REVELOC TETRA subsection 3.8 review of a statement that three named groups were absent from several hosts' gpresult captures.
+
+Issue or risk observed:
+A VERIFIED matrix row and automated source-check approval can still overstate a cross-host absence when its cited excerpt proves presence on one host but does not prove the claim across every named host. One raw host capture contradicted the broad absence statement.
+
+Evidence used:
+The reviewed wording and E-152 said the named groups were absent from MOTPRDREV101, while that host's `60_gpresult_user.txt` lists OT_Digital_Radio_LAdmins. The correction was recorded as E-476.
+
+Improved review approach:
+For a claim that a value is absent across multiple named hosts, open every named source or run a scoped cross-host index query. Do not treat one source-checked positive excerpt as proof of all stated absences.
+
+Validation:
+List each named host and record presence or absence for each named value before accepting a grouped negative statement.
+
+---
+
+### Re-review after corrective tracked-apply + flatten
+
+Context: REVELOC TETRA §3.8, 2026-10-08. Prior FAIL had two P1s: (a) S3-E151 evidence contradiction (MOTPRDREV101 OT_Digital_Radio_LAdmins absence claim contradicted by raw gpresult), (b) tracked-change control failure (revisions accepted/removed without sign-off).
+
+What happened: A corrective change file (3-8c, S3-E183/S3-E184) was authored, applied, and flattened. The re-review pass then signed off only S3-E183/S3-E184 by their own edit IDs. The prior FAIL's two P1s were re-stated as RESOLVED in the new report rather than re-found as open issues.
+
+Learning:
+When a re-review follows a corrective tracked-apply and flatten cycle, sign off the corrective edits by their own IDs (not the superseded originals). In the Findings table, re-state prior P1s as RESOLVED with the corrective edit IDs that closed them, rather than re-listing them as open. This keeps the audit trail clean: the FAIL → correction → PASS chain is explicit and each P1 has a clear closure record.
+
+Validation:
+After writing the re-review report, confirm: (1) the sign-off line lists only the corrective edit IDs reviewed in this pass, (2) each prior P1 appears in Findings as RESOLVED with the corrective edit ID, (3) no prior P1 is re-listed as an open finding.
+## 2026-10-09 - Missing subsection change record after draft refresh
+
+- Context: a subsection review had historical author/apply run-state, but the approved Markdown change file and live edit comments were no longer present after a later draft refresh.
+- Risk: reconstructing approved `Where`, `Text`, `Why` or `Note` fields from run-state, comments or memory would silently create a new source of truth.
+- Review approach: mark the review `BLOCKED`, sign off no edit IDs, preserve the historical IDs only as an unverified inventory, and require restoration or controlled re-author/apply.
+- Validation: confirm live `csa status`, `csa prepare`, stable-ID lookup, current comments, live evidence IDs and a known pre-refresh backup before reporting the blocker.
+
+## 2026-10-13 - Reconcile accumulated change-file identity before trusting an apply report
+
+- **Context:** A subsection change file retained older approved edit records while its header and fact-audit history referred to later edit-number series. The implementation report named the older records, but the live DOCX contained later condensed wording.
+- **Risk:** A reviewer can incorrectly pass semantically similar text by relying on the header, fact audit or implementation report instead of the actual approved edit records.
+- **Review approach:** Treat each explicit approved edit record as the source of truth, resolve its stable anchor, compare the live accepted text with the immediate pre-apply backup, and compare DOCX part hashes. When a report claims comments were added, verify that `word/comments.xml` changed or that comment IDs increased; an unchanged comments part disproves the claim.
+- **Validation next time:** Record the exact edit series selected for the bounded batch before DOCX inspection, then verify live text, revision/bookmark markers, comment-part delta and package-part delta independently of the changes report.
+
+## 2026-10-13 - Use the workspace DocxEngine render adapter when the packaged review renderer lacks its Python rasteriser
+
+- **Context:** A read-only CSA review needed a fresh full-document render, but the packaged `render_docx.py` stopped before conversion because its configured Python did not provide `pdf2image`.
+- **Issue or risk observed:** Repeatedly invoking the same renderer cannot produce new validation evidence, while falling back directly to an unmanaged desktop conversion path makes the render less reproducible.
+- **Evidence used:** The packaged renderer raised `ModuleNotFoundError: No module named 'pdf2image'`; the workspace-vendored DocxEngine converted the same DOCX through its LibreOffice adapter and reported a 35-page PDF, which PDFKit rasterised successfully for visual inspection.
+- **Improved review approach:** After one diagnosed packaged-renderer dependency failure, use the workspace-vendored DocxEngine `Document.convert("pdf")` path, then rasterise the required PDF pages with the platform PDF library. Record both the failed preferred path and the successful fallback in the review report.
+- **Validation next time:** Confirm the DocxEngine result names the renderer and output path, verify the PDF page count, and visually inspect the cover plus every page containing the reviewed subsection or edited tables.
+
+## 2026-10-13 - Reconcile group coverage against the complete expected host set
+
+- **Context:** A VERIFIED monitoring row cited ten positive host captures and stated that one other host did not list the service, while the subsection claimed coverage across twelve captured hosts. The omitted twelfth host's primary service inventory also contained the same positive service state.
+- **Issue or risk observed:** Automated source checking can prove every cited source excerpt while still missing an uncited host from the expected fleet, leaving a group count or absence statement materially wrong.
+- **Evidence used:** The host register expected twelve captured hosts; eleven primary service inventories contained the same stopped/manual Sense service entry, and only one captured inventory did not list it. Corrected rows E-690 and E-691 preserved the positive group and scoped absence separately.
+- **Improved review approach:** For any grouped count or full-capture coverage claim, enumerate the expected host set, compare it with every host named or cited by the evidence row, and open any omitted host capture before accepting the claim.
+- **Validation next time:** Record expected, positive, negative and unexamined host sets and confirm that their union equals the stated review scope before signing off the edit.

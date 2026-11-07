@@ -36,6 +36,10 @@ A finding drawn from the May 2026 captures is not a fact about every host in the
 5. What Group Policy governs the environment, per host class?
 6. How do files move, and where does local storage and log capture live?
 
+## Host-centred tables
+
+Build every inventory table from `csa hosts group`, not from a source's rows. Example for patch tooling: `csa hosts group --system UTC --attr "Target Collection" --attr "Software Update Group" --attr "Deployment Schedule" --attr "Maintenance Window Name"` gives one row per set of hosts that share a collection, deployment, schedule and maintenance window. MECM maintenance windows are matched to hosts by device name (the window collection IDs differ from the deployment collection IDs). Connections between components come from `csa hosts links`.
+
 ## Expected source evidence
 
 - The declared asset list / inventory (with roles, sites, classes).

@@ -25,12 +25,28 @@ csa mcp                 # prints the csa-mcp config for Codex and the `claude mc
 csa sync --codex-prompts  # wrapper skills, /csa-* slash commands, AGENTS.md (re-run after editing registry.yaml)
 ```
 
-Daily use:
+Draft lane (before V1; a project's `stage:` in PROJECTS.yaml, default `draft`):
+
+```text
+csa ingest                 new data in: discovery index -> graph sync; defers stale results while stand-alone documents still need `csa intake`
+csa answer 3.4             card -> one agent call (answer + prose) -> written into the DOCX as plain text -> logged
+csa stale                  answered subsections whose evidence changed (no model)
+csa refresh-draft          answer every stale subsection again
+csa answer 3.4 --cli claude|codex|evo    pick the model per run
+csa freeze v1              baseline copy of the DOCX, then the V1 change lane below takes over
+```
+
+No change file, writer pass, check-change, tracked changes, review or cleanup run in the draft lane. Each run is logged in
+`csa-work/draft/changes-<date>.md`; every `Unknown:` line is collected in `csa-work/draft/open-questions.md`. A subsection
+with unaccepted tracked changes is refused until they are accepted or rejected in Word. Plan: `docs/draft-lane-plan.md`
+(project doc `claude/csa-draft-lane-plan.md`).
+
+V1 change lane, daily use:
 
 ```text
 csa status [N] | csa next                    where each section is, and what to do next
 csa author 6 [EDIT_MODE=editorial]           step 1 (agent)
-csa approve 6                                human approval gate - flips the change file's Status line
+csa approve 6 --reject S6-E3                optional: keep an edit out before it is applied
 csa apply 6 --until-done                     step 2, framework-first, batch after batch; stops on BLOCKED
 csa apply 6 --agent                          step 2 through the document agent (for BLOCKED edits)
 csa review 6 | csa cleanup 6                 steps 3 and 4 (agents)
@@ -40,14 +56,14 @@ csa ask Network | evidence | gaps | analyse <skill> | write | summary | qa      
 csa lookup "<text>" | csa ev lookup "<q>" | csa lint 6 | csa check --final      no-LLM helpers
 ```
 
-Agent options: `--cli codex|claude|hermes` (default in `cli.yaml`), `--headless`, `--print` (show the prompt only), `-p <project>`, and `KEY=VALUE` overrides. Agents, their verbs, inputs and defaults are defined once in `registry.yaml`; edit that, then `csa sync`. `csa apply` refuses a change file that has not been approved with `csa approve` (existing change files still say "Proposed", so approve each before its next apply, or pass `--allow-unapproved`).
+Agent options: `--cli codex|claude|hermes` (default in `cli.yaml`), `--headless`, `--print` (show the prompt only), `-p <project>`, and `KEY=VALUE` overrides. Agents, their verbs, inputs and defaults are defined once in `registry.yaml`; edit that, then `csa sync`. There is no approval step between authoring and apply: `csa author N` applies its change file when the agent finishes, and `csa write` places its section file in the working DOCX (`csa place`). `csa apply` runs `csa check-change` and records what it applies; `--allow-unapproved` skips the check. Your approval is accepting or rejecting the tracked changes in Word, then `csa review N` and `csa cleanup N`. `--no-apply` on author/write stops after the agent.
 
 ## Agent Definitions
 
 Four agents form the pipeline, run in this order (the fourth, cleanup, accepts the reviewed tracked changes after you have read them in Word):
 
 ```text
-prepareDocument()  ->  csa-change-authoring.md  ->  [human approves]  ->  current-state-assessment-document.md  ->  csa-change-review.md
+prepareDocument()  ->  csa-change-authoring.md  ->  current-state-assessment-document.md (csa apply, automatic)  ->  csa-change-review.md  ->  [human accepts/rejects in Word]  ->  cleanup
      step 0              step 1: draft                                     step 2: apply                            step 3: verify
 ```
 
@@ -74,7 +90,7 @@ Draft change proposals for the requested section using the agent defaults.
 
 To condense a section whose facts are already settled (after its evidence edits are applied and reviewed), run the same agent with `EDIT_MODE=editorial` added. It proposes concision edits only (no fact added, changed or dropped), each with a `Why` starting `Editorial --` that says where every removed fact is still stated. See `csa-change-authoring.md`, Editorial Mode, and the "Say it once, say it first" rules in `skills/csa-writing-style/SKILL.md`. To measure a section first: `python3 skills/csa-writing-style/scripts/prose_lint.py "<working DOCX>" --section <N>`.
 
-Then a human reads the drafted `ChangesCSA_*.md` and decides whether to approve it -- nothing applies it automatically; the file's own `**Status:** Proposed changes for approval` line says so.
+`csa author` then applies the drafted `ChangesCSA_*.md` straight away as tracked changes (after `csa check-change`); the human decision is made in Word, change by change.
 
 Start an implementation run with:
 
@@ -126,12 +142,13 @@ Routing rules:
 - `csa-section-writer` writes from approved evidence and does not search sources independently.
 - `csa-writing-style` is the single style guide for any prose landing in a CSA document (human-sounding, not AI-sounding). The CSA Writer Agent owns it. The C-S-A-Change-Authoring Agent (the separate change-file pipeline, see below) also loads and follows it when drafting an edit's replacement/insertion text -- it borrows the Writer Agent's voice rather than defining its own, so document prose reads consistently regardless of which pipeline produced a given sentence.
 - `australian-it-ot-terminology` is a foundational skill: every agent that analyses, writes, edits or reviews CSA text loads it (evidence investigator, technical analyst, writer, change authoring, quality reviewer). It sets the technical term for each thing, IT/OT classification, heading choice, evidence phrasing and Australian English; `references/terminology.md` is the controlled terminology table and `scripts/term_lint.py` flags wording for review without changing it.
+- Application knowledge skills (for example `reveloc-csa-skill`) hold vendor terminology and a functional model for one application. A project lists them in `application_skills` in its context file and every content agent loads them (`csa-core-rules.md`, Application knowledge skills). Vendor capability in them is background only, never project evidence.
 - `csa-quality-review` reports findings and does not silently rewrite approved content for style. Its check 12 (Section fit) tests whether each paragraph sits in the right section and subsection, against `skills/csa-quality-review/references/section-scope.md`; `csa-section-writer` and `csa-change-authoring` read the same map so new text lands in the right place. Deterministic starting point: `skills/csa-quality-review/scripts/section_fit_scan.py <docx> --heading "<title>"`.
 - `technical-explainer` output is a labelled `Technical explanation`, kept separate from project evidence. General technical knowledge is never presented as verified project evidence.
 - `executive-summary` is used only after the detailed assessment is stable and the reviewer verdict is `READY` or `READY WITH DECLARED GAPS`.
 - Skills and agent definitions stay generic. Project facts live in each project's own `csa-context/<PROJECT>_PROJECT_CONTEXT.yaml` and in that project's assessment evidence -- never in the shared agent/skill files.
 
-Working files: `csa-context/` holds every project's context file (one YAML per project, named `<PROJECT>_PROJECT_CONTEXT.yaml`); `csa-templates/` holds blank templates (project context, assessment state, evidence matrix, section coverage guide) copied from the skill pack. Per-run working files (`assessment-state.yaml`, `evidence-matrix.csv`, `analysis/`, `drafts/`, `reviews/`) go in `WORK_DIR`, which must be set to that project's own `csa-work/` folder (created from the templates on first use) -- since `.agents` is shared, there is no single "project root" to default to, so always pass `WORK_DIR` as an absolute path inside the right project.
+Working files: `csa-context/` holds every project's context file (one YAML per project, named `<PROJECT>_PROJECT_CONTEXT.yaml`); `csa-templates/` holds blank templates (project context, assessment state, evidence matrix, section coverage guide) copied from the skill pack. Per-run working files (`assessment-state.yaml`, `evidence-matrix.csv`, `intake/leads.jsonl`, `analysis/`, `drafts/`, `reviews/`) go in `WORK_DIR`, which must be set to that project's own `csa-work/` folder (created from the templates on first use) -- since `.agents` is shared, there is no single "project root" to default to, so always pass `WORK_DIR` as an absolute path inside the right project. Gap-search hits are append-only leads, not evidence; only source-read findings enter the matrix, and only source-checked VERIFIED rows answer document questions.
 
 Start a CSA analysis run with:
 
@@ -205,7 +222,7 @@ RUN_SCOPE=next-authoring-batch
 Draft change proposals for the requested section using the agent defaults.
 ```
 
-then, once a human has approved the drafted change file:
+then (`csa author` does this for you straight after drafting; run it by hand only after `--no-apply`):
 
 ```text
 Use $csa-document-agent.
@@ -248,10 +265,28 @@ Layer 2 is the one that actually prevents contamination if layer 1 is ever bypas
 
 ## Safety Rules
 
-- A drafted `ChangesCSA_*.md` is a proposal, not an authority, until a human approves it -- the authoring agent's `**Status:** Proposed changes for approval` line is the gate; nothing in this framework applies a change file automatically just because it exists.
-- Once approved, the Markdown change file is the source of truth for implementation and review.
+- A drafted `ChangesCSA_*.md` is applied as soon as it is authored (tracked changes, each with its evidence comment). It is not accepted until Wenzel accepts it in Word; rejected changes simply do not survive `csa cleanup`.
+- The Markdown change file is the source of truth for implementation and review; its Status line and `.approval.json` record what was applied.
 - The active working DOCX must be backed up before every mutation.
 - Process one section at a time.
 - For CLI, EVO, or Ollama runs, use small bounded batches and stop immediately after updating the DOCX, report, and run-state.
 - Do not create duplicate comments when resuming.
 - Do not create another DOCX copy when a valid working DOCX already exists.
+
+## Converting an old-format CSA
+
+`csa convert` moves a pre-template CSA into the CSA template one subsection at a time, only the parts that map. Set `legacy_docx:` for the project in `csa-context/PROJECTS.yaml`, then run `csa convert --prepare` and read `csa-work/legacy/map-report.md`. Correct the map in `csa-work/legacy/legacy-map.csv` (it overrides `skills/csa-document-template/references/legacy-map-default.csv`). Then `csa convert 3.4` (or `csa fleet "convert 3.4" "convert 3.5"`): brief, evidence pre-pass, evidence agent, writer, placement as tracked changes, ledger. Recommendations and scores go to `csa-work/convert/parked.md`, figures to `csa-work/convert/figures.md`. Design: `docs/convert-old-template-plan.md`.
+
+`csa figures` lists every section of the working CSA, whether it needs a figure and why; `csa figure KEY` draws one (`--save`, `--place [--drawing word]`), and the Evidence Workspace's CSA figures page does the same with buttons. Figures use the band design: IT, the IT / OT boundary and OT top to bottom, one icon per machine role, one coloured line per function. `csa figure-design KEY` launches the CSA Figure Design Agent: MODE=design writes a design for a figure the framework cannot draw yet, MODE=build builds it after you approve, MODE=review checks a figure against the design rules, MODE=explain QUESTION="..." answers how figures work. Guide: `references/figure-design-guide.md`.
+
+The conversion is requirement-led. `csa convert --prepare` also splits the old document into facts, gives each a requirement ID (`skills/csa-document-template/references/requirement-map.csv`) and writes `csa-work/convert/requirement-audit.md`: can each requirement be answered, and from what? Per subsection the evidence agent writes `csa-work/convert/<N>/answer-plan.csv` (legacy ID → requirement ID → fact → evidence scope → destination field → confidence → transformation → gap), checked by `python3 -m csa_docx.answer_plan`; the writer writes from it; gaps become Appendix E rows. Facts move, narratives do not; qualifiers stay; recommendations go to the roadmap list.
+
+## Moving an old-format CSA into the template
+
+`csa move` populates the new document quickly from the old one, one subsection at a time, as plain text. It is not a change process: no tracked changes, no evidence matrix, no review. Set `legacy_docx:` for the project, then:
+
+- `csa move --prepare` extracts and maps the old document (no facts, no audit).
+- `csa move N` writes the brief, runs one writer agent (`MODE=move`), inserts the section as plain text and records what moved.
+- `csa move --all` does every mapped subsection in order, then Section 8, then 2.1.
+
+Ratings are left blank; where the old content says nothing the cell reads `Not stated in previous assessment`. The writer's open questions become Section 8 (Discovery Required). Rework the populated document afterwards with the build and revise lane (evidence investigator, tracked changes, review, cleanup). The one-page prompt for a manual run is `references/move-subsection-prompt.md`. Plan: `docs/move-old-template-plan.md`.

@@ -1,0 +1,5 @@
+#!/bin/zsh
+# csa-window <command> [args...]
+# Compatibility shim for older shortcuts and saved commands. CSA model work now
+# always replaces this process and stays in the invoking terminal.
+exec "$@"

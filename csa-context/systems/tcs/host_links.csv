@@ -1,0 +1,285 @@
+src_host,dst_host,dst_port,connections,basis,project,source
+CONTROLLER1,ROKMRLEFT,6010,2,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/tg_discovery_CONTROLLER1_20260317T054226Z/21_established_connections_raw.txt line 15
+CONTROLLER1,ROKMRRIGHT,6010,2,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/tg_discovery_CONTROLLER1_20260317T054226Z/21_established_connections_raw.txt line 9
+CONTROLLER1,ROTPRDSRV122,445,1,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/tg_discovery_CONTROLLER1_20260317T054226Z/21_established_connections_raw.txt line 33
+CONTROLLER1,ROTPRDSRV122,50322,1,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/tg_discovery_CONTROLLER1_20260317T054226Z/21_established_connections_raw.txt line 75
+CONTROLLER10,ROKMRLEFT,6010,2,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRLEFT_20260317T034549Z/21_established_connections_raw.txt line 165
+CONTROLLER10,ROKMRRIGHT,6010,2,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 363
+CONTROLLER100,ROKMRLEFT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRLEFT_20260317T034549Z/21_established_connections_raw.txt line 267
+CONTROLLER100,ROKMRRIGHT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 597
+CONTROLLER102,ROKMRLEFT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRLEFT_20260317T034549Z/21_established_connections_raw.txt line 153
+CONTROLLER102,ROKMRRIGHT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 429
+CONTROLLER105,ROKMRLEFT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRLEFT_20260317T034549Z/21_established_connections_raw.txt line 69
+CONTROLLER105,ROKMRRIGHT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 735
+CONTROLLER106,MKYMRLEFT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_CONTROLLER106_20260317T062918Z/21_established_connections_raw.txt line 57
+CONTROLLER106,MKYMRRIGHT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_CONTROLLER106_20260317T062918Z/21_established_connections_raw.txt line 51
+CONTROLLER106,MOTPRDSRV122,445,1,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_CONTROLLER106_20260317T062918Z/21_established_connections_raw.txt line 3
+CONTROLLER106,MOTPRDSRV122,56991,1,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_CONTROLLER106_20260317T062918Z/21_established_connections_raw.txt line 63
+CONTROLLER111,ROKMRLEFT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRLEFT_20260317T034549Z/21_established_connections_raw.txt line 735
+CONTROLLER111,ROKMRRIGHT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 747
+CONTROLLER112,ROKMRLEFT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRLEFT_20260317T034549Z/21_established_connections_raw.txt line 75
+CONTROLLER112,ROKMRRIGHT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 711
+CONTROLLER12,ROKMRLEFT,6010,3,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRLEFT_20260317T034549Z/21_established_connections_raw.txt line 87
+CONTROLLER12,ROKMRRIGHT,6010,3,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 519
+CONTROLLER120,ROKMRLEFT,6010,2,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRLEFT_20260317T034549Z/21_established_connections_raw.txt line 63
+CONTROLLER120,ROKMRRIGHT,6010,2,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 117
+CONTROLLER123,ROKMRLEFT,6010,3,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRLEFT_20260317T034549Z/21_established_connections_raw.txt line 249
+CONTROLLER123,ROKMRRIGHT,6010,3,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 63
+CONTROLLER126,ROKMRLEFT,6010,3,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRLEFT_20260317T034549Z/21_established_connections_raw.txt line 273
+CONTROLLER126,ROKMRRIGHT,6010,3,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 669
+CONTROLLER129,ROKMRLEFT,6010,2,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRLEFT_20260317T034549Z/21_established_connections_raw.txt line 507
+CONTROLLER129,ROKMRRIGHT,6010,2,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 561
+CONTROLLER132,ROKMRLEFT,6010,3,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRLEFT_20260317T034549Z/21_established_connections_raw.txt line 135
+CONTROLLER132,ROKMRRIGHT,6010,3,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 213
+CONTROLLER135,ROKMRLEFT,6010,3,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRLEFT_20260317T034549Z/21_established_connections_raw.txt line 489
+CONTROLLER135,ROKMRRIGHT,6010,3,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 87
+CONTROLLER138,ROKMRLEFT,6010,3,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRLEFT_20260317T034549Z/21_established_connections_raw.txt line 81
+CONTROLLER138,ROKMRRIGHT,6010,3,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 627
+CONTROLLER141,ROKMRLEFT,6010,2,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRLEFT_20260317T034549Z/21_established_connections_raw.txt line 297
+CONTROLLER141,ROKMRRIGHT,6010,2,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 393
+CONTROLLER144,ROKMRLEFT,6010,3,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRLEFT_20260317T034549Z/21_established_connections_raw.txt line 123
+CONTROLLER144,ROKMRRIGHT,6010,3,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 99
+CONTROLLER147,ROKMRLEFT,6010,2,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRLEFT_20260317T034549Z/21_established_connections_raw.txt line 171
+CONTROLLER147,ROKMRRIGHT,6010,2,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 537
+CONTROLLER15,ROKMRLEFT,6010,3,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRLEFT_20260317T034549Z/21_established_connections_raw.txt line 447
+CONTROLLER15,ROKMRRIGHT,6010,3,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 51
+CONTROLLER150,ROKMRLEFT,6010,2,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/tg_discovery_CONTROLLER150_20260317T055014Z/21_established_connections_raw.txt line 9
+CONTROLLER150,ROKMRRIGHT,6010,2,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/tg_discovery_CONTROLLER150_20260317T055014Z/21_established_connections_raw.txt line 3
+CONTROLLER150,ROTPRDSRV122,445,1,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/tg_discovery_CONTROLLER150_20260317T055014Z/21_established_connections_raw.txt line 27
+CONTROLLER150,ROTPRDSRV122,50322,1,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/tg_discovery_CONTROLLER150_20260317T055014Z/21_established_connections_raw.txt line 33
+CONTROLLER153,ROKMRLEFT,6010,2,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRLEFT_20260317T034549Z/21_established_connections_raw.txt line 357
+CONTROLLER153,ROKMRRIGHT,6010,2,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 573
+CONTROLLER156,ROKMRLEFT,6010,2,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRLEFT_20260317T034549Z/21_established_connections_raw.txt line 51
+CONTROLLER156,ROKMRRIGHT,6010,2,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 423
+CONTROLLER159,ROKMRLEFT,6010,2,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRLEFT_20260317T034549Z/21_established_connections_raw.txt line 33
+CONTROLLER159,ROKMRRIGHT,6010,2,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 183
+CONTROLLER162,ROKMRLEFT,6010,2,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRLEFT_20260317T034549Z/21_established_connections_raw.txt line 315
+CONTROLLER162,ROKMRRIGHT,6010,2,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 279
+CONTROLLER165,ROKMRLEFT,6010,2,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRLEFT_20260317T034549Z/21_established_connections_raw.txt line 381
+CONTROLLER165,ROKMRRIGHT,6010,2,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 123
+CONTROLLER168,ROKMRLEFT,6010,2,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRLEFT_20260317T034549Z/21_established_connections_raw.txt line 531
+CONTROLLER168,ROKMRRIGHT,6010,2,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 549
+CONTROLLER17,ROKMRLEFT,6010,3,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRLEFT_20260317T034549Z/21_established_connections_raw.txt line 57
+CONTROLLER17,ROKMRRIGHT,6010,3,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 375
+CONTROLLER20,ROKMRLEFT,6010,2,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRLEFT_20260317T034549Z/21_established_connections_raw.txt line 201
+CONTROLLER20,ROKMRRIGHT,6010,2,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 405
+CONTROLLER24,ROKMRLEFT,6010,2,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRLEFT_20260317T034549Z/21_established_connections_raw.txt line 459
+CONTROLLER24,ROKMRRIGHT,6010,2,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 105
+CONTROLLER25,ROKMRLEFT,6010,3,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRLEFT_20260317T034549Z/21_established_connections_raw.txt line 177
+CONTROLLER25,ROKMRRIGHT,6010,3,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 75
+CONTROLLER27,ROKMRLEFT,6010,2,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRLEFT_20260317T034549Z/21_established_connections_raw.txt line 99
+CONTROLLER27,ROKMRRIGHT,6010,2,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 651
+CONTROLLER33,ROKMRLEFT,6010,2,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRLEFT_20260317T034549Z/21_established_connections_raw.txt line 339
+CONTROLLER33,ROKMRRIGHT,6010,2,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 435
+CONTROLLER36,ROKMRLEFT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/UTC_discovery_CONTROLLER36_20260505T010953Z/21_established_connections_raw.txt line 51
+CONTROLLER36,ROKMRRIGHT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/UTC_discovery_CONTROLLER36_20260505T010953Z/21_established_connections_raw.txt line 57
+CONTROLLER36,ROTPRDSRV122,445,2,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/UTC_discovery_CONTROLLER36_20260505T010953Z/21_established_connections_raw.txt line 63
+CONTROLLER37,ROKMRLEFT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRLEFT_20260317T034549Z/21_established_connections_raw.txt line 27
+CONTROLLER37,ROKMRRIGHT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 171
+CONTROLLER39,ROKMRLEFT,6010,3,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRLEFT_20260317T034549Z/21_established_connections_raw.txt line 117
+CONTROLLER39,ROKMRRIGHT,6010,3,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 81
+CONTROLLER4,ROKMRLEFT,6010,3,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRLEFT_20260317T034549Z/21_established_connections_raw.txt line 363
+CONTROLLER4,ROKMRRIGHT,6010,3,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 453
+CONTROLLER41,ROKMRLEFT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRLEFT_20260317T034549Z/21_established_connections_raw.txt line 195
+CONTROLLER41,ROKMRRIGHT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 333
+CONTROLLER52,ROKMRLEFT,6010,2,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRLEFT_20260317T034549Z/21_established_connections_raw.txt line 423
+CONTROLLER52,ROKMRRIGHT,6010,2,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 717
+CONTROLLER54,ROKMRLEFT,6010,2,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRLEFT_20260317T034549Z/21_established_connections_raw.txt line 321
+CONTROLLER54,ROKMRRIGHT,6010,2,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 687
+CONTROLLER62,ROKMRLEFT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRLEFT_20260317T034549Z/21_established_connections_raw.txt line 615
+CONTROLLER62,ROKMRRIGHT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 177
+CONTROLLER63,ROKMRLEFT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRLEFT_20260317T034549Z/21_established_connections_raw.txt line 111
+CONTROLLER63,ROKMRRIGHT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 483
+CONTROLLER65,ROKMRLEFT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRLEFT_20260317T034549Z/21_established_connections_raw.txt line 639
+CONTROLLER65,ROKMRRIGHT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 297
+CONTROLLER66,ROKMRLEFT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/tg_discovery_CONTROLLER66_20260317T062625Z/21_established_connections_raw.txt line 27
+CONTROLLER66,ROKMRRIGHT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/tg_discovery_CONTROLLER66_20260317T062625Z/21_established_connections_raw.txt line 21
+CONTROLLER66,ROTPRDSRV122,445,1,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/tg_discovery_CONTROLLER66_20260317T062625Z/21_established_connections_raw.txt line 3
+CONTROLLER66,ROTPRDSRV122,50322,1,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/tg_discovery_CONTROLLER66_20260317T062625Z/21_established_connections_raw.txt line 9
+CONTROLLER67,ROKMRLEFT,6010,2,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRLEFT_20260317T034549Z/21_established_connections_raw.txt line 45
+CONTROLLER67,ROKMRRIGHT,6010,2,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 135
+CONTROLLER7,ROKMRLEFT,6010,3,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRLEFT_20260317T034549Z/21_established_connections_raw.txt line 225
+CONTROLLER7,ROKMRRIGHT,6010,3,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 153
+CONTROLLER70,ROKMRLEFT,6010,3,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRLEFT_20260317T034549Z/21_established_connections_raw.txt line 39
+CONTROLLER70,ROKMRRIGHT,6010,3,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 753
+CONTROLLER73,ROKMRLEFT,6010,3,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRLEFT_20260317T034549Z/21_established_connections_raw.txt line 183
+CONTROLLER73,ROKMRRIGHT,6010,3,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 345
+CONTROLLER76,ROKMRLEFT,6010,3,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRLEFT_20260317T034549Z/21_established_connections_raw.txt line 159
+CONTROLLER76,ROKMRRIGHT,6010,3,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 489
+CONTROLLER79,ROKMRLEFT,6010,2,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRLEFT_20260317T034549Z/21_established_connections_raw.txt line 477
+CONTROLLER79,ROKMRRIGHT,6010,2,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 471
+CONTROLLER84,ROKMRLEFT,6010,2,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRLEFT_20260317T034549Z/21_established_connections_raw.txt line 105
+CONTROLLER84,ROKMRRIGHT,6010,2,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 111
+CONTROLLER87,MOTPRDSRV122,445,1,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/tg_discovery_CONTROLLER87_20260317T060223Z/21_established_connections_raw.txt line 3
+CONTROLLER87,ROKMRLEFT,6010,2,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/tg_discovery_CONTROLLER87_20260317T060223Z/21_established_connections_raw.txt line 63
+CONTROLLER87,ROKMRRIGHT,6010,2,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/tg_discovery_CONTROLLER87_20260317T060223Z/21_established_connections_raw.txt line 57
+CONTROLLER90,ROKMRLEFT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRLEFT_20260317T034549Z/21_established_connections_raw.txt line 279
+CONTROLLER90,ROKMRRIGHT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 321
+CONTROLLER93,ROKMRLEFT,6010,2,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRLEFT_20260317T034549Z/21_established_connections_raw.txt line 231
+CONTROLLER93,ROKMRRIGHT,6010,2,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 69
+CONTROLLER96,ROKMRLEFT,6010,2,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRLEFT_20260317T034549Z/21_established_connections_raw.txt line 129
+CONTROLLER96,ROKMRRIGHT,6010,2,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 585
+CONTROLLER99,ROKMRLEFT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRLEFT_20260317T034549Z/21_established_connections_raw.txt line 237
+CONTROLLER99,ROKMRRIGHT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 513
+IPTPRDAPP130,ROKPRDAMP102,5672,2,dst listens on port,iamps,01 Current State AS Built/IAMPS Discovery Data/PROD/IAMPS_discovery_ROKPRDAMP102_20260429T023702Z/21_established_connections_raw.txt line 39
+MAINTENANCE5,ROKMRLEFT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/tg_discovery_MAINTENANCE5_20260317T053428Z/21_established_connections_raw.txt line 21
+MAINTENANCE5,ROKMRRIGHT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/tg_discovery_MAINTENANCE5_20260317T053428Z/21_established_connections_raw.txt line 15
+MAINTENANCE5,ROTPRDSRV122,445,1,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/tg_discovery_MAINTENANCE5_20260317T053428Z/21_established_connections_raw.txt line 9
+MKY-DTC-CWS12,MKYCELEFT,6000,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/tg_discovery_MKY-DTC-CWS12_20260317T060447Z/21_established_connections_raw.txt line 39
+MKY-DTC-CWS12,MKYCERIGHT,6000,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/tg_discovery_MKY-DTC-CWS12_20260317T060447Z/21_established_connections_raw.txt line 33
+MKY-DTC-CWS12,MOTPRDSRV122,135,1,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/tg_discovery_MKY-DTC-CWS12_20260317T060447Z/21_established_connections_raw.txt line 9
+MKY-DTC-CWS12,MOTPRDSRV122,445,1,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/tg_discovery_MKY-DTC-CWS12_20260317T060447Z/21_established_connections_raw.txt line 15
+MKY-DTC-CWS12,MOTPRDSRV122,56991,1,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/tg_discovery_MKY-DTC-CWS12_20260317T060447Z/21_established_connections_raw.txt line 3
+MKY-DTC-CWS13,MKYCELEFT,6000,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_MKYCELEFT_20260317T042559Z/21_established_connections_raw.txt line 81
+MKY-DTC-CWS13,MKYCERIGHT,6000,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_MKYCERIGHT_20260317T042522Z/21_established_connections_raw.txt line 81
+MKY-DTC-CWS14,MKYCELEFT,6000,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_MKYCELEFT_20260317T042559Z/21_established_connections_raw.txt line 93
+MKY-DTC-CWS14,MKYCERIGHT,6000,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_MKYCERIGHT_20260317T042522Z/21_established_connections_raw.txt line 87
+MKY-DTC-CWS15,MOTPRDSRV122,445,1,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/UTC_discovery_MKY-DTC-CWS15_20260505T012213Z/21_established_connections_raw.txt line 81
+MKY-DTC-CWS15,ROKCELEFT,6000,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/UTC_discovery_MKY-DTC-CWS15_20260505T012213Z/21_established_connections_raw.txt line 45
+MKY-DTC-CWS15,ROKCERIGHT,6000,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/UTC_discovery_MKY-DTC-CWS15_20260505T012213Z/21_established_connections_raw.txt line 51
+MKY-DTC-CWS15,ROTPRDSRV122,445,2,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/UTC_discovery_MKY-DTC-CWS15_20260505T012213Z/21_established_connections_raw.txt line 57
+MKY-DTC-CWS16,ROKCELEFT,6000,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/tg_discovery_MKY-DTC-CWS16_20260317T062117Z/21_established_connections_raw.txt line 33
+MKY-DTC-CWS16,ROKCERIGHT,6000,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/tg_discovery_MKY-DTC-CWS16_20260317T062117Z/21_established_connections_raw.txt line 39
+MKY-DTC-CWS16,ROTPRDSRV122,445,1,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/tg_discovery_MKY-DTC-CWS16_20260317T062117Z/21_established_connections_raw.txt line 3
+MKY-DTC-CWS16,ROTPRDSRV122,50322,1,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/tg_discovery_MKY-DTC-CWS16_20260317T062117Z/21_established_connections_raw.txt line 9
+MKYCELEFT,MOTPRDSRV122,445,1,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_MKYCELEFT_20260317T042559Z/21_established_connections_raw.txt line 33
+MKYCELEFT,MOTPRDSRV122,56991,1,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_MKYCELEFT_20260317T042559Z/21_established_connections_raw.txt line 9
+MKYCERIGHT,MKYCELEFT,6003,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_MKYCERIGHT_20260317T042522Z/21_established_connections_raw.txt line 27
+MKYCERIGHT,MOTPRDSRV122,445,1,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_MKYCERIGHT_20260317T042522Z/21_established_connections_raw.txt line 3
+MKYCERIGHT,MOTPRDSRV122,56991,1,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_MKYCERIGHT_20260317T042522Z/21_established_connections_raw.txt line 15
+MKYMAINT2,MKYCELEFT,6001,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_MKYMAINT2_20260317T053417Z/21_established_connections_raw.txt line 21
+MKYMAINT2,MKYCERIGHT,6001,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_MKYMAINT2_20260317T053417Z/21_established_connections_raw.txt line 15
+MKYMAINT2,MKYMRLEFT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_MKYMAINT2_20260317T053417Z/21_established_connections_raw.txt line 9
+MKYMAINT2,MKYMRRIGHT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_MKYMAINT2_20260317T053417Z/21_established_connections_raw.txt line 3
+MKYMAINT2,MOTPRDSRV122,135,1,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_MKYMAINT2_20260317T053417Z/21_established_connections_raw.txt line 39
+MKYMAINT2,MOTPRDSRV122,445,1,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_MKYMAINT2_20260317T053417Z/21_established_connections_raw.txt line 27
+MKYMAINT2,MOTPRDSRV122,56991,1,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_MKYMAINT2_20260317T053417Z/21_established_connections_raw.txt line 33
+MKYMAINT3,MKYMRLEFT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/UTC_discovery_MKYMRLEFT_20260505T011739Z/21_established_connections_raw.txt line 57
+MKYMAINT3,MKYMRRIGHT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_MKYMRRIGHT_20260317T034920Z/21_established_connections_raw.txt line 45
+MKYMRLEFT,MOTPRDSRV122,445,2,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/UTC_discovery_MKYMRLEFT_20260505T011739Z/21_established_connections_raw.txt line 63
+MKYMRRIGHT,MOTPRDSRV122,445,1,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_MKYMRRIGHT_20260317T034920Z/21_established_connections_raw.txt line 15
+MKYMRRIGHT,MOTPRDSRV122,56991,1,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_MKYMRRIGHT_20260317T034920Z/21_established_connections_raw.txt line 3
+MKYSIGMAPA3,ROTPRDSRV122,445,1,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_MKYSIGMAPA3_20260317T051130Z/21_established_connections_raw.txt line 9
+MKYSIGMAPA4,ROTPRDSRV122,445,1,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/SIGMAP Discovery Data/UTC_discovery_MKYSIGMAPA4_20260507T021804Z/21_established_connections_raw.txt line 21
+MKYSIGMAPB3,ROTPRDSRV122,445,1,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_MKYSIGMAPB3_20260317T051134Z/21_established_connections_raw.txt line 9
+MKYSIGMAPW5,MOTPRDSRV122,445,3,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/SIGMAP Discovery Data/UTC_discovery_MKYSIGMAPW5_20260507T021202Z/21_established_connections_raw.txt line 9
+MKYTCSILEFT,MKYCELEFT,6005,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/UTC_discovery_MKYTCSILEFT_20260505T011354Z/21_established_connections_raw.txt line 87
+MKYTCSILEFT,MKYCERIGHT,6005,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/UTC_discovery_MKYTCSILEFT_20260505T011354Z/21_established_connections_raw.txt line 93
+MKYTCSILEFT,MKYMRLEFT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/UTC_discovery_MKYTCSILEFT_20260505T011354Z/21_established_connections_raw.txt line 75
+MKYTCSILEFT,MKYMRRIGHT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/UTC_discovery_MKYTCSILEFT_20260505T011354Z/21_established_connections_raw.txt line 99
+MKYTCSILEFT,MKYTCSIRIGHT,6056,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/UTC_discovery_MKYTCSILEFT_20260505T011354Z/21_established_connections_raw.txt line 105
+MKYTCSILEFT,MOTPRDSRV122,135,1,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/UTC_discovery_MKYTCSILEFT_20260505T011354Z/21_established_connections_raw.txt line 57
+MKYTCSILEFT,MOTPRDSRV122,445,2,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/UTC_discovery_MKYTCSILEFT_20260505T011354Z/21_established_connections_raw.txt line 45
+MKYTCSILEFT,MOTPRDSRV122,64631,2,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/UTC_discovery_MKYTCSILEFT_20260505T011354Z/21_established_connections_raw.txt line 51
+MKYTCSIRIGHT,MKYCELEFT,6005,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_MKYTCSIRIGHT_20260317T033827Z/21_established_connections_raw.txt line 27
+MKYTCSIRIGHT,MKYCERIGHT,6005,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_MKYTCSIRIGHT_20260317T033827Z/21_established_connections_raw.txt line 21
+MKYTCSIRIGHT,MKYMRLEFT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_MKYTCSIRIGHT_20260317T033827Z/21_established_connections_raw.txt line 45
+MKYTCSIRIGHT,MKYMRRIGHT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_MKYTCSIRIGHT_20260317T033827Z/21_established_connections_raw.txt line 39
+MKYTCSIRIGHT,MKYTCSILEFT,6056,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_MKYTCSIRIGHT_20260317T033827Z/21_established_connections_raw.txt line 51
+MKYTCSIRIGHT,MKYTCSILEFT,6058,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_MKYTCSIRIGHT_20260317T033827Z/21_established_connections_raw.txt line 15
+MKYTCSIRIGHT,ROTPRDSRV122,445,1,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_MKYTCSIRIGHT_20260317T033827Z/21_established_connections_raw.txt line 69
+MKYTELEFT,MKYCELEFT,6002,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/UTC_discovery_MKYTELEFT_20260505T011546Z/21_established_connections_raw.txt line 87
+MKYTELEFT,MKYCERIGHT,6002,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/UTC_discovery_MKYTELEFT_20260505T011546Z/21_established_connections_raw.txt line 93
+MKYTELEFT,MKYMRLEFT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/UTC_discovery_MKYTELEFT_20260505T011546Z/21_established_connections_raw.txt line 75
+MKYTELEFT,MKYMRRIGHT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/UTC_discovery_MKYTELEFT_20260505T011546Z/21_established_connections_raw.txt line 81
+MKYTELEFT,MOTPRDSRV122,445,3,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/UTC_discovery_MKYTELEFT_20260505T011546Z/21_established_connections_raw.txt line 45
+MKYTERIGHT,MKYCELEFT,6002,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_MKYTERIGHT_20260317T040114Z/21_established_connections_raw.txt line 9
+MKYTERIGHT,MKYCERIGHT,6002,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_MKYTERIGHT_20260317T040114Z/21_established_connections_raw.txt line 3
+MKYTERIGHT,MKYMRLEFT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_MKYTERIGHT_20260317T040114Z/21_established_connections_raw.txt line 21
+MKYTERIGHT,MKYMRRIGHT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_MKYTERIGHT_20260317T040114Z/21_established_connections_raw.txt line 15
+MKYTERIGHT,MOTPRDSRV122,445,1,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_MKYTERIGHT_20260317T040114Z/21_established_connections_raw.txt line 39
+MKYTERIGHT,MOTPRDSRV122,56991,1,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_MKYTERIGHT_20260317T040114Z/21_established_connections_raw.txt line 27
+MKYUATAMP101,MKYUATAMP102,445,1,dst listens on port,iamps,01 Current State AS Built/IAMPS Discovery Data/UAT/tg_discovery_20260317T002428Z/21_established_connections_raw.txt line 39
+MKYUATAMP102,MKYUATAMP101,25672,1,dst listens on port,iamps,01 Current State AS Built/IAMPS Discovery Data/UAT/tg_discovery_20260317T002426Z/21_established_connections_raw.txt line 39
+MKYUATAMP102,MKYUATAMP101,445,1,dst listens on port,iamps,01 Current State AS Built/IAMPS Discovery Data/UAT/tg_discovery_20260317T002426Z/21_established_connections_raw.txt line 15
+ROK-DTC-CWS1,ROKCELEFT,6000,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/tg_discovery_ROK-DTC-CWS1_20260317T060926Z/21_established_connections_raw.txt line 57
+ROK-DTC-CWS1,ROKCERIGHT,6000,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/tg_discovery_ROK-DTC-CWS1_20260317T060926Z/21_established_connections_raw.txt line 51
+ROK-DTC-CWS1,ROTPRDSRV122,445,1,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/tg_discovery_ROK-DTC-CWS1_20260317T060926Z/21_established_connections_raw.txt line 39
+ROK-DTC-CWS1,ROTPRDSRV122,50322,1,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/tg_discovery_ROK-DTC-CWS1_20260317T060926Z/21_established_connections_raw.txt line 63
+ROK-DTC-CWS10,ROKCELEFT,6000,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKCELEFT_20260317T041444Z/21_established_connections_raw.txt line 123
+ROK-DTC-CWS10,ROKCERIGHT,6000,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/UTC_discovery_ROKCERIGHT_20260505T012021Z/21_established_connections_raw.txt line 93
+ROK-DTC-CWS2,ROKCELEFT,6000,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKCELEFT_20260317T041444Z/21_established_connections_raw.txt line 69
+ROK-DTC-CWS2,ROKCERIGHT,6000,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/UTC_discovery_ROKCERIGHT_20260505T012021Z/21_established_connections_raw.txt line 45
+ROK-DTC-CWS3,ROKCELEFT,6000,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKCELEFT_20260317T041444Z/21_established_connections_raw.txt line 117
+ROK-DTC-CWS3,ROKCERIGHT,6000,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/UTC_discovery_ROKCERIGHT_20260505T012021Z/21_established_connections_raw.txt line 51
+ROK-DTC-CWS4,ROKCELEFT,6000,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKCELEFT_20260317T041444Z/21_established_connections_raw.txt line 99
+ROK-DTC-CWS4,ROKCERIGHT,6000,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/UTC_discovery_ROKCERIGHT_20260505T012021Z/21_established_connections_raw.txt line 57
+ROK-DTC-CWS5,ROKCELEFT,6000,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKCELEFT_20260317T041444Z/21_established_connections_raw.txt line 81
+ROK-DTC-CWS5,ROKCERIGHT,6000,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/UTC_discovery_ROKCERIGHT_20260505T012021Z/21_established_connections_raw.txt line 63
+ROK-DTC-CWS6,ROKCELEFT,6000,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKCELEFT_20260317T041444Z/21_established_connections_raw.txt line 105
+ROK-DTC-CWS6,ROKCERIGHT,6000,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/UTC_discovery_ROKCERIGHT_20260505T012021Z/21_established_connections_raw.txt line 69
+ROK-DTC-CWS7,ROKCELEFT,6000,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/tg_discovery_ROK-DTC-CWS7_20260317T061607Z/21_established_connections_raw.txt line 39
+ROK-DTC-CWS7,ROKCERIGHT,6000,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/tg_discovery_ROK-DTC-CWS7_20260317T061607Z/21_established_connections_raw.txt line 33
+ROK-DTC-CWS7,ROTPRDSRV122,445,4,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/tg_discovery_ROK-DTC-CWS7_20260317T061607Z/21_established_connections_raw.txt line 3
+ROK-DTC-CWS8,ROKCELEFT,6000,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKCELEFT_20260317T041444Z/21_established_connections_raw.txt line 129
+ROK-DTC-CWS8,ROKCERIGHT,6000,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/UTC_discovery_ROKCERIGHT_20260505T012021Z/21_established_connections_raw.txt line 81
+ROK-DTC-CWS9,ROKCELEFT,6000,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKCELEFT_20260317T041444Z/21_established_connections_raw.txt line 75
+ROK-DTC-CWS9,ROKCERIGHT,6000,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/UTC_discovery_ROKCERIGHT_20260505T012021Z/21_established_connections_raw.txt line 87
+ROKCELEFT,ROTPRDSRV122,445,1,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKCELEFT_20260317T041444Z/21_established_connections_raw.txt line 9
+ROKCERIGHT,ROKCELEFT,6003,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/UTC_discovery_ROKCERIGHT_20260505T012021Z/21_established_connections_raw.txt line 141
+ROKCERIGHT,ROTPRDSRV122,445,2,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/UTC_discovery_ROKCERIGHT_20260505T012021Z/21_established_connections_raw.txt line 147
+ROKMAINT1,ROKCELEFT,6001,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMAINT1_20260317T051442Z/21_established_connections_raw.txt line 15
+ROKMAINT1,ROKCERIGHT,6001,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMAINT1_20260317T051442Z/21_established_connections_raw.txt line 9
+ROKMAINT1,ROKMRLEFT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMAINT1_20260317T051442Z/21_established_connections_raw.txt line 27
+ROKMAINT1,ROKMRRIGHT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMAINT1_20260317T051442Z/21_established_connections_raw.txt line 21
+ROKMAINT1,ROTPRDSRV122,445,1,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMAINT1_20260317T051442Z/21_established_connections_raw.txt line 3
+ROKMAINT3,ROKMRLEFT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/tg_discovery_ROKMAINT3_20260317T053903Z/21_established_connections_raw.txt line 15
+ROKMAINT3,ROKMRRIGHT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/tg_discovery_ROKMAINT3_20260317T053903Z/21_established_connections_raw.txt line 9
+ROKMAINT3,ROTPRDSRV122,445,1,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/tg_discovery_ROKMAINT3_20260317T053903Z/21_established_connections_raw.txt line 3
+ROKMAINT4,ROKMRLEFT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/tg_discovery_ROKMAINT4_20260317T053619Z/21_established_connections_raw.txt line 15
+ROKMAINT4,ROKMRRIGHT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/tg_discovery_ROKMAINT4_20260317T053619Z/21_established_connections_raw.txt line 9
+ROKMAINT4,ROTPRDSRV122,445,1,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/tg_discovery_ROKMAINT4_20260317T053619Z/21_established_connections_raw.txt line 21
+ROKMAINT4,ROTPRDSRV122,50322,1,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/tg_discovery_ROKMAINT4_20260317T053619Z/21_established_connections_raw.txt line 27
+ROKMRLEFT,ROTPRDSRV122,445,1,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRLEFT_20260317T034549Z/21_established_connections_raw.txt line 3
+ROKMRRIGHT,ROTPRDSRV122,135,2,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 27
+ROKMRRIGHT,ROTPRDSRV122,445,1,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 15
+ROKMRRIGHT,ROTPRDSRV122,50322,2,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKMRRIGHT_20260317T034609Z/21_established_connections_raw.txt line 21
+ROKPRDAMP101,ROKPRDAMP102,25672,1,dst listens on port,iamps,01 Current State AS Built/IAMPS Discovery Data/PROD/IAMPS_discovery_ROKPRDAMP101_20260429T023652Z/21_established_connections_raw.txt line 111
+ROKPRDAMP101,ROKPRDAMP102,445,1,dst listens on port,iamps,01 Current State AS Built/IAMPS Discovery Data/PROD/IAMPS_discovery_ROKPRDAMP101_20260429T023652Z/21_established_connections_raw.txt line 177
+ROKPRDAMP101,ROKPRDAMP102,7058,1,dst listens on port,iamps,01 Current State AS Built/IAMPS Discovery Data/PROD/IAMPS_discovery_ROKPRDAMP101_20260429T023652Z/21_established_connections_raw.txt line 147
+ROKPRDAMP101,ROKTCSILEFT,6050,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/UTC_discovery_ROKTCSILEFT_20260415T002451Z/21_established_connections_raw.txt line 21
+ROKPRDAMP101,ROKTCSIRIGHT,6050,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKTCSIRIGHT_20260317T032805Z/21_established_connections_raw.txt line 111
+ROKPRDAMP102,IPTPRDAPP130,5672,1,dst not captured; port not verified,iamps,01 Current State AS Built/IAMPS Discovery Data/PROD/IAMPS_discovery_ROKPRDAMP102_20260429T023702Z/21_established_connections_raw.txt line 177
+ROKPRDAMP102,IPTPRDAPP230,5672,1,dst not captured; port not verified,iamps,01 Current State AS Built/IAMPS Discovery Data/PROD/IAMPS_discovery_ROKPRDAMP102_20260429T023702Z/21_established_connections_raw.txt line 111
+ROKPRDAMP102,ROKPRDAMP101,445,1,dst listens on port,iamps,01 Current State AS Built/IAMPS Discovery Data/PROD/IAMPS_discovery_ROKPRDAMP102_20260429T023702Z/21_established_connections_raw.txt line 207
+ROKPRDAMP102,ROKPRDAMP101,7059,1,dst listens on port,iamps,01 Current State AS Built/IAMPS Discovery Data/PROD/IAMPS_discovery_ROKPRDAMP102_20260429T023702Z/21_established_connections_raw.txt line 63
+ROKPRDAMP102,ROKTCSILEFT,6050,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/UTC_discovery_ROKTCSILEFT_20260415T002451Z/21_established_connections_raw.txt line 27
+ROKPRDAMP102,ROKTCSIRIGHT,6050,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKTCSIRIGHT_20260317T032805Z/21_established_connections_raw.txt line 105
+ROKPRDOPS114,MKYUATAMP102,56403,1,dst listens on port,iamps,01 Current State AS Built/IAMPS Discovery Data/tg_discovery_20260317T010054Z/21_established_connections_raw.txt line 663
+ROKPRDOPS114,ROKUATAMP101,56403,1,dst listens on port,iamps,01 Current State AS Built/IAMPS Discovery Data/tg_discovery_20260317T010054Z/21_established_connections_raw.txt line 657
+ROKPRDOPS114,ROKUATAMP102,56403,1,dst listens on port,iamps,01 Current State AS Built/IAMPS Discovery Data/tg_discovery_20260317T010054Z/21_established_connections_raw.txt line 651
+ROKSIGMAPA1,ROTPRDSRV122,445,4,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/SIGMAP Discovery Data/UTC_discovery_ROKSIGMAPA1_20260507T021432Z/21_established_connections_raw.txt line 21
+ROKSIGMAPA2,MOTPRDSRV122,445,1,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKSIGMAPA2_20260317T043917Z/21_established_connections_raw.txt line 39
+ROKSIGMAPA2,ROTPRDSRV122,445,5,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKSIGMAPA2_20260317T043917Z/21_established_connections_raw.txt line 9
+ROKSIGMAPB1,ROTPRDSRV122,445,1,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKSIGMAPB1_20260317T044500Z/21_established_connections_raw.txt line 15
+ROKSIGMAPB2,ROTPRDSRV122,445,3,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/SIGMAP Discovery Data/UTC_discovery_ROKSIGMAPB2_20260507T021623Z/21_established_connections_raw.txt line 39
+ROKSIGMAPW1,ROKSIGMAPW2,502,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/SIGMAP Discovery Data/UTC_discovery_ROKSIGMAPW1_20260507T021106Z/21_established_connections_raw.txt line 21
+ROKSIGMAPW1,ROTPRDSRV122,445,1,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/SIGMAP Discovery Data/UTC_discovery_ROKSIGMAPW1_20260507T021106Z/21_established_connections_raw.txt line 93
+ROKSIGMAPW2,ROTPRDSRV122,445,4,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKSIGMAPW2_20260317T050138Z/21_established_connections_raw.txt line 3
+ROKSIGMAPW2,ROTPRDSRV122,50322,1,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKSIGMAPW2_20260317T050138Z/21_established_connections_raw.txt line 15
+ROKTCSILEFT,ROKCELEFT,6005,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/UTC_discovery_ROKTCSILEFT_20260415T002451Z/21_established_connections_raw.txt line 57
+ROKTCSILEFT,ROKCERIGHT,6005,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/UTC_discovery_ROKTCSILEFT_20260415T002451Z/21_established_connections_raw.txt line 63
+ROKTCSILEFT,ROKMRLEFT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/UTC_discovery_ROKTCSILEFT_20260415T002451Z/21_established_connections_raw.txt line 75
+ROKTCSILEFT,ROKMRRIGHT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/UTC_discovery_ROKTCSILEFT_20260415T002451Z/21_established_connections_raw.txt line 87
+ROKTCSILEFT,ROKTCSIRIGHT,6056,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/UTC_discovery_ROKTCSILEFT_20260415T002451Z/21_established_connections_raw.txt line 81
+ROKTCSILEFT,ROTPRDSRV122,445,1,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/UTC_discovery_ROKTCSILEFT_20260415T002451Z/21_established_connections_raw.txt line 105
+ROKTCSIRIGHT,ROKCELEFT,6005,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKTCSIRIGHT_20260317T032805Z/21_established_connections_raw.txt line 9
+ROKTCSIRIGHT,ROKCERIGHT,6005,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKTCSIRIGHT_20260317T032805Z/21_established_connections_raw.txt line 3
+ROKTCSIRIGHT,ROKMRLEFT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKTCSIRIGHT_20260317T032805Z/21_established_connections_raw.txt line 27
+ROKTCSIRIGHT,ROKMRRIGHT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKTCSIRIGHT_20260317T032805Z/21_established_connections_raw.txt line 21
+ROKTCSIRIGHT,ROKTCSILEFT,6056,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKTCSIRIGHT_20260317T032805Z/21_established_connections_raw.txt line 33
+ROKTCSIRIGHT,ROKTCSILEFT,6058,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKTCSIRIGHT_20260317T032805Z/21_established_connections_raw.txt line 63
+ROKTCSIRIGHT,ROTPRDSRV122,445,1,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKTCSIRIGHT_20260317T032805Z/21_established_connections_raw.txt line 51
+ROKTELEFT24,ROKCELEFT,6002,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKTELEFT24_20260317T035512Z/21_established_connections_raw.txt line 27
+ROKTELEFT24,ROKCERIGHT,6002,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKTELEFT24_20260317T035512Z/21_established_connections_raw.txt line 21
+ROKTELEFT24,ROKMRLEFT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKTELEFT24_20260317T035512Z/21_established_connections_raw.txt line 39
+ROKTELEFT24,ROKMRRIGHT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKTELEFT24_20260317T035512Z/21_established_connections_raw.txt line 33
+ROKTELEFT24,ROTPRDSRV122,445,2,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKTELEFT24_20260317T035512Z/21_established_connections_raw.txt line 3
+ROKTERIGHT,ROKCELEFT,6002,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKTERIGHT_20260317T035500Z/21_established_connections_raw.txt line 33
+ROKTERIGHT,ROKCERIGHT,6002,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKTERIGHT_20260317T035500Z/21_established_connections_raw.txt line 27
+ROKTERIGHT,ROKMRLEFT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKTERIGHT_20260317T035500Z/21_established_connections_raw.txt line 21
+ROKTERIGHT,ROKMRRIGHT,6010,1,dst listens on port,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKTERIGHT_20260317T035500Z/21_established_connections_raw.txt line 39
+ROKTERIGHT,ROTPRDSRV122,445,1,dst not captured; port not verified,utcdtc,01 Current State AS Built/UTC Discovery Data/1 Log Data/tg_discovery_ROKTERIGHT_20260317T035500Z/21_established_connections_raw.txt line 3
+ROKUATAMP101,ROKUATAMP102,445,1,dst listens on port,iamps,01 Current State AS Built/IAMPS Discovery Data/UAT/tg_discovery_20260317T002420Z/21_established_connections_raw.txt line 33
+ROKUATAMP102,ROKUATAMP101,25672,1,dst listens on port,iamps,01 Current State AS Built/IAMPS Discovery Data/UAT/tg_discovery_20260317T002415Z/21_established_connections_raw.txt line 39
+ROKUATAMP102,ROKUATAMP101,445,1,dst listens on port,iamps,01 Current State AS Built/IAMPS Discovery Data/UAT/tg_discovery_20260317T002415Z/21_established_connections_raw.txt line 15

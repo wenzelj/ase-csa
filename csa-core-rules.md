@@ -2,6 +2,8 @@
 
 Every agent and skill in `.agents/` follows these rules. Where a line in an agent or skill file disagrees with this file, this file wins; say so in your final report so the other file can be fixed.
 
+**Card-based lanes (`csa answer`, `csa draft`) read `csa-card-rules.md` instead of this file.** It holds the rules those writers use (project, evidence classes, document text, never infer, evidence IDs, stopping). The tools, evidence-matrix lookup, change-file, subsection, Word-comment and tracked-change sections below do not apply to them: their evidence is the card, and they write only the answer sheet. The shared sections are kept word for word in both files (a test fails when they drift), so edit them here and copy them across.
+
 ## Paths and tools
 
 - Paths that start with `.agents/` are relative to the CurrentStateAssessments folder. `csa` starts every agent there.
@@ -14,16 +16,50 @@ Every agent and skill in `.agents/` follows these rules. Where a line in an agen
 - Stop on `WORKSPACE_NOT_REGISTERED`, on `NOT_READY`, and when a framework response's `project.key` differs from the project you were given. Do not retry with another path.
 - Project facts live in the project's context file and evidence, never in shared agent or skill files.
 
+## Application knowledge skills
+
+- Background knowledge (`framework/csa_docx/knowledge.py`) explains how a system's parts behave, from documents kept apart from the discovery data: shared platform material in `CurrentStateAssessments/Knowledge/` and third-party material for one system in `<project>/00 Knowledge/`, each registered in a `sources.json`, plus the project's reviewed `system-model.json`. It is indexed into `csa-work/knowledge-index.sqlite`, never into the evidence matrix, discovery index, host index, graph, fact store or evidence appendix, and its passages carry K- IDs. Cards show the best passages under "Background knowledge (not evidence)". A K- passage may only explain an E- evidenced observation in a narrative block, on its own fact with basis `background`; passages from `derived` documents (summaries such as a system reference document) and the system model are "Look for" prompts only, never citable. The answer-sheet check refuses any other use.
+- Some applications have a knowledge skill under `.agents/skills/` (for example `reveloc-csa-skill` for Epiroc/Radlink Reveloc / RevelocPlus and its TETRA context). The project context lists them in `application_skills`. Every agent that searches, analyses, writes, edits or reviews CSA content loads each listed skill alongside its own skills, after `australian-it-ot-terminology`.
+- Also load one when the evidence clearly concerns that application but the project context does not list it, and say so in your final report so the context file can be updated.
+- They supply terminology and a functional model for reading evidence. They never replace the CSA workflow, writing standard or terminology skill, and vendor capability in them is general knowledge: it is never written as deployed, enabled or configured unless project evidence shows it (see Evidence). Their evidence checklists feed `csa gaps`, not the document.
+
 ## Evidence
 
 - Classes: `VERIFIED`, `INFERRED`, `UNCONFIRMED`, `CONFLICTING`, `NOT_FOUND`. Never upgrade an inference because it is plausible. "Not observed in the evidence searched" is never written as "does not exist".
-- Look things up in this order: the evidence matrix (`csa ev lookup`), the discovery index (`csa index rows` / `csa index search`), then raw files for what the index does not cover. Append what you find with `csa ev append`; never edit the matrix CSV by hand.
+- A discovery-index hit found while checking an open question is a lead, not evidence. Store it in `csa-work/intake/leads.jsonl`; read its original source before writing evidence. `UNCONFIRMED` remains valid for unsupported assertions from other workflows, but gap lookup never creates it.
+- Only source-checked `VERIFIED` rows answer an open question. `INFERRED` and `CONFLICTING` rows may be related context. Scoped `NOT_FOUND` remains in the matrix as search history, not proof of absence.
+- Work from the hosts: `csa hosts show <HOST>` gives everything known about one machine (register entry, facts from every source with file and line, evidence IDs, connections to other hosts); `csa hosts group --attr "<attribute>" [--attr ...] [--system UTC]` gives the hosts that share a configuration; `csa hosts links [HOST]` gives host-to-host connections. Rebuild with `csa hosts build` after `csa index build`.
+- Applications of the same system (for example UTC/DTC and IAMPS in TCS) know each other's hosts: each project's `hosts/roles.csv` lists the others as `system_project`. A connection is verified when either project's capture proves it, and the basis names that project. Cite the sibling project's evidence as `<project>:E-nnn` (for example `utcdtc:E-088`); `csa check-change` checks it against that project's matrix. Never state as observed what neither project's evidence shows. `csa hosts system --name <system>` writes the combined view to `.agents/csa-context/systems/<system>/`.
+- One evidence row per claim about a host or a group of hosts that share the value. Write every host name in full (expand `CONTROLLER70 / 73` shorthand); keep the source's row or collection ID in `page_or_location` only.
 - General technical knowledge never fills a gap in project facts. It may explain significance, in a labelled `Technical explanation`.
+- **Source precedence when evidence disagrees about a concrete value (address, hostname, port, version, role):** a live capture, connection log, resolver/DNS or asset/inventory record (non-diagram, log-derived evidence) confirms the value and outranks a network-diagram transcription, which may be out of date. When they conflict, record the log/inventory value as `VERIFIED` and reject the diagram row as superseded; note the rule in `gap_or_action` and name the winning E-id. Do not carry a diagram-vs-log disagreement as an unresolved `CONFLICTING` item — the diagram is the stale source, not a second credible reading.
 
 ## Document text
 
-- Evidence IDs (`E-nnn`), stable IDs (`@H...`), evidence file names and status tags never appear in document text. They belong in the change record's `Why:` and, from there, the Word comment.
+- **The subject is the system, its applications and its hosts.** A source's own keys (a workbook row, a collection or group ID, a sheet or line number, an evidence ID) are citations, never the subject of a sentence, a fact or a table row. Tables are keyed by host(s), role or application; hosts that share the same configuration share a row. **Group hosts by what they are.** Hosts with the same role share one table row ("ROTPRDCLU101-104, MOTPRDCLU101, MOTPRDCLU103 | OT | SQL Server cluster node"), and prose names the role group, not each host. A host table covers every captured host in the card's Host register, one row per role group. Any count must add up: a total and its breakdown name the same hosts.
+
+- Stable IDs (`@H...`), evidence file names and status tags never appear in document text either (see Evidence IDs never in document text).
 - Prose follows `csa-writing-style`; terms and spelling follow `australian-it-ot-terminology`.
+
+## Never infer
+
+- State what the evidence shows at the strength it shows it. No conclusions the evidence does not state ("which means", "likely", "therefore", "typically").
+- Use the evidence's own words for frequency, timing, direction, content and quantity: "copies yesterday's file" is not "daily".
+- Keep the scope of the capture: name the hosts or sites it covers, and never widen to "all", "every", "both" or "the system".
+- A conclusion you would have to reason your way to is an unknown and an open question, never a fact. A gap stated plainly is good writing.
+- A consequence the evidence records is not an inference: a function map or flow row that says a function needs DNS, and a cut path that removes it, lets you write what stops and what that means for operations in the function's own words. Without that record, the consequence is an open question.
+- `prose_lint` flags inference wording; `csa check-change` checks every fact against the evidence matrix.
+
+## Evidence IDs never in document text
+
+- Evidence IDs (`E-nnn`) belong in the change record's `Why:` and, from there, the Word comment; never inline in a sentence or table cell (no "`[E-042]`").
+- Uncertainty is said in plain words ("has not been directly observed", "reported inconsistently across hosts"), never as a bracketed status tag.
+
+## Evidence matrix first
+
+- Every technical fact (hosts, services, ports, addresses, software, configuration, ownership, dates) starts with `csa ev lookup --brief`. If a row answers this question for this host and date, cite its E-id and stop searching.
+- Otherwise search the discovery index, then raw files for what it does not cover. A search hit awaiting source review goes to the lead store, not the matrix. Append only source-read findings (including scoped NOT_FOUND search records) with `csa ev append`; never edit the matrix CSV by hand.
+- Never write a claim you have neither found in the matrix nor verified in Discovery Data.
 
 ## Change files
 
@@ -33,15 +69,29 @@ Every agent and skill in `.agents/` follows these rules. Where a line in an agen
 - Every record has a `Note:` of at most 40 words, written for the Word comment.
 - Run `csa check-change <N>` before handing a change file over, and fix every ERROR.
 
+## Subsections
+
+A section too big for one run can be worked one subsection at a time: `csa author 6.4` (applies its change file when it finishes), `csa apply 6.4 --until-done`, `csa review 6.4`, `csa cleanup 6.4`, `csa status 6.4`, `csa pipeline 6.4`.
+
+- The command number is the number printed in the document. The CLI resolves it against the live manifest and passes
+  the separate `STABLE_SUBTREE` (for example visible `5.3` may resolve to `@H6.4`). Never derive one identity from the
+  other or replace the visible command number with the structural stable-ID path.
+- When the prompt has `SUBSECTION=<n.m>`, work only on that visible heading and everything under the separately supplied
+  `STABLE_SUBTREE`. Other subsections are out of scope; a finding for one of them is an open question, not an edit.
+- The change file is the labelled file in `CHANGE_FILE`: `reviews/ChangesCSA_<App>_Section<N>_<n-m>.md` (dots as dashes). Header: `**Section:** <N> - <section title> (subsection <n.m> <subsection title>)`.
+- Edit IDs stay `S<N>-E<n>` and number on from every change file of section N, labelled or not, so IDs never collide.
+- Run-state is per change file (`run-state/current-state-assessment-document-section-<N>_<n-m>.md`); the authoring run-state is `csa-change-authoring-section-<N>_<n-m>.md`.
+- Pass the subsection to the checks: `csa check-change <n.m>`.
+
 ## Word comments
 
 - The framework writes each comment from `Note:` as `<Note> (Ref S<N>-E<n>; evidence E-nnn, ...)`, with author and initials from `.agents/cli.yaml` (Wenzel Joubert, WJ). Do not hand-write or extend comments.
 
 ## Tracked changes and human gates
 
-- The framework applies every approved edit as a Word tracked change. Do not turn this off unless Wenzel asks in that run.
-- Two gates are for Wenzel only, never an agent: `csa approve <N>` before apply, and reading the tracked changes in Word before `csa cleanup <N>`.
-- `csa apply` refuses a record that changed after approval. Never edit an approved record; ask for re-approval instead.
+- No step between writing and applying: `csa author N` applies its change file when the agent finishes; `csa write` places its section file (creating 0.1 if needed). The framework checks the file first and records what it applied.
+- Every edit is a Word tracked change with its evidence comment. Do not turn this off unless Wenzel asks in that run.
+- One gate, Wenzel's only: accept or reject the tracked changes in Word before `csa cleanup <N>`. Correct an applied edit with a new record or a rewritten section file, never by editing it.
 - There is one working DOCX per project, edited in place. No versioned copies unless Wenzel asks. The framework backs it up before every batch.
 
 ## Stopping

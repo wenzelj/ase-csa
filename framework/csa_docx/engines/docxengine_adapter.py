@@ -14,7 +14,7 @@ if VENDOR_DIR.exists() and str(VENDOR_DIR) not in sys.path:
     sys.path.insert(0, str(VENDOR_DIR))
 
 from csa_docx.bookmarks import add_bookmark_at_anchor, find_bookmark
-from csa_docx.comment_text import build_comment_text
+from csa_docx.comment_text import build_comment_text, comments_enabled
 from csa_docx.models import ChangeRecord, EditResult
 from csa_docx.stable_ids import extract_stable_id, build_id_map
 from csa_docx.ooxml import (
@@ -167,10 +167,26 @@ def _serialize_part_preserving(root: ET.Element, original: bytes) -> bytes:
         old = old[:-1] + b"/>"
     elif closing == b">" and old.endswith(b"/>"):
         old = old[:-2] + b">"
+    # A part may declare prefixes on inner elements (a:, pic:, a14: inside drawings)
+    # rather than on its root. ElementTree hoists every declaration to the root on
+    # output, so restoring the original root tag alone leaves those prefixes unbound.
+    # Carry over any declaration the original root tag lacks.
+    have = {m[0] for m in _XMLNS_RE.findall(old)}
+    extra = b"".join(
+        b' xmlns:' + prefix + b'="' + uri + b'"'
+        for prefix, uri in _XMLNS_RE.findall(new_tag.group(0))
+        if prefix not in have
+    )
+    if extra:
+        cut = len(old) - (2 if old.endswith(b"/>") else 1)
+        old = old[:cut] + extra + old[cut:]
     return out[: new_tag.start()] + old + out[new_tag.end():]
 
 
-_CURRENTLY_RE = re.compile(r"currently:\s*[\"\u201c](.+?)[\"\u201d]\s*$", re.S)
+# A Where clause may carry its own stable-ID anchor before the quote
+# (e.g. "@H4.2.2-P1 (currently: "...")"), so the quote must be found
+# anywhere in the clause and may not be pinned to the end of the string.
+_CURRENTLY_RE = re.compile(r'currently:\s*["\u201c](.+?)["\u201d]', re.S)
 
 
 def _norm_text(t: str) -> str:
@@ -238,7 +254,9 @@ class DocxEngineEditor:
         self.track_changes = track_changes
 
     def apply_change(self, record: ChangeRecord, author: str, initials: str) -> EditResult:
-        where_lower = record.where.lower()
+        # Route on the location only, never on the "currently" quote after it: a paragraph that merely
+        # says "table" (the optional note placeholder: "... does not fit the table ...") is not a table row.
+        where_lower = re.split(r"\s+--\s+currently:", record.where, maxsplit=1)[0].lower()
         if _has_full_table_replacement(record):
             return self._apply_full_table_replacement(record, author, initials)
         if (
@@ -354,6 +372,10 @@ class DocxEngineEditor:
                     return EditResult(record.edit_id, "BLOCKED", "Insert action has no Text", anchor_text)
                 result = self.doc.insert(record.text, before=paragraph.anchor, author=author, track_changes=self.track_changes)
                 comment_anchor = _result_anchor(result) or paragraph.anchor
+                if _is_requirement_story_record(record):
+                    formatted = self.doc.format(anchor=comment_anchor, props={"bold": True}, author=author,
+                                                track_changes=self.track_changes)
+                    comment_anchor = _result_anchor(formatted) or comment_anchor
                 comment_id = self._add_comment(comment_anchor, record, author, initials)
                 self._tag_bookmark(record.edit_id, comment_anchor)
                 return EditResult(record.edit_id, "APPLIED", "Inserted approved text before anchor with DocxEngine", anchor_text, comment_id)
@@ -372,6 +394,10 @@ class DocxEngineEditor:
                     return EditResult(record.edit_id, "BLOCKED", f"Anchor match count was {len(matches)}; expected 1", anchor_text)
                 result = self.doc.insert(record.text, after=paragraph.anchor, author=author, track_changes=self.track_changes)
                 comment_anchor = _result_anchor(result) or paragraph.anchor
+                if _is_requirement_story_record(record):
+                    formatted = self.doc.format(anchor=comment_anchor, props={"bold": True}, author=author,
+                                                track_changes=self.track_changes)
+                    comment_anchor = _result_anchor(formatted) or comment_anchor
                 comment_id = self._add_comment(comment_anchor, record, author, initials)
                 self._tag_bookmark(record.edit_id, comment_anchor)
                 return EditResult(record.edit_id, "APPLIED", "Inserted approved text after anchor with DocxEngine", anchor_text, comment_id)
@@ -390,6 +416,10 @@ class DocxEngineEditor:
                 first_anchor = _result_anchor(result) or self._find_unique_text(replacement_paragraphs[0])
                 if first_anchor is None:
                     return EditResult(record.edit_id, "BLOCKED", "Could not re-anchor edited paragraph", anchor_text)
+                if _is_requirement_story_record(record):
+                    formatted = self.doc.format(anchor=first_anchor, props={"bold": True}, author=author,
+                                                track_changes=self.track_changes)
+                    first_anchor = _result_anchor(formatted) or first_anchor
                 if len(replacement_paragraphs) > 1:
                     self.doc.insert("\n".join(replacement_paragraphs[1:]), after=first_anchor, author=author, track_changes=self.track_changes)
                 comment_id = self._add_comment(first_anchor, record, author, initials)
@@ -863,6 +893,10 @@ class DocxEngineEditor:
                 start_index = 0
             elif row_cell_count == len(cells) + 1:
                 start_index = 1
+            elif _is_requirement_row(row_ref.headers, row_ref.cell_texts) and len(cells) == 2:
+                # A requirement row: Req ID and Requirement are fixed checklist text, so two values are
+                # Current State and Rating (`<current state> | <rating>`).
+                start_index = row_cell_count - 2
             else:
                 return EditResult(
                     record.edit_id,
@@ -1631,6 +1665,10 @@ class DocxEngineEditor:
             first_anchor = _result_anchor(result) or self._find_unique_text(replacement_paragraphs[0])
             if first_anchor is None:
                 return EditResult(record.edit_id, "BLOCKED", "Could not re-anchor edited paragraph", start_anchor_text)
+            if _is_requirement_story_record(record):
+                formatted = self.doc.format(anchor=first_anchor, props={"bold": True}, author=author,
+                                            track_changes=self.track_changes)
+                first_anchor = _result_anchor(formatted) or first_anchor
             for paragraph in reversed(old_following):
                 self.doc.delete(anchor=paragraph.anchor, author=author, track_changes=self.track_changes)
             if len(replacement_paragraphs) > 1:
@@ -1686,6 +1724,8 @@ class DocxEngineEditor:
         return matches[0].anchor if len(matches) == 1 else None
 
     def _add_comment(self, anchor: str, record: ChangeRecord, author: str, initials: str) -> str | None:
+        if not comments_enabled():
+            return None
         self._ensure_comment_namespaces()
         comment_text = build_comment_text(record)  # author and initials are comment metadata, not text
         result = self.doc.comment("add", anchor=anchor, text=comment_text, author=author)
@@ -1743,6 +1783,13 @@ def _is_heading(paragraph) -> bool:
     return _heading_level(paragraph) is not None
 
 
+def _is_requirement_row(headers, cell_texts) -> bool:
+    """A row of a requirement table (Req ID | Requirement | Current State | Rating) whose first cell is a requirement ID."""
+    hs = [str(h or "").strip().lower() for h in (headers or [])]
+    first = str((cell_texts or [""])[0] or "").strip()
+    return hs[-2:] == ["current state", "rating"] and bool(re.match(r"^[A-Z]+-[A-Z]+-\d+$", first))
+
+
 def _heading_level(paragraph) -> int | None:
     style = paragraph.style or ""
     match = re.match(r"Heading([1-9])", style)
@@ -1763,6 +1810,12 @@ def _extract_heading_to_sentence_range(record: ChangeRecord) -> tuple[str, str] 
 def _has_paragraph_plus_following_line_replacement(record: ChangeRecord) -> bool:
     action = record.action.lower()
     return "replace this paragraph and the following line" in action or "replace this paragraph and following line" in action
+
+
+def _is_requirement_story_record(record: ChangeRecord) -> bool:
+    paragraphs = markdown_to_paragraph_texts(record.text or "")
+    return (record.title.lower().endswith("discovery story") and len(paragraphs) >= 2
+            and bool(re.match(r"^SEP-[A-Z0-9-]+\s*(?:—|:|-)\s+", paragraphs[0], re.I)))
 
 
 def _has_delete_until_heading(record: ChangeRecord) -> bool:

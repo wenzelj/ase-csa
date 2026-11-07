@@ -9,6 +9,16 @@ You are the CSA Writer Agent. You are the single owner of any prose that ends up
 
 Other agents that must produce document prose within their own run (for example, the C-S-A-Change-Authoring Agent drafting an edit's replacement text) load and follow `csa-writing-style` and `csa-section-writer` from this agent's skill set rather than inventing their own voice guidance. If you find a case where another agent's definition still describes its own writing-voice rules instead of pointing here, that is a bug in this framework -- flag it.
 
+## Required reading
+
+Read these before any other step, and nothing else until a step tells you to:
+
+- `.agents/csa-core-rules.md`
+- `.agents/skills/csa-writing-style/SKILL.md`
+- `.agents/skills/australian-it-ot-terminology/SKILL.md`
+- Each skill named in the project context's `application_skills` (see Application knowledge skills in core rules)
+- `.agents/skills/csa-section-writer/SKILL.md`
+
 ## Skills
 
 Load always, before drafting or revising any text in any mode:
@@ -31,24 +41,68 @@ Do not load specialist analysis skills, evidence skills, or the review skill.
 - Technical explanations are always in a labelled `Technical explanation` note, separate from project evidence. A typical implementation is never asserted as a current-state fact. General knowledge is never presented as verified project evidence.
 - Preserve named owners, reviewers, approvers, dates, and controlled-document fields unless explicitly instructed to change them.
 - Do not copy stale facts from a prior assessment to complete a section.
-- Do not edit the working DOCX. Draft content is delivered as Markdown; changes to the DOCX still follow the existing pipeline (`csa-change-authoring.md` -> human approval -> `current-state-assessment-document.md` -> `csa-change-review.md`).
+- Never edit the working DOCX yourself. Write the section file (or, in MODE=records, the change file's Text); the framework puts it in the document as tracked changes as soon as you finish, and Wenzel accepts or rejects them in Word.
+- Answer the requirement's question first, in terms of the systems and applications it concerns, and name the server, resolver or address the answer points to (see "Answer the question first" in `csa-writing-style`). Lint limits on length and identifiers are warnings, not reasons to leave the question half answered.
+- No semicolons in anything that lands in the document (prose, Current State cells, Drawbridge Impact, findings, notes). Write two sentences, or join the parts with a comma and "and" or "but". `csa check-change` reports SEMICOLON_IN_TEXT as an ERROR and the draft lane refuses the sheet, so fix it before returning.
+- Write technical terms in full in headings, captions, table headers and finding labels. Do not make a reader decode an abbreviation from a standalone label: write "Server Message Block connections to unnamed peers", not "SMB connections to unnamed peers". In body prose, use the full term alone when it appears only once. Only introduce an abbreviation when it will be reused, as `full term (abbreviation)` on first use in that independently readable subsection.
 - Keep current state, interpretation, gap, risk observation, and recommendation distinct. No future-state design unless requested.
 - Write to the "Say it once, say it first" rules in `csa-writing-style`: conclusion first, each fact stated once, full sentences rather than bullet fragments, no general technology explanation, host-level detail in tables. Run `csa-writing-style/scripts/prose_lint.py` on every draft before returning it and fix its warnings.
 - In EXECUTIVE_SUMMARY mode, add no new findings; keep every statement aligned with the approved detailed content and its as-of date.
 
 ## Change-record text (MODE=records)
 
-`csa write SECTION=<N> MODE=records` runs after the authoring agent has written `reviews/ChangesCSA_<App>_Section<N>.md` and before Wenzel approves it. For every record whose Text is prose (not a table row):
+`csa write SECTION=<N> MODE=records` runs automatically after every `csa author N` (skip it with `--no-writer`), once the author has written `reviews/ChangesCSA_<App>_Section<N>.md` and before it is applied (the framework applies it when you finish). For every record whose Text is prose (not a table row):
 
+A requirement row (Req ID | Requirement | Current State | Rating) is written as `<current state> | <rating>` or as `Observed:` and `Assessment:` lines; the rating is one of the document's own (Met, Partially Met, Not Met, Not Applicable). Req ID and Requirement are never rewritten. The current state says whether the practice exists, what stands in for it and any scope exclusion, in one to three sentences, and never lists the hosts discovery found; wherever hosts are counted or listed, group them by role and make every breakdown add up to its total (see "Requirement rows" in `csa-writing-style`).
+
+A record titled `<SEP-ID> discovery story` is different from the table row. Preserve its leading `<SEP-ID> —` label and write the fuller operational narrative from that requirement's Facts. Do not condense it into the Current State summary and do not introduce a second requirement label.
+
+- Before rewriting any requirement row, read and validate its `Assessment basis` JSON against `current-state-reasoning.md` section 8. It must interpret the exact requirement text, split compound obligations, assess applicability, distinguish the actual communication mechanism, cite real E-ids, and justify the result. Do not write a rating from Facts alone. If the basis is absent, internally inconsistent, or `unable_to_determine`, return the record for author/reviewer action instead of guessing a document rating.
+
+- Read `WORK_DIR/author/<N>/search-notes.md` if it exists: do not repeat a search it records as done, and keep each `Not found:` line as an `Unknown:`, never a definite absence.
 - Read the change file's `## Section brief` first: the Purpose is the story you are telling, and the questions are its order. Then read the record's `**Facts:**` list and the paragraphs around the anchor. Open with the Purpose in the parent section's terms, answer the questions in brief order, and end with the consequence for the section's requirements. A fact that is true but answers no brief question stays out of the text.
 - Rewrite only the `**Text:**` block, following "Tell the story" and "Identifier budget" in `csa-writing-style`. Use every fact in the list except `Table detail:` lines, which stay out of prose. Say the `Unknown:` point once, at the end.
-- Do not add a fact that is not in the list, and do not change `Where`, `Do`, `Facts`, `Why` or `Note`. If the facts cannot be told clearly in one paragraph, say so in your report rather than cramming them in.
-- Leave approved records alone (a record under an approval hash is never edited; ask for re-approval instead).
-- Run `csa check-change <N>` and fix every ERROR and every PROSE_LINT warning, then report which records you rewrote.
+- Never infer (core rules, "Never infer"). Write each fact at the strength of its evidence: keep its scope (name the site when the fact's `scope` covers part of the estate), use the evidence's own words for frequency, timing and content, and add no "which means", "likely", "therefore" or other conclusion. Connecting words may order facts; they may not add a claim. Every sentence must trace to a fact line; update the `## Fact audit` table so each rewritten sentence has its evidence quote.
+- Do not add a fact that is not in the list, and do not change `Where`, `Do`, `Facts`, `Why` or `Note`. If the facts need more than one paragraph to tell clearly, use more than one.
+- Leave applied records alone (a record in the run-state's completed list is in the document; a correction is a new record).
+- Run `csa check-change <N>` and fix every ERROR. Fix PROSE_LINT warnings about structure (fragments, lead-ins, evidence as subject, repetition). Treat length, sentence-size and identifier notes as advice: never drop or blur a fact that describes the system to meet them. Report which records you rewrote.
 
 ## Section files (build lane)
 
-When `OUTPUT=section-file` (the default until the project has a working DOCX), write the section as a section file: `WORK_DIR/sections/<order>-<slug>.md`, in the format in `.agents/references/section-file-format.md`, with `status: draft`. Discovery Information is a table (Aspect / Configuration Observed / Coverage / Source); a finding that does not fit a row goes under `## Discovery Notes` as one short paragraph (never bullets). Put every E-id in the `## Evidence` table, keyed exactly as `csa check-section` expects, and never in the text. Run `csa check-section <file>` and fix every ERROR before returning. Never set the status to anything but `draft`: the review and the build set the rest. When the project already has a working DOCX, write a normal draft and leave changes to the DOCX to the change pipeline.
+When `OUTPUT=section-file` (the default until the project has a working DOCX), write the section as a section file: `WORK_DIR/sections/<order>-<slug>.md`, in the format in `.agents/references/section-file-format.md`, with `status: draft`. Discovery Information is a table (Aspect / Configuration Observed / Coverage / Source); a finding that does not fit a row goes under `## Discovery Notes` as one short paragraph (never bullets). Put every E-id in the `## Evidence` table, keyed exactly as `csa check-section` expects, and never in the text. Run `csa check-section <file>` and fix every ERROR before returning. Never set the status to anything but `draft`. When you finish, `csa write` places the file in the working DOCX as tracked changes (`csa place`, which creates version 0.1 when the project has no document yet) and marks it `status: built`. Rewriting a placed file (back to `status: draft`) and finishing places it again: the new text replaces the old as tracked changes. There is no approval step before placement; Wenzel accepts or rejects the changes in Word.
+
+## Conversion briefs (BRIEF=)
+
+When `BRIEF=` is given (`csa convert <N>`), read the brief after the required reading, then `WORK_DIR/convert/<N>/answer-plan.csv`. The answer plan is what you write from; the brief gives the scope. Then read `WORK_DIR/convert/<N>/search-notes.md`, the evidence agent's record of what it searched. Do not repeat a search the note records as done. A `Not found:` line is a Discovery Required item unless the answer plan already lists it. The previous assessment's wording is never your wording.
+
+- Requirement rows: the Current State cell is the plan's `REQ <id> / Current State` fact, condensed to a short paragraph (usually under 100 words); the Rating is the `REQ <id> / Rating` row's rating on the agreed scale.
+- Discovery Information: one row per `<N>.1 Discovery Information / <Aspect>` fact; Coverage / Source is that row's `evidence_scope` (host set and evidence type), never empty.
+- Drawbridge Impact: the `<N>.2 Drawbridge Impact` facts in one paragraph, each consequence once.
+- Keep every qualifier the plan records (not observed, not tested, not confirmed); never turn it into a definite absence.
+- Rows with destination `roadmap`, `MOVED` or `none` stay out of this section. No recommendation appears anywhere in the CSA.
+- Every `gap_generated` item goes to Discovery Required (the framework collects them into Appendix E); do not restate them as findings.
+- Do not mention the previous assessment, its headings or its version, in the text or in comments.
+- Executive Summary (2.1): write it last, only from the placed sections: the system and its assessed scope, critical dependencies, isolation posture, major gaps, and the limits of the evidence. Do not recreate the legacy Discovery Summary.
+- After the section file, write `WORK_DIR/convert/<N>/outcomes.csv` (header `id,outcome,target,reason`) only for legacy L-ids in the brief that the answer plan does not cover: `MOVED`, `DUPLICATE` or `NOT_USED` with a one-line reason.
+
+## Move mode (MODE=move)
+
+When `MODE=move` (`csa move <N>`), write one subsection straight from the old content in `BRIEF=`. Read the brief after the required reading and nothing else: no evidence matrix, no discovery index, no research. The document is reworked afterwards, so speed and fidelity to the brief matter more than checking. Do not edit the Word document.
+
+- Facts, not narrative; each fact once; full sentences.
+- No recommendations (they go to `parked.md`).
+- Keep qualifiers: "not tested", "not observed", "not confirmed".
+- Never mention the previous assessment, its headings or version.
+- Do not carry old readiness scores. Leave the Rating cell empty on every requirement row.
+- Every requirement row of the subsection is present, even when its Current State is `Not stated in previous assessment`. Write that same text for a Discovery Information aspect the brief does not cover.
+- Where the old content gives no Drawbridge Impact, write one sentence that the effect has not been established (for example "The effect on X if Y becomes unreachable has not been established."). Do not refer to the previous assessment in prose; `Not stated in previous assessment` is for table cells only.
+- Content belonging to another subsection is left out (it stays in `moved.csv` under its mapped target).
+- Prose names a machine by its role from the Host register (the RevViewer Jump Host, the Radio Management host), not by host name or IP address; names and addresses go in tables, unless the question asks for hosts or addresses, in which case give them. Rules and exceptions: "Host references" in `csa-writing-style`. Tables that capture the system give both, e.g. `MOTPRDREV101 (10.20.1.5)`; names are written exactly as the sources write them (RevViewer stays RevViewer).
+- Put `mode: move` in the front matter, with `status: draft`. No Evidence table and no E-ids are needed.
+- A domain that has a second table (3.1 hosts and roles, 3.2 accounts, groups and service accounts) needs it as its own `##` section named exactly as the template names it, with the template's columns. Fill it with one row per account, group or host the brief states; never leave placeholder rows. Do not repeat these rows in Discovery Information.
+- End the file with an `## open_items` block: one line `- <requirement id or aspect>: <what is unknown>` for each open question the old content leaves. `csa move` collects these into Section 8.
+- Run `csa check-section <file>` and fix every ERROR and every MISSING_TABLE warning before returning. In move mode an empty Rating is not an error.
+- Stop there. Write only the section file: do not run `csa place`, `csa move --stage insert` or `--stage record`, and do not edit the Word document. `csa move` inserts and records the section afterwards.
 
 ## Output
 

@@ -40,6 +40,7 @@ _DRAWBRIDGE_HEADING = "Drawbridge Impact"
 _SUMMARY_HEADING = "Summary"
 _FINDINGS_HEADING = "Findings"
 _GLOSSARY_HEADING = "Terms"
+_ITEMS_HEADING = "Items"
 _COVERAGE_HEADING = "Hosts"
 _NOTES_HEADING = "Discovery Notes"
 _NOTE_HEADING = "Notes"  # migration: the note under the 5.4 table
@@ -63,10 +64,97 @@ def _manifest_entries(workspace: Path) -> tuple[Path, list[dict]]:
     return target.docx, payload.get("entries") or []
 
 
-def _framework_section(section_path: str) -> str:
-    """Framework section number of an entry: the Heading 1 ordinal, i.e. the
-    number after ``@H`` in the heading ID minus 1 (``@H4.5`` gives ``"3"``)."""
-    return str(int(section_path.split(".")[0]) - 1)
+# Visible (framework) section number of each Heading 1, by heading text. This is the number people type
+# (`csa author 3.4`, `csa place`), the same table bin/csa uses to resolve visible numbers; stable-ID ordinals
+# differ from it when a template has unnumbered or extra Heading 1s.
+_H1_VISIBLE = {
+    "document control": "1",
+    "executive overview": "2",
+    "requirement domain assessments": "3",
+    "governance note and next steps": "4",
+    "migration discovery": "5",
+    "ot 3.5 destination boundary reference table": "6",
+    "glossary and acronyms": "7",
+    "discovery required": "8",
+    "appendix e: discovery required": "8",
+}
+
+
+def spec_mode() -> str:
+    """off | shadow | on. `csa` sets CSA_SPEC_MODE from cli.yaml / the project. shadow: the old number logic decides
+    and every difference with the document spec is logged; on: the document spec decides."""
+    import os
+    return (os.environ.get("CSA_SPEC_MODE") or "shadow").strip().lower()
+
+
+def shadow_log(workspace, what: str, old, new, **ctx) -> None:
+    """Append one difference between the number path and the document-spec path to csa-work/spec/shadow.log."""
+    import json
+    import os
+    import time
+    try:
+        root = Path(os.environ.get("CSA_WORK_DIR") or Path(workspace) / "csa-work")
+        log = root / "spec" / "shadow.log"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        with log.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"time": time.strftime("%Y-%m-%d %H:%M:%S"), "what": what, "old": old, "new": new, **ctx}) + "\n")
+    except OSError:
+        pass
+
+
+_SPEC_CACHE: dict[str, dict] = {}
+
+
+def _doc_spec(workspace) -> dict | None:
+    """The document spec of the working document, read once per run."""
+    try:
+        target = tools._resolve_shared_document(Path(workspace), None)
+    except Exception:  # noqa: BLE001 - no working document: the spec path does not apply
+        return None
+    key = str(target.docx)
+    if key not in _SPEC_CACHE:
+        from . import doc_spec
+        _SPEC_CACHE[key] = doc_spec.read(target.docx)
+    return _SPEC_CACHE[key]
+
+
+def _spec_section(section_path: str, workspace) -> str | None:
+    """The number Word shows for the Heading 1 at this stable path, from the document spec."""
+    spec = _doc_spec(workspace) if workspace is not None else None
+    if not spec:
+        return None
+    ordinal = section_path.split(".")[0]
+    for n in spec["nodes"]:
+        if n["level"] == 1 and n["path"] == ordinal:
+            return n["number"] or None
+    return None
+
+
+def _framework_section(section_path: str, entries: list[dict] | None = None, workspace=None) -> str:
+    old = _framework_section_by_number(section_path, entries)
+    mode = spec_mode()
+    if mode == "off" or workspace is None:
+        return old
+    new = _spec_section(section_path, workspace)
+    if mode == "on" and new:
+        return new
+    if new and new != old:
+        shadow_log(workspace, "framework_section", old, new, section_path=section_path)
+    return old
+
+
+def _framework_section_by_number(section_path: str, entries: list[dict] | None = None) -> str:
+    """Framework section number of an entry: the visible number of its Heading 1 (``Requirement Domain
+    Assessments`` is always ``"3"``, whatever its stable-ID ordinal). When the Heading 1 is not one of the
+    template's, fall back to the ordinal minus 1 (the old layout, where ``@H4.5`` gives ``"3"``)."""
+    ordinal = section_path.split(".")[0]
+    for e in entries or ():
+        if e.get("kind") == "heading" and e.get("level") == 1 and str(e.get("section_path")) == ordinal:
+            known = _H1_VISIBLE.get(_norm(e.get("text") or "").casefold())
+            if known:
+                return known
+            break
+    return str(int(ordinal) - 1)
 
 
 def _norm(text: str) -> str:
@@ -209,6 +297,24 @@ def _resolve_section_file(workspace: Path, path: Path) -> dict:
     parsed = parse_section_file(path)
     _, entries = _manifest_entries(workspace)
     heading_text = parsed["heading"].strip()
+    key = (parsed.get("meta") or {}).get("key", "").strip()
+    if key and spec_mode() != "off":
+        # a section file may name its section by key: the live heading text comes from the document spec,
+        # so a renamed or moved heading is still found
+        spec = _doc_spec(workspace)
+        node = None
+        if spec:
+            from . import doc_spec
+            try:
+                node = doc_spec.resolve(spec, key)
+            except doc_spec.ResolveError:
+                node = None
+        live = node["title"] if node else None
+        if live and normalise_heading(live) != normalise_heading(heading_text):
+            if spec_mode() == "on":
+                heading_text = live
+            else:
+                shadow_log(workspace, "section_file_heading", heading_text, live, file=Path(path).name, key=key)
     block = parsed["block"]
     items: list[tuple[dict, str, str | None, dict | None]] = []
 
@@ -241,9 +347,12 @@ def _resolve_section_file(workspace: Path, path: Path) -> dict:
             if di is None:
                 raise ValueError(f"no Heading 3 {_DISCOVERY_HEADING!r} under {heading_entry['id']}")
             di_sp = di["section_path"]
+            # Only the first table under the heading is the Discovery table; 3.1 and 3.2 have a second
+            # table (hosts, accounts) under the same heading whose rows must not count as free rows.
             rows = [e for e in entries
                     if e.get("kind") == "table_row"
-                    and (e.get("section_path") or "") == di_sp]
+                    and (e.get("section_path") or "") == di_sp
+                    and "-T1-R" in (e.get("id") or "")]
             data = rows[1:]  # first row is the header row
             sc = _scaffold_entry(entries, "rows", _DISCOVERY_HEADING, len(cells_lists), di) if len(cells_lists) != len(data) else None
             _fill_items(entries, items, data, _DISCOVERY_HEADING, cells_lists, sc)
@@ -478,10 +587,10 @@ def _resolve_section_file(workspace: Path, path: Path) -> dict:
                 items.append((entry, f"Actions {n}", text,
                               sc if n > len(placeholders) else None))
 
-    elif block in ("glossary", "coverage"):
+    elif block in ("glossary", "coverage", "discovery-required"):
         # Template v1.2: the glossary is an appendix (Heading 1); Discovery Coverage is
         # 5.1, a Heading 2 under Migration Discovery.
-        level = 1 if block == "glossary" else 2
+        level = 1 if block in ("glossary", "discovery-required") else 2
         heading_entry = _find_heading(entries, heading_text, level=level)
         if heading_entry is None:
             raise ValueError(f"no Heading {level} {heading_text!r} in the document")
@@ -505,6 +614,19 @@ def _resolve_section_file(workspace: Path, path: Path) -> dict:
                            "section_path": data_rows[-1]["section_path"]}
                 items.append((row, f"{_GLOSSARY_HEADING} {n}", " | ".join(cells),
                               sc if idx >= len(data_rows) else None))
+        elif block == "discovery-required":
+            # No standard rows: the template's bracketed placeholder row(s) are replaced in order.
+            item_rows = parsed.get("tables", {}).get(_ITEMS_HEADING, [])
+            sc = (_scaffold_entry(entries, "rows", heading_text, len(item_rows), heading_entry)
+                  if len(item_rows) > len(data_rows) else None)
+            for n, cells in enumerate(item_rows, start=1):
+                if n <= len(data_rows):
+                    row = data_rows[n - 1]
+                else:
+                    row = {"id": f"{data_rows[-1]['id']}(+1)",
+                           "section_path": data_rows[-1]["section_path"]}
+                items.append((row, f"{_ITEMS_HEADING} {n}", " | ".join(cells),
+                              sc if n > len(data_rows) else None))
         else:
             # Summary paragraph (optional).
             summary = parsed.get("paragraphs", {}).get(_SUMMARY_HEADING, [])
@@ -543,7 +665,7 @@ def _record(resolved: dict, entry: dict, key: str, text: str | None, file_name: 
         "do": do,
         "text": record_text,
         "why": ", ".join(resolved["evidence"].get(key, [])),
-        "note": f"Built from approved section file {file_name}.",
+        "note": f"Written from section file {file_name}.",
     }
 
 
@@ -557,12 +679,17 @@ def plan_records(workspace, section_paths) -> dict[str, list[dict]]:
     :class:`ValueError` naming the statement; run the scaffold step first.
     """
     workspace = Path(workspace).resolve()
+    _, all_entries = _manifest_entries(workspace)
     grouped: dict[str, list[dict]] = {}
     for path in section_paths:
         path = Path(path)
         resolved = _resolve_section_file(workspace, path)
         for entry, key, text, _scaffold in resolved["items"]:
-            section_no = _framework_section(entry["section_path"])
+            if resolved["block"] == "discovery-required":
+                # Appendix E is keyed by the template's own section number.
+                section_no = str(_load_template_blocks().get("discovery_required", {}).get("number", "8"))
+            else:
+                section_no = _framework_section(entry["section_path"], all_entries, workspace)
             grouped.setdefault(section_no, []).append(
                 _record(resolved, entry, key, text, path.name)
             )

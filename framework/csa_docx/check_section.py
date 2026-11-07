@@ -19,7 +19,8 @@ from pathlib import Path
 from csa_docx import section_file
 from csa_docx.check_change import EID_RE, MARKDOWN_RE, STABLE_ID_RE, finding, lint_findings
 
-BLOCKS = ("domain", "executive-summary", "governance", "migration", "glossary", "coverage")
+BLOCKS = ("domain", "executive-summary", "governance", "migration", "glossary", "coverage", "discovery-required")
+MODES = ("move",)
 BLOCKS_JSON = (Path(__file__).resolve().parents[2]
                / "skills" / "csa-document-template" / "references" / "template-blocks.json")
 
@@ -43,6 +44,7 @@ REQUIRED_SECTIONS = {
     "governance": ["Actions"],
     "glossary": ["Terms"],
     "coverage": ["Hosts"],
+    "discovery-required": ["Items"],
     "migration": [],  # every subsection section is optional; Table/Findings shape below
 }
 
@@ -53,6 +55,7 @@ TABLE_SECTIONS = {
     "migration": {"Table"},
     "coverage": {"Hosts"},
     "glossary": {"Terms"},
+    "discovery-required": {"Items"},
 }
 
 
@@ -78,6 +81,8 @@ def _heading_for(blocks: dict, block: str) -> str | None:
         return blocks.get("glossary", {}).get("heading")
     if block == "coverage":
         return blocks.get("coverage", {}).get("heading")
+    if block == "discovery-required":
+        return blocks.get("discovery_required", {}).get("heading")
     if block == "migration":
         for m in blocks.get("migration", []):
             if m.get("heading"):
@@ -122,7 +127,9 @@ def _expected_columns(blocks: dict, block: str, heading: str, name: str) -> int 
         cov = blocks.get("coverage", {})
         return len(cov.get("columns") or []) or None
     if block == "glossary" and name == "Terms":
-        return len((blocks.get("glossary", {}).get("columns") or []) or None)
+        return len((blocks.get("glossary", {}).get("columns") or [])) or None
+    if block == "discovery-required" and name == "Items":
+        return len(blocks.get("discovery_required", {}).get("columns") or []) or None
     return None
 
 
@@ -133,12 +140,8 @@ def _matrix_eids(workspace: str | None) -> set[str] | None:
     path = Path(workspace) / "csa-work" / "evidence-matrix.csv"
     if not path.is_file():
         return None
-    eids: set[str] = set()
-    with open(path, newline="", encoding="utf-8-sig") as fh:
-        for row in csv.reader(fh):
-            if row and row[0].strip():
-                eids.add(row[0].strip())
-    return eids
+    from csa_docx import modelstore
+    return {r["evidence_id"].strip() for r in modelstore.read_csv(path) if (r.get("evidence_id") or "").strip()}
 
 
 def check(path: Path, workspace: str | None = None, lint: bool = True) -> dict:
@@ -153,8 +156,17 @@ def check(path: Path, workspace: str | None = None, lint: bool = True) -> dict:
     blocks = _load_blocks()
     block = parsed["block"]
     heading = parsed["heading"]
-    max_words = blocks.get("max_current_state_words", 50)
+    from csa_docx.prose_budget import budgets
+    budget = budgets(path.parent, workspace)
+    # A size in the template spec wins; otherwise the guide follows the host register.
+    max_words = blocks.get("max_current_state_words") or budget["current_state_words"]
     ratings = set(blocks.get("ratings", []))
+    # mode: move (csa move): old content copied into the template. Every structural ERROR stays;
+    # an empty Rating and a missing Evidence table are allowed, and the Evidence checks are skipped.
+    mode = parsed.get("mode", "")
+    move = mode == "move"
+    if mode and mode not in MODES:
+        findings.append(finding("ERROR", "UNKNOWN_MODE", f"mode {mode!r} is not one of {', '.join(MODES)}"))
 
     if block not in BLOCKS:
         findings.append(finding("ERROR", "UNKNOWN_BLOCK", f"block {block!r} is not one of {', '.join(BLOCKS)}"))
@@ -180,7 +192,7 @@ def check(path: Path, workspace: str | None = None, lint: bool = True) -> dict:
                 if rid not in exp_set:
                     findings.append(finding("ERROR", "EXTRA_REQ", f"requirement {rid} is not in domain {heading!r}"))
             for r in parsed["requirements"]:
-                if r["rating"] not in ratings:
+                if r["rating"] not in ratings and not (move and not r["rating"]):
                     findings.append(finding("ERROR", "BAD_RATING", f"{r['req_id']}: rating {r['rating']!r} not in {sorted(ratings)}", r["req_id"]))
                 if len(r["current_state"].split()) > max_words:
                     findings.append(finding("WARN", "LONG_CURRENT_STATE",
@@ -197,8 +209,8 @@ def check(path: Path, workspace: str | None = None, lint: bool = True) -> dict:
 
     # Sections: every required ## heading present, and no ## heading the build would not know where to put.
     if block in REQUIRED_SECTIONS:
-        required = REQUIRED_SECTIONS[block] + ["Evidence"]
-        allowed_sections = set(required)
+        required = REQUIRED_SECTIONS[block] + ([] if move else ["Evidence"])
+        allowed_sections = set(required) | {"Evidence"}
         table_sections: set[str] = set()
         if block == "domain" and dom is not None:
             allowed_sections |= set(dom.get("tables", {}))
@@ -260,6 +272,14 @@ def check(path: Path, workspace: str | None = None, lint: bool = True) -> dict:
                         findings.append(finding("ERROR", "BAD_COLUMNS",
                                                 f"section '## {name_t}' row {n} has {len(cells)} columns; the template has {expected} ({', '.join(cells)})"))
 
+        # Move mode: an extra table the template ships for this domain (hosts, accounts) that the file
+        # leaves out keeps its bracketed placeholder rows in the document.
+        if move and block == "domain" and dom is not None:
+            for name in dom.get("tables", {}):
+                if name not in parsed.get("tables", {}):
+                    findings.append(finding("WARN", "MISSING_TABLE",
+                                            f"section '## {name}' is missing; its placeholder rows stay in the document"))
+
         # Notes under a table (template v1.3): one optional plain paragraph, never bullets.
         for name in ("Discovery Notes", "Notes"):
             if name not in present:
@@ -274,7 +294,7 @@ def check(path: Path, workspace: str | None = None, lint: bool = True) -> dict:
     evidence = parsed.get("evidence", {})
     for key, _text in section_file.rendered_statements(parsed):
         ids = evidence.get(key)
-        if not ids or not any(i.strip() for i in ids):
+        if not move and (not ids or not any(i.strip() for i in ids)):
             findings.append(finding("ERROR", "MISSING_EVIDENCE", f"rendered statement {key!r} has no non-empty row in the Evidence table"))
 
     rendered_keys = {k for k, _t in section_file.rendered_statements(parsed)}
@@ -283,7 +303,7 @@ def check(path: Path, workspace: str | None = None, lint: bool = True) -> dict:
             findings.append(finding("WARN", "UNUSED_EVIDENCE_ROW", f"Evidence row {key!r} matches no statement in the file (renamed or deleted?)"))
 
     # Evidence IDs must exist in the matrix (skip coverage: its evidence is capture files).
-    if workspace and block != "coverage":
+    if workspace and block != "coverage" and not move:
         eids = _matrix_eids(workspace)
         if eids is None:
             findings.append(finding("WARN", "NO_MATRIX",
@@ -307,7 +327,7 @@ def check(path: Path, workspace: str | None = None, lint: bool = True) -> dict:
     if lint:
         # Reuse check_change's lint runner by giving it record-like objects.
         records = [type("R", (), {"edit_id": k, "text": t})() for k, t in section_file.rendered_statements(parsed)]
-        findings += lint_findings(records)
+        findings += lint_findings(records, budget["section_words"])
 
     return {
         "file": str(path),

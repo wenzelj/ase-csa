@@ -13,6 +13,7 @@
 #   step         pipeline order (pipeline agents only)
 #   arg          name of the positional argument (SECTION, ANALYSIS_SKILL, ...)
 #   inputs       comma list; NAME* = required, NAME=value = default
+#   local_inputs defaults that replace inputs for local-model launches (CSA_LOCAL=1 or a codex --profile)
 #   locks        what the task holds while it runs under `csa fleet`; tasks sharing a lock never
 #                overlap. docx = working DOCX, state = assessment-state.yaml, section = section:<N>,
 #                analysis = analysis:<ANALYSIS_SKILL>. Missing = "docx, section" (safe default).
@@ -30,10 +31,35 @@ agents:
     step: 1
     arg: SECTION
     inputs: SECTION*, AUTHOR_ITEM_LIMIT=6, RUN_SCOPE=next-authoring-batch, EDIT_MODE=evidence
+    local_inputs: AUTHOR_ITEM_LIMIT=3
     locks: section
     instruction: Draft change proposals for the requested section using the agent defaults.
     skill: csa-change-authoring-agent
-    summary: Step 1 - draft ChangesCSA_*.md for one section from Discovery Data evidence (EDIT_MODE=editorial for a concision pass).
+    summary: Step 1 - draft ChangesCSA_*.md for one section from Discovery Data evidence, then the Writer rewrites its prose from the Facts (--no-writer skips that), then apply it as tracked changes (EDIT_MODE=editorial for a concision pass; --no-apply to stop after drafting).
+
+  - verb: answer
+    file: csa-answer-agent.md
+    title: CSA Answer Agent
+    group: pipeline
+    tier: frontier
+    arg: SECTION
+    inputs: SECTION, CARD*, SHEET*, MODE=answer, ERRORS, ANSWER, ONLY
+    locks: section
+    instruction: Answer the section card in CARD and write the answer sheet to SHEET, in the shape of the card's example (MODE=check grades ANSWER against the card; MODE=propose proposes kinds for unclassified sections).
+    skill: csa-answer-agent
+    summary: Answer one section card (csa card N) as an answer sheet; csa author N --cards runs it, checks the sheet and renders the change file.
+
+  - verb: draft
+    file: csa-draft-agent.md
+    title: CSA Draft Agent
+    group: pipeline
+    tier: frontier
+    arg: SECTION
+    inputs: SECTION, CARD*, SHEET*, ERRORS, ONLY, ANSWER
+    locks: docx, section
+    instruction: Answer the section card in CARD and write the answer sheet, with the finished prose in Text:, to SHEET.
+    skill: csa-draft-agent
+    summary: Draft lane (before V1) - csa answer N (or csa draft N) builds the card, this agent writes the answer with its prose, the framework writes it into the document as plain text. One model call.
 
   - verb: apply
     file: current-state-assessment-document.md
@@ -46,7 +72,7 @@ agents:
     locks: docx, section
     instruction: Apply the requested section using the agent defaults.
     skill: csa-document-agent
-    summary: Step 2 - apply an approved change file to the working DOCX in bounded, backed-up batches (tracked changes).
+    summary: Step 2 - apply a change file to the working DOCX in bounded, backed-up batches (tracked changes); csa author runs this for you.
 
   - verb: review
     file: csa-change-review.md
@@ -92,7 +118,7 @@ agents:
     group: analysis
     tier: local
     arg: SECTION
-    inputs: SECTION*, MODE=EVIDENCE
+    inputs: SECTION*, MODE=EVIDENCE, BRIEF
     locks: section
     instruction: Build or update the evidence set for the requested section.
     skill: csa-evidence-investigator-agent
@@ -109,6 +135,30 @@ agents:
     instruction: Assess missing, weak, stale or conflicting evidence for the requested section and produce the gap register and questions.
     skill: csa-gap-analysis-agent
     summary: Investigator in GAP mode - gap register and targeted questions.
+
+  - verb: intake
+    file: csa-evidence-investigator-agent.md
+    title: CSA Evidence Investigator Agent
+    group: analysis
+    tier: local
+    arg: INTAKE
+    inputs: INTAKE=latest, MODE=INTAKE
+    locks: none
+    instruction: Intake mode - read the new and changed files in WORK_DIR/intake/latest.json (written by csa ingest) and record what they state as evidence matrix rows and graph items, following Intake mode (MODE=INTAKE) in the agent file.
+    skill: csa-evidence-investigator-agent
+    summary: Turn newly ingested documents into evidence rows and graph items (Evidence intake step 2).
+
+  - verb: settle
+    file: csa-evidence-investigator-agent.md
+    title: CSA Evidence Investigator Agent
+    group: analysis
+    tier: frontier
+    arg: GAP_CHECK
+    inputs: GAP_CHECK=latest, MODE=SETTLE
+    locks: none
+    instruction: Settlement mode - read the schema-4 gap-check record, adjudicate each CANDIDATES result and its saved leads against the original source without rerunning lookup, append source-checked VERIFIED evidence or record the saved scoped NOT_FOUND outcome, and review the exact lead IDs. Leave INCOMPLETE results untouched.
+    skill: csa-gap-settlement-agent
+    summary: Settle Evidence intake leads from their original sources before affected subsections are answered again.
 
   - verb: analyse
     file: csa-technical-analyst-agent.md
@@ -128,11 +178,11 @@ agents:
     group: analysis
     tier: frontier
     arg: SECTION
-    inputs: SECTION*, MODE=SECTION, OUTPUT=section-file
+    inputs: SECTION*, MODE=SECTION, OUTPUT=section-file, BRIEF
     locks: section
-    instruction: Draft or revise the requested section from approved evidence.
+    instruction: Draft or revise the requested section from approved evidence. With MODE=move, write the subsection straight from BRIEF (no evidence, Rating left empty).
     skill: csa-writer-agent
-    summary: Draft a section from approved evidence into WORK_DIR/drafts (runs prose_lint first).
+    summary: Draft a section file from evidence, then place it in the working DOCX as tracked changes (csa place; --no-apply to stop after drafting).
 
   - verb: summary
     file: csa-writer-agent.md
@@ -169,3 +219,27 @@ agents:
     instruction: Review the requested draft or section and give findings and a verdict.
     skill: csa-quality-reviewer-agent
     summary: Content review - traceability, consistency, section fit, readability, concision; READY / NOT READY verdict.
+
+  - verb: figure-brief
+    file: csa-figure-brief-agent.md
+    title: CSA Figure Brief Agent
+    group: analysis
+    tier: frontier
+    arg: SECTION
+    inputs: SECTION, PROMPT*, WORDING*
+    locks: section
+    instruction: Follow PROMPT and write only the JSON file at WORDING.
+    skill: csa-figure-brief-agent
+    summary: Figures - reword one figure's purpose and caption from its brief (csa figure KEY --agent); the framework checks the wording against the evidence before it is used.
+
+  - verb: figure-design
+    file: csa-figure-design-agent.md
+    title: CSA Figure Design Agent
+    group: analysis
+    tier: frontier
+    arg: KEY
+    inputs: KEY, MODE=design, QUESTION, OUTPUT
+    locks: section
+    instruction: Work in the requested MODE for KEY (design, build, review or explain) to the figure design guide, and finish with the final report.
+    skill: csa-figure-design-agent
+    summary: Figures - design a new figure kind for a section (MODE=design), build it after you approve (MODE=build), review a figure against the design rules (MODE=review), or explain how figures work (MODE=explain QUESTION="...").

@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """CSA discovery index -- a rebuildable SQLite index of a project's Discovery Data.
 
-Stdlib only (Python 3.8+, SQLite with JSON1; FTS5 used when available).
+Python 3.8+ and SQLite with JSON1 (FTS5 used when available). PDF extraction
+prefers Poppler's ``pdftotext`` and falls back to the framework's vendored
+``pypdf`` package.
 
 The index is a *search aid*, not evidence. Every result carries a `cite` block
 (source_title / source_version / page_or_location / evidence_excerpt) that points
@@ -15,6 +17,12 @@ Commands (all output JSON):
   tables  [pattern]                                          structured tables and their columns
   rows    <table> [--where COL~text|COL=text|COL!~text ...] [--host H] [--cols a,b] [--distinct COL]
   search  "<terms>" [--host H] [--path-like PATTERN] [--any] [--all-captures] [--include-archive]
+  entities [--kind K] [--value V] [--host H] [--limit N]     what the text names: address, fqdn, host, port, service,
+          process, account, share (no filter: counts per kind); values match on the normalised form
+  aliases [--host H] [--value V] [--scope S] [--refresh]     host <-> name <-> fqdn <-> address, with scope (system,
+          sibling, neighbour, external), basis and ambiguity; --refresh rebuilds it from the current host register
+  verify-cites [--save F] [--against F]                      does every evidence-matrix row still point into the index?
+          run with --save before a rebuild and --against after; --stage-dir builds publish only if nothing newly fails
   sql     "SELECT ..."                                       read-only query
 
 Always pass --project <key> (from csa-context/PROJECTS.yaml) or --workspace <project_root>.
@@ -22,6 +30,7 @@ Always pass --project <key> (from csa-context/PROJECTS.yaml) or --workspace <pro
 import argparse
 import csv
 import hashlib
+import html
 import io
 import json
 import os
@@ -35,7 +44,12 @@ import zipfile
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
-SCHEMA_VERSION = 1
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import index_aliases  # noqa: E402
+import index_cites  # noqa: E402
+import index_entities  # noqa: E402
+
+SCHEMA_VERSION = 5   # 5: complete Open XML stories and uncapped spreadsheet rows; 4: lossless line-preserving HTML/XML
 FRAMEWORK_DIR = Path(__file__).resolve().parents[3]  # .agents
 BASE_DIR = FRAMEWORK_DIR.parent
 INDEX_NAME = "discovery-index.sqlite"
@@ -61,7 +75,7 @@ def _host_from_summary(folder):
                 host = m.group(1).strip().upper()
     _summary_host_cache[folder] = host
     return host
-ARCHIVE_PARTS = {"archive", "z_archive", "_to_delete", "old", "superseded"}
+ARCHIVE_PARTS = {"archive", "archived", "z_archive", "_to_delete", "old", "superseded"}
 DERIVED_PARTS = {"discovery_consolidated"}
 # "01 Final Version" holds the CSA itself (working DOCX, reviews/, run-state/, backups): never evidence.
 SKIP_DIRS = {".git", "__MACOSX", ".pytest_cache", "__pycache__", "csa-work", "csa-authoring-active",
@@ -69,16 +83,17 @@ SKIP_DIRS = {".git", "__MACOSX", ".pytest_cache", "__pycache__", "csa-work", "cs
 SKIP_FILES = {".DS_Store", "Thumbs.db"}
 BINARY_EXT = {".dll", ".exe", ".dat", ".w001", ".zip", ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico",
               ".svg", ".msi", ".cab", ".pdb", ".sys", ".bin", ".iso", ".7z", ".gz", ".tar", ".lnk",
-              ".mp4", ".mov", ".vsdx", ".pptx", ".xls", ".doc", ".db", ".sqlite", ".pyc", ".bak"}
-# Large renderings that duplicate a text equivalent in the same capture.
-SKIP_NAME_RE = re.compile(r"(gpresult\.html|gpresult\.xml|_logs_dns_ntp_auth\.xml)$", re.I)
+              ".mp4", ".mov", ".vsdx", ".xls", ".doc", ".db", ".sqlite", ".pyc", ".bak"}
+DOCUMENT_EXT = {".txt", ".log", ".csv", ".xml", ".html", ".htm", ".pdf", ".docx", ".pptx", ".xlsx",
+                ".doc", ".xls", ".vsdx", ".png", ".jpg", ".jpeg", ".svg"}
 MAX_TEXT_BYTES = 8 * 1024 * 1024
 MAX_CSV_BYTES = 64 * 1024 * 1024
-SPARSE_XML_BYTES = 1024 * 1024      # larger XML: index only the structural (non-repeating) elements
-SPARSE_TAG_REPEAT = 200
 LINE_TAG = re.compile(r"^@(\d+)\| ")
+MARKUP_TAG_RE = re.compile(r"<[^>]*>")
+QUOTED_ATTR_RE = re.compile(r"(['\"])(.*?)\1")
 CHUNK_LINES = 30
-MAX_ROWS_PER_FILE = 20000
+CHUNK_OVERLAP = 5      # lines two neighbouring chunks share, so a fact is found with the host line above it
+MAX_ENTITIES_PER_FILE = 5000
 MAX_EXCERPT = 1200
 
 
@@ -288,36 +303,84 @@ def xlsx_sheets(path):
                         val = "".join(x.text or "" for x in c.iter(XNS + "t"))
                     else:
                         val = v.text if v is not None and v.text is not None else ""
+                    formula = c.find(XNS + "f")
+                    if not val and formula is not None and formula.text:
+                        val = "=" + formula.text
                     if val != "":
                         vals[col_index(c.get("r"))] = val
                 if vals:
                     width = max(vals) + 1
                     grid.append((int(row.get("r") or len(grid) + 1), [vals.get(i, "") for i in range(width)]))
-                if len(grid) >= MAX_ROWS_PER_FILE:
-                    break
             yield s.get("name"), grid
 
 
+def _openxml_part_text(data, text_tag):
+    """Visible text from one Open XML part, with paragraph boundaries retained."""
+    root = ET.fromstring(data)
+    out = []
+    for elem in root.iter():
+        tag = elem.tag.rsplit("}", 1)[-1]
+        if tag in (text_tag, "text") and elem.text:
+            out.append(elem.text)
+        elif tag in ("tab", "br", "cr"):
+            out.append("\t" if tag == "tab" else "\n")
+        elif tag in ("p", "tr") and out and not out[-1].endswith("\n"):
+            out.append("\n")
+    return "".join(out).strip()
+
+
 def docx_text(path):
+    """Text from the main story and the auxiliary Word stories that can hold evidence."""
     with zipfile.ZipFile(path) as z:
-        xml = z.read("word/document.xml").decode("utf-8", "replace")
-    paras = []
-    for p in re.split(r"</w:p>", xml):
-        t = "".join(re.findall(r"<w:t[^>]*>([^<]*)</w:t>", p))
-        if t.strip():
-            paras.append(t)
-    import html
-    return "\n".join(html.unescape(x) for x in paras)
+        names = [n for n in z.namelist() if re.fullmatch(
+            r"word/(?:document|header\d+|footer\d+|footnotes|endnotes|comments)\.xml", n)]
+        names.sort(key=lambda n: (n != "word/document.xml", n))
+        parts = []
+        for name in names:
+            text = _openxml_part_text(z.read(name), "t")
+            if text:
+                parts.append(f"[{name}]\n{text}")
+        return "\n".join(parts)
+
+
+def pptx_text(path):
+    """Text from slides, speaker notes and comments in an Open XML presentation."""
+    with zipfile.ZipFile(path) as z:
+        names = [n for n in z.namelist() if re.fullmatch(
+            r"ppt/(?:slides/slide\d+|notesSlides/notesSlide\d+|comments/comment\d+)\.xml", n)]
+        names.sort()
+        parts = []
+        for name in names:
+            text = _openxml_part_text(z.read(name), "t")
+            if text:
+                parts.append(f"[{name}]\n{text}")
+        return "\n".join(parts)
 
 
 def pdf_text(path):
+    """Extract a PDF text layer without making Poppler a hard dependency.
+
+    Poppler remains first choice because ``-layout`` generally preserves tables
+    better.  The pure-Python fallback makes evidence ingestion work on a clean
+    framework installation where the ``pdftotext`` executable is unavailable.
+    """
     exe = shutil.which("pdftotext")
-    if not exe:
-        return None
+    if exe:
+        try:
+            r = subprocess.run([exe, "-layout", str(path), "-"], capture_output=True, timeout=120)
+            if r.returncode == 0:
+                return r.stdout.decode("utf-8", "replace")
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+
+    vendor = FRAMEWORK_DIR / "framework" / "vendor"
+    if str(vendor) not in sys.path:
+        sys.path.insert(0, str(vendor))
     try:
-        r = subprocess.run([exe, "-layout", str(path), "-"], capture_output=True, timeout=120)
-        return r.stdout.decode("utf-8", "replace") if r.returncode == 0 else None
-    except (OSError, subprocess.TimeoutExpired):
+        from pypdf import PdfReader
+        reader = PdfReader(str(path))
+        return "\f".join(page.extract_text() or "" for page in reader.pages)
+    except (ImportError, OSError, ValueError):
         return None
 
 
@@ -338,6 +401,11 @@ CREATE INDEX IF NOT EXISTS rows_table ON rows(table_name);
 CREATE INDEX IF NOT EXISTS rows_file ON rows(file_id);
 CREATE TABLE IF NOT EXISTS chunk_map(chunk_id INTEGER PRIMARY KEY, file_id INTEGER, line_start INTEGER, line_end INTEGER);
 CREATE INDEX IF NOT EXISTS chunk_file ON chunk_map(file_id);
+CREATE TABLE IF NOT EXISTS entities(
+  entity_id INTEGER PRIMARY KEY, kind TEXT, value TEXT, norm TEXT, file_id INTEGER, line_no INTEGER,
+  capture_id INTEGER, host TEXT, source TEXT);
+CREATE INDEX IF NOT EXISTS entities_norm ON entities(kind, norm);
+CREATE INDEX IF NOT EXISTS entities_file ON entities(file_id);
 """
 
 
@@ -353,13 +421,15 @@ def has_fts5(con):
 def init_db(con):
     con.executescript(SCHEMA)
     if has_fts5(con):
-        con.execute("CREATE VIRTUAL TABLE IF NOT EXISTS chunks USING fts5(content, tokenize='unicode61')")
+        con.execute("CREATE VIRTUAL TABLE IF NOT EXISTS chunks USING fts5(content, tokenize='porter unicode61')")
         fts = "1"
     else:
         con.execute("CREATE TABLE IF NOT EXISTS chunks(rowid INTEGER PRIMARY KEY, content TEXT)")
         fts = "0"
+    con.executescript(index_aliases.SCHEMA)
     con.execute("INSERT OR REPLACE INTO meta VALUES('fts5', ?)", (fts,))
     con.execute("INSERT OR REPLACE INTO meta VALUES('schema_version', ?)", (str(SCHEMA_VERSION),))
+    con.execute("INSERT OR REPLACE INTO meta VALUES('tokenizer', ?)", ("porter",))
 
 
 # --------------------------------------------------------------------------- build
@@ -397,43 +467,81 @@ def drop_content(con, file_id):
         con.execute(f"DELETE FROM chunks WHERE rowid IN ({q})", part)
     con.execute("DELETE FROM chunk_map WHERE file_id=?", (file_id,))
     con.execute("DELETE FROM rows WHERE file_id=?", (file_id,))
+    con.execute("DELETE FROM entities WHERE file_id=?", (file_id,))
 
 
-def add_sparse(con, file_id, numbered):
-    """numbered: [(line_no, text)] - non-contiguous lines; each stored as '@<n>| text'."""
-    for s in range(0, len(numbered), CHUNK_LINES):
-        part = numbered[s:s + CHUNK_LINES]
-        cur = con.execute("INSERT INTO chunks(content) VALUES(?)", ("\n".join(f"@{n}| {t}" for n, t in part),))
-        con.execute("INSERT INTO chunk_map VALUES(?,?,?,?)", (cur.lastrowid, file_id, part[0][0], part[-1][0]))
+def markup_text(text):
+    """Make HTML/XML searchable without dropping content or changing source line numbers.
+
+    Each physical source line produces exactly one output line. Element names, attribute
+    names/values and text are retained, while markup punctuation is replaced with spaces.
+    Repeated unescaping exposes GPResult's embedded, escaped EventXml payload.
+    """
+    out = []
+    for source_line in text.splitlines():
+        line = source_line
+        for _ in range(3):
+            decoded = html.unescape(line)
+            if decoded == line:
+                break
+            line = decoded
+
+        def tag_text(match):
+            body = match.group(0)[1:-1].strip()
+            if not body or body.startswith(("/", "!", "?")):
+                return " "
+            body = body.rstrip("/").strip()
+            body = QUOTED_ATTR_RE.sub(lambda m: m.group(2), body)
+            return f" {body} "
+
+        out.append(re.sub(r"\s+", " ", MARKUP_TAG_RE.sub(tag_text, line)).strip())
+    return "\n".join(out)
 
 
-def sparse_xml(lines):
-    tags = [re.match(r"\s*<([A-Za-z_][\w.:-]*)", l) for l in lines]
-    freq = {}
-    for m in tags:
-        if m:
-            freq[m.group(1)] = freq.get(m.group(1), 0) + 1
-    return [(i + 1, l.strip()) for i, (l, m) in enumerate(zip(lines, tags))
-            if l.strip() and m and freq[m.group(1)] <= SPARSE_TAG_REPEAT]
+def add_entities(con, file_id, lines):
+    """Fill ``entities`` from the lines of one file; the owning host is the host of the capture the file sits in."""
+    owner = con.execute("SELECT host, capture_id FROM files WHERE file_id=?", (file_id,)).fetchone() or (None, None)
+    room = MAX_ENTITIES_PER_FILE - con.execute("SELECT COUNT(*) FROM entities WHERE file_id=?", (file_id,)).fetchone()[0]
+    if room <= 0:
+        return
+    con.executemany("INSERT INTO entities(kind, value, norm, file_id, line_no, capture_id, host, source) "
+                    "VALUES(?,?,?,?,?,?,?,'text')",
+                    [(k, v, n, file_id, ln, owner[1], owner[0]) for ln, k, v, n in index_entities.extract_text(lines, room)])
 
 
 def add_text(con, file_id, text):
     lines = text.splitlines()
-    for s in range(0, len(lines), CHUNK_LINES):
+    add_entities(con, file_id, lines)
+    for s in range(0, len(lines), CHUNK_LINES - CHUNK_OVERLAP):
         part = lines[s:s + CHUNK_LINES]
-        if not any(x.strip() for x in part):
-            continue
-        cur = con.execute("INSERT INTO chunks(content) VALUES(?)", ("\n".join(part),))
-        con.execute("INSERT INTO chunk_map VALUES(?,?,?,?)", (cur.lastrowid, file_id, s + 1, s + len(part)))
+        if any(x.strip() for x in part):
+            cur = con.execute("INSERT INTO chunks(content) VALUES(?)", ("\n".join(part),))
+            con.execute("INSERT INTO chunk_map VALUES(?,?,?,?)", (cur.lastrowid, file_id, s + 1, s + len(part)))
+        if s + CHUNK_LINES >= len(lines):
+            break
     return lines
+
+
+def add_row_entities(con, file_id, tname, rows):
+    """Entities named by the cells of structured rows (the column map), not repeated where the text pass found them."""
+    owner = con.execute("SELECT host, capture_id FROM files WHERE file_id=?", (file_id,)).fetchone() or (None, None)
+    have = {(k, n, ln) for k, n, ln in con.execute("SELECT kind, norm, line_no FROM entities WHERE file_id=?", (file_id,))}
+    room = MAX_ENTITIES_PER_FILE - len(have)
+    new = []
+    for line_no, data in rows:
+        for k, v, nm in index_entities.from_row(tname, data):
+            if (k, nm, line_no) not in have and len(new) < room:
+                have.add((k, nm, line_no))
+                new.append((k, v[:200], nm[:200], file_id, line_no, owner[1], owner[0]))
+    con.executemany("INSERT INTO entities(kind, value, norm, file_id, line_no, capture_id, host, source) "
+                    "VALUES(?,?,?,?,?,?,?,'row')", new)
 
 
 def add_rows(con, file_id, tname, blocks):
     n = 0
     for b, (fmt, rows) in enumerate(blocks, start=1):
+        add_row_entities(con, file_id, tname, rows)
         for line_no, data in rows:
-            if n >= MAX_ROWS_PER_FILE:
-                return n
             con.execute("INSERT INTO rows VALUES(?,?,?,?,?,?)",
                         (file_id, tname, fmt, b, line_no,
                          json.dumps({k: v for k, v in data.items() if v not in ("", None)}, ensure_ascii=False)))
@@ -456,23 +564,31 @@ def index_file(con, file_id, path, ext, fname):
             add_text(con, file_id, text)
         return "indexed", f"xlsx rows={count}"
     if ext == ".docx":
-        add_text(con, file_id, docx_text(path))
+        t = docx_text(path)
+        if not (t or "").strip():
+            return "skipped", "docx has no text"
+        add_text(con, file_id, t)
         return "indexed", "docx text"
+    if ext == ".pptx":
+        t = pptx_text(path)
+        if not (t or "").strip():
+            return "skipped", "pptx has no extractable text"
+        add_text(con, file_id, t)
+        return "indexed", "pptx slide, notes and comment text"
     if ext == ".pdf":
         t = pdf_text(path)
         if t is None:
-            return "skipped", "pdf (pdftotext not available)"
+            return "skipped", "pdf text extraction failed"
+        if not t.strip():
+            return "skipped", "pdf has no text layer (scanned)"
         add_text(con, file_id, t)
         return "indexed", "pdf text"
     raw = path.read_bytes()
     text = decode(raw)
     if text is None:
         return "skipped", "binary content"
-    if ext == ".xml" and len(raw) > SPARSE_XML_BYTES:
-        lines = text.splitlines()
-        kept = sparse_xml(lines)
-        add_sparse(con, file_id, kept)
-        return "indexed", f"large xml: {len(kept)} structural lines of {len(lines)} (repeating elements not indexed)"
+    if ext in (".xml", ".html", ".htm"):
+        text = markup_text(text)
     lines = add_text(con, file_id, text)
     if ext == ".csv":
         blocks = parse_csv_text(text)
@@ -481,12 +597,24 @@ def index_file(con, file_id, path, ext, fname):
     else:
         blocks = []
     n = add_rows(con, file_id, tname, blocks) if blocks else 0
-    return "indexed", f"text lines={len(lines)} rows={n}"
+    kind = ext.lstrip(".") if ext in (".xml", ".html", ".htm") else "text"
+    return "indexed", f"{kind} lines={len(lines)} rows={n}"
 
 
 def cmd_build(args, project, root):
     work_dir = remap(project["work_dir"], project)
     final_db = Path(args.db) if args.db else work_dir / INDEX_NAME
+    # Resolve and validate every configured source before touching either a staged or live index.  A disconnected
+    # share must never look like an intentional removal of the whole evidence set.
+    if args.source:
+        sources = [Path(s).expanduser() for s in args.source]
+    else:
+        sources = [remap(project["default_source_set"], project)]
+        sources += [remap(x.strip(), project) for x in project.get("index_extra_sources", "").split(";") if x.strip()]
+    missing = [str(s) for s in sources if not s.is_dir()]
+    if missing:
+        fail("SOURCE_NOT_AVAILABLE", "one or more configured evidence source folders are missing or not directories; "
+             "the live index was not changed", sources=missing)
     if args.stage_dir:
         db_path = Path(args.stage_dir).expanduser() / f"{project['key']}-{INDEX_NAME}"
         db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -494,21 +622,34 @@ def cmd_build(args, project, root):
             shutil.copyfile(final_db, db_path)
     else:
         db_path = final_db
+    # A rebuild starts from an empty index; remember what the old one held so the intake record reports only real changes.
+    previous = {}
+    if args.rebuild:
+        old = db_path if db_path.exists() else final_db
+        if old.exists():
+            try:
+                pc = sqlite3.connect(f"file:{old}?mode=ro", uri=True)
+                previous = {r: (sha, size, status, reason) for r, sha, size, status, reason in
+                            pc.execute("SELECT rel_path, sha1, size, status, reason FROM files")}
+                pc.close()
+            except sqlite3.Error:
+                previous = {}
     if args.rebuild and db_path.exists():
         db_path.unlink()
     # Default: the project's discovery data (default_source_set) plus any extra evidence folders
     # listed in PROJECTS.yaml as index_extra_sources ("path; path"). Not the whole parent folder,
     # which also holds CSA documents that must not be indexed as evidence.
-    if args.source:
-        sources = [Path(s).expanduser() for s in args.source]
-    else:
-        sources = [remap(project["default_source_set"], project)]
-        sources += [remap(x.strip(), project) for x in project.get("index_extra_sources", "").split(";") if x.strip()]
     con = sqlite3.connect(str(db_path))
+    try:
+        old_schema = int((con.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone() or (0,))[0])
+    except (sqlite3.Error, TypeError, ValueError):
+        old_schema = 0
     con.execute("PRAGMA journal_mode=OFF" if args.stage_dir else "PRAGMA journal_mode=DELETE")
     con.execute("PRAGMA synchronous=OFF")
     init_db(con)
     t0, done, stats, seen = time.time(), True, {}, set()
+    changes = {"added": [], "changed": [], "removed": []}
+    shas = {}
     capture_ids = {}
     for src in sources:
         for dirpath, dirnames, filenames in os.walk(src):
@@ -543,22 +684,34 @@ def cmd_build(args, project, root):
                         capture_ids[folder] = cap_id
                 host = cap[1] if cap else None
                 sclass = "capture" if cap else ("derived" if derived else "other")
-                prev = con.execute("SELECT file_id, size, mtime, status FROM files WHERE rel_path=?", (rel,)).fetchone()
-                if prev and prev[1] == st.st_size and abs((prev[2] or 0) - st.st_mtime) < 1:
+                prev = con.execute("SELECT file_id, size, mtime, status, reason, sha1 FROM files WHERE rel_path=?", (rel,)).fetchone()
+                retry_pdf = (ext == ".pdf" and prev and prev[3] in ("skipped", "error") and
+                             prev[4] in ("pdf (pdftotext not available)", "pdf text extraction failed"))
+                retry_markup = (ext in (".xml", ".html", ".htm") and prev and
+                                (prev[3] in ("skipped", "error") or (prev[4] or "").startswith("large xml:")))
+                retry_office = old_schema < 5 and ext in (".docx", ".pptx", ".xlsx")
+                same_metadata = prev and prev[1] == st.st_size and abs((prev[2] or 0) - st.st_mtime) < 0.000001
+                content_sha = None
+                if same_metadata and (prev[5] or ext in DOCUMENT_EXT):
+                    h = hashlib.sha1()
+                    with open(path, "rb") as fh:
+                        for blk in iter(lambda: fh.read(1 << 20), b""):
+                            h.update(blk)
+                    content_sha = h.hexdigest()
+                same_content = same_metadata and (content_sha is None or (prev[5] and content_sha == prev[5]))
+                if (same_content and not retry_pdf and not retry_markup and not retry_office):
                     stats[prev[3]] = stats.get(prev[3], 0) + 1
                     continue
                 if prev:
                     drop_content(con, prev[0])
                     con.execute("DELETE FROM files WHERE file_id=?", (prev[0],))
-                status, reason, sha, dup = None, None, None, None
+                status, reason, sha, dup = None, None, content_sha, None
                 if ext in BINARY_EXT:
                     status, reason = "skipped", f"binary type {ext}"
                     if ext == ".zip":
                         reason = "zip (extracted alongside)" if path.with_suffix("").is_dir() else "zip (NOT extracted - contents not indexed)"
-                elif SKIP_NAME_RE.search(fname):
-                    status, reason = "skipped", "rendering duplicated by a text file in the same capture"
                 elif st.st_size > (MAX_CSV_BYTES if ext == ".csv" else 64 * 1024 * 1024 if ext == ".xml" else MAX_TEXT_BYTES) \
-                        and ext not in (".xlsx", ".docx", ".pdf"):
+                        and ext not in (".xlsx", ".docx", ".pdf", ".xml", ".html", ".htm"):
                     status, reason = "skipped", f"too large ({st.st_size} bytes)"
                 elif st.st_size == 0:
                     status, reason = "skipped", "empty"
@@ -567,11 +720,12 @@ def cmd_build(args, project, root):
                     (rel, cap_id, host, ext, st.st_size, st.st_mtime, sclass, archived))
                 fid = cur.lastrowid
                 if status is None:
-                    h = hashlib.sha1()
-                    with open(path, "rb") as fh:
-                        for blk in iter(lambda: fh.read(1 << 20), b""):
-                            h.update(blk)
-                    sha = h.hexdigest()
+                    if sha is None:
+                        h = hashlib.sha1()
+                        with open(path, "rb") as fh:
+                            for blk in iter(lambda: fh.read(1 << 20), b""):
+                                h.update(blk)
+                        sha = h.hexdigest()
                     d = con.execute("SELECT file_id FROM files WHERE sha1=? AND status='indexed' AND file_id<>? LIMIT 1", (sha, fid)).fetchone()
                     if d:
                         status, reason, dup = "duplicate", "identical content indexed elsewhere", d[0]
@@ -583,6 +737,9 @@ def cmd_build(args, project, root):
                             status, reason = "error", f"{type(e).__name__}: {e}"[:300]
                 con.execute("UPDATE files SET sha1=?, status=?, reason=?, dup_of=? WHERE file_id=?", (sha, status, reason, dup, fid))
                 stats[status] = stats.get(status, 0) + 1
+                shas[rel] = (sha, st.st_size, status, reason)
+                changes["changed" if prev else "added"].append(dict(
+                    rel_path=rel, ext=ext, status=status, reason=reason, source_class=sclass, host=host))
                 if sum(stats.values()) % 200 == 0:
                     con.commit()
     if done:
@@ -591,6 +748,37 @@ def cmd_build(args, project, root):
             drop_content(con, fid)
             con.execute("DELETE FROM files WHERE file_id=?", (fid,))
         stats["removed"] = len(stale)
+        changes["removed"] = sorted(r[1] for r in stale)
+        # A duplicate holds no content of its own: it is read through the file it copies (dup_of). When that
+        # file is gone (removed above, or in an earlier build), the copy would have no text at all, so index
+        # it in its own right; further copies of the same content then point at it.
+        orphans = con.execute(
+            "SELECT f.file_id, f.rel_path, f.ext, f.sha1 FROM files f WHERE f.status = 'duplicate' AND NOT EXISTS "
+            "(SELECT 1 FROM files o WHERE o.file_id = f.dup_of AND o.status = 'indexed') ORDER BY f.file_id").fetchall()
+        for fid, rel, ext, sha in orphans:
+            d = con.execute("SELECT file_id FROM files WHERE sha1=? AND status='indexed' AND file_id<>? LIMIT 1",
+                            (sha, fid)).fetchone()
+            if d:
+                con.execute("UPDATE files SET dup_of=? WHERE file_id=?", (d[0], fid))
+                continue
+            path = Path(os.path.normpath(root / rel))
+            try:
+                status, reason = index_file(con, fid, path, ext, Path(rel).name)
+            except Exception as e:  # keep going; record why
+                drop_content(con, fid)
+                status, reason = "error", f"{type(e).__name__}: {e}"[:300]
+            con.execute("UPDATE files SET status=?, reason=?, dup_of=NULL WHERE file_id=?", (status, reason, fid))
+            stats["rehomed"] = stats.get("rehomed", 0) + 1
+        if previous:      # a rebuild: compare with the old index instead of reporting every file as new
+            added, changed = [], list(changes["changed"])
+            for f in changes["added"]:
+                old = previous.get(f["rel_path"])
+                if old is None:
+                    added.append(f)
+                elif old != shas.get(f["rel_path"]):
+                    changed.append(f)
+            changes["added"], changes["changed"] = added, changed
+            changes["removed"] = sorted(set(changes["removed"]) | (set(previous) - seen))
     # current vs superseded captures, per host (archived captures never current)
     con.execute("UPDATE captures SET superseded_by=NULL, file_count=(SELECT COUNT(*) FROM files f WHERE f.capture_id=captures.capture_id)")
     for (host,) in con.execute("SELECT DISTINCT host FROM captures").fetchall():
@@ -600,23 +788,157 @@ def cmd_build(args, project, root):
         for c in caps:
             if c[0] != latest:
                 con.execute("UPDATE captures SET superseded_by=? WHERE capture_id=?", (latest, c[0]))
+    index_aliases.build_aliases(con, index_aliases.load_register(work_dir))
     con.execute("INSERT OR REPLACE INTO meta VALUES('project', ?)", (project["key"],))
     con.execute("INSERT OR REPLACE INTO meta VALUES('sources', ?)", (json.dumps([str(s) for s in sources]),))
     con.execute("INSERT OR REPLACE INTO meta VALUES('complete', ?)", ("1" if done else "0",))
-    con.execute("INSERT OR REPLACE INTO meta VALUES('built_at_utc', ?)", (time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),))
+    built_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    con.execute("INSERT OR REPLACE INTO meta VALUES('built_at_utc', ?)", (built_at,))
     con.commit()
     if done and has_fts5(con):
         con.execute("INSERT INTO chunks(chunks) VALUES('optimize')")
         con.commit()
     con.close()
-    copied = None
+    copied, publish = None, {}
     if args.stage_dir and done:
-        tmp = final_db.with_name(final_db.name + ".new")
-        shutil.copyfile(db_path, tmp)
-        os.replace(tmp, final_db)
-        copied = str(final_db)
-    emit(dict(status="OK" if done else "INCOMPLETE", message=None if done else "time budget reached - run build again to continue",
-              db=str(db_path), published_to=copied, seconds=round(time.time() - t0, 1), files=stats))
+        publish = publish_index(db_path, final_db, work_dir / "evidence-matrix.csv", force=args.force_swap)
+        copied = publish.get("published_to")
+    intake = write_intake(work_dir, changes, built_at, matrix_last_id(work_dir)) if done else None
+    emit(dict(status=publish.get("status") if publish.get("status") == "CITES_BROKEN" else "OK" if done else "INCOMPLETE",
+              message=None if done else "time budget reached - run build again to continue",
+              publish=publish or None, db=str(db_path), published_to=copied, seconds=round(time.time() - t0, 1), files=stats,
+              intake=str(intake) if intake else None))
+
+
+def _matrix_rows(matrix_csv):
+    matrix_csv = Path(matrix_csv)
+    if not matrix_csv.is_file():
+        return []
+    with open(matrix_csv, encoding="utf-8-sig", newline="") as fh:
+        return [r for r in csv.DictReader(fh) if r.get("evidence_id")]
+
+
+def _cites_of(db, rows):
+    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    try:
+        return index_cites.verify_cites(con, rows)
+    finally:
+        con.close()
+
+
+def publish_index(new_db, final_db, matrix_csv, force=False):
+    """Copy a staged index over the live one only when no evidence-matrix citation newly fails (a file no longer indexed,
+    or text shorter than a cited line). The old index is kept beside it as <name>.bak-<date>. The matrix is only read."""
+    new_db, final_db = Path(new_db), Path(final_db)
+    rows = _matrix_rows(matrix_csv)
+    bad = []
+    if final_db.exists() and rows:
+        bad = index_cites.new_failures(_cites_of(final_db, rows), _cites_of(new_db, rows))
+    if bad and not force:
+        return dict(status="CITES_BROKEN", new_failures=bad, published_to=None,
+                    message=f"{len(bad)} citation(s) would stop resolving; the staged index at {new_db} was not published "
+                            "(--force-swap to publish anyway)")
+    backup = None
+    if final_db.exists():
+        backup = final_db.with_name(f"{final_db.name}.bak-{time.strftime('%Y%m%d-%H%M%S')}")
+        shutil.copyfile(final_db, backup)
+    tmp = final_db.with_name(final_db.name + ".new")
+    shutil.copyfile(new_db, tmp)
+    os.replace(tmp, final_db)
+    return dict(status="OK", published_to=str(final_db), backup=str(backup) if backup else None, new_failures=bad)
+
+
+def cmd_verify_cites(args, project, root):
+    work_dir = remap(project["work_dir"], project)
+    matrix = work_dir / "evidence-matrix.csv"
+    rows = _matrix_rows(matrix)
+    con, _ = open_ro(project)
+    res = index_cites.verify_cites(con, rows)
+    res["matrix_sha256"] = hashlib.sha256(matrix.read_bytes()).hexdigest() if matrix.is_file() else ""
+    if args.against:
+        before = json.loads(Path(args.against).read_text(encoding="utf-8"))
+        res["new_failures"] = index_cites.new_failures(before, res)
+        res["matrix_unchanged"] = before.get("matrix_sha256") == res["matrix_sha256"]
+    if args.save:
+        Path(args.save).write_text(json.dumps(res, indent=1), encoding="utf-8")
+    res["status"] = "CITES_BROKEN" if res.get("new_failures") else "OK"
+    emit(res)
+
+
+def matrix_last_id(work_dir):
+    """The highest evidence ID in the project's matrix ("" when there is none), so a reader of the intake
+    record can tell which rows were added after this build."""
+    path = Path(work_dir) / "evidence-matrix.csv"
+    if not path.is_file():
+        return ""
+    with open(path, encoding="utf-8-sig", newline="") as fh:
+        nums = [int(m.group(1)) for r in csv.DictReader(fh) for m in [re.fullmatch(r"E-(\d+)", r.get("evidence_id") or "")] if m]
+    return f"E-{max(nums):03d}" if nums else ""
+
+
+def unreadable(f):
+    """A document the index could not read and a person can supply in another format. Capture artefacts
+    (DLLs, renderings, extracted zips) and empty files are not documents to ask for."""
+    reason = f.get("reason") or ""
+    return ((f.get("source_class") != "capture" or f.get("ext") in DOCUMENT_EXT)
+            and f.get("status") in ("skipped", "error") and reason != "empty"
+            and not reason.startswith(("zip (extracted", "rendering duplicated")))
+
+
+def intake_report_missing(folder, record):
+    """Files a completed intake report must account for by exact indexed path.
+
+    Capture artefacts are handled as a set by graph sync and the host-profile workflow.  Stand-alone documents have
+    no other deterministic consumer, so a free-form marker cannot silently mark them read without naming them.
+    """
+    if not isinstance(record, dict) or not record.get("id"):
+        return []
+    report = Path(folder) / f"{record['id']}.evidence.md"
+    try:
+        text = report.read_text(encoding="utf-8")
+    except OSError:
+        missing = [f.get("rel_path") for f in (record.get("added", []) + record.get("changed", []))
+                   if isinstance(f, dict) and f.get("source_class") != "capture" and f.get("rel_path")]
+        return missing or [str(report)]
+    if not text.strip():
+        return [str(report)]
+    required = {f.get("rel_path") for f in (record.get("added", []) + record.get("changed", []))
+                if isinstance(f, dict) and f.get("source_class") != "capture" and f.get("rel_path")}
+    required.update(f.get("rel_path") for f in record.get("unreadable", [])
+                    if isinstance(f, dict) and f.get("rel_path"))
+    return sorted(p for p in required if p not in text)
+
+
+def write_intake(work_dir, changes, built_at, last_id):
+    """Record what this build brought in: <work_dir>/intake/<id>.json and a copy at intake/latest.json.
+    Nothing is written when nothing was added, changed or removed (latest.json keeps the last real intake)."""
+    if not any(changes.get(k) for k in ("added", "changed", "removed")):
+        return None
+    folder = Path(work_dir) / "intake"
+    folder.mkdir(parents=True, exist_ok=True)
+    added, changed, carried_from = list(changes["added"]), list(changes["changed"]), []
+    try:
+        prev = json.loads((folder / "latest.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        prev = None
+    if isinstance(prev, dict) and prev.get("id") and intake_report_missing(folder, prev):
+        # The evidence agent has not read the previous intake yet: carry its files forward so none is lost.
+        listed = {f["rel_path"] for f in added + changed} | set(changes["removed"])
+        added += [f for f in prev.get("added", []) if f["rel_path"] not in listed]
+        changed += [f for f in prev.get("changed", []) if f["rel_path"] not in listed]
+        carried_from = list(prev.get("carried_from", [])) + [prev["id"]]
+    rid = base = built_at.replace("-", "").replace(":", "")
+    n = 1
+    while (folder / f"{rid}.json").exists():
+        n += 1
+        rid = f"{base}-{n}"
+    record = dict(id=rid, built_at_utc=built_at, matrix_last_id=last_id, carried_from=carried_from, added=added,
+                  changed=changed, removed=changes["removed"], unreadable=[f for f in added + changed if unreadable(f)])
+    text = json.dumps(record, indent=1)
+    path = folder / f"{rid}.json"
+    path.write_text(text, encoding="utf-8")
+    (folder / "latest.json").write_text(text, encoding="utf-8")
+    return path
 
 
 # --------------------------------------------------------------------------- queries
@@ -669,16 +991,109 @@ def cite(con, file_id, lines, excerpt):
                 source_class=f["source_class"], superseded=bool(f["superseded_by"]))
 
 
+def brief_result(hit: dict) -> dict:
+    """Compact hit for agents (--brief): host, non-empty values cut to 120 characters, one file/line citation."""
+    c = hit.get("cite") or hit
+    if "row" in hit:
+        values = {k: str(v) for k, v in (hit.get("row") or {}).items() if v not in (None, "")}
+    else:
+        values = {"excerpt": str(c.get("evidence_excerpt") or "")}
+    values = {k: (v if len(v) <= 120 else v[:120] + "...") for k, v in values.items()}
+    loc = c.get("page_or_location") or ""
+    m = re.search(r"((?:line|lines|sheet!row) \S+)$", loc)
+    cite_s = f"{c['rel_path']} {m.group(1)}" if c.get("rel_path") and m else (loc or c.get("rel_path", ""))
+    return {"host": hit.get("host") or c.get("host"), "values": values, "cite": cite_s}
+
+
+def _limit(args):
+    return args.limit if args.limit is not None else (25 if getattr(args, "brief", False) else 20)
+
+
+def _term(t):
+    """One FTS term: quoted, and a trailing * left outside the quotes so it is a prefix search (restor*)."""
+    base = t.strip('"')
+    star = base.endswith("*") and len(base) > 2
+    base = base.rstrip("*")
+    return '"' + base.replace('"', '""') + '"' + ("*" if star else "")
+
+
+def loose(word):
+    """How a query word is found in a line of text now that the index stems words: a long plain word is matched by its
+    stem-sized start (restored -> resto, vulnerabilities -> vulnerabilit), a short word or a host or address exactly."""
+    w = word.lower().rstrip("*")
+    return w[:max(4, len(w) - 3)] if len(w) >= 6 and w.isalpha() else w
+
+
 def fts_query(terms, any_mode):
     toks = [t for t in re.findall(r'"[^"]+"|\S+', terms)]
-    quoted = ['"' + t.strip('"').replace('"', '""') + '"' for t in toks]
-    return (" OR " if any_mode else " AND ").join(quoted), [t.strip('"').lower() for t in toks]
+    return (" OR " if any_mode else " AND ").join(_term(t) for t in toks), [t.strip('"').rstrip("*").lower() for t in toks]
+
+
+def unseen_hits(cited, file_id, hits):
+    """The hits whose line was not cited yet (neighbouring chunks share CHUNK_OVERLAP lines); marks the rest as cited."""
+    fresh = [h for h in hits if (file_id, h[0]) not in cited]
+    cited.update((file_id, h[0]) for h in fresh)
+    return fresh
+
+
+MAX_EXPANSION = 8
+EXPAND_SCOPES = ("system", "sibling", "neighbour")
+
+
+def expand_terms(con, terms):
+    """{term (lower case): [aliases]}: for a term that is a host name, full name or address in the aliases table, the
+    host's other names and addresses (at most MAX_EXPANSION, names first). Ambiguous addresses and hosts outside the
+    system, sibling and neighbour scopes are never used."""
+    if not con.execute("SELECT 1 FROM sqlite_master WHERE name='aliases'").fetchone():
+        return {}
+    out = {}
+    scopes = ",".join("?" * len(EXPAND_SCOPES))
+    for tok in re.findall(r'"[^"]+"|\S+', terms):
+        t = tok.strip('"')
+        if len(t) < 3 or t.lower() in ("and", "or", "not"):
+            continue
+        hosts = {h for (h,) in con.execute(
+            f"SELECT host FROM aliases WHERE (norm=? OR norm=?) AND scope IN ({scopes}) AND ambiguous=0",
+            (t.upper(), t.lower(), *EXPAND_SCOPES))}
+        if not hosts:
+            continue
+        marks = ",".join("?" * len(hosts))
+        rows = con.execute(
+            f"SELECT value, kind, norm FROM aliases WHERE host IN ({marks}) AND scope IN ({scopes}) AND ambiguous=0 "
+            "AND confidence IN ('high','medium') GROUP BY norm ORDER BY CASE kind WHEN 'name' THEN 0 WHEN 'fqdn' THEN 1 ELSE 2 END, norm",
+            (*sorted(hosts), *EXPAND_SCOPES)).fetchall()
+        extra = [r[0] for r in rows if r[2].lower() != t.lower()][:MAX_EXPANSION]
+        if extra:
+            out[t.lower()] = extra
+    return out
+
+
+def fts_expanded(terms, any_mode, expansions):
+    """The FTS query with each expanded term as (term OR alias OR ...); words = the original terms for highlighting."""
+    q, words = fts_query(terms, any_mode)
+    if not expansions:
+        return q, words, words
+    toks = re.findall(r'"[^"]+"|\S+', terms)
+    parts, all_words = [], list(words)
+    for t in toks:
+        base = t.strip('"')
+        alts = [base] + expansions.get(base.lower().rstrip("*"), [])
+        all_words += [a.lower() for a in alts[1:]]
+        parts.append("(" + " OR ".join(_term(a) for a in alts) + ")" if len(alts) > 1 else _term(base))
+    return (" OR " if any_mode else " AND ").join(parts), words, all_words
 
 
 def cmd_search(args, project, root):
+    args.limit = _limit(args)
     con, meta = open_ro(project)
+    emit(search_core(con, meta, args))
+
+
+def search_core(con, meta, args):
+    args.limit = _limit(args)
     where, params = scope_sql(args)
-    q, words = fts_query(args.terms, args.any)
+    expansions = {} if getattr(args, "no_expand", False) or meta.get("fts5") != "1" else expand_terms(con, args.terms)
+    q, orig_words, words = fts_expanded(args.terms, args.any, expansions)
     if meta.get("fts5") == "1":
         sql = (f"SELECT m.file_id, m.line_start, chunks.content AS content, bm25(chunks) AS score FROM chunks "
                f"JOIN chunk_map m ON m.chunk_id=chunks.rowid JOIN files f ON f.file_id=m.file_id "
@@ -689,7 +1104,7 @@ def cmd_search(args, project, root):
         sql = (f"SELECT m.file_id, m.line_start, chunks.content AS content, 0 AS score FROM chunks "
                f"JOIN chunk_map m ON m.chunk_id=chunks.rowid JOIN files f ON f.file_id=m.file_id WHERE {like} AND {where} LIMIT ?")
         rows = con.execute(sql, [f"%{w}%" for w in words] + params + [args.limit * 4]).fetchall()
-    out, per_file = [], {}
+    out, per_file, cited = [], {}, set()
     for r in rows:
         if per_file.get(r["file_id"], 0) >= args.per_file:
             continue
@@ -698,18 +1113,25 @@ def cmd_search(args, project, root):
             m = LINE_TAG.match(line)
             n, line = (int(m.group(1)), line[m.end():]) if m else (r["line_start"] + off, line)
             low = line.lower()
-            if any(w in low for w in words):
+            if any(w in low for w in [loose(x) for x in words]):
                 hits.append((n, line.rstrip()))
+        hits = unseen_hits(cited, r["file_id"], hits)     # an overlapped line is cited once
         if not hits:
             continue
+        via = bool(expansions) and not any(loose(w) in h[1].lower() for h in hits for w in orig_words)
         per_file[r["file_id"]] = per_file.get(r["file_id"], 0) + 1
         nums = [h[0] for h in hits[:8]]
         excerpt = " | ".join(h[1].strip() for h in hits[:8])
-        out.append(dict(score=round(r["score"], 2), **cite(con, r["file_id"], nums, excerpt)))
-        if len(out) >= args.limit:
+        out.append(dict(score=round(r["score"], 2), **cite(con, r["file_id"], nums, excerpt), **({"via_alias": True} if via else {})))
+        if len(out) >= args.limit and not args.brief:
             break
-    emit(dict(status="OK", query=args.terms, fts=q, scope=scope_label(args), count=len(out), results=out,
-              note=None if out else "no hits in scope; try --any, fewer terms, --all-captures or --include-archive"))
+    extra = {"expanded": expansions} if expansions else {}
+    if args.brief:
+        shown = out[:args.limit]
+        return dict(status="OK", query=args.terms, total=len(out), shown=len(shown), more=len(out) - len(shown),
+                    results=[dict(brief_result(h), **({"via_alias": True} if h.get("via_alias") else {})) for h in shown], **extra)
+    return dict(status="OK", query=args.terms, fts=q, scope=scope_label(args), count=len(out), results=out, **extra,
+                note=None if out else "no hits in scope; try --any, fewer terms, --all-captures or --include-archive")
 
 
 def scope_label(args):
@@ -721,6 +1143,7 @@ WHERE_RE = re.compile(r"^(?P<col>[^=~!]+?)(?P<op>!~|~|=|!=)(?P<val>.*)$")
 
 
 def cmd_rows(args, project, root):
+    args.limit = _limit(args)
     con, _ = open_ro(project)
     where, params = scope_sql(args)
     tables = [r[0] for r in con.execute("SELECT DISTINCT table_name FROM rows")]
@@ -769,6 +1192,10 @@ def cmd_rows(args, project, root):
         excerpt = "; ".join(f"{k}={v}" for k, v in d.items() if v not in (None, ""))
         c = cite(con, r["file_id"], [r["line_no"]], excerpt)
         out.append(dict(table=r["table_name"], host=c["host"], row=d, cite=c))
+    if args.brief:
+        emit(dict(status="OK", tables=tsel, total=len(res), shown=len(out), more=len(res) - len(out),
+                  results=[brief_result(h) for h in out]))
+        return
     emit(dict(status="OK", tables=tsel, scope=scope_label(args), total=len(res), shown=len(out), results=out))
 
 
@@ -814,6 +1241,66 @@ def cmd_status(args, project, root):
               files_by_status=by, not_indexed_reasons=reasons, errors=errors))
 
 
+def cmd_entities(args, project, root):
+    con, _ = open_ro(project)
+    if not con.execute("SELECT 1 FROM sqlite_master WHERE name='entities'").fetchone():
+        fail("NO_ENTITIES", "this index was built before entities existed; run: discovery_index.py build --rebuild "
+                            f"--project {project['key']}")
+    if not (args.kind or args.value or args.host):
+        counts = {k: n for k, n in con.execute("SELECT kind, COUNT(*) FROM entities GROUP BY kind ORDER BY 2 DESC")}
+        emit(dict(status="OK", total=sum(counts.values()), kinds=counts))
+        return
+    where, params = ["1=1"], []
+    if args.kind:
+        where.append("e.kind=?"); params.append(args.kind)
+    if args.value:
+        v = args.value.strip()
+        where.append("e.norm=?"); params.append(v.upper() if args.kind == "host" else v.lower())
+    if args.host:
+        where.append("UPPER(e.host)=?"); params.append(args.host.upper())
+    args.limit = args.limit or 50
+    rows = con.execute(f"SELECT e.kind, e.value, e.norm, e.host, f.rel_path, e.line_no FROM entities e JOIN files f "
+                       f"ON f.file_id=e.file_id WHERE {' AND '.join(where)} ORDER BY e.norm, f.rel_path, e.line_no LIMIT ?",
+                       params + [args.limit]).fetchall()
+    emit(dict(status="OK", count=len(rows), results=[
+        dict(kind=r["kind"], value=r["value"], norm=r["norm"], host=r["host"], file=r["rel_path"], line=r["line_no"])
+        for r in rows]))
+
+
+def cmd_aliases(args, project, root):
+    if args.refresh:                      # rebuild from the index's entities and the current host register
+        work_dir = remap(project["work_dir"], project)
+        db = work_dir / INDEX_NAME
+        if not db.is_file():
+            fail("NO_INDEX", f"no index at {db}")
+        con = sqlite3.connect(db)
+        n = index_aliases.build_aliases(con, index_aliases.load_register(work_dir))
+        con.commit()
+        con.close()
+        emit(dict(status="OK", aliases=n))
+        return
+    con, _ = open_ro(project)
+    if not con.execute("SELECT 1 FROM sqlite_master WHERE name='aliases'").fetchone():
+        fail("NO_ALIASES", "this index was built before aliases existed; run: discovery_index.py build --rebuild "
+                           f"--project {project['key']}")
+    where, params = ["1=1"], []
+    if args.host:
+        where.append("UPPER(host)=?"); params.append(args.host.upper())
+    if args.value:
+        where.append("(norm=? OR norm=?)"); params += [args.value.lower(), args.value.upper()]
+    if args.scope:
+        where.append("scope=?"); params.append(args.scope)
+    if not (args.host or args.value or args.scope):
+        emit(dict(status="OK", total=con.execute("SELECT COUNT(*) FROM aliases").fetchone()[0],
+                  by_scope={k: n for k, n in con.execute("SELECT scope, COUNT(*) FROM aliases GROUP BY scope")},
+                  by_basis={k: n for k, n in con.execute("SELECT basis, COUNT(*) FROM aliases GROUP BY basis")},
+                  ambiguous_addresses=con.execute("SELECT COUNT(DISTINCT norm) FROM aliases WHERE ambiguous=1").fetchone()[0]))
+        return
+    rows = con.execute(f"SELECT host, kind, value, scope, basis, confidence, ambiguous FROM aliases WHERE {' AND '.join(where)} "
+                       "ORDER BY host, kind, norm LIMIT ?", params + [args.limit or 50]).fetchall()
+    emit(dict(status="OK", count=len(rows), results=[dict(r) for r in rows]))
+
+
 def cmd_sql(args, project, root):
     con, _ = open_ro(project)
     if not re.match(r"^\s*(SELECT|WITH)\b", args.query, re.I):
@@ -832,27 +1319,40 @@ def main():
     b.add_argument("--rebuild", action="store_true")
     b.add_argument("--source", action="append", help="folder to index (default: parent of default_source_set)")
     b.add_argument("--db", help="override index path")
-    b.add_argument("--stage-dir", help="build in a local folder, then copy into work_dir when complete")
+    b.add_argument("--stage-dir", help="build in a local folder, then copy into work_dir when complete (only if no "
+                                       "evidence-matrix citation newly fails; the old index is kept as .bak-<date>)")
+    b.add_argument("--force-swap", action="store_true", help="publish the staged index even if citations would break")
 
     def scope(sp):
         sp.add_argument("--host")
         sp.add_argument("--path-like")
         sp.add_argument("--all-captures", action="store_true", help="include superseded captures")
         sp.add_argument("--include-archive", action="store_true")
-        sp.add_argument("--limit", type=int, default=20)
+        sp.add_argument("--limit", type=int, default=None, help="default 20, or 25 with --brief")
+        sp.add_argument("--brief", action="store_true", help="compact results for agents: host, non-empty values, file + line")
 
     s = sub.add_parser("search"); s.add_argument("terms"); scope(s)
     s.add_argument("--any", action="store_true", help="match any term instead of all")
     s.add_argument("--per-file", type=int, default=2)
+    s.add_argument("--no-expand", action="store_true", help="search the terms alone (default: a host name also searches its addresses and back)")
     r = sub.add_parser("rows"); r.add_argument("table"); scope(r)
     r.add_argument("--where", action="append"); r.add_argument("--cols"); r.add_argument("--distinct")
     t = sub.add_parser("tables"); t.add_argument("pattern", nargs="?")
     sub.add_parser("hosts"); sub.add_parser("status")
+    e = sub.add_parser("entities"); e.add_argument("--kind", choices=index_entities.KINDS)
+    e.add_argument("--value"); e.add_argument("--host"); e.add_argument("--limit", type=int, default=None)
+    al = sub.add_parser("aliases"); al.add_argument("--host"); al.add_argument("--value")
+    al.add_argument("--scope", choices=("system", "sibling", "neighbour", "external"))
+    al.add_argument("--limit", type=int, default=None)
+    al.add_argument("--refresh", action="store_true", help="rebuild the aliases from the entities and the current host register")
+    vc = sub.add_parser("verify-cites")
+    vc.add_argument("--save", help="write the report here (run before a rebuild)")
+    vc.add_argument("--against", help="compare with a report saved earlier: lists new failures, and whether the matrix is unchanged")
     q = sub.add_parser("sql"); q.add_argument("query"); q.add_argument("--limit", type=int, default=200)
     args = p.parse_args()
     project, root = resolve_project(args)
     dict(build=cmd_build, search=cmd_search, rows=cmd_rows, tables=cmd_tables, hosts=cmd_hosts,
-         status=cmd_status, sql=cmd_sql)[args.cmd](args, project, root)
+         status=cmd_status, sql=cmd_sql, entities=cmd_entities, aliases=cmd_aliases, **{"verify-cites": cmd_verify_cites})[args.cmd](args, project, root)
 
 
 if __name__ == "__main__":

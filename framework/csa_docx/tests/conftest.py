@@ -23,3 +23,10 @@ def _register_test_workspace(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     monkeypatch.setenv("CSA_PROJECTS_FILE", str(registry))
+
+
+@pytest.fixture(autouse=True)
+def _comments_on_by_default(monkeypatch):
+    """Word comments can be switched off in .agents/cli.yaml. Pin them on so the tests
+    do not depend on that setting; the comments-off behaviour has its own test."""
+    monkeypatch.setenv("CSA_COMMENTS", "on")

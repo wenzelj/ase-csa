@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from .models import ApplySummary, ChangeRecord
@@ -13,6 +14,17 @@ def state_path(base_dir: Path, section: str) -> Path:
     return base_dir / "run-state" / f"current-state-assessment-document-section-{section}.md"
 
 
+_LABELLED_RE = re.compile(r"^ChangesCSA_.+?_Section(?P<section>\d+)_(?P<label>[^.]+)\.md$")
+
+
+def state_key(section: str, change_file: Path | str | None) -> str:
+    """Run-state key for a change file: the section number, plus the label for a
+    labelled change file (``ChangesCSA_<App>_Section6_6-4.md`` -> ``6_6-4``), so two
+    change files for one section (e.g. two subsections) keep separate progress."""
+    m = _LABELLED_RE.match(Path(change_file).name) if change_file else None
+    return f"{section}_{m['label']}" if m else str(section)
+
+
 def read_completed_ids(path: Path) -> set[str]:
     if not path.exists():
         return set()
@@ -22,6 +34,28 @@ def read_completed_ids(path: Path) -> set[str]:
             value = line.split(":", 1)[1].strip()
             completed.update(part.strip() for part in value.split(",") if part.strip() and part.strip() != "None")
     return completed
+
+
+def remove_edit_ids(path: Path, edit_ids) -> None:
+    """Drop ``edit_ids`` from a run-state file: the edit inventory, the completed / iteration /
+    blocked / unresolved / skipped lists, the next edit ID and the per-edit result lines.
+    Every other edit and line is left as it was."""
+    drop = set(edit_ids)
+    if not drop or not path.exists():
+        return
+    lines = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        m = re.match(r"^(- (?:Full edit inventory|Current iteration edit IDs|Completed edit IDs|Already applied edit IDs"
+                     r"|Blocked edit IDs|Unresolved edit IDs|Skipped edit IDs)): (.*)$", line)
+        if m:
+            kept = [v.strip() for v in m[2].split(",") if v.strip() and v.strip() != "None" and v.strip() not in drop]
+            line = f"{m[1]}: {', '.join(kept) or 'None'}"
+        elif re.match(r"^- Next edit ID: (.*)$", line) and line.split(":", 1)[1].strip() in drop:
+            line = "- Next edit ID: None"
+        elif (r := re.match(r"^- (S\d+(?:\.\d+)?-[EA]\d+): ", line)) and r[1] in drop:
+            continue
+        lines.append(line)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def write_state(path: Path, records: list[ChangeRecord], summary: ApplySummary) -> None:

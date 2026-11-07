@@ -25,6 +25,7 @@ from csa_docx.ooxml import (
     find_anchor,
 )
 from csa_docx.engines.docxengine_adapter import (
+    Document,
     DocxEngineEditor,
     _extract_delete_until_heading,
     _extract_heading_to_sentence_range,
@@ -92,6 +93,23 @@ Because it is approved.
     assert records[0].action == "Replace"
     assert records[0].text == "New text"
     assert "approved" in records[0].why
+
+
+def test_parse_assessment_basis_without_applying_it_as_text():
+    markdown = '''### S3-E1 - Requirement assessment
+**Where:** `@H3.1-T1-R2`
+**Do:** Replace
+**Facts:**
+- [B1] The application uses an API. (E-101) {basis: documented}
+**Assessment basis:**
+{"requirement_id":"CTRL-01","compliance_status":"unable_to_determine"}
+**Text:**
+> Observed: The application uses an API.\n> Assessment: Partially Met
+**Why:** E-101.
+'''
+    record = parse_change_records(markdown)[0]
+    assert '"requirement_id":"CTRL-01"' in record.assessment_basis
+    assert "Assessment basis" not in record.text
 
 
 def test_find_anchor_after_markdown_cleanup():
@@ -663,6 +681,101 @@ def _read_docx_table_rows(docx: Path) -> dict[str, list[str]]:
         if values:
             rows[values[0]] = values
     return rows
+
+
+def test_docxengine_inserts_after_duplicate_heading_by_heading_stable_id(tmp_path):
+    package = tmp_path / "pkg"
+    document_xml = _make_test_docx_parts(package)
+    package_editor = DocumentEditor(document_xml)
+    body = package_editor.root.find(qn(W_NS, "body"))
+    assert body is not None
+    body.append(_make_heading("First section", 1))
+    body.append(_make_heading("Discovery Information", 2))
+    body.append(make_paragraph("First body"))
+    body.append(_make_heading("Second section", 1))
+    body.append(_make_heading("Discovery Information", 2))
+    body.append(make_paragraph("Second body"))
+    package_editor.save()
+
+    docx = tmp_path / "headings.docx"
+    with zipfile.ZipFile(docx, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for file_path in sorted(package.rglob("*")):
+            if file_path.is_file():
+                archive.write(file_path, file_path.relative_to(package).as_posix())
+
+    editor = DocxEngineEditor(docx)
+    record = parse_change_records(
+        """### E-200 - Add the first requirement story
+**Where:** `@H1.1` -- currently: "Discovery Information"
+**Do:** Insert After
+**Text:**
+> SEP-STOR-01 — Evidence-backed story.
+**Why:** The full story belongs below Discovery Information.
+"""
+    )[0]
+
+    result = editor.apply_change(record, "Wenzel Joubert", "WJ")
+    editor.save()
+
+    assert result.status == "APPLIED"
+    with zipfile.ZipFile(docx) as archive:
+        root = ET.fromstring(archive.read("word/document.xml"))
+    texts = [normalise_text(paragraph_text(p)) for p in root.iter(qn(W_NS, "p"))]
+    assert texts[:4] == [
+        "First section",
+        "Discovery Information",
+        "SEP-STOR-01 — Evidence-backed story.",
+        "First body",
+    ]
+    assert texts.count("SEP-STOR-01 — Evidence-backed story.") == 1
+
+
+def test_docxengine_splits_and_refreshes_a_requirement_story_title_and_body(tmp_path):
+    docx = tmp_path / "story.docx"
+    Document.create(content_md="## Discovery Information\n\nSEP-TIME-01 — Old combined story.").save(docx)
+
+    first = parse_change_records(
+        """### S3-E1 - SEP-TIME-01 discovery story
+**Where:** `SEP-TIME-01 — Old combined story.` -- currently: "SEP-TIME-01 — Old combined story."
+**Do:** Replace
+**Text:**
+> SEP-TIME-01 — Independent OT time source
+>
+> The current-state story starts underneath the title.
+**Why:** Structure test.
+**Note:** Split the story title from its paragraph.
+"""
+    )[0]
+    editor = DocxEngineEditor(docx, track_changes=False)
+    assert editor.apply_change(first, "Wenzel Joubert", "WJ").status == "APPLIED"
+    editor.save()
+
+    second = parse_change_records(
+        """### S3-E2 - SEP-TIME-01 discovery story
+**Where:** `SEP-TIME-01 — Independent OT time source`
+**Do:** Replace this paragraph and the following line
+**Text:**
+> SEP-TIME-01 — Independent OT time source
+>
+> The refreshed story remains underneath the title.
+**Why:** Structure test.
+**Note:** Refreshed the story.
+"""
+    )[0]
+    editor = DocxEngineEditor(docx, track_changes=False)
+    assert editor.apply_change(second, "Wenzel Joubert", "WJ").status == "APPLIED"
+    editor.save()
+
+    paragraphs = Document.open(docx).paragraphs()
+    assert [p.text for p in paragraphs] == [
+        "Discovery Information",
+        "SEP-TIME-01 — Independent OT time source",
+        "The refreshed story remains underneath the title.",
+    ]
+    with zipfile.ZipFile(docx) as archive:
+        xml = archive.read("word/document.xml").decode("utf-8")
+    title = xml[xml.index("SEP-TIME-01") - 200:xml.index("SEP-TIME-01")]
+    assert "<w:b" in title
 
 
 def _make_table_row(*cells: str) -> ET.Element:

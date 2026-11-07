@@ -6,7 +6,7 @@ import xml.etree.ElementTree as ET
 from difflib import SequenceMatcher
 from pathlib import Path
 
-from .comment_text import build_comment_text
+from .comment_text import build_comment_text, comments_enabled
 from .models import ChangeRecord, EditResult
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -609,7 +609,9 @@ class DocumentEditor:
                 return paragraphs[index]
         return None
 
-    def add_comment(self, paragraph: ET.Element, record: ChangeRecord, author: str, initials: str) -> str:
+    def add_comment(self, paragraph: ET.Element, record: ChangeRecord, author: str, initials: str) -> str | None:
+        if not comments_enabled():
+            return None
         comments_path = self.document_xml_path.parent / "comments.xml"
         comments_tree, comments_root = load_or_create_comments(comments_path)
         existing_ids = [int(node.get(qn(W_NS, "id"), "0")) for node in comments_root.findall(qn(W_NS, "comment"))]

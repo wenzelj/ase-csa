@@ -1,0 +1,20 @@
+{
+ "topic": "Time Synchronisation",
+ "key": "TIME",
+ "headings": ["Time Synchronisation", "Time Synchronization", "Time Sync"],
+ "requirements": ["SEP-TIME-01"],
+ "columns": [
+  {"label": "Time source", "attribute": "time.source", "explains": "where each host takes its time from",
+   "common": "take time from {value}"},
+  {"label": "Fallback peer", "attribute": "time.fallback", "explains": "whether a second source exists if the first is lost",
+   "common": "have fallback peer {value}", "common_none": "have no fallback peer"},
+  {"label": "Poll interval", "attribute": "time.poll", "explains": "how fast drift becomes a problem if the source is lost",
+   "common": "poll their source every {value}"},
+  {"label": "Time service", "attribute": "time.service", "explains": "whether the host relies on Windows time",
+   "common": "run the {value}"},
+  {"label": "Host stratum", "attribute": "time.stratum", "explains": "what hierarchy sits above the source",
+   "common": "operate at stratum {value}"},
+  {"label": "Source stratum", "attribute": "time.source_stratum", "explains": "what hierarchy sits above the source",
+   "common": "follow sources at stratum {value}"}
+ ]
+}

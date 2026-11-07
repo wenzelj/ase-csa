@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "csa_docx/techdiagram/model.schema.json",
+  "title": "CSA technical diagram model",
+  "description": "The input every renderer takes (screen SVG, print SVG, PNG, Word drawing, Word document). Built from evidence by model.overview and views.*; saved per figure as csa-work/figures/<KEY>/model.json. Nothing in it is invented: every edge cites evidence, and anything unknown is drawn as such (kind unknown or gap, status unknown).",
+  "type": "object",
+  "required": ["id", "title", "zones", "nodes", "edges"],
+  "properties": {
+    "id": {"type": "string", "description": "Stable id, e.g. figure-time or system-overview."},
+    "title": {"type": "string"},
+    "subtitle": {"type": "string"},
+    "zones": {
+      "type": "array",
+      "description": "Network and security zones, in page order. Ids with meaning: it (IT, enterprise and Internet), shared (shared services), nosite (site not recorded), outside (location not captured), site:<name> (another site), and one id per data centre listed in layout.dcs.",
+      "items": {"type": "object", "required": ["id", "label"],
+                "properties": {"id": {"type": "string"}, "label": {"type": "string"}}}
+    },
+    "groups": {
+      "type": "array",
+      "description": "Systems that belong together inside one zone, e.g. SQL cluster nodes. A group whose members connect identically is drawn as one card at print size.",
+      "items": {"type": "object", "required": ["id", "zone", "label", "members"],
+                "properties": {"id": {"type": "string"}, "zone": {"type": "string"}, "label": {"type": "string"},
+                               "members": {"type": "array", "items": {"type": "string"}}}}
+    },
+    "nodes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "label", "kind", "zone"],
+        "properties": {
+          "id": {"type": "string", "description": "Host name exactly as the evidence writes it, or a synthetic id (G-INTERNAL, G-INTERNET, GAP-OT)."},
+          "label": {"type": "string"},
+          "role": {"type": "string", "description": "The role recorded in the host register; never derived from the name."},
+          "kind": {"type": "string", "description": "Icon and colour; see icons.KINDS.",
+                   "enum": ["database", "app_server", "logging", "jump_host", "terminal", "radio", "directory", "internal", "internet",
+                            "backup", "mail", "firewall", "dns", "time", "switch", "router", "hypervisor", "storage", "plc", "rtu",
+                            "hmi", "historian", "server", "wireless", "cloud", "api", "vm", "rack", "workstation", "scada", "dhcp",
+                            "unknown", "gap"]},
+          "zone": {"type": "string"},
+          "tier": {"type": ["string", "null"], "description": "Row inside a data centre: net, access, app, db, ot."},
+          "group": {"type": ["string", "null"]},
+          "ips": {"type": "array", "items": {"type": "string"}},
+          "kind_basis": {"type": "string", "description": "Why this kind: the recorded role, or 'No role recorded'."},
+          "host": {"type": "boolean", "description": "True for a host in the register (not a roll-up or gap marker)."}
+        }
+      }
+    },
+    "edges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "s", "t", "status"],
+        "properties": {
+          "id": {"type": "string"},
+          "s": {"type": "string", "description": "Source node, group or Z:<zone> for a whole zone."},
+          "t": {"type": "string"},
+          "dir": {"enum": ["forward", "both"]},
+          "label": {"type": "string", "description": "Protocol, port and process as captured, one per line; never invented."},
+          "short": {"type": ["string", "null"], "description": "Label used at print size (e.g. '1st', 'not in use')."},
+          "status": {"enum": ["observed", "configured", "inactive", "inferred", "documented", "unknown", "unenforced", "direct", "via-jump"],
+                     "description": "Evidence status, drawn as the line style: observed in captures, configured setting, configured but not in use, inferred, documented only, path not captured, crosses a zone with no control evidenced, admin protocol from outside OT with no jump host, admin path through a jump host."},
+          "evidence": {"type": "array", "items": {"type": "string"}, "description": "Evidence matrix IDs (E-nnn) or capture file lines."},
+          "detail": {"type": "object"}
+        }
+      }
+    },
+    "notes": {"type": "array", "items": {"type": "string"}, "description": "Findings about the figure; shown on the page and in the standalone Word document, not inside the drawing."},
+    "layout": {"type": "object", "description": "Added by model._layout: dcs (data centres left to right), top, bottom, tiers."}
+  }
+}

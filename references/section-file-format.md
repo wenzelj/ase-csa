@@ -68,14 +68,23 @@ The `## Evidence` table is never rendered. It is the traceability record, and ev
 | `migration` | 5 Migration Discovery (heading `Migration Discovery`: `## Summary` only) or a 5.2–5.6 subsection | optional `## Summary` (one paragraph: the intro); `## Table` where the template subsection has a table (5.2, 5.4, 5.5), with the template's columns; optional `## Notes` (one short paragraph) under the 5.4 table; `## Findings` (bullets) in 5.3 and 5.6 | Intro paragraph replaced; table rows scaffolded, then replaced; the note paragraph replaced or deleted; bullets scaffolded, then replaced. For 5.5 the `## Table` header row renames the two `[Host group]` columns; a CSA that needs more host-group columns adds them by hand in Word after the build (neither the framework nor `scaffold_csa.py` can add columns) |
 | `coverage` | 5.1 Discovery Coverage | optional `## Summary`; `## Hosts` (table Host / Role / Discovery Script Run / Notes) | Rows scaffolded to the count, then replaced. S61 generates this file from the discovery index. |
 | `glossary` | Appendix B | `## Terms` (table Term / Definition) | Standard rows kept; project terms appended by scaffolding the row count up, then replacing the new rows |
+| `discovery-required` | Appendix E Discovery Required | `## Items` (table ID / Requirement(s) / Discovery needed / Why it's needed / Rating impact / Owner / source / How to obtain / Status; the template's 8 columns), evidence keys `Items 1`, `Items 2`, ... | The template's bracketed placeholder row is replaced by the first item; rows are scaffolded to the item count, then replaced in order. Rows come from NOT_FOUND evidence rows and recorded discovery gaps. |
 
 Document Control (1.1) and the cover come from the document properties, which `new_csa.py` sets. The build adds one revision-history row (1.2) from its own arguments. Appendix A (the OT 3.5 destinations) is pre-filled in the template and is not a block.
+
+## Role tables (topic tables)
+
+Where the topic has a profile in `.agents/references/topic-tables/` (Time Synchronisation, DNS), the framework itself puts a role table under the Discovery Information heading, above the Aspect table: rows are role groups, columns follow the captured data, no counts, hosts without a capture marked †. It is never written in a section file and never answered by an agent. The Aspect table keeps only points that are not per host. Spec: `.agents/docs/topic-tables-spec.md`; command: `csa topic-table <section> [--place]`.
+
+## Analysis frames
+
+Where the topic has a frame in `.agents/references/topic-frames/` (Storage & Data Transfer), the section card carries an "Analysis frame": explicit sub-questions filled from the captures (host settings and the data-flow inventory), each finding citable by evidence ID. The draft agent answers every slot in a `## F1 Analysis frame` block of the answer sheet (`- S3: B2, B3` or `- S9: Unknown: ...`); FRAME_UNCOVERED blocks a sheet that skips a slot, FLOW_NOT_COVERED warns about a cross-zone data flow named nowhere. Plan: `.agents/docs/topic-analysis-storage-plan.md`.
 
 ## Rules that `csa check-section` enforces
 
 - `block:` is one of the kinds above, and `heading:` exists in the template for that kind (from `template-blocks.json`; straight and curly quotes match).
 - Every required `##` section is present, no unknown or repeated `##` section appears, and every table has exactly the template's column count.
 - `## Discovery Notes` and `## Notes` are exactly one paragraph: no bullets, no table, not several paragraphs.
-- Domain: every Req ID of the domain appears exactly once, and no others; Rating is one of `Met`, `Partially Met`, `Not Met`, `Not Applicable`; Current State is at most 50 words (a warning).
+- Domain: every Req ID of the domain appears exactly once, and no others; Rating is one of `Met`, `Partially Met`, `Not Met`, `Not Applicable`; Current State is at most 100 words (a warning).
 - Every rendered statement has a row in `## Evidence` with at least one E-id that exists in the evidence matrix (coverage files cite captures instead). Unused Evidence rows and a missing matrix are warnings.
 - Rendered text is free of E-ids, `@H` IDs, Markdown emphasis and backticks (errors), and `prose_lint.py` / `term_lint.py` run over it (warnings).

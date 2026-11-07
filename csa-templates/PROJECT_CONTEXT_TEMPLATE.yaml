@@ -16,6 +16,9 @@ project:
     - detailed_current_state_assessment
     - consumable_summary
 
+# Application knowledge skills under .agents/skills/ that every content agent loads, e.g. reveloc-csa-skill.
+application_skills: []
+
 working_preferences:
   evidence_only_factual_claims: true
   expand_abbreviations_on_first_use: true

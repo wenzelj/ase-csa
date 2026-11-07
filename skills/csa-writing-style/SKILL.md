@@ -17,6 +17,18 @@ Before applying anything below, read a paragraph or two of the section's surroun
 
 Match the register (formality, level of detail), not the structural habits. Spelling and technical terms always follow `australian-it-ot-terminology` (`.agents/skills/australian-it-ot-terminology/SKILL.md`): Australian English and the terminology table, even where the surrounding text uses US spelling or looser terms. If the surrounding text breaks the "Say it once, say it first" rules below (bullet fragments, restated facts, announcing lead-ins), do not copy those habits into new text.
 
+## Write terms in full
+
+A reader must not have to decode an abbreviation to understand a heading or a short passage.
+
+- Write technical terms in full in headings, captions, table headers and finding labels. Prefer `Server Message Block connections to unnamed peers`, not `SMB connections to unnamed peers`.
+- In body prose, use the full term without an abbreviation when the term appears only once.
+- Introduce an abbreviation only when it will be reused. On first use in each independently readable subsection, write the full term followed by the abbreviation in parentheses, for example `Server Message Block (SMB)`. Use the abbreviation alone only after that introduction.
+- Do not assume that a glossary makes an unexplained abbreviation clear at the point of reading.
+- Preserve official product names, host names, executable names, service names, configuration keys and quoted source wording. Do not invent an expanded form for an identifier or vendor name.
+
+Run `term_lint.py` before returning the draft. Resolve every `UNEXPANDED_ABBREVIATION` finding by spelling out the term or, where the token is genuinely an official name or identifier, documenting why it must remain.
+
 ## Tell the story
 
 A reader should be able to read a paragraph aloud to a colleague and have it make sense. Write each paragraph as a short explanation of how this part of the system works, not as a list of what the evidence contains. Follow this order, and leave out any step that has nothing to say:
@@ -27,15 +39,44 @@ A reader should be able to read a paragraph aloud to a colleague and have it mak
 4. **What it means.** The consequence for operations, including if the OT environment is isolated.
 5. **What is still unknown.** Once, at the end, in one sentence, with who can confirm it.
 
+### Answer the question first
+
+The reader asked a question of a system: where does its time come from, which resolvers does it use, what fails when they go. Answer it in terms of the systems and applications (the Reveloc application servers, the SQL clusters, the TETRA log server, the jump hosts), not host counts or capture coverage, and name the role the answer points to (the host name too only where the reader must act on one host; see "Host references"), so the reader knows what to look at. The limits below are guides that `prose_lint.py` reports as warnings. Never leave the question half answered, or drop a fact that answers it, to meet a limit; a longer sentence or one more host name is the smaller fault.
+
+### Requirement rows: judge the practice, not the assessment's own list
+
+A requirement asks whether the organisation does something (keeps an inventory, documents dependencies, monitors logs). The Current State cell answers that, in this order and usually in one to three sentences:
+
+1. **The applicable practice or control.** Name what the application does and the function involved. If implementation was not demonstrated, say that it was not identified in the defined evidence scope; do not state a bare absence.
+2. **What exists instead, if anything.** A partial or informal substitute, in a few words ("A point-in-time list was compiled prior to discovery").
+3. **Scope exclusions that touch the requirement** ("<system> is excluded from this CSA and will be assessed separately"), only where the project context or supplied documents record that exclusion.
+
+The assessment's own discovery output (the hosts the captures found, their roles and counts) is not the organisation's inventory or dependency map, and never counts as the practice being in place. Host lists, counts and roles go in the Discovery Information and Hosts tables, not the Current State cell. Rate only after applying the applicability and evidence decision rules in `csa-section-writer/references/current-state-reasoning.md`; failure to identify a maintained tool or process is not by itself proof of Not Met.
+
+### Host references: function in prose, name and address in tables
+
+Prose that explains how the system works names a machine by what it does. A host name or IP address only identifies the machine, so it belongs in the table the reader looks it up in, unless the question asks for it.
+
+- **The question decides.** When a requirement or card question asks for hosts or addresses ("which hosts", "what addresses"), give exactly what it asks for: host names, IP addresses, ports. Role-first is the default for explaining how the system works; it never replaces a requested identifier. A "which hosts" answer lists them by name with the role group beside them, and a "which address" answer gives the address next to the role.
+- **Default: the function.** Use the machine's role from the Host register (`role` column), written the same way every time: "the RevViewer Jump Host", "the Radio Management host", "the enterprise domain controllers", "the TETRA log server". The role is the subject of the sentence, and the initiator of a connection is the subject: "The RevViewer Jump Host starts RDP (mstsc) sessions into the Radio Management host." not "ROKPRDOPS110 initiates RDP sessions into ROKPRDOPS112 and 10.40.228.132."
+- **Same role, several hosts: the group.** "The two RevViewer Jump Hosts", "the six SQL Server cluster nodes". Add the site only when the sites differ ("the Mackay RevViewer Jump Host"). The member names go in the table row for that role group.
+- **Add the host name in prose only when** (a) the finding is about one specific host and the reader must act on it or find it (an exception, a gap, a host that differs from its peers), or (b) the role and site still leave two hosts indistinguishable. Give it once, on first mention in that paragraph, as "role (NAME)": "the Mackay RevViewer Jump Host (MKYPRDOPS110)", then the role alone afterwards. Never repeat a host name sentence after sentence.
+- **No role in the evidence: use the name.** Never invent or infer a function. If the register has no role for a host, use its name exactly as the sources write it and let the unknown be stated once.
+- **IP address in prose only for a machine with no name and no known role**, written as "an unnamed internal peer (10.40.228.132)". Never give a name and an address together in prose, and never an address for a host that has a name. Leave subnets and address ranges to the tables.
+- **Tables give both**, one row per role group: `MOTPRDREV101 (10.20.1.5)`. Write names exactly as the sources do, never renamed (RevViewer stays RevViewer).
+- **Ports where they matter.** Give a port or protocol where it explains how components connect ("RDP (mstsc)", "tcp/9997"); put full port lists in a table.
+
+Before: "ROKPRDOPS110 initiates RDP (mstsc) sessions into ROKPRDOPS112 and into unnamed internal peers at 10.40.228.132 and 10.40.228.211. MKYPRDOPS110 and ROKPRDOPS110 each establish sessions to MOTPRDSRV122 and ROTPRDSRV122."
+
+After: "The RevViewer Jump Hosts are the administrative entry point. The Rockhampton jump host starts RDP (mstsc) sessions into the Radio Management host and two unnamed internal peers (10.40.228.132, 10.40.228.211), and both jump hosts authenticate against the enterprise domain controllers."
+
 ### Identifier budget
 
-- **No IP addresses or subnets in prose.** They go in the discovery table, the observed-state table or the appendix. `csa check-change` rejects an IP address in an edit's prose text.
-- **At most one port number per paragraph**, and only where the port is the point (for example, the one inbound port a firewall must allow).
-- **Name hosts by role**, and give a host name only where the reader needs it to act or to find the host in a table. Never list more than two host names in a sentence.
-- **Average sentence 24 words or fewer; no sentence over 35 words.** Split any sentence that carries more than one fact about more than one component.
+- **Group hosts by role.** Hosts with the same role share one table row ("ROTPRDCLU101-104, MOTPRDCLU101, MOTPRDCLU103 | OT | SQL Server cluster node"), and prose names the role group, not each host. A host table covers every captured host in the card's Host register, one row per role group. Any count must add up: a total and its breakdown name the same hosts.
+- **Readable sentences.** Aim for an average around 25 words and split sentences over about 45 words where that reads better. Never drop a fact to shorten a sentence.
 - **One hedge per point.** Put the unknown once, at the end ("Whether the second site is used only on failover is still to be confirmed with the operations team."), not in every sentence.
 
-`prose_lint.py` measures each of these.
+`prose_lint.py` reports these as advisory notes. They guide the writing; they are not pass/fail rules.
 
 ### Example
 
@@ -49,23 +90,37 @@ After (the same facts, told as a story):
 
 The addresses, ports and gateway names move to the discovery table. Nothing is lost, and the paragraph now explains the system instead of listing it.
 
+<!-- digest:plain-language:start -->
+## Plain language for the reader
+
+The agent digests copy this section word for word, so edit it here and nowhere else.
+
+- Write for a reader who has never seen the evidence or this framework. Say what this system's own parts are or do the first time they appear ("the two domain controllers that every server asks for DNS"), not in a shorthand label. This is not textbook material: do not explain what DNS or a domain controller is in general.
+- Say "DNS server", not "resolver", in prose (the terminology skill's term).
+- Never use framework shorthand as if the reader knew it: "resolver pair", "OT parts", "captured parts", "role group", "role-aware".
+- Write a term in full on first use, and the abbreviation after it only where the abbreviation is needed again.
+- Name a machine by its role and site ("the Reveloc application server in Mackay"). Host names and IP addresses go in tables, unless the question asks for them. This holds even when a Fact names the host.
+- Tell it as a short story: how it works now, what is missing, what that means for operations. Do not list what the captures contain.
+- Read it aloud to a colleague who does not know the system. If they would ask "what is that?", rewrite it.
+<!-- digest:plain-language:end -->
+
 ## Say it once, say it first
 
 A Current State Assessment (CSA) gives decision-makers an evidenced baseline: what exists, how it differs from what the design or reference standard expects, and what that means for operations. Its readers are technical and operational people who already know the technologies. They need the facts and their consequence, not a tour of the evidence. These rules apply to every paragraph, bullet and table cell, and they outrank "match the existing voice".
 
 - **The subject is the system, not the evidence.** The subject of a sentence is the application, a component, a service, or a dependency -- never "the discovery data", "the table", "the workbook", "the capture", "the script output". Evidence supports the statement; it does not become its subject. Full rules and before/after examples: `csa-section-writer/references/current-state-reasoning.md`.
-- **Answer first.** The first sentence of a section or subsection states its conclusion. Supporting facts follow; raw detail goes in a table or the appendix. Do not build up to the conclusion through a chain of "This confirms... As a result..." steps.
+- **Answer first.** The first sentence of a section or subsection states its conclusion. (In a requirement block the Summary answers first. The Story then tells how the capability works now and what the evidence leaves unknown. It does not restate the rating or repeat the Summary.) Supporting facts follow; raw detail goes in a table or the appendix. Do not build up to the conclusion through a chain of "This confirms... As a result..." steps.
 - **Each fact once.** A fact (a host list, a server name, an IP address, a dependency, a consequence) is stated in the one place that owns it. Everywhere else, refer to it ("the two enterprise time servers", or a finding ID) rather than listing it again. When Findings, Assessment, Operational Behaviour and Impact subsections all restate the same dependency, each keeps only what is new to it.
 - **State, don't announce.** Delete lead-ins that announce a conclusion instead of stating it: "This confirms that", "This indicates", "This establishes that", "This results in:", "This represents", "As a result:", "The following findings are derived from...", "The analysis focuses on...". Write the conclusion itself as the sentence.
 - **Sentences, not fragments.** Write full sentences in paragraphs. Use a bullet list only for three or more parallel items a reader will scan (hosts, services, requirements). Never split one sentence across a lead-in line and bullets ("Loss of:" followed by "- ongoing time synchronisation"). No nested bullets.
 - **No textbook material.** Do not explain what DNS, NTP, Kerberos, a firewall or an endpoint agent is, or why such services matter in general. Say what it does in this system and why that matters here. If a reader needs background, it goes in a labelled `Technical explanation` note (`technical-explainer`), not in the finding.
 - **Findings, not log lines.** Never paste raw log or command output into the body. State what it shows and give a short source reference (file name and date); the raw lines stay in the evidence.
-- **Detail lives in tables and appendices.** Per-host lists, IP addresses, ports, capture dates and evidence file names belong in the observed-state or discovery table, or the evidence appendix. Prose carries what the detail means ("all eight captured hosts", "both production sites").
+- **Detail lives in tables and appendices.** Per-host lists, address lists, port lists, capture dates and evidence file names belong in the observed-state or discovery table, or the evidence appendix. Prose carries what the detail means ("the captured SQL Server cluster nodes", "the Rockhampton site"). Do not give counts of hosts: name the role group.
 - **State the evidence basis once.** How evidence was gathered, and what it could not see, is stated once in Scope and Methodology. Do not tag headings or sentences with "(Script Evidence)", "(Evidence-Based)" or "(Script Confirmed)". A limitation that affects one finding is stated once, precisely, in that finding ("not confirmed on six of eight hosts, whose captures did not include service inventories").
 - **Findings run condition, criteria, consequence.** Each finding is one short paragraph with a headline sentence that could stand alone: what is (condition), what the design or reference standard expects (criteria), and what it means for operations, including under the isolation scenario (consequence). Add the cause only when the evidence shows it. Recommendations sit separately and refer back to the finding.
 - **Rank by consequence.** Order findings by operational consequence, not by the order discovery happened.
 - **One term per thing.** Define a term once (for example the isolation scenario's name) and use only that term afterwards.
-- **Proportion.** A domain with one finding reads in well under a page. When a draft is longer than its facts justify, cut restatement before cutting facts.
+- **Proportion.** Length follows the system: a domain with one finding reads in well under a page, while a large application with many components, interfaces and dependencies needs as much as it takes to describe them. When a draft is longer than its facts justify, cut restatement before cutting facts.
 
 Flow comes from order (conclusion, support, consequence) and from linking sentences by their content, not from connector words. When two points relate, say how in one clause: "Unlike the DNS dependency, loss of time synchronisation degrades gradually."
 
@@ -103,6 +158,7 @@ The rewrite keeps every fact, adds the consequence the original only implied, an
 - **Symmetric triplets.** "Reliable, scalable, and secure" or any three-adjective/three-clause list used as a rhetorical flourish rather than because there are exactly three distinct, evidenced things to say. State what's actually true; stop when you've said it.
 - **Uniform paragraph and sentence rhythm.** Real technical writing varies -- a short sentence next to a longer one, a paragraph that's two sentences next to one that's five. Prose where every sentence is roughly the same length and every paragraph follows the same setup-detail-consequence shape reads as generated. Vary it.
 - **Over-signposting.** Don't narrate the structure of what you're about to say ("There are three key points to consider," "Let's break this down," "In summary," when nothing was actually summarised). State the finding; let the heading and table do the structural work the document already provides.
+- **Semicolons.** Never put a semicolon in text that lands in the document: prose, a requirement's Current State, a Drawbridge Impact paragraph, a finding or a Discovery note. Write two sentences, or join the two parts with a comma and "and" or "but". A list after a colon is separated by commas. `prose_lint.py` warns on every one, and `csa check-change` and the draft lane refuse a Text that has one.
 - **Em dash overuse as a substitute for commas or full stops.** An occasional em dash is fine; a string of them in every paragraph is a tell. Prefer a comma, a full stop, or a colon where either reads more naturally.
 - **Manufactured enthusiasm or editorialising.** No exclamation points, no "excitingly," no implied opinion about whether a finding is good or bad beyond what the evidence and the document's risk/gap framing supports.
 - **Padding a sentence to sound authoritative.** "It is worth noting that the server was found to be running Windows Server 2019" is a sentence about nothing; "The server runs Windows Server 2019." says the same thing and reads like a person who trusts their own claim.
@@ -117,9 +173,13 @@ The rewrite keeps every fact, adds the consequence the original only implied, an
 - When two adjacent items in a list or table row are similar, it's fine for their phrasing to differ slightly rather than following an identical template every time, the way two different people describing the same ten hosts would naturally vary their phrasing slightly from row to row.
 - Read the paragraph back once before finalising it and ask: would a technical writer on this team actually have typed this sentence, or does it read like a summary of what a sentence like this should contain? Rewrite anything that fails that check.
 
+## Never infer
+
+See "Never infer" in .agents/csa-core-rules.md.
+
 ## Evidence IDs never appear in the body text
 
-Traceability (E-id citations) belongs in the change record's `Why` field and, from there, the Word comment attached to the edit -- never in the drafted prose itself. Do not write "`[E-042]`" or similar inline into a sentence or table cell that will land in the document. If a claim is `INFERRED`, `UNCONFIRMED`, or `CONFLICTING`, say so in plain words in the sentence ("has not been directly observed," "reported inconsistently across hosts") rather than a bracketed status tag -- the citation marker and the uncertainty label are both metadata, and metadata stays out of the reader-facing text.
+See "Evidence IDs never in document text" in .agents/csa-core-rules.md.
 
 ## Comment notes (the Word comment on each change)
 
@@ -149,7 +209,7 @@ Run the prose lint on the draft (Markdown) or, for review, on the working DOCX s
 python3 .agents/skills/csa-writing-style/scripts/prose_lint.py <draft.md | working.docx> [--section N]
 ```
 
-It measures the rules above: bullet share, nested bullets, fragments and lead-ins, announcing connectors, identifiers repeated in prose, repeated sentences, evidence IDs or file names in prose, and heading label noise. New or rewritten text should produce no connector, nested-bullet, evidence-ID or heading-noise warnings, and no identifier stated in more than three prose paragraphs of one section. The lint is a guide, not a substitute for reading the paragraph back.
+It measures the rules above: bullet share, nested bullets, fragments and lead-ins, announcing connectors, identifiers repeated in prose, repeated sentences, evidence IDs or file names in prose, and heading label noise. New or rewritten text should produce no semicolon, connector, nested-bullet, evidence-ID or heading-noise warnings, and no identifier stated in more than three prose paragraphs of one section. The lint is a guide, not a substitute for reading the paragraph back.
 
 ## What this skill does not change
 

@@ -19,13 +19,16 @@ for the design this module implements.
 
 from __future__ import annotations
 
+import sys
+
 import hashlib
 import json
 import os
 import re
 import zipfile
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime, timezone
+UTC = timezone.utc  # datetime.UTC needs Python 3.11; this works on 3.10 too
 from pathlib import Path
 
 from .change_parser import parse_change_file, select_batch
@@ -34,7 +37,7 @@ from .manifest import ManifestError, get_manifest, refresh_manifest as _refresh_
 from .models import ApplySummary
 from .ooxml import DocumentEditor
 from .report_writer import update_changes_report
-from .run_state import read_completed_ids, state_path, write_state
+from .run_state import read_completed_ids, state_key, state_path, write_state
 from .stable_ids import generate_manifest
 from .validator import validate_docx
 
@@ -195,6 +198,12 @@ def _check_document_ready(docx: Path) -> _Readiness:
         )
 
     locks = _word_lock_files(docx)
+    if locks:
+        from .word_close import ensure_closed
+        closed = ensure_closed(docx)
+        if closed["status"] != "LOCKED":
+            print(f"csa: {closed['message']}; carrying on", file=sys.stderr)
+            locks = _word_lock_files(docx)
     if locks:
         return _Readiness(
             False,
@@ -802,7 +811,7 @@ def apply_next_batch(
     if not docx.exists():
         return _error(f"Working DOCX does not exist: {docx}")
 
-    state = state_path(docx.parent, section)
+    state = state_path(docx.parent, state_key(section, change_file))
 
     section_label, records = parse_change_file(change_file)
     section = str(section) or (section_label or "unknown")

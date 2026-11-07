@@ -1,0 +1,523 @@
+"""Safe, no-apply author and card workflow for the CSA editing workspace."""
+from __future__ import annotations
+
+import csv
+import hashlib
+import json
+import re
+import sys
+from pathlib import Path
+from typing import Any, Callable
+
+from fastapi import HTTPException
+
+from . import commands, documents, jobs, pipeline, sections
+from .models import AuthorOutcomeSummary, AuthorPreflight, CommandRequest
+
+
+Runner = Callable[[str], Any]
+ARTIFACT_NAMES = {
+    "brief": "Author brief",
+    "card": "Section card",
+    "card_json": "Section card data",
+    "answer_sheet": "Answer sheet",
+    "answer_check": "Answer check",
+    "answer_errors": "Answer errors",
+    "search_notes": "Evidence search notes",
+    "author_report": "Author report",
+    "timing": "Run timing",
+    "cache_manifest": "Answer cache manifest",
+    "fact_store": "Established facts snapshot",
+}
+
+
+def _run(agents_dir: Path, project: dict[str, str], runner: Runner | None, operation: str) -> Any:
+    return (runner or (lambda name: pipeline._run(agents_dir, project, name)))(operation)
+
+
+def _job_dict(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if hasattr(value, "model_dump"):
+        return value.model_dump()
+    return {}
+
+
+def _normal_key(value: str) -> str:
+    key = re.sub(r"[^A-Za-z0-9_.-]+", "-", value.strip()).strip("-.")
+    if not key or not commands.SAFE_SECTION.fullmatch(key):
+        raise HTTPException(422, "Invalid section identifier")
+    return key
+
+
+def _matching_row(rows: Any, section: str) -> dict[str, Any]:
+    if not isinstance(rows, list):
+        return {}
+    wanted = section.casefold()
+    matches = [row for row in rows if isinstance(row, dict) and wanted in {
+        str(row.get("section") or "").casefold(), str(row.get("subsection") or "").casefold(),
+        str(row.get("stable_key") or row.get("key") or "").casefold(),
+    }]
+    return matches[0] if len(matches) == 1 else {}
+
+
+def _section_identity(status: Any, builds: Any, section: str,
+                      resolved: dict[str, Any] | None = None) -> tuple[str, str, str]:
+    stable_key = str((resolved or {}).get("key") or section)
+    number = str((resolved or {}).get("number") or section)
+    revise = _matching_row(status, number) or _matching_row(status, section)
+    build = _matching_row(builds, number) or _matching_row(builds, stable_key) or _matching_row(builds, section)
+    row = revise or build
+    stable_key = str(row.get("stable_key") or row.get("key") or stable_key)
+    number = str(row.get("subsection") or row.get("section") or row.get("number") or number)
+    return _normal_key(stable_key), number, "revise" if revise else "build" if build else "revise"
+
+
+def _resolved_node(agents_dir: Path, project: dict[str, str], runner: Runner | None,
+                   section: str) -> dict[str, Any] | None:
+    try:
+        spec = _run(agents_dir, project, runner, "spec_status")
+        if not isinstance(spec, dict) or not isinstance(spec.get("nodes"), list):
+            return None
+        resolver = sections._resolver(agents_dir)
+    except (HTTPException, OSError, ValueError, AttributeError, AssertionError):
+        return None
+    try:
+        return resolver.resolve(spec, section)
+    except resolver.ResolveError as error:
+        raise HTTPException(409 if "more than one" in str(error) else 404, str(error)) from error
+
+
+def _sha256(path: Path | None) -> str | None:
+    if path is None or not path.is_file():
+        return None
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def _document_hash(project: dict[str, str]) -> str:
+    try:
+        metadata = documents.metadata(project)
+        path = Path(str(metadata.get("path") or "")).expanduser()
+        return _sha256(path) or "unavailable"
+    except (HTTPException, OSError, ValueError):
+        return "unavailable"
+
+
+def _artifact_paths(project: dict[str, str], stable_key: str) -> dict[str, Path]:
+    work = Path(project["work_dir"]).expanduser().resolve()
+    author = work / "author" / stable_key
+    cards = work / "cards"
+    return {
+        "brief": author / "brief.md", "card": cards / f"{stable_key}.md",
+        "card_json": cards / f"{stable_key}.json", "answer_sheet": cards / f"{stable_key}.answer.md",
+        "answer_check": cards / f"{stable_key}.check.md", "answer_errors": cards / f"{stable_key}.errors.md",
+        "search_notes": author / "search-notes.md", "author_report": author / "author-report.md",
+        "timing": author / "timing.json",
+        "cache_manifest": cards / f"{stable_key}.manifest.json",
+        "fact_store": work / "facts" / "facts.jsonl",
+    }
+
+
+def _artifact_rows(project: dict[str, str], stable_key: str) -> list[dict[str, Any]]:
+    rows = []
+    for key, path in _artifact_paths(project, stable_key).items():
+        digest = _sha256(path)
+        rows.append({"key": key, "label": ARTIFACT_NAMES[key], "exists": digest is not None,
+                     "hash": digest, "size": path.stat().st_size if digest is not None else None})
+    return rows
+
+
+def _safe_selected_file(project: dict[str, str], row: dict[str, Any]) -> Path | None:
+    raw = row.get("change_file") or row.get("file")
+    if not raw:
+        return None
+    path = Path(str(raw)).expanduser()
+    if not path.is_absolute():
+        path = Path(project["work_dir"]).expanduser() / "sections" / path
+    path = path.resolve()
+    roots = [Path(project[name]).expanduser().resolve() for name in ("project_root", "work_dir") if project.get(name)]
+    if not path.is_file() or not any(path == root or root in path.parents for root in roots):
+        return None
+    return path
+
+
+def _evidence(project: dict[str, str], section: str, stable_key: str) -> list[dict[str, str]]:
+    path = Path(project["work_dir"]).expanduser() / "evidence-matrix.csv"
+    if not path.is_file():
+        return []
+    wanted = {section.casefold(), stable_key.casefold(), stable_key.replace("-", " ").casefold()}
+    result = []
+    try:
+        with path.open(encoding="utf-8-sig", newline="") as handle:
+            for row in csv.DictReader(handle):
+                scope = " ".join(str(row.get(key) or "") for key in ("section", "csa_area", "question", "claim")).casefold()
+                if not any(value and value in scope for value in wanted):
+                    continue
+                result.append({key: str(row.get(key) or "") for key in
+                               ("evidence_id", "status", "review_state", "question", "claim", "source_title", "page_or_location")})
+    except (OSError, csv.Error):
+        return []
+    return result
+
+
+def _cards(path: Path) -> list[dict[str, str]]:
+    if not path.is_file():
+        return []
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    questions = value.get("questions", []) if isinstance(value, dict) else []
+    return [{"id": str(row.get("id") or row.get("qid") or ""),
+             "question": str(row.get("question") or row.get("text") or "")}
+            for row in questions if isinstance(row, dict)]
+
+
+def _framework_import(agents_dir: Path, name: str) -> Any | None:
+    framework = str((agents_dir / "framework").resolve())
+    added = framework not in sys.path
+    try:
+        if added:
+            sys.path.insert(0, framework)
+        return __import__(f"csa_docx.{name}", fromlist=[name])
+    except (ImportError, OSError):
+        return None
+    finally:
+        if added and framework in sys.path:
+            sys.path.remove(framework)
+
+
+def _matrix_by_id(project: dict[str, str]) -> dict[str, dict[str, str]]:
+    path = Path(project["work_dir"]) / "evidence-matrix.csv"
+    if not path.is_file():
+        return {}
+    try:
+        with path.open(encoding="utf-8-sig", newline="") as handle:
+            return {str(row.get("evidence_id") or "").upper(): dict(row) for row in csv.DictReader(handle)}
+    except (OSError, csv.Error):
+        return {}
+
+
+def _author_state(agents_dir: Path, project: dict[str, str], stable_key: str) -> dict[str, Any]:
+    paths = _artifact_paths(project, stable_key)
+    card_path, sheet = paths["card_json"], paths["answer_sheet"]
+    matrix = Path(project["work_dir"]) / "evidence-matrix.csv"
+    hosts = Path(project["work_dir"]) / "hosts" / "hosts.csv"
+    cards = _cards(card_path)
+    cache = {"status": "NONE", "changed": [], "reason": "No validated answer cache is available."}
+    fingerprint: dict[str, Any] = {}
+    module = _framework_import(agents_dir, "answer_cache")
+    if module is not None and card_path.is_file() and matrix.is_file():
+        try:
+            fingerprint = module.fingerprint(card_path, matrix, hosts if hosts.is_file() else None)
+            cache = {**cache, **module.compare(sheet, fingerprint)}
+        except (OSError, ValueError, KeyError, TypeError):
+            cache = {"status": "STALE", "changed": [], "reason": "The answer cache manifest could not be validated."}
+    changed = set(cache.get("changed") or [])
+    decisions = [{"question_id": row["id"], "question": row["question"],
+                  "decision": "regenerate" if row["id"] in changed or cache["status"] in {"NONE", "STALE"} else "reuse",
+                  "reason": cache.get("reason") or ("Inputs changed." if row["id"] in changed else "Inputs are unchanged.")}
+                 for row in cards]
+    established: list[dict[str, Any]] = []
+    rows = _matrix_by_id(project)
+    if card_path.is_file():
+        try:
+            raw = json.loads(card_path.read_text(encoding="utf-8"))
+            for qid, facts in (raw.get("established") or {}).items():
+                for fact in facts:
+                    ids = [str(value).upper() for value in fact.get("evidence_ids") or []]
+                    live = all(value in rows for value in ids)
+                    sources = [{"evidence_id": value, "status": rows.get(value, {}).get("status", "UNAVAILABLE"),
+                                "source_title": rows.get(value, {}).get("source_title", ""),
+                                "page_or_location": rows.get(value, {}).get("page_or_location", "")}
+                               for value in ids]
+                    established.append({"fact": str(fact.get("fact") or ""), "origin_section": str(fact.get("section") or ""),
+                                        "question_id": str(fact.get("question") or qid), "basis": str(fact.get("basis") or ""),
+                                        "evidence_ids": ids, "sources": sources,
+                                        "validation_state": "valid" if live else "invalidated",
+                                        "reuse_status": "reused" if live else "unavailable"})
+        except (OSError, ValueError, TypeError):
+            pass
+    fp_hash = hashlib.sha256(json.dumps(fingerprint, sort_keys=True).encode()).hexdigest() if fingerprint else ""
+    timing: dict[str, Any] = {}
+    try:
+        timing = json.loads(paths["timing"].read_text(encoding="utf-8")) if paths["timing"].is_file() else {}
+    except (OSError, ValueError):
+        timing = {}
+    writer = str(timing.get("writer") or "not-run")
+    if writer.startswith("run"):
+        writer_decision = {"state": "executed", "reason": writer.partition(":")[2].strip() or "Validation requested the writer."}
+    elif writer.startswith("skipped"):
+        writer_decision = {"state": "skipped", "reason": writer.partition(":")[2].strip() or "The proposal passed the writer gate."}
+    else:
+        writer_decision = {"state": "pending", "reason": "No writer decision has been recorded."}
+    digest_path = agents_dir / "references" / "digests" / "author.md"
+    digest_hash = _sha256(digest_path)
+    rules_digest = {"name": "author", "sha256": digest_hash or "", "bytes": digest_path.stat().st_size if digest_hash else 0}
+    metric_keys = ("author_s", "answer_s", "write_s", "author_read_kb", "answer_read_kb", "write_read_kb",
+                   "author_commands", "answer_commands", "write_commands", "author_tokens", "answer_tokens", "write_tokens",
+                   "reused", "answered", "open", "unanswered")
+    metrics = {key: timing[key] for key in metric_keys if key in timing}
+    durations = [float(timing[key]) for key in ("author_s", "answer_s", "write_s") if isinstance(timing.get(key), (int, float))]
+    metrics["total_seconds"] = round(sum(durations), 1)
+    metrics["read_kb"] = round(sum(float(timing.get(key) or 0) for key in ("author_read_kb", "answer_read_kb", "write_read_kb")), 1)
+    metrics["commands"] = sum(int(timing.get(key) or 0) for key in ("author_commands", "answer_commands", "write_commands"))
+    metrics["tokens"] = sum(int(timing.get(key) or 0) for key in ("author_tokens", "answer_tokens", "write_tokens"))
+    return {"cache_status": cache["status"], "cache_reason": cache.get("reason", ""),
+            "question_decisions": decisions, "established_facts": established,
+            "autofixes": timing.get("autofixes") or [], "writer_decision": writer_decision,
+            "run_metrics": metrics, "rules_digest": rules_digest,
+            "freshness": {"status": "current" if cache["status"] == "REUSE" else "attention",
+                          "fingerprint": fp_hash, "reason": cache.get("reason", "")}}
+
+
+def _fingerprint(project_key: str, section: str, document_hash: str,
+                 evidence: list[dict[str, str]]) -> str:
+    value = {"project": project_key, "section": section, "document": document_hash,
+             "evidence": [(row.get("evidence_id"), row.get("status"), row.get("review_state")) for row in evidence]}
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def _job_target(job: dict[str, Any]) -> str:
+    args = [str(value) for value in job.get("display_args", [])]
+    try:
+        position = args.index("author")
+    except ValueError:
+        position = -1
+    for value in args[position + 1:]:
+        if not value.startswith("-"):
+            return value
+    return ""
+
+
+def setup(agents_dir: Path, project: dict[str, str], section: str, *,
+          runner: Runner | None = None, manager: jobs.JobManager | None = None) -> dict[str, Any]:
+    """Return bounded inputs and artifacts for a no-apply author run."""
+    commands.build_argv(agents_dir, project["key"], "author", CommandRequest(target=section))
+    status = _run(agents_dir, project, runner, "status")
+    builds = _run(agents_dir, project, runner, "sections")
+    node = _resolved_node(agents_dir, project, runner, section)
+    stable_key, number, lane = _section_identity(status, builds, section, node)
+    selected = _matching_row(status, number) or _matching_row(status, section) or \
+        _matching_row(builds, number) or _matching_row(builds, stable_key) or _matching_row(builds, section)
+    proposal_path = _safe_selected_file(project, selected)
+    artifacts = _artifact_rows(project, stable_key)
+    author_state = _author_state(agents_dir, project, stable_key)
+    evidence = _evidence(project, number, stable_key)
+    document_hash = _document_hash(project)
+    prior = []
+    if manager is not None:
+        prior = [_job_dict(job) for job in manager.list(project)]
+        prior = [job for job in prior if job.get("operation") == "author" and _job_target(job) == section]
+    active = [job for job in prior if str(job.get("state")) in {"queued", "running"}]
+    exists = {row["key"]: row["exists"] for row in artifacts}
+    validation = str(selected.get("validation") or selected.get("review") or "pending")
+    validation_ready = validation.lower() in {"ok", "pass", "passed", "valid", "validated", "ready"}
+    cache_status = author_state["cache_status"]
+    writer_state = author_state["writer_decision"]["state"]
+    stages = [
+        {"key": "evidence", "label": "Evidence selected", "state": "ready" if evidence else "attention",
+         "reason": f"{len(evidence)} matrix claim(s) selected." if evidence else "No section evidence is selected."},
+        {"key": "facts", "label": "Established facts", "state": "reused" if author_state["established_facts"] else "ready",
+         "reason": f"{len(author_state['established_facts'])} validated fact(s) reused." if author_state["established_facts"] else "No prior facts are needed."},
+        {"key": "card", "label": "Question card", "state": "ready" if exists["card"] else "pending",
+         "reason": "The section questions are prepared." if exists["card"] else "The card will be prepared when authoring starts."},
+        {"key": "cache", "label": "Reuse decision", "state": "reused" if cache_status == "REUSE" else "attention" if cache_status in {"PARTIAL", "STALE"} else "pending",
+         "reason": author_state["cache_reason"] or cache_status},
+        {"key": "answers", "label": "Question answers", "state": "reused" if cache_status == "REUSE" else "changed" if exists["answer_sheet"] else "pending",
+         "reason": f"{sum(1 for row in author_state['question_decisions'] if row['decision'] == 'reuse')} reused; {sum(1 for row in author_state['question_decisions'] if row['decision'] == 'regenerate')} to regenerate."},
+        {"key": "repairs", "label": "Mechanical repairs", "state": "changed" if author_state["autofixes"] else "ready" if proposal_path else "pending",
+         "reason": f"{len(author_state['autofixes'])} mechanical repair(s) recorded." if author_state["autofixes"] else "No mechanical repairs recorded."},
+        {"key": "validation", "label": "Proposal validation", "state": "ready" if validation_ready else "attention" if proposal_path else "pending",
+         "reason": validation},
+        {"key": "writer", "label": "Writer decision", "state": "changed" if writer_state == "executed" else "ready" if writer_state == "skipped" else "pending",
+         "reason": author_state["writer_decision"]["reason"]},
+        {"key": "proposal", "label": "Review handoff", "state": "ready" if proposal_path and validation_ready else "attention" if proposal_path else "pending",
+         "reason": "The proposal is ready for review." if proposal_path and validation_ready else "Validation must pass before review."},
+    ]
+    return {
+        "project_key": project["key"], "section": section, "visible_number": number,
+        "stable_key": stable_key, "lane": lane, "document_hash": document_hash,
+        "model_route": {"default": "cards", "cards": "card → answer → validated proposal",
+                        "legacy": "legacy author agent"},
+        "supported_modes": {"legacy": True, "fresh": True, "check_answers": True,
+                            "writer_policies": ["auto", "force", "skip"]},
+        "default_route": "cards", "no_apply": True, "cards_available": True,
+        "lock_state": {"locked": bool(active), "job_id": active[0].get("id") if active else None,
+                       "detail": "This section is currently being authored." if active else "This section is available."},
+        "selected_cards": _cards(_artifact_paths(project, stable_key)["card_json"]),
+        "author_brief": next(row for row in artifacts if row["key"] == "brief"),
+        "answer_sheet": next(row for row in artifacts if row["key"] == "answer_sheet"),
+        "evidence": evidence, "artifacts": artifacts, "stages": stages, **author_state,
+        "existing_proposal": {"exists": proposal_path is not None, "file": proposal_path.name if proposal_path else None,
+                              "hash": _sha256(proposal_path), "validation": validation},
+        "prior_runs": len(prior),
+        "input_hash": hashlib.sha256((_fingerprint(project["key"], section, document_hash, evidence) +
+                                       author_state["freshness"]["fingerprint"]).encode()).hexdigest(),
+    }
+
+
+def preflight(agents_dir: Path, project: dict[str, str], section: str, *, cards: bool = False,
+              runner: Runner | None = None, manager: jobs.JobManager | None = None) -> AuthorPreflight:
+    current = setup(agents_dir, project, section, runner=runner, manager=manager)
+    return AuthorPreflight(section=section, stable_key=current["stable_key"], lane=current["lane"],
+                           cards=cards, no_apply=True, document_hash=current["document_hash"],
+                           input_hash=current["input_hash"], existing_proposal=current["existing_proposal"],
+                           prior_author_jobs=current["prior_runs"])
+
+
+def _context_path(project: dict[str, str], job_id: str) -> Path:
+    return Path(project["work_dir"]).expanduser() / "ui-jobs" / job_id / "author-context.json"
+
+
+def _write_context(project: dict[str, str], job_id: str, current: dict[str, Any], cards: bool) -> None:
+    path = _context_path(project, job_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    value = {"project_key": project["key"], "section": current["section"], "stable_key": current["stable_key"],
+             "document_hash": current["document_hash"], "input_hash": current["input_hash"], "cards": cards,
+             "artifact_hashes_before": {row["key"]: row["hash"] for row in current["artifacts"]}}
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    temporary.replace(path)
+
+
+def _read_context(project: dict[str, str], job_id: str) -> dict[str, Any]:
+    try:
+        value = json.loads(_context_path(project, job_id).read_text(encoding="utf-8"))
+        return value if isinstance(value, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def submit(agents_dir: Path, project: dict[str, str], section: str, *, cards: bool | None = None,
+           legacy: bool = False, fresh: bool = False, check_answers: bool = False,
+           writer_policy: str = "auto",
+           manager: jobs.JobManager | None = None, runner: Runner | None = None) -> dict[str, Any]:
+    if writer_policy not in {"auto", "force", "skip"}:
+        raise HTTPException(422, "writer_policy must be auto, force, or skip")
+    current = setup(agents_dir, project, section, runner=runner, manager=manager)
+    options = {"no_apply": True}
+    options.update({key: value for key, value in {
+        "legacy": legacy, "fresh": fresh, "check_answers": check_answers,
+        "writer": writer_policy == "force", "no_writer": writer_policy == "skip",
+    }.items() if value})
+    request = CommandRequest(target=section, options=options)
+    manager = manager or jobs.JobManager(agents_dir)
+    job = manager.submit(project, "author", request)
+    row = _job_dict(job)
+    actual_route = "legacy" if legacy else "cards"
+    _write_context(project, str(row["id"]), current, actual_route == "cards")
+    context_path = _context_path(project, str(row["id"]))
+    context = json.loads(context_path.read_text(encoding="utf-8"))
+    context.update({"actual_route": actual_route, "writer_policy": writer_policy,
+                    "fresh": fresh, "check_answers": check_answers})
+    context_path.write_text(json.dumps(context, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return {"job": row, "section": section, "cards": True, "actual_route": actual_route,
+            "writer_policy": writer_policy, "no_apply": True,
+            "input_hash": current["input_hash"]}
+
+
+def outcome(job: dict[str, Any], current: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    raw_state = str(job.get("state") or "unknown").lower()
+    output = " ".join(str(job.get(key) or "") for key in ("message", "stdout_tail", "stderr_tail")).casefold()
+    if raw_state in {"queued", "running"}:
+        state = raw_state.upper()
+    elif raw_state == "succeeded":
+        artifact_state = {row["key"]: row["exists"] for row in current["artifacts"]}
+        if context.get("cards") and not (artifact_state.get("card") and artifact_state.get("answer_sheet")):
+            state = "MISSING_CARDS"
+        elif not current["existing_proposal"]["exists"]:
+            state = "MALFORMED_OUTPUT"
+        elif not current["evidence"]:
+            state = "INCOMPLETE_EVIDENCE"
+        else:
+            state = "DRAFTED"
+    elif raw_state == "cancelled":
+        state = "CANCELLED"
+    elif raw_state == "interrupted":
+        state = "INTERRUPTED"
+    elif "timed out" in output or "timeout" in output:
+        state = "TIMEOUT"
+    elif "blocked" in output or "missing card" in output or "missing evidence" in output:
+        state = "BLOCKED"
+    else:
+        state = "ERROR"
+    current_run = bool(context) and context.get("project_key") == current["project_key"] and \
+        context.get("section") == current["section"] and context.get("document_hash") == current["document_hash"] and \
+        context.get("input_hash") == current["input_hash"]
+    reasons = []
+    before = context.get("artifact_hashes_before") or {}
+    artifact_changes = [{"key": row["key"], "label": row["label"],
+                         "change": "created" if not before.get(row["key"]) and row.get("hash") else "modified"}
+                        for row in current["artifacts"] if row.get("hash") and before.get(row["key"]) != row.get("hash")]
+    if not current_run:
+        reasons.append("The saved run belongs to different or older section inputs and is not current.")
+    if state == "MALFORMED_OUTPUT":
+        reasons.append("The author command completed without a framework-selected proposal.")
+    elif state == "MISSING_CARDS":
+        reasons.append("Card authoring completed without both a section card and answer sheet.")
+    elif state == "INCOMPLETE_EVIDENCE":
+        reasons.append("The author command completed, but the section has no inspectable evidence set.")
+    elif state in {"ERROR", "TIMEOUT", "BLOCKED", "CANCELLED", "INTERRUPTED"}:
+        reasons.append(str(job.get("message") or job.get("stderr_tail") or f"Author run ended as {state}.")[:800])
+    return AuthorOutcomeSummary(
+        state=state, section=current["section"], lane=current["lane"], current=current_run,
+        input_hash=str(context.get("input_hash") or ""), document_hash=str(context.get("document_hash") or ""),
+        proposal=current["existing_proposal"], artifacts=current["artifacts"], stages=current["stages"],
+        evidence=current["evidence"], routed_to_editor=state == "DRAFTED" and current_run,
+        routed_to_validation=state == "DRAFTED" and current_run,
+        warnings=[value for value in [str(job.get("stderr_tail") or "").strip()] if value],
+        non_success_reasons=reasons,
+        actual_route=str(context.get("actual_route") or "cards"),
+        writer_policy=str(context.get("writer_policy") or "auto"),
+        cache_status=current.get("cache_status", "NONE"),
+        question_decisions=current.get("question_decisions", []),
+        established_facts=current.get("established_facts", []),
+        freshness=current.get("freshness", {}),
+        autofixes=current.get("autofixes", []), writer_decision=current.get("writer_decision", {}),
+        run_metrics=current.get("run_metrics", {}), rules_digest=current.get("rules_digest", {}),
+        artifact_changes=artifact_changes,
+    ).model_dump()
+
+
+def get_job(agents_dir: Path, project: dict[str, str], section: str, job_id: str, *,
+            manager: jobs.JobManager | None = None, runner: Runner | None = None) -> dict[str, Any]:
+    manager = manager or jobs.JobManager(agents_dir)
+    job = _job_dict(manager.get(project, job_id))
+    if job.get("operation") != "author" or _job_target(job) != section:
+        raise HTTPException(404, "Author job not found for this section")
+    current = setup(agents_dir, project, section, runner=runner, manager=manager)
+    return {"job": job, "outcome": outcome(job, current, _read_context(project, job_id))}
+
+
+def latest(agents_dir: Path, project: dict[str, str], section: str, *,
+           manager: jobs.JobManager | None = None, runner: Runner | None = None) -> dict[str, Any] | None:
+    manager = manager or jobs.JobManager(agents_dir)
+    matches = [_job_dict(job) for job in manager.list(project)]
+    matches = [job for job in matches if job.get("operation") == "author" and _job_target(job) == section]
+    if not matches:
+        return None
+    matches.sort(key=lambda row: str(row.get("created_at") or ""), reverse=True)
+    job = matches[0]
+    current = setup(agents_dir, project, section, runner=runner, manager=manager)
+    return {"job": job, "outcome": outcome(job, current, _read_context(project, str(job["id"])))}
+
+
+def artifact(project: dict[str, str], section: str, artifact_key: str, *,
+             agents_dir: Path, runner: Runner | None = None) -> tuple[str, str]:
+    if artifact_key not in ARTIFACT_NAMES:
+        raise HTTPException(404, "Unknown author artifact")
+    status = _run(agents_dir, project, runner, "status")
+    builds = _run(agents_dir, project, runner, "sections")
+    stable_key, _, _ = _section_identity(status, builds, section,
+                                          _resolved_node(agents_dir, project, runner, section))
+    path = _artifact_paths(project, stable_key)[artifact_key]
+    if not path.is_file():
+        raise HTTPException(404, "Author artifact is unavailable")
+    try:
+        return path.read_text(encoding="utf-8"), "application/json" if path.suffix == ".json" else "text/plain"
+    except OSError as error:
+        raise HTTPException(409, "Author artifact cannot be read") from error

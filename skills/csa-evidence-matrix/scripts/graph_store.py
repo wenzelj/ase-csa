@@ -23,7 +23,8 @@ Commands
   append-edge   add new edge rows, append-only, validated               (WRITE)
   get-node      print node rows by node_id                              (READ)
   get-edge      print edge rows by edge_id                              (READ)
-  list          list nodes/edges for a domain                           (READ)
+  list          list nodes/edges for a domain (rejected ones left out)  (READ)
+  review        record reviewed/accepted/disputed/rejected per id       (WRITE, review log only)
   stats         counts by domain / node_type / relationship_type        (READ)
   verify        structural + referential-integrity health check        (READ)
 
@@ -58,7 +59,7 @@ NODE_TYPES = (
 PURDUE_LEVELS = ("0", "1", "2", "3", "3.5", "4", "5", "n/a")
 RELATIONSHIP_TYPES = (
     "conduit", "dependency", "trust", "data-flow", "remote-access",
-    "hosting", "replication", "other",
+    "hosting", "replication", "name-resolution", "time-source", "other",
 )
 CONFIDENCES = ("high", "medium", "low")
 REVIEW_STATES = ("pending", "reviewed", "accepted", "disputed")
@@ -117,6 +118,12 @@ def _resolve_registered_project(workspace):
             root_path = Path(root).expanduser().resolve()
         except OSError:
             continue
+        # the registry holds the author's absolute paths; when the repository is mounted
+        # elsewhere (a VM or another machine) rebase the root onto this checkout
+        repo = Path(__file__).resolve().parents[4]
+        if not root_path.exists() and repo.name in root_path.parts:
+            i = root_path.parts.index(repo.name)
+            root_path = repo.joinpath(*root_path.parts[i + 1:])
         if workspace == root_path or root_path in workspace.parents:
             return project
     return None
@@ -306,6 +313,18 @@ def validate_node_row(raw, known_evidence_ids, allow_new_type):
     return row, errs
 
 
+HOST_LABEL = re.compile(r"^([A-Za-z][A-Za-z0-9-]{2,30})(?: \((.*)\))?$")
+
+
+def host_key(label: str):
+    """The host a host-node label names ("NAME" or "NAME (description)", a name with a digit), upper case;
+    None for group or device labels ("IPR400 Radio Over IP gateways, ...") and bare addresses."""
+    m = HOST_LABEL.match((label or "").strip())
+    if not m or not re.search(r"\d", m[1]) or re.fullmatch(r"\d+(?:\.\d+){3}", m[1]):
+        return None
+    return m[1].upper()
+
+
 def cmd_append_node(args):
     workspace, project_key, nodes_path, _, matrix_path = resolve_paths(args)
     payload = _read_payload(args)
@@ -322,8 +341,21 @@ def cmd_append_node(args):
                 fail("nodes.csv header differs from the expected schema; repair before appending", found=header)
 
             prepared, errors = [], []
+            hosts_have = {}
+            for r in body:
+                d = dict(zip(header, r))
+                k = host_key(d.get("label", "")) if d.get("node_type") == "host" else None
+                if k:
+                    hosts_have.setdefault(k, d.get("node_id"))
             for i, item in enumerate(data):
                 item = dict(item)
+                k = host_key(item.get("label", "")) if (item.get("node_type") or "") == "host" else None
+                if k and k in hosts_have:          # one node per host: cite the existing node instead
+                    errors.append({"index": i, "label": (item.get("label") or "")[:80], "errors": [
+                        f"host {k} already has node {hosts_have[k]}; use that node_id for edges"]})
+                    continue
+                if k:
+                    hosts_have[k] = "(this batch)"
                 item.setdefault("project", project_key)
                 if item.get("project") != project_key:
                     errors.append({"index": i, "errors": [
@@ -495,12 +527,64 @@ def cmd_get_edge(args):
     emit({"status": "OK", "rows": rows, "not_found": sorted(ids - found)})
 
 
+REVIEW_LOG_STATES = ("reviewed", "accepted", "disputed", "rejected")
+
+
+def graph_reviews(graph_dir) -> dict:
+    """node/edge id -> latest review record from graph-reviews.jsonl (the CSVs stay append-only)."""
+    log = Path(graph_dir) / "graph-reviews.jsonl"
+    out = {}
+    if log.is_file():
+        for line in log.read_text(encoding="utf-8").splitlines():
+            try:
+                r = json.loads(line)
+            except ValueError:
+                continue
+            out[r["id"]] = r
+    return out
+
+
+def apply_reviews(nodes, edges, graph_dir, include_rejected=False):
+    """Overlay the latest review state; drop rejected nodes/edges (and edges touching a rejected
+    node) unless include_rejected. Every reader of the graph goes through this."""
+    rv = graph_reviews(graph_dir)
+    for row, key in [(n, "node_id") for n in nodes] + [(e, "edge_id") for e in edges]:
+        if row[key] in rv:
+            row["review_state"] = rv[row[key]]["state"]
+    if include_rejected:
+        return nodes, edges
+    gone = {n["node_id"] for n in nodes if n["review_state"] == "rejected"}
+    nodes = [n for n in nodes if n["node_id"] not in gone]
+    edges = [e for e in edges if e["review_state"] != "rejected"
+             and e["source_node_id"] not in gone and e["target_node_id"] not in gone]
+    return nodes, edges
+
+
+def cmd_review(args):
+    _, _, nodes_path, edges_path, _ = resolve_paths(args)
+    _, nb, *_ = load_csv(nodes_path, NODE_COLUMNS)
+    _, eb, *_ = load_csv(edges_path, EDGE_COLUMNS)
+    known = {r[0] for r in nb if r} | {r[0] for r in eb if r}
+    ids = [i.strip().upper() for i in args.ids]
+    missing = [i for i in ids if i not in known]
+    if missing:
+        fail(f"unknown node/edge id(s): {', '.join(missing)}")
+    log = nodes_path.parent / "graph-reviews.jsonl"
+    at = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+    with open(log, "a", encoding="utf-8") as fh:
+        for i in ids:
+            fh.write(json.dumps({"id": i, "state": args.state, "by": args.by, "at": at,
+                                 "note": args.note or ""}, ensure_ascii=False) + "\n")
+    emit({"status": "OK", "reviewed": ids, "state": args.state, "log": str(log)})
+
+
 def cmd_list(args):
     _, project_key, nodes_path, edges_path, _ = resolve_paths(args)
     nh, nb, *_ = load_csv(nodes_path, NODE_COLUMNS)
     eh, eb, *_ = load_csv(edges_path, EDGE_COLUMNS)
     nodes = [as_dict(NODE_COLUMNS, r) for r in nb]
     edges = [as_dict(EDGE_COLUMNS, r) for r in eb]
+    nodes, edges = apply_reviews(nodes, edges, nodes_path.parent, getattr(args, "include_rejected", False))
     if args.domain:
         nodes = [n for n in nodes if n["domain"] == args.domain]
         edges = [e for e in edges if e["domain"] == args.domain]
@@ -515,6 +599,7 @@ def cmd_stats(args):
     eh, eb, *_ = load_csv(edges_path, EDGE_COLUMNS)
     nodes = [as_dict(NODE_COLUMNS, r) for r in nb]
     edges = [as_dict(EDGE_COLUMNS, r) for r in eb]
+    nodes, edges = apply_reviews(nodes, edges, nodes_path.parent)
     def count(rows, key):
         out = {}
         for r in rows:
@@ -624,7 +709,12 @@ def main():
     p = sub.add_parser("get-node"); p.add_argument("ids", nargs="+"); p.set_defaults(fn=cmd_get_node)
     p = sub.add_parser("get-edge"); p.add_argument("ids", nargs="+"); p.set_defaults(fn=cmd_get_edge)
 
-    p = sub.add_parser("list"); p.add_argument("--domain"); p.set_defaults(fn=cmd_list)
+    p = sub.add_parser("list"); p.add_argument("--domain"); p.add_argument("--include-rejected", action="store_true")
+    p.set_defaults(fn=cmd_list)
+    p = sub.add_parser("review", help="record a review of nodes/edges (appends to graph/graph-reviews.jsonl; the CSVs are not changed)")
+    p.add_argument("ids", nargs="+"); p.add_argument("--by", required=True)
+    p.add_argument("--state", choices=REVIEW_LOG_STATES, default="reviewed"); p.add_argument("--note")
+    p.set_defaults(fn=cmd_review)
     p = sub.add_parser("stats"); p.set_defaults(fn=cmd_stats)
     p = sub.add_parser("verify"); p.set_defaults(fn=cmd_verify)
 

@@ -20,7 +20,7 @@ CHANGES = """# Changes CSA Check Section 3
 
 ### S3-E1 - Time Synchronisation: SEP-TIME-01
 
-**Where:** @H4.5-T1-R2
+**Where:** @H3.4-T1-R2
 **Do:** Replace
 **Text:**
 > Observed: Hosts take time from two enterprise servers.
@@ -30,7 +30,7 @@ CHANGES = """# Changes CSA Check Section 3
 
 ### S3-E2 - Time Synchronisation: Discovery Information 1
 
-**Where:** @H4.5.2-T1-R2
+**Where:** @H3.4.1-T1-R2
 **Do:** Replace
 **Text:**
 > Time source | Two enterprise time servers | All captured hosts

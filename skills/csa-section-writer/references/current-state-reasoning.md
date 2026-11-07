@@ -127,7 +127,35 @@ The pipeline is `Discover -> Extract -> Correlate -> Validate -> Build System Vi
 
 A writer that reaches for a sentence as soon as it has found a fact is writing the evidence, not the system. If a paragraph is a string of "X shows, Y lists, Z contains", it has skipped Correlate and Build System View.
 
-## 8. The reader-value test (completion check)
+## 8. Requirement applicability and control assessment
+
+Assess a requirement before writing its finding. The requirement's explicit words, including `shall`, `must`, scope conditions and referenced controls, take precedence over a general account of its intent.
+
+For each requirement, complete an internal assessment object with: `requirement_id`, `requirement_text`, `requirement_intent`, `mandatory_obligations`, `application_function`, `observed_architecture`, `communication_mechanisms` where relevant, `evidence_references`, `confirmed_facts`, `evidence_gaps`, `applicability`, `applicability_justification`, `obligation_assessments`, `compliance_status`, `compliance_justification`, `recommendations`, and `confidence`. For a change-record requirement edit, store this as JSON under `Assessment basis`; it is an audit artefact and never lands in the DOCX.
+
+Use this order:
+
+1. Parse every independently mandatory obligation. Do not add a control that the requirement neither states nor legitimately incorporates by reference.
+2. State the risk or activity each obligation addresses and the application function, component and path to which it could apply.
+3. Classify the observed communication accurately: file transfer, SMB/network share, database connection, REST/SOAP API, application protocol, SMTP, message queue, replication, interactive remote access or infrastructure-management traffic. Data crossing a boundary is not automatically a file transfer. SMTP alone establishes neither the presence nor absence of attachments.
+4. Decide applicability from the exact wording and observed architecture. A feature conclusively absent can support Not Applicable only when the requirement imposes no independent obligation. If either applicability or implementation is not established, record `unable_to_determine` and the evidence needed to decide.
+5. Assess each obligation separately, then derive the overall result. One missing technology does not make a compound requirement Not Met unless that technology is mandatory and applicable.
+
+Decision rules:
+
+| Internal result | Decision rule | Document rating |
+| --- | --- | --- |
+| `met` | Applies; sufficient evidence demonstrates every applicable mandatory element to the required extent. | Met |
+| `partially_met` | Applies; evidence demonstrates some but not all applicable mandatory elements. | Partially Met |
+| `not_met` | Applies; evidence positively establishes that a mandatory condition is not satisfied. | Not Met |
+| `not_applicable` | The addressed activity, technology or condition is demonstrably absent and there is no independent obligation. | Not Applicable |
+| `unable_to_determine` | Evidence is insufficient to establish applicability, implementation or effectiveness. | No supported document rating. Preserve as an open question and do not change the existing rating without human review. |
+
+Absence of evidence supports an evidence gap, not `not_met`. A positive observation that an applicable mandatory control is bypassed can support `not_met`. `not_applicable` needs evidence for the architectural absence and a wording-based explanation of why no independent obligation remains.
+
+Recommendations follow the result: request verification for missing evidence; remediate a positively established failure; make no implementation recommendation for a control that is not applicable. Never call an undocumented control a vulnerability without evidence of a weakness.
+
+## 9. The reader-value test (completion check)
 
 Before a section is complete, the reviewer asks, in order:
 
@@ -139,5 +167,6 @@ Before a section is complete, the reviewer asks, in order:
 6. **Cross-section consistency** -- does the section agree with the other sections (same host names, same populations, same dependency picture)?
 7. **Unknowns** -- are genuine gaps clearly identified rather than filled with assumptions?
 8. **Reader value** -- after reading the section, does a reader unfamiliar with the evidence understand materially better how the application and its supporting system currently operate?
+9. **Requirement decision** -- for a compliance finding, were applicability and every mandatory obligation assessed, was the communication mechanism classified correctly, and does the rating follow from positive evidence rather than an evidence gap?
 
 A section that fails any of 1, 4, 6 or 8 is not complete.

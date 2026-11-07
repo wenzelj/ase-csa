@@ -9,29 +9,25 @@ Terminology: name every component, service, dependency and interface with `austr
 
 The evidence matrix is the shared memory of what has already been established about the assessed system. It lives at `<work_dir>/evidence-matrix.csv`, where `<work_dir>` is the active project's `work_dir` from `csa-context/PROJECTS.yaml` (or the `WORK_DIR` supplied directly) -- never assume IAMPS. For example, IAMPS's matrix is at:
 
-```text
-/Users/wenzel/Work/ASE/CurrentStateAssessments/IAMPS/06 IAMPS/csa-work/evidence-matrix.csv
-```
+For example `<project_root>/csa-work/evidence-matrix.csv`.
 
-and UTC DTC's is at its own `csa-work/evidence-matrix.csv` under its project root. Always resolve this path per-project; writing one project's findings into another project's matrix is a data-integrity error.
+Always resolve this path per-project; writing one project's findings into another project's matrix is a data-integrity error.
 
-**Built-in guard:** `evidence_matrix.py` validates the resolved `--workspace` (or cwd, if `--workspace`/`CSA_WORKSPACE` was omitted) against `csa-context/PROJECTS.yaml` before touching any file, for every command (`lookup`, `get`, `stats`, `verify`, `append`). If the workspace is not a registered project's `project_root` (or a path under it), the command fails loudly with `"status": "ERROR"` and a `WORKSPACE_NOT_REGISTERED` message instead of silently reading or writing the wrong project's matrix -- always pass `--workspace <this project's project_root>` explicitly rather than relying on the cwd default.
+**Built-in guard:** every command checks `--workspace` (or the cwd) against `csa-context/PROJECTS.yaml` and fails with `WORKSPACE_NOT_REGISTERED` if it is not a registered project, so one project's matrix is never read or written by mistake. Always pass `--workspace <this project's project_root>`.
 
-Each row is one atomic claim with a stable `E-nnn` ID, an evidence class, its source, and an exact excerpt. This skill is how the three pipeline agents read it and write to it, so a fact found once is never searched for twice and every claim can be traced to a source.
-
-Agents that use this skill: **csa-change-authoring-agent**, **csa-document-agent**, **csa-change-review-agent**. The evidence-investigator and orchestrator agents write to the same file under their own rules; this skill is compatible with them.
+Agents that use this skill: **csa-change-authoring-agent**, **csa-document-agent**, **csa-change-review-agent**. The evidence-investigator and orchestrator agents write to the same file under their own rules.
 
 ## Purpose separation: matrix vs analysis vs CSA
 
-Three artefacts, three jobs. Keep them separate and do not let one become the other.
+Three artefacts, three jobs; do not let one become another. The **matrix** records and traces evidence, one atomic claim per row with an E-id, source and exact excerpt. **Analysis** correlates the evidence to decide what it says about the system (`csa-section-writer/references/current-state-reasoning.md`). The **CSA** (the DOCX) describes the system and its operating environment, derived from the evidence. The CSA body never takes the evidence as its subject; a reader can trace any material statement to an E-id without the matrix showing in the prose.
 
-- **Evidence matrix** (`csa-work/evidence-matrix.csv`): records, organises, locates and traces the evidence used during the assessment. One atomic claim per row, with an E-id, its source, and an exact excerpt. This is the *input and traceability mechanism*.
-- **Analysis**: correlates the evidence and determines what it tells us about the application and system. This is the reasoning step (see `csa-section-writer/references/current-state-reasoning.md`).
-- **Current State Assessment** (the DOCX): presents a technically accurate, understandable description of the application and its current IT/OT operating environment. This is the *current-state view derived from the evidence*.
+## Rows are about hosts, not source rows
 
-The matrix is not the structure or subject of the CSA. The CSA body never takes the evidence as its subject; it states the system, and the matrix sits behind it as the traceability record. A reader of the CSA should be able to trace any material statement to an E-id in the matrix without the matrix being visible in the prose.
+Each row's claim names its host(s), role or application, every host name in full. A source row that lists many hosts (a MECM collection, a GPO scope, an agent report) becomes one row per group of hosts that share the value, not one row per source row. The source's own row, collection or sheet key goes in `page_or_location`. `csa hosts build` derives `hosts/evidence_hosts.csv` (evidence ID -> hosts) from the claims, and `csa hosts show <HOST>` lists the evidence for a machine; a row that names no host counts as system-wide.
 
 ## The rule: matrix first, then data, then write back
+
+See "Evidence matrix first" in .agents/csa-core-rules.md. The five steps:
 
 ```text
 1. LOOKUP   -> search the matrix for the question
@@ -39,13 +35,13 @@ The matrix is not the structure or subject of the CSA. The CSA body never takes 
                  yes -> use it, cite its E-id, STOP searching for it
                  no  -> continue
 3. SEARCH   -> search Discovery Data (only the part the matrix did not answer)
-4. APPEND   -> record every finding, including NOT_FOUND with the scope searched
+4. APPEND   -> after reading the source, record every finding, including NOT_FOUND with the scope searched
 5. CITE     -> quote the E-id(s) in your Why / comment / report
 ```
 
-Never skip step 1 for a technical fact about hosts, services, ports, addresses, software, configuration, ownership or dates. Never write a claim into a proposed edit, comment or report that you have not either found in the matrix or verified in Discovery Data.
+Step 3 uses the discovery index first where the project has one (`csa-discovery-index` skill), then raw files only for what the index reports as not indexed.
 
-**Step 3 (SEARCH) - use the discovery index first where the project has one.** If `<work_dir>/discovery-index.sqlite` exists, query it with the `csa-discovery-index` skill (`discovery_index.py rows` / `search`) before opening raw Discovery Data files. It covers every current host capture in one query and returns the source file, capture and line numbers to put in the new row. Search raw files only for what the index reports as not indexed. (Trial on UTC DTC, 25/09/2026.)
+A discovery-index search hit is not yet a finding. When gap lookup finds a possible answer, it writes an append-only lead to `csa-work/intake/leads.jsonl`. Do not put that hit in the matrix as an UNCONFIRMED row and do not return its L-ID from matrix lookup. Read the original source first: append/source-check a VERIFIED row and resolve the lead to its E-ID, or mark the lead `not_an_answer`. `UNCONFIRMED` remains supported for non-gap assertions that genuinely belong in the matrix. Scoped NOT_FOUND records remain in the matrix.
 
 ## Script
 
@@ -72,15 +68,19 @@ python3 "$S" append --agent <your-agent-name> --context "<...>" --row-json '{...
 python3 "$S" append ... --dry-run          # validate and preview IDs without writing
 ```
 
+### Graph and host index stay in step automatically
+
+Every successful `append` runs `scripts/graph_sync.py` for the project (set `CSA_NO_GRAPH_SYNC=1` to skip). It records any host capture newer than the last sync with `host_profile.py`, adds an edge for every link row in the host-profile grammar that has none, drops graph references to evidence that is no longer in the matrix (removing edges and nodes left with no evidence), and rebuilds `hosts/evidence_hosts.csv`. Free-text rows that merely name two hosts are not turned into edges. After removing or editing matrix rows by any other means, run `python3 scripts/graph_sync.py --workspace <project_root>` (add `--dry-run` to preview). Each run is logged in `csa-work/graph-audit.jsonl`.
+
 ### How to query
 
-Use a short phrase of the topic plus the concrete names that matter: hosts, ports, services, file names. Good: `RabbitMQ listening ports application hosts`, `NTP source time.windows.com`, `CSFalconService ROKPRDAMP101`. Bad: a whole sentence copied from the document. Use `--host` to restrict to one host, `--area` to restrict to one CSA area. Run two or three differently-worded queries before concluding the matrix has no answer.
+Use a short phrase of the topic plus the names that matter (hosts, ports, services, file names), for example `NTP source time.windows.com` or `CSFalconService ROKPRDAMP101`, never a whole sentence from the document. `--host` restricts to one host and `--area` to one CSA area. Run two or three differently-worded queries before concluding the matrix has no answer. Agents use --brief (and get --brief) by default; drop it only to read a full excerpt.
 
 ### What the verdict means
 
 | verdict | meaning | what to do |
 |---|---|---|
-| `LIKELY_ANSWERED` | a VERIFIED/INFERRED row covers the question | read the row; confirm host, capture date and wording match your claim; use it and cite the E-id. Do not re-search Discovery Data for it. |
+| `LIKELY_ANSWERED` | a source-checked VERIFIED row covers the question | read the row; confirm host, capture date and wording match your claim; use it and cite the E-id. Do not re-search Discovery Data for it. |
 | `PRIOR_NOT_FOUND` | an earlier search found nothing | read the row's `source_title` (the scope searched); search only outside that scope or in newer captures; append the result. |
 | `OPEN_ON_RECORD` | a CONFLICTING/UNCONFIRMED row exists | do not present the point as settled; look for deciding evidence; append the outcome citing the earlier E-id in `gap_or_action`. |
 | `PARTIAL_MATCH` | related rows, none clearly answers | search Discovery Data for the remainder; append. |
@@ -108,36 +108,11 @@ One atomic claim per row. Put the host and capture date in the claim so it can b
 | `inference_reason` | required for `INFERRED` |
 | `confidence` | `high`, `medium`, `low` or empty. Nothing else - put gaps in `gap_or_action` |
 | `gap_or_action` | what is missing or who must confirm. Required for `NOT_FOUND`, `UNCONFIRMED`, `CONFLICTING` |
-| `review_state` | leave empty; the tool sets `pending`. Only a human changes review state |
+| `review_state` | leave empty; the tool sets `pending`. A VERIFIED row is approved by the source check, never by its author (see "Source check") |
 
-The tool assigns the next `E-nnn`, backs the matrix up to `csa-work/backups/` before each write, keeps the file's BOM and CRLF format, skips exact duplicates, rejects bad rows as a batch, and logs every write to `csa-work/evidence-matrix-audit.jsonl`.
+The tool assigns the next `E-nnn`, backs the matrix up before each write, skips exact duplicates, rejects bad rows as a batch, and logs every write to `csa-work/evidence-matrix-audit.jsonl`.
 
-Example `rows.json` (illustrative values - always use what you actually found):
-
-```json
-[
-  {
-    "csa_area": "network_and_connectivity",
-    "question": "Which NTP source does each host synchronise from?",
-    "claim": "ROKPRDAMP101 synchronises from ROTPRDSRV122.internal.qr.com.au; time.windows.com is a Pending secondary peer (capture 2026-04-29)",
-    "status": "VERIFIED",
-    "source_title": "IAMPS_discovery_ROKPRDAMP101_20260429T023652Z: 03_time_status.txt",
-    "source_version": "capture 2026-04-29T023652Z",
-    "section": "time synchronisation",
-    "page_or_location": "03_time_status.txt, w32tm peers",
-    "evidence_excerpt": "Peer: ROTPRDSRV122.internal.qr.com.au State: Active | Peer: time.windows.com State: Pending",
-    "confidence": "high"
-  },
-  {
-    "csa_area": "security_posture",
-    "question": "Are endpoint/monitoring agents present on MKYPRDAMP102?",
-    "claim": "No service or installed-software inventory exists for MKYPRDAMP102 (capture 2026-03-17), so agent presence is not established",
-    "status": "NOT_FOUND",
-    "source_title": "tg_discovery_MKYPRDAMP102_20260317: all 13 files; no services/software inventory collected",
-    "gap_or_action": "Collect services and installed-software inventory from MKYPRDAMP102"
-  }
-]
-```
+An example `rows.json`, and how the document and change-review agents use the matrix, are in `.agents/skills/csa-evidence-matrix/references/matrix-reference.md`.
 
 ### Append-only rules
 
@@ -146,33 +121,19 @@ Example `rows.json` (illustrative values - always use what you actually found):
 - Never fill in hostnames, addresses, versions or dates from prior knowledge.
 - Record `NOT_FOUND` with the scope, so the next run does not repeat the same empty search.
 - If `append` rejects a row, fix the row; do not work around the validator.
-- Run `verify` if a write fails unexpectedly. It reports structural problems; do not hand-edit the CSV to fix them.
+- Run `verify` if a write fails unexpectedly; never hand-edit the CSV.
 
-## Per-agent use
+## Source check: approval comes from the evidence
 
-**csa-change-authoring-agent** (reads and writes)
-- Before searching Discovery Data for any claim in the section, run `lookup`. Search Discovery Data only for what the matrix did not answer.
-- Append each supported finding (and each NOT_FOUND) before or as you draft the edit that depends on it.
-- In each edit's `Why`, cite the E-id(s) together with the source file and host, e.g. `Evidence: E-075 (ROKPRDAMP101 03_time_status.txt)`.
-- List E-ids used and appended in the run-state file.
+A row is approved by what its source shows, not by the person or agent who wrote it.
 
-**csa-document-agent** (reads; writes only when it verifies a fact)
-- The approved change file remains the only source of edits. This skill never changes what is applied.
-- After a batch, run `lookup` for each applied edit whose text asserts a technical fact. Report in the completion report under `Evidence check`: `supported (E-nnn)`, `no evidence on record`, or `contradicted by E-nnn`. A contradiction is reported, never a reason to alter or skip an approved edit.
-- If you searched Discovery Data to settle a point, append what you found.
+- **On append:** every VERIFIED row is checked against the file(s) it cites in `source_title`. The check looks each file up in the discovery index (following duplicates to the file that holds the text) and confirms that every ` | ` part of `evidence_excerpt` appears in a cited file, and that every cited file holds at least one part. A row that fails is rejected with the reason: quote lines that are in the named file. A row that passes is written and recorded as `reviewed` by `csa source check (automated)`, with the files it matched in the note.
+- **Naming the source:** `source_title` must name the capture folder (`<host>_<timestamp>`) and the file, for example `REVELOC_discovery_ROKPRDOPS110_20260607T214201Z: 03_time_status.txt`. A row citing several captures must quote at least one line from each cited file, so a row cannot cite a file that does not support it.
+- **Not approved by the check:** INFERRED, NOT_FOUND, UNCONFIRMED and CONFLICTING rows rest on reasoning or a search scope, not on one quoted line. They stay `pending` until a person decides them. Never mark them reviewed to clear the queue.
+- **Existing rows:** `check-sources [E-nnn ...] [--dry-run] [--all]` checks rows already in the matrix and approves those the source proves. It never rejects a row: a failing row stays pending and is listed with the reason.
+- **Escape hatch:** `append --no-source-check` skips the check, for a source that is not in the discovery index. The row then stays `pending`.
 
-**csa-change-review-agent** (reads; writes only when it verifies a fact)
-- Verifying the DOCX against the change file is unchanged. For factual claims in the reviewed text, `lookup` and compare. A matrix row is a lead, not proof: when you rely on it for a factual finding, open the cited source file and confirm.
-- A claim contradicted by VERIFIED evidence is a finding (`P2 MEDIUM` unless the change file itself cites the wrong evidence, then `P1 HIGH`). A claim with no evidence anywhere is an `Evidence gap` note.
-- If you searched Discovery Data, append what you found.
-- The matrix is a working evidence file, not source evidence or the DOCX; appending to it does not breach the review agent's read-only rule.
+Writes take an exclusive lock and back the matrix up to `csa-work/backups/` first, so agents can append at the same time.
 
-## Concurrency and safety
-
-Writes take an exclusive file lock, so two agents can append at the same time without colliding. IDs are assigned under the lock. Each write makes a timestamped backup under `csa-work/backups/`.
-
-## Known data-quality note
-
-`verify` currently reports 6 legacy rows (E-006, E-007, E-008, E-009, E-011, E-014) whose `confidence` column holds gap text instead of high/medium/low. They are read normally and left untouched (append-only); a human can clean them.
-
-- `review E-nnn ... --by "<name>"` - records a review in `csa-work/evidence-reviews.jsonl`.
+- `review E-nnn ... --by "<name>"` records a person's review in `csa-work/evidence-reviews.jsonl`, for rows the source check cannot settle.
+- `check-sources` is the automated source check above; its reviews go in the same log.

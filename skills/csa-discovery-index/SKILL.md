@@ -37,9 +37,14 @@ Called directly, always pass `--project <key>` (from `csa-context/PROJECTS.yaml`
 | `hosts` | which hosts were captured, when, and which capture is current (newer captures supersede older ones per host; `Archive`/`z_` folders are never current) |
 | `tables [pattern]` | list structured tables (one per discovery file type, e.g. `services_inventory`, `listening_ports`, `local_admins_membership`, `firewall_rules`, `installed_software`, `windows_update_config`) with columns and host counts |
 | `rows <table> [--where COL~text] [--where COL=text] [--where COL!~text] [--host H] [--cols a,b] [--distinct COL]` | cross-host questions: "which hosts run X", "who is a local admin", "which ports listen on all interfaces". `--distinct COL` returns each value with the hosts that have it |
-| `search "<terms>" [--host H] [--path-like text] [--any]` | full-text search of everything indexed (all terms must appear in the same 30-line chunk unless `--any`); returns file, line numbers and matching lines |
-| `sql "SELECT ..."` | read-only SQL for anything else (tables: `captures`, `files`, `rows(data JSON)`, `chunk_map`, `chunks`) |
+| `search "<terms>" [--host H] [--path-like text] [--any] [--no-expand]` | full-text search of everything indexed (all terms must appear in the same 30-line chunk unless `--any`); returns file, line numbers and matching lines. A term that is a host name or address in the aliases table also searches that host's other names and addresses (up to 8; the result lists them under `expanded`, and a hit found only through one is marked `via_alias`; `--no-expand` turns it off) |
+| `entities [--kind K] [--value V] [--host H]` | what the text names (address, fqdn, host, port, service, process, account, share), found at index time; no filter gives counts per kind. Needs an index built with entities (`build --rebuild`) |
+| `aliases [--host H] [--value V] [--scope S] [--refresh]` | host <-> name <-> fqdn <-> address with scope (system, sibling, neighbour, external), basis (own-capture, register, paired-row, paired-line) and ambiguity; no filter gives counts; `--refresh` rebuilds it from the current host register without a full index build |
+| `verify-cites [--save F] [--against F]` | does every evidence-matrix row still point into the index (source file indexed, cited line inside the file)? Save a report before a rebuild, compare after; rows whose title is prose (no file name) show as `unresolved` in the baseline and only new failures matter. `build --stage-dir` publishes only if no citation newly fails and keeps the old index as `.bak-<date>` (`--force-swap` overrides) |
+| `sql "SELECT ..."` | read-only SQL for anything else (tables: `captures`, `files`, `rows(data JSON)`, `chunk_map`, `chunks`, `entities`, `aliases`) |
 | `status` | what was indexed, skipped and why |
+
+Agents use --brief; raise --limit only when "more" matters to the question.
 
 Scope defaults: **current captures only, archive excluded.** Add `--all-captures` to include superseded captures
 (e.g. to compare March `tg_` with May `UTC_` captures) and `--include-archive` for archived ones.
@@ -66,10 +71,12 @@ from an older capture of the same host.
 
 ## What is not indexed
 
-Binaries (DLL, EXE, DAT, W001, zips whose contents are extracted alongside), exact duplicate files (e.g. `UGL 2`
-and `UTC 2` are copies of `UGL` and `UTC`), gpresult HTML/XML renderings (the text versions are indexed), and the
-repeating I/O-mapping elements of large SIGMAP configuration XMLs (their structural elements - Builder, Ports,
-Communication - are indexed). `status` lists every reason with counts.
+Binaries (DLL, EXE, DAT, W001, zips whose contents are extracted alongside), legacy `.doc` / `.xls` files and exact duplicate files (e.g. `UGL 2`
+and `UTC 2` are copies of `UGL` and `UTC`) are not indexed. Word text is read from the document body, headers,
+footers, footnotes, endnotes and comments. PowerPoint slide, speaker-note and comment text is indexed. HTML and XML are indexed losslessly: element names,
+attribute names and values, and text are searchable, including repeated records in large XML files. Extraction keeps
+one output line per physical source line so citations continue to identify the original line. `status` lists every
+reason for files that were not indexed.
 
 ## Building / refreshing
 
@@ -79,7 +86,11 @@ python3 "$X" --project utcdtc build --rebuild  # from scratch
 ```
 
 The index is written to `<work_dir>/discovery-index.sqlite` (UTC DTC: ~350 MB, ~45 s to build). It indexes the
-parent of the project's `default_source_set` (`01 Current State AS Built`) unless `--source` is given. Rebuild after
+project's exact `default_source_set` plus its configured `index_extra_sources` unless `--source` is given. Rebuild after
 new captures are added. If the build runs somewhere the work folder cannot host SQLite (e.g. a mounted share),
 add `--stage-dir <local folder>`: it builds there and copies the finished file into `work_dir`. Queries open
 the index read-only, so do not run a build while agents are querying.
+
+PDF files with a text layer are indexed automatically. The builder prefers Poppler's `pdftotext` when installed
+and otherwise uses the framework's vendored `pypdf` fallback; scanned image-only PDFs remain listed as unreadable
+until an OCR or text copy is supplied.

@@ -47,10 +47,14 @@ def test_word_lock_file_is_detected_under_both_naming_conventions(tmp_path):
     assert tools._word_lock_files(docx) == [full]
 
 
-def test_prepare_document_reports_not_ready_when_the_docx_is_open_in_word(tmp_path):
+def test_prepare_document_reports_not_ready_when_the_docx_is_open_in_word(tmp_path, monkeypatch):
     workspace = _make_workspace(tmp_path)
     docx = _workspace_docx(workspace)
     docx.with_name(f"~${docx.name[2:]}").write_bytes(b"owner file")
+    monkeypatch.setattr(
+        "csa_docx.word_close.ensure_closed",
+        lambda _docx: {"status": "LOCKED", "message": "document is open in Word"},
+    )
 
     result = tools.prepareDocument("1", workspace=workspace)
 
@@ -107,7 +111,7 @@ def test_prepare_document_generates_the_id_manifest_for_a_clean_document(tmp_pat
     assert manifest_path.exists()
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert payload["generated_by_section"] == "1"
-    assert [entry["id"] for entry in payload["entries"] if entry["kind"] == "heading"] == ["@H2", "@H2.2"]
+    assert [entry["id"] for entry in payload["entries"] if entry["kind"] == "heading"] == ["@H1", "@H1.1"]
 
 
 def test_prepare_document_is_a_no_op_on_an_unchanged_document(tmp_path):
@@ -205,7 +209,7 @@ def test_lookup_stable_id_works_at_true_step_zero_with_only_the_bare_docx(tmp_pa
 
     assert result["status"] == "OK"
     assert result["section"] is None
-    assert result["unique_id"] == "@H2-P1"
+    assert result["unique_id"] == "@H1-P1"
 
 
 def test_prepare_document_at_step_zero_refuses_to_guess_among_two_bare_docs(tmp_path):
@@ -299,7 +303,7 @@ def test_lookup_stable_id_with_no_section_resolves_the_one_shared_docx(tmp_path)
     result = tools.lookupStableId("first body paragraph", workspace=workspace)
 
     assert result["status"] == "OK"
-    assert result["unique_id"] == "@H2-P1"
+    assert result["unique_id"] == "@H1-P1"
 
 
 def test_prepare_document_requires_a_section_when_the_workspace_has_two_distinct_docs(tmp_path):
@@ -364,7 +368,7 @@ def test_lookup_stable_id_finds_a_unique_text_match(tmp_path):
     assert result["status"] == "OK"
     assert result["match_count"] == 1
     assert result["truncated"] is False
-    assert result["unique_id"] == "@H2-P1"
+    assert result["unique_id"] == "@H1-P1"
     assert result["matches"][0]["text"] == "First body paragraph."
     assert result["possibly_stale"] is False
 
@@ -373,11 +377,11 @@ def test_lookup_stable_id_resolves_an_exact_stable_id(tmp_path):
     workspace = _make_workspace(tmp_path)
     tools.prepareDocument("1", workspace=workspace)
 
-    result = tools.lookupStableId("@H2-P1", "1", workspace=workspace)
+    result = tools.lookupStableId("@H1-P1", "1", workspace=workspace)
 
     assert result["status"] == "OK"
     assert result["match_count"] == 1
-    assert result["unique_id"] == "@H2-P1"
+    assert result["unique_id"] == "@H1-P1"
     assert result["matches"][0]["kind"] == "paragraph"
 
 
@@ -452,11 +456,15 @@ def test_lookup_stable_id_surfaces_an_unresolvable_section_as_error(tmp_path):
     assert "section 9" in result["message"]
 
 
-def test_apply_next_batch_returns_not_ready_and_touches_nothing_when_locked(tmp_path):
+def test_apply_next_batch_returns_not_ready_and_touches_nothing_when_locked(tmp_path, monkeypatch):
     workspace = _make_workspace(tmp_path)
     docx = _workspace_docx(workspace)
     lock = docx.with_name(f"~${docx.name[2:]}")
     lock.write_bytes(b"owner file")
+    monkeypatch.setattr(
+        "csa_docx.word_close.ensure_closed",
+        lambda _docx: {"status": "LOCKED", "message": "document is open in Word"},
+    )
     before = docx.read_bytes()
 
     result = tools.apply_next_batch("1", limit=1, workspace=workspace)

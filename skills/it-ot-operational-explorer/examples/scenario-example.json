@@ -1,0 +1,20 @@
+{
+  "illustrativeOnly": true,
+  "warning": "Fictional example for schema demonstration; not verified CSA evidence.",
+  "entities": [
+    {"id": "sensor", "name": "Example field device", "kind": "ot_device", "layer": "OT", "role": "Generates measurement", "evidenceRefs": [], "status": "illustrative"},
+    {"id": "gateway", "name": "Example communications gateway", "kind": "interface", "layer": "OT", "role": "Receives messages", "evidenceRefs": [], "status": "illustrative"},
+    {"id": "processor", "name": "Example application processor", "kind": "application_service", "layer": "Application", "role": "Processes measurements", "evidenceRefs": [], "status": "illustrative"}
+  ],
+  "relationships": [
+    {"id": "e1", "source": "sensor", "target": "gateway", "kind": "SENDS_TO", "direction": "forward", "evidenceRefs": [], "status": "illustrative"},
+    {"id": "e2", "source": "gateway", "target": "processor", "kind": "SENDS_TO", "direction": "forward", "evidenceRefs": [], "status": "illustrative"}
+  ],
+  "scenarios": [
+    {"id": "example-telemetry", "title": "Illustrative telemetry journey", "purpose": "Demonstrate storytelling controls only", "trigger": "Hypothetical measurement generated", "evidenceRefs": [], "status": "illustrative", "steps": [
+      {"id": "s1", "componentId": "sensor", "action": "Generate", "narrative": "A sample measurement is generated.", "outgoingEdgeId": "e1", "status": "illustrative", "evidenceRefs": []},
+      {"id": "s2", "componentId": "gateway", "action": "Forward", "narrative": "A fictional gateway forwards the sample message.", "incomingEdgeId": "e1", "outgoingEdgeId": "e2", "status": "illustrative", "evidenceRefs": []},
+      {"id": "s3", "componentId": "processor", "action": "Process", "narrative": "A fictional application service processes the example.", "incomingEdgeId": "e2", "status": "illustrative", "evidenceRefs": []}
+    ]}
+  ]
+}

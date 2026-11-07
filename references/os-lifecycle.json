@@ -1,0 +1,14 @@
+{
+ "about": "Microsoft end of extended support by operating system caption (Win32_OperatingSystem Caption). Dates are dd/mm/yyyy. Checked 15/10/2026 against the Microsoft lifecycle dates as published (endoflife.ai summary of the Microsoft Lifecycle Policy). Review when a new release ships; ESU (paid extended security updates) is not counted.",
+ "checked": "15/10/2026",
+ "products": [
+  {"match": "Windows Server 2025", "extended_end": "14/11/2034", "mainstream_end": "13/11/2029"},
+  {"match": "Windows Server 2022", "extended_end": "14/10/2031", "mainstream_end": "13/10/2026"},
+  {"match": "Windows Server 2019", "extended_end": "09/01/2029", "mainstream_end": "09/01/2024"},
+  {"match": "Windows Server 2016", "extended_end": "12/01/2027", "mainstream_end": "11/01/2022"},
+  {"match": "Windows Server 2012 R2", "extended_end": "10/10/2023", "mainstream_end": "09/10/2018"},
+  {"match": "Windows Server 2012", "extended_end": "10/10/2023", "mainstream_end": "09/10/2018"},
+  {"match": "Windows Server 2008 R2", "extended_end": "14/01/2020", "mainstream_end": "13/01/2015"},
+  {"match": "Windows Server 2008", "extended_end": "14/01/2020", "mainstream_end": "13/01/2015"}
+ ]
+}

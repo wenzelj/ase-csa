@@ -26,7 +26,7 @@ Before drafting, read the section's entry in the section scope map (`.agents/ski
 
 Template domain blocks (CSA template v1.x):
 
-- **Requirement table, Current State cell:** one or two sentences stating the condition against the requirement. No lists. Aim for 50 words or fewer. **Rating:** `Met`, `Partially Met`, `Not Met` or `Not Applicable`, as the evidence supports.
+- **Requirement table, Current State cell:** a short paragraph stating the condition against the requirement. No lists. Usually under 100 words; use more when the system needs it. **Rating:** `Met`, `Partially Met`, `Not Met` or `Not Applicable`, as the evidence supports.
 - **Discovery Information:** the observed facts only, as a short table or up to five parallel bullets. No interpretation.
 - **Drawbridge Impact** (isolation consequence): one paragraph covering what fails, whether it fails immediately or degrades, and what keeps working. Do not restate the discovery facts.
 
@@ -43,19 +43,22 @@ Legacy structures (Design and functionality expected / Observed / Findings / Dra
 
 When a subsection would only restate another, reduce it to one sentence that points to the owning subsection, and raise the merge as a structural suggestion under Open questions.
 
-**Length:** aim for 600 words of prose or fewer per domain section, excluding tables; one finding paragraph is 120 words or fewer. These are targets, not reasons to drop evidenced facts.
+**Length:** proportional to the system. The section must fully describe the application and the systems around it (components, interfaces, dependencies, data flows). The length guide is worked out from the host register (`python3 -m csa_docx.prose_budget <work_dir>`: in-scope hosts, roles and links); `csa check-change` and `check-section` report it as `PROSE_BUDGET`. Cut restatement and textbook material, never evidenced description. A finding paragraph should still make one point.
 
 ## Rules
 
 - Use approved evidence as the factual basis.
 - Do not put evidence IDs (`E-nnn`) or any other citation marker inside the drafted section text itself -- that text is what a reader sees in the assessment document, and it should read as plain prose, not a citation trail. Evidence traceability lives in the accompanying change record (and from there, in the Word comment attached to the edit when it's applied), never inline in the body.
 - State `INFERRED`, `UNCONFIRMED`, `CONFLICTING`, and `NOT_FOUND` matters transparently -- as plain wording in the sentence itself (e.g. "has not been directly observed" rather than a bracketed tag), not as a citation-style marker.
-- Expand an abbreviation on first use, for example Operational Technology (OT).
+- Write technical terms in full in headings, captions, table headers and finding labels. In body prose, use the full term alone when it appears once. Only introduce an abbreviation when it will be reused, as `full term (abbreviation)` on first use in each independently readable subsection.
 - Keep current state, interpretation, gap, risk observation, and recommendation distinct.
+- Before writing a requirement finding, complete the requirement-assessment object and decision sequence in `current-state-reasoning.md` section 8. Assess applicability and each mandatory obligation before selecting a rating. If the result is `unable_to_determine`, do not force it into the document's four-value rating schema; retain it as an open question for human review.
 - Do not copy stale facts from a prior assessment merely to complete a section.
 - Preserve named owners, reviewers, approvers, dates, and controlled-document fields unless instructed to change them.
 - Use tables for inventories and exact mappings; use prose for meaning and operational context.
 
 Before returning the draft, run `prose_lint.py` on it (see `csa-writing-style`, Check before returning) and fix its warnings. Then map every material factual sentence to its evidence ID(s) -- but keep that mapping in the change record, not the section text. If the source cannot support the wording, narrow it or label the uncertainty in the prose itself.
+
+For every requirement finding, also verify that the application function and supporting components remain the subject; observed behaviour, missing evidence and the compliance conclusion are separate; communication is not generalised into file transfer; every mandatory obligation has an assessment; and any recommendation is proportional to the established result.
 
 Return the revised section (clean prose, no evidence IDs in it) and a brief change record stating what changed, why, and which E-id(s) support each material change -- the change record is where citations belong. Do not silently broaden scope.

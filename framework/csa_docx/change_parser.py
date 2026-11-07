@@ -5,7 +5,7 @@ from pathlib import Path
 
 from .models import ChangeRecord
 
-EDIT_HEADING_RE = re.compile(r"^###\s+(S\d+-[EA]\d+|[EA]-\d+)\s+-\s+(.+?)\s*$", re.MULTILINE)
+EDIT_HEADING_RE = re.compile(r"^###\s+(S\d+(?:\.\d+)?-[EA]\d+|[EA]-\d+)\s+-\s+(.+?)\s*$", re.MULTILINE)
 SECTION_RE = re.compile(r"^\*\*Section:\*\*\s*(.+?)\s*$", re.MULTILINE)
 
 
@@ -41,12 +41,13 @@ def _parse_block(edit_id: str, title: str, block: str) -> ChangeRecord:
         questions=_extract_questions(block),
         note=_extract_label(block, "Note"),
         facts=_extract_label(block, "Facts"),
+        assessment_basis=_extract_label(block, "Assessment basis"),
     )
 
 
 def _extract_label(block: str, label: str) -> str:
     pattern = re.compile(
-        rf"^\*\*{re.escape(label)}:\*\*\s*(.*?)(?=^\*\*(?:Where|Do|Facts|Text|Why|Note):\*\*|\n---[ \t]*(?:\n|\Z)|\Z)",
+        rf"^\*\*{re.escape(label)}:\*\*\s*(.*?)(?=^\*\*(?:Where|Do|Facts|Assessment basis|Text|Why|Note):\*\*|\n---[ \t]*(?:\n|\Z)|\Z)",
         re.MULTILINE | re.DOTALL,
     )
     match = pattern.search(block)

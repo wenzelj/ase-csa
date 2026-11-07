@@ -2,6 +2,7 @@
 from types import SimpleNamespace as P
 
 from csa_docx.engines.docxengine_adapter import verified_stable_index
+from csa_docx.stable_ids import extract_stable_id
 
 WHERE = '`@H5.9.2-P5` -- currently: "Both IAMPS production servers keep a connection open ..."'
 
@@ -29,3 +30,10 @@ def test_ambiguous_or_missing_quote_blocks():
 
 def test_no_quote_keeps_id_only_behaviour():
     assert verified_stable_index("`@H5.9.2-P5`", paras("", "x"), "@H5.9.2-P5", {"@H5.9.2-P5": 0}) == (0, None)
+
+
+def test_heading_id_is_a_resolvable_stable_id():
+    sid = extract_stable_id('`@H3.7.1` -- currently: "Discovery Information"')
+    assert sid is not None
+    assert sid.kind == "H"
+    assert str(sid) == "@H3.7.1"

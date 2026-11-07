@@ -1,0 +1,54 @@
+{
+ "topic": "Internet & SMTP",
+ "key": "INET",
+ "headings": [
+  "Internet Access & Communications (Proxy / SMTP)",
+  "Internet Access and Communications (Proxy / SMTP)",
+  "Internet & SMTP",
+  "Internet Access & Communications"
+ ],
+ "requirements": [
+  "SEP-INET-01",
+  "SEP-INET-02"
+ ],
+ "columns": [
+  {
+   "label": "Proxy",
+   "attribute": "transfer.proxy",
+   "explains": "how web traffic leaves the host",
+   "keep": true
+  },
+  {
+   "label": "Internet connections (samples)",
+   "attribute": "flows.internet",
+   "explains": "what the host opened or tried to open to internet addresses in the sampled connections",
+   "flows": {
+    "dst_zones": [
+     "Internet"
+    ]
+   },
+   "none": "None seen",
+   "keep": true
+  }
+ ],
+ "flows": {
+  "any_of": [
+   {
+    "dst_zones": [
+     "Internet"
+    ]
+   },
+   {
+    "mechanisms": [
+     "mail"
+    ]
+   }
+  ],
+  "status": [
+   "observed",
+   "both",
+   "declared",
+   "attempted"
+  ]
+ }
+}
