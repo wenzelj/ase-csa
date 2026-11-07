@@ -609,6 +609,13 @@ def commit_project_setup(
     tree_errors = _staged_tree_ok(session_dir, session.get("manifest", []))
     if tree_errors:
         return {"status": "BLOCKED", "errors": tree_errors, "staging": staging}
+    for field in ("discovery", "knowledge"):
+        relative = Path(values["paths"][field]).relative_to(root)
+        if not (session_dir / relative).is_dir():
+            return {"status": "BLOCKED",
+                    "errors": [{"field": field, "code": "UPLOADED_FOLDER_MISSING",
+                                "message": f"The uploaded application folder must contain {relative}."}],
+                    "staging": staging}
 
     knowledge_requested = bool(knowledge.get("documents") or knowledge.get("system_terms") or knowledge.get("about"))
     knowledge_rel = Path(values["paths"]["knowledge"]).relative_to(root)
@@ -675,8 +682,7 @@ def commit_project_setup(
 
         # 2. framework folders, created when the upload did not include them
         ensure_directory(root / "csa-work")
-        ensure_directory(Path(values["paths"]["discovery"]))
-        ensure_directory(knowledge_dir)
+        # Discovery and knowledge were supplied in the uploaded tree and are left intact.
 
         # 3. project-context file from the template fields
         context_file.parent.mkdir(parents=True, exist_ok=True)

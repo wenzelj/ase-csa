@@ -295,16 +295,20 @@ def _setup_agents(tmp_path, extra_projects=""):
     return agents
 
 
-def _staged_session(tmp_path, staging_root=None, files=None, dirs=None):
+def _staged_session(tmp_path, staging_root=None, files=None, dirs=None, include_required=True):
     """Create and finalise a valid upload session; return (staging_root, session_id)."""
     import json
     import backend.project_upload as up
     staging_root = Path(staging_root) if staging_root else tmp_path / "staging"
     staging_root.mkdir(parents=True, exist_ok=True)
+    directories = list(dirs or [])
+    if include_required:
+        directories.extend(["Discovery", "00 Knowlege"])
+    directories = list(dict.fromkeys(directories))
     manifest = []
     for name, data in (files or {}).items():
         manifest.append({"path": name, "kind": "file", "size": len(data)})
-    for name in dirs or []:
+    for name in directories:
         manifest.append({"path": name, "kind": "dir"})
     created = up.create_session(manifest, staging_root=staging_root)
     assert created["status"] == "READY", created
@@ -312,7 +316,7 @@ def _staged_session(tmp_path, staging_root=None, files=None, dirs=None):
     for name, data in (files or {}).items():
         result = up.write_file(sid, name, data, staging_root=staging_root)
         assert result["status"] == "OK", result
-    for name in dirs or []:
+    for name in directories:
         (staging_root / sid / name).mkdir(parents=True, exist_ok=True)
     final = up.finalise(sid, staging_root=staging_root)
     assert final["status"] == "READY", final
@@ -370,15 +374,42 @@ def test_commit_registers_the_project(tmp_path):
 
 def test_commit_creates_selected_discovery_folder(tmp_path):
     agents = _setup_agents(tmp_path)
-    staging_root, sid = _staged_session(tmp_path, files={"readme.txt": b"x"})
+    staging_root, sid = _staged_session(tmp_path, files={"readme.txt": b"x"}, dirs=["Collected Sources"])
     chosen = tmp_path / "new-app" / "Collected Sources"
     result = project_setup.commit_project_setup(
         _payload(discovery=str(chosen)), agents_dir=agents, base_dir=tmp_path,
         staging_root=staging_root, session_id=sid)
     assert result["status"] == "READY", result
     assert chosen.is_dir()
-    assert not (tmp_path / "new-app" / "Discovery").exists()
+    assert (tmp_path / "new-app" / "Discovery").is_dir()
     assert f'default_source_set: "{chosen}"' in (agents / "csa-context" / "PROJECTS.yaml").read_text()
+
+
+def test_commit_requires_both_uploaded_source_folders(tmp_path):
+    agents = _setup_agents(tmp_path)
+    for supplied, missing in ((["Discovery"], "knowledge"), (["00 Knowlege"], "discovery")):
+        staging_root, sid = _staged_session(
+            tmp_path, staging_root=tmp_path / f"staging-{missing}",
+            files={"readme.txt": b"x"}, dirs=supplied, include_required=False)
+        result = project_setup.commit_project_setup(
+            _payload(), agents_dir=agents, base_dir=tmp_path,
+            staging_root=staging_root, session_id=sid)
+        assert result["status"] == "BLOCKED"
+        assert result["errors"][0]["field"] == missing
+        assert result["errors"][0]["code"] == "UPLOADED_FOLDER_MISSING"
+        assert (staging_root / sid / "readme.txt").read_bytes() == b"x"
+
+
+def test_commit_preserves_populated_uploaded_source_trees(tmp_path):
+    agents = _setup_agents(tmp_path)
+    files = {"Discovery/hosts/one.txt": b"host", "00 Knowlege/vendor/guide.md": b"guide"}
+    staging_root, sid = _staged_session(tmp_path, files=files)
+    result = project_setup.commit_project_setup(
+        _payload(), agents_dir=agents, base_dir=tmp_path,
+        staging_root=staging_root, session_id=sid)
+    assert result["status"] == "READY", result
+    for relative, content in files.items():
+        assert (tmp_path / "new-app" / relative).read_bytes() == content
 
 
 def test_uploaded_knowledge_sources_are_not_overwritten(tmp_path):
