@@ -28,23 +28,25 @@ from .models import CommandRequest, IntakeErrorsResponse, JobCreateRequest
 
 APP_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_AGENTS_DIR = Path(__file__).resolve().parents[2]
-SYSTEMS = {
+# Stable browser keys for systems registered before the project registry was the source of
+# truth; their identity (label, application, scope) now comes from project configuration.
+SYSTEM_ALIASES = {
     "iamps": {
+        "project_key": "iamps-08",
         "label": "IAMPS",
         "application": "IAMPS",
-        "project_key": "iamps-08",
         "scope": "The IAMPS application and the infrastructure, services and controls that operate it.",
     },
     "utcdtc": {
+        "project_key": "utcdtc",
         "label": "UTC DTC",
         "application": "UTC DTC",
-        "project_key": "utcdtc",
         "scope": "The UTC DTC application and the KVM-based system in which it operates.",
     },
     "tetra": {
+        "project_key": "tetra-reveloc",
         "label": "TETRA",
         "application": "Reveloc TETRA",
-        "project_key": "tetra-reveloc",
         "scope": "The Reveloc TETRA application and the hosts, dependencies and controls that provide its service.",
     },
 }
@@ -180,14 +182,46 @@ def projects() -> dict[str, dict[str, str]]:
     return {p["key"]: p for p in _parse_registry(path)}
 
 
+def system_key_aliases() -> dict[str, str]:
+    """Browser key -> project key for every known alias (existing stable keys plus new project keys)."""
+    aliases = {alias: cfg["project_key"] for alias, cfg in SYSTEM_ALIASES.items()}
+    for project in projects().values():
+        aliases.setdefault(project["key"], project["key"])
+    return aliases
+
+
 def system_project(system_key: str) -> dict[str, str]:
-    if system_key not in SYSTEMS:
+    project_key = system_key_aliases().get(system_key)
+    if not project_key:
         raise HTTPException(404, "Unknown evidence system")
-    project_key = SYSTEMS[system_key]["project_key"]
     project = projects().get(project_key)
     if not project:
         raise HTTPException(503, f"Registered project '{project_key}' is unavailable")
     return project
+
+
+def system_setup(system_key: str) -> dict[str, Any]:
+    """Setup status for one system: registered paths validated, and index/document presence."""
+    project = system_project(system_key)
+    roots = source_roots(project)
+    invalid = [str(root) for root in roots if not root.is_dir()]
+    index_ok = (work_dir(project) / "discovery-index.sqlite").is_file()
+    try:
+        resolved = documents.resolve(project)
+    except Exception:
+        resolved = {"state": "blocked", "path": None}
+    document_ok = bool(resolved.get("path")) and Path(resolved["path"]).is_file()
+    status = "READY" if (not invalid and index_ok and document_ok) else "BLOCKED"
+    reasons: list[str] = []
+    if invalid:
+        reasons.append("Registered source paths are not valid directories")
+    if not index_ok:
+        reasons.append("Discovery index is absent")
+    if not document_ok:
+        reasons.append("Working document is absent")
+    return {"system": system_key, "project_key": project["key"], "status": status,
+            "source_roots": [str(root) for root in roots], "invalid_paths": invalid,
+            "index_present": index_ok, "document_present": document_ok, "reasons": reasons}
 
 
 def work_dir(project: dict[str, str]) -> Path:
@@ -462,11 +496,30 @@ job_manager = JobManager(agents_dir())
 
 @app.get("/api/systems")
 def get_systems() -> dict[str, Any]:
+    """Every registered project; stable browser keys keep working as aliases for their projects."""
     registered = projects()
-    return {"systems": [{"key": key, "label": cfg["label"], "project_key": cfg["project_key"],
-                         "available": cfg["project_key"] in registered,
-                         "stage": str(registered.get(cfg["project_key"], {}).get("stage") or "draft").strip().lower()}
-                        for key, cfg in SYSTEMS.items()]}
+    systems: list[dict[str, Any]] = []
+    used: set[str] = set()
+    for alias, cfg in SYSTEM_ALIASES.items():
+        project_key = cfg["project_key"]
+        if project_key not in registered:
+            continue
+        project = registered[project_key]
+        systems.append({"key": alias, "label": cfg["label"], "project_key": project_key,
+                        "available": True, "stage": str(project.get("stage") or "draft").strip().lower()})
+        used.add(project_key)
+    for project in registered.values():
+        if project["key"] in used:
+            continue
+        systems.append({"key": project["key"], "label": project.get("label", ""),
+                        "project_key": project["key"], "available": True,
+                        "stage": str(project.get("stage") or "draft").strip().lower()})
+    return {"systems": systems}
+
+
+@app.get("/api/systems/{system_key}/setup")
+def system_setup_status(system_key: str) -> dict[str, Any]:
+    return system_setup(system_key)
 
 
 @app.get("/api/systems/{system_key}/prompts")
@@ -830,7 +883,7 @@ def get_summary(system_key: str) -> dict[str, Any]:
             evidence_count = sum(1 for _ in csv.DictReader(handle))
     con.close()
     families = [name for name, _ in FAMILY_RULES] + ["Other"]
-    return {"system": system_key, "label": SYSTEMS[system_key]["label"], "project_key": project["key"],
+    return {"system": system_key, "label": project.get("label", ""), "project_key": project["key"],
             "built_at_utc": meta.get("built_at_utc"), "index_complete": meta.get("complete") == "1",
             "captures": captures[0] or 0, "current_captures": captures[1] or 0,
             "files_by_status": statuses, "evidence_rows": evidence_count, "families": families,
@@ -929,7 +982,7 @@ def figure_save(system_key: str, section_key: str) -> dict[str, Any]:
 def application_portrait(system_key: str) -> dict[str, Any]:
     """Translate indexed material into the questions an assessor must resolve."""
     project = system_project(system_key)
-    config = SYSTEMS[system_key]
+    config = SYSTEM_ALIASES.get(system_key, {})
     ledger_rows = matrix_rows(project)
     # Rejected rows remain in the append-only evidence ledger for provenance, but they are
     # retired decisions rather than live claims or questions.  Do not put them back into the
@@ -1009,10 +1062,10 @@ def application_portrait(system_key: str) -> dict[str, Any]:
     ))
     return {
         "application": {
-            "name": config["application"],
-            "system": config["label"],
+            "name": config.get("application") or project.get("application") or project.get("label", ""),
+            "system": config.get("label") or project.get("label", ""),
             "project_key": project["key"],
-            "scope": config["scope"],
+            "scope": config.get("scope") or project.get("scope", ""),
         },
         "assessment": {
             "total": len(rows),
