@@ -1,0 +1,15 @@
+.new-application-page { max-width: 1050px; }
+.new-app-drop { display: grid; gap: .6rem; justify-items: start; padding: 2rem; border: 2px dashed var(--ase-operational); border-radius: 14px; background: #fff; }
+.new-app-drop strong { font-size: 1.2rem; }
+.new-app-drop button, .new-app-actions button { padding: .65rem 1rem; border: 0; border-radius: 7px; background: var(--ase-operational); color: #fff; cursor: pointer; }
+.new-app-drop button:hover, .new-app-actions button:hover { background: #065e36; }
+.new-app-actions button:disabled { opacity: .45; cursor: default; }
+.new-app-picker { display: none; }
+.new-app-selection, .new-app-next { margin-top: 1.5rem; padding: 1.25rem; border: 1px solid var(--ase-line); border-radius: 10px; background: #fff; }
+.new-app-selection h2 { margin-top: 0; }
+.new-app-note { color: var(--ase-graphite); }
+.new-app-tree { max-height: 280px; overflow: auto; padding: 1rem; border-radius: 7px; background: var(--ase-paper); }
+.new-app-tree ul { margin-bottom: 0; overflow-wrap: anywhere; }
+.new-app-actions { display: flex; align-items: center; gap: 1rem; margin-top: 1rem; }
+.new-app-selection progress { width: 100%; margin-top: 1rem; accent-color: var(--ase-operational); }
+.new-app-error { color: var(--red); font-weight: 600; }

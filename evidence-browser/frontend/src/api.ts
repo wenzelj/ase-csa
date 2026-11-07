@@ -9,6 +9,39 @@ export async function api<T>(url: string, init?: RequestInit): Promise<T> {
   return data as T;
 }
 
+export type NewApplicationManifestEntry = { path: string; kind: "file" | "dir"; size?: number };
+export type NewApplicationResult = { status: "READY" | "OK" | "BLOCKED" | "ERROR"; session_id?: string; offset?: number; already_received?: boolean; errors?: { field: string; code: string; message: string }[] };
+export type NewApplicationDefaults = { workspace_root: string; discovery_name: string; knowledge_name: string; max_file_bytes: number; max_total_bytes: number; chunk_bytes: number; defaults: { lane: string; stage: string; spec_mode: string }; templates: string[] };
+
+export function fetchNewApplicationDefaults() {
+  return api<NewApplicationDefaults>("/api/new-application/defaults");
+}
+
+export function createNewApplicationUpload(manifest: NewApplicationManifestEntry[]) {
+  return api<NewApplicationResult>("/api/new-application/uploads", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ manifest }),
+  });
+}
+
+export function getNewApplicationUpload(sessionId: string) {
+  return api<NewApplicationResult & { received_bytes: number; total_bytes: number; effective_status: string }>(`/api/new-application/uploads/${encodeURIComponent(sessionId)}`);
+}
+
+export async function putNewApplicationChunk(sessionId: string, path: string, index: number, data: ArrayBuffer, signal?: AbortSignal): Promise<NewApplicationResult> {
+  const encodedPath = path.split("/").map(encodeURIComponent).join("/");
+  return api<NewApplicationResult>(`/api/new-application/uploads/${encodeURIComponent(sessionId)}/files/${encodedPath}?index=${index}`, {
+    method: "PUT", headers: { "Content-Type": "application/octet-stream" }, body: data, signal,
+  });
+}
+
+export function finaliseNewApplicationUpload(sessionId: string) {
+  return api<NewApplicationResult>(`/api/new-application/uploads/${encodeURIComponent(sessionId)}/finalise`, { method: "POST" });
+}
+
+export function cancelNewApplicationUpload(sessionId: string) {
+  return api<NewApplicationResult>(`/api/new-application/uploads/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
+}
+
 export async function fetchWordReview(system: string): Promise<WordReview> {
   return api<WordReview>(`/api/systems/${system}/word-review`);
 }
