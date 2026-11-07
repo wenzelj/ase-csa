@@ -1,5 +1,7 @@
 """Knowledge: background documents indexed apart from the evidence, shown on cards, never cited as evidence."""
 import json
+import sqlite3
+from pathlib import Path
 
 import pytest
 
@@ -101,6 +103,76 @@ def test_card_section_labels_background_and_hides_second_hand_system_statements(
 def test_no_knowledge_means_no_section(tmp_path, monkeypatch):
     monkeypatch.setattr(K, "SHARED", tmp_path / "none")
     assert K.card_section("DNS", "DNS", [], "", tmp_path) == ([], [])
+
+
+def _registered_project(tmp_path, monkeypatch, knowledge_dir: str | None):
+    """A throwaway project registered in its own PROJECTS.yaml, with one derived knowledge document."""
+    root = tmp_path / "proj"
+    kn = root / "00 Knowlege" if knowledge_dir == "00 Knowlege" else root / K.PROJECT_DIR
+    kn.mkdir(parents=True)
+    (root / "csa-work").mkdir()
+    (kn / "reference.md").write_text(DERIVED, encoding="utf-8")
+    (kn / "sources.json").write_text(json.dumps({"system_terms": ["Aurizon"], "documents": [
+        {"file": "reference.md", "title": "System reference", "type": "derived"}]}), encoding="utf-8")
+    (kn / K.MODEL).write_text(json.dumps({"functions": [{"function": "Alerts", "delivered_by": "the app servers",
+                                                         "depends_on": "SQL", "it_dependencies": "SMTP"}]}),
+                              encoding="utf-8")
+    entry = [
+        f'  - key: knowleg-{root.name}',
+        f'    label: "Knowlege {root.name}"',
+        f'    project_root: "{root}"',
+        '    project_context: ""',
+        f'    work_dir: "{root / "csa-work"}"',
+        '    default_source_set: ""',
+    ]
+    if knowledge_dir is not None:
+        entry.insert(3, f'    knowledge_dir: "{knowledge_dir}"')
+    import os
+    reg = Path(os.environ["CSA_PROJECTS_FILE"])
+    reg.write_text("\n".join(entry) + "\n", encoding="utf-8")
+    monkeypatch.setattr(K, "SHARED", tmp_path / "none")
+    return root, kn
+
+
+def test_registered_knowledge_dir_spelling_is_used(tmp_path, monkeypatch):
+    root, kn = _registered_project(tmp_path, monkeypatch, "00 Knowlege")
+    assert K.knowledge_dir(root) == "00 Knowlege"
+    assert K.folders(root) == [("project", kn)]
+    first = K.build(root)
+    assert first["rebuilt"] and first["documents"] == 1 and first["passages"] >= 2
+    with sqlite3.connect(f"file:{K.index_path(root)}?mode=ro", uri=True) as con:
+        assert con.execute("SELECT scope, title, type FROM docs").fetchall() == [
+            ("project", "System reference", "derived")]
+    assert K.system_model(root)["functions"][0]["function"] == "Alerts"
+    lines, _ = K.card_section("DNS", "DNS", [], "", root)
+    assert "System model" in "\n".join(lines) and "Look for (second-hand, from System reference" in "\n".join(lines)
+
+
+def test_no_knowledge_dir_setting_keeps_the_historic_folder(tmp_path, monkeypatch):
+    root, kn = _registered_project(tmp_path, monkeypatch, None)
+    assert K.knowledge_dir(root) == K.PROJECT_DIR
+    assert K.folders(root) == [("project", kn)]
+    assert K.build(root)["documents"] == 1
+    assert K.build(root)["rebuilt"] is False
+
+
+def test_knowledge_dir_signatures_differ_across_spellings(tmp_path, monkeypatch):
+    a, _ = _registered_project(tmp_path, monkeypatch, "00 Knowledge")
+    b, _ = _registered_project(tmp_path / "separate", monkeypatch, "00 Knowlege")
+    assert K._signature(a) != K._signature(b)
+
+
+def test_knowledge_dir_escaping_the_project_root_is_rejected(tmp_path, monkeypatch):
+    import os
+    root, _ = _registered_project(tmp_path, monkeypatch, None)
+    reg = Path(os.environ["CSA_PROJECTS_FILE"])
+    base = reg.read_text(encoding="utf-8")
+    for bad in ("../outside", "/private/tmp/knowledge-outside", "a/b/../../c"):
+        reg.write_text(base + f'    knowledge_dir: "{bad}"\n', encoding="utf-8")
+        with pytest.raises(ValueError):
+            K.knowledge_dir(root)
+        reg.write_text(base, encoding="utf-8")
+    assert K.knowledge_dir(root) == K.PROJECT_DIR
 
 
 MATRIX = {"E-001": {"evidence_id": "E-001", "status": "VERIFIED", "question": "", "gap_or_action": "",
