@@ -1,8 +1,11 @@
 import io
+import os
+import shutil
 import zipfile
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+import pytest
 
 from backend import app, documents, working_document
 
@@ -123,7 +126,73 @@ def test_loopback_working_document_routes(tmp_path, monkeypatch):
         uploaded = call("PUT", f"/api/systems/my-app/working-document/upload?filename={quote('Second.docx')}",
                         docx_bytes(), "application/octet-stream")[1]
         assert uploaded["status"] == "READY"
+        template_result = call("POST", "/api/systems/my-app/working-document/from-template",
+                               json.dumps({"template_id": "missing", "output_path": "new.docx", "confirmed": True}).encode())[1]
+        assert template_result["errors"][0]["code"] == "TEMPLATE_MISSING"
     finally:
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+def _shared_template() -> Path:
+    return Path(os.environ.get("CSA_TEST_TEMPLATE") or
+                Path(__file__).resolve().parents[3] / "CSA Template" / "CSA_Template_v1.6.dotx")
+
+
+def test_create_working_docx_from_shared_dotx_and_register(tmp_path, monkeypatch):
+    source = _shared_template()
+    if not source.is_file():
+        pytest.skip("Shared CSA template is unavailable in this checkout")
+    agents, root, registry = workspace(tmp_path, monkeypatch)
+    shared = tmp_path / "CSA Template"
+    shared.mkdir()
+    shutil.copy2(source, shared / source.name)
+    project = app.system_project("my-app")
+    choices = working_document.options(project)
+    template_id = next(item["id"] for item in choices["templates"] if item["source"] == "shared")
+    output = choices["suggested_output"]
+    result = TestClient(app.app).post("/api/systems/my-app/working-document/from-template", json={
+        "template_id": template_id, "output_path": output, "system_name": "My App", "confirmed": True}).json()
+    assert result["status"] == "READY", result
+    assert result["template_check"] in ("PASS", "WARN")
+    document = root / output
+    assert document.is_file()
+    assert documents.resolve(app.system_project("my-app"))["path"] == document.resolve()
+    assert "working_docx:" in registry.read_text()
+    refused = working_document.create_from_template(app.system_project("my-app"), agents, {
+        "template_id": template_id, "output_path": output, "system_name": "My App", "confirmed": True})
+    assert refused["errors"][0]["code"] == "OUTPUT_UNAVAILABLE"
+
+
+def test_template_creation_rejects_invalid_template_and_unsafe_output(tmp_path, monkeypatch):
+    agents, root, registry = workspace(tmp_path, monkeypatch)
+    template = root / "Assessment.dotx"
+    template.write_bytes(b"not a Word template")
+    project = app.system_project("my-app")
+    assert working_document.create_from_template(project, agents, {
+        "template_id": "project:Assessment.dotx", "output_path": "../escape.docx", "confirmed": True})["status"] == "BLOCKED"
+    result = working_document.create_from_template(project, agents, {
+        "template_id": "project:Assessment.dotx", "output_path": "New/output.docx", "confirmed": True})
+    assert result["status"] == "BLOCKED"
+    assert result["errors"][0]["code"] == "TEMPLATE_CREATE_FAILED"
+    assert not (root / "New" / "output.docx").exists()
+    assert "working_docx:" not in registry.read_text()
+
+
+def test_rms_local_template_fails_validation_without_becoming_working_docx(tmp_path, monkeypatch):
+    source = Path(os.environ.get("CSA_TEST_OLD_TEMPLATE") or
+                  Path(__file__).resolve().parents[3] / "RMS" / "02 Current State Assessment" /
+                  "01 Final Version" / "Current_State_Assessment_Template.dotx")
+    if not source.is_file():
+        pytest.skip("RMS local template is unavailable in this checkout")
+    agents, root, registry = workspace(tmp_path, monkeypatch)
+    target = root / "02 Current State Assessment" / "01 Final Version" / source.name
+    target.parent.mkdir(parents=True)
+    shutil.copy2(source, target)
+    result = working_document.create_from_template(app.system_project("my-app"), agents, {
+        "template_id": "project:02 Current State Assessment/01 Final Version/Current_State_Assessment_Template.dotx",
+        "output_path": "02 Current State Assessment/02 New Template/Assessment.docx", "confirmed": True})
+    assert result["status"] == "BLOCKED"
+    assert result["errors"][0]["code"] == "TEMPLATE_FIELDS_MISSING"
+    assert "working_docx:" not in registry.read_text()

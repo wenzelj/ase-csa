@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import os
 import stat
+import subprocess
+import sys
 import tempfile
 import zipfile
 from pathlib import Path
@@ -59,7 +61,120 @@ def options(project: dict[str, str]) -> dict[str, Any]:
                 break
     configured = project.get("working_docx") or ""
     return {"project_key": project["key"], "project_root": str(root),
-            "configured_path": configured, "candidates": candidates, "max_upload_bytes": MAX_UPLOAD_BYTES}
+            "configured_path": configured, "candidates": candidates, "max_upload_bytes": MAX_UPLOAD_BYTES,
+            "templates": templates(project),
+            "suggested_output": "02 Current State Assessment/02 New Template/Current State Assessment - "
+                                + "".join(ch for ch in project.get("label", project["key"]) if ch not in "/\\:")
+                                + ".docx"}
+
+
+def templates(project: dict[str, str]) -> list[dict[str, str]]:
+    root = _root(project)
+    excluded = {"Discovery", "csa-work", project.get("knowledge_dir") or "00 Knowlege"}
+    found: list[dict[str, str]] = []
+    if root.is_dir():
+        for dirpath, dirnames, filenames in os.walk(root):
+            current = Path(dirpath)
+            if current == root:
+                dirnames[:] = [name for name in dirnames if name not in excluded and not name.startswith(".")]
+            else:
+                dirnames[:] = [name for name in dirnames if not name.startswith(".")]
+            for name in sorted(filenames):
+                path = current / name
+                if path.suffix.lower() == ".dotx" and not path.is_symlink():
+                    relative = path.relative_to(root).as_posix()
+                    found.append({"id": f"project:{relative}", "label": relative, "source": "application"})
+                    if len(found) >= 100:
+                        break
+            if len(found) >= 100:
+                break
+    shared = root.parent / "CSA Template"
+    for path in sorted(shared.glob("CSA_Template_v*.dotx"), reverse=True):
+        if path.is_file() and not path.is_symlink():
+            found.append({"id": f"shared:{path.name}", "label": f"Shared CSA template · {path.name}",
+                          "source": "shared"})
+    return found
+
+
+def _template_path(project: dict[str, str], template_id: str) -> Path | None:
+    root = _root(project)
+    if template_id.startswith("project:"):
+        candidate = (root / template_id[len("project:"):]).resolve()
+        if not _inside(candidate, root):
+            return None
+    elif template_id.startswith("shared:"):
+        name = template_id[len("shared:"):]
+        if Path(name).name != name:
+            return None
+        candidate = (root.parent / "CSA Template" / name).resolve()
+        if candidate.parent != (root.parent / "CSA Template").resolve():
+            return None
+    else:
+        return None
+    if candidate.suffix.lower() != ".dotx" or not candidate.is_file() or candidate.is_symlink():
+        return None
+    return candidate
+
+
+def _run_json(command: list[str]) -> tuple[int, dict[str, Any]]:
+    completed = subprocess.run(command, capture_output=True, text=True, timeout=60)
+    try:
+        payload = json.loads(completed.stdout)
+    except json.JSONDecodeError:
+        payload = {"message": (completed.stderr or completed.stdout).strip()[:500]}
+    return completed.returncode, payload
+
+
+def create_from_template(project: dict[str, str], agents_dir: Path, payload: dict[str, Any]) -> dict[str, Any]:
+    if payload.get("confirmed") is not True:
+        return _error("confirmed", "CONFIRMATION_REQUIRED", "Confirm creation of a new working DOCX.")
+    root = _root(project)
+    template = _template_path(project, str(payload.get("template_id") or ""))
+    if template is None or not any(item["id"] == payload.get("template_id") for item in templates(project)):
+        return _error("template_id", "TEMPLATE_MISSING", "Choose a listed application or shared CSA template.")
+    relative_text = str(payload.get("output_path") or "")
+    relative = Path(relative_text)
+    if not relative_text or relative.is_absolute() or ".." in relative.parts or relative.suffix.lower() != ".docx":
+        return _error("output_path", "INVALID_PATH", "Choose a new DOCX path inside the application folder.")
+    output = (root / relative).resolve()
+    excluded = {"Discovery", "csa-work", project.get("knowledge_dir") or "00 Knowlege"}
+    if not _inside(output, root) or relative.parts[0] in excluded or output.exists():
+        return _error("output_path", "OUTPUT_UNAVAILABLE", "The output must be a new DOCX outside discovery and knowledge folders.")
+    if output.parent.is_dir() and any(output.parent.glob("*.docx")):
+        return _error("output_path", "DOCX_SIBLING_EXISTS", "Choose an empty folder for the new working DOCX.")
+    system_name = str(payload.get("system_name") or project.get("label") or project["key"]).strip()
+    if not system_name or len(system_name) > 160:
+        return _error("system_name", "INVALID_NAME", "Enter a system name of up to 160 characters.")
+    scripts = Path(__file__).resolve().parents[2] / "skills" / "csa-document-template" / "scripts"
+    try:
+        with tempfile.TemporaryDirectory(prefix=".new-csa-", dir=root) as temp_dir:
+            staged = Path(temp_dir) / "assessment.docx"
+            code, created = _run_json([sys.executable, str(scripts / "new_csa.py"),
+                                       "--workspace", str(root), "--template", str(template),
+                                       "--out", str(staged), "--system-name", system_name])
+            if code or created.get("status") != "CREATED":
+                return _error("template_id", "TEMPLATE_CREATE_FAILED", str(created.get("message") or "Template conversion failed."))
+            if created.get("properties_without_fields"):
+                return _error("template_id", "TEMPLATE_FIELDS_MISSING",
+                              "This DOTX does not contain the required cached CSA fields; choose a compatible template.")
+            check_code, checked = _run_json([sys.executable, str(scripts / "check_csa.py"), str(staged),
+                                             "--workspace", str(root), "--template", str(template)])
+            if check_code or checked.get("counts", {}).get("errors"):
+                findings = checked.get("findings") or []
+                detail = findings[0].get("message", "") if findings else checked.get("message", "")
+                return _error("template_id", "TEMPLATE_CHECK_FAILED", f"The generated DOCX failed the template check. {detail}".strip())
+            output.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                os.link(staged, output)
+            except FileExistsError:
+                return _error("output_path", "OUTPUT_UNAVAILABLE", "The output DOCX already exists.")
+            result = _set_registry_path(agents_dir, project, output)
+            if result["status"] != "READY":
+                output.unlink(missing_ok=True)
+                return result
+            return {**result, "template": str(template), "template_check": checked.get("status")}
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return _error("template_id", "TEMPLATE_CREATE_FAILED", str(error))
 
 
 def _set_registry_path(agents_dir: Path, project: dict[str, str], document: Path) -> dict[str, Any]:

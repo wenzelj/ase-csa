@@ -234,6 +234,9 @@ class Handler(BaseHTTPRequestHandler):
             match = re.fullmatch(r"/api/systems/([^/]+)/working-document", path)
             if match:
                 return self.dispatch_result(api.select_working_document(match.group(1), payload))
+            match = re.fullmatch(r"/api/systems/([^/]+)/working-document/from-template", path)
+            if match:
+                return self.dispatch_result(api.create_working_document_from_template(match.group(1), payload))
             match = re.fullmatch(r"/api/systems/([^/]+)/figures/refresh", parsed.path)
             if match:
                 return self.dispatch_result(api.figure_refresh(match.group(1)))
