@@ -599,11 +599,34 @@ def commit_project_setup(
                 "errors": [{"field": "destination", "code": "DESTINATION_CONFLICTS",
                             "message": f"The destination overlaps the existing project \"{overlap}\"."}],
                 "staging": staging}
+    if not registry_file.is_file():
+        return {"status": "BLOCKED",
+                "errors": [{"field": "registry", "code": "REGISTRY_MISSING",
+                            "message": f"The project registry is missing: {registry_file}"}],
+                "staging": staging}
 
     # --- revalidate the staged tree --------------------------------------
     tree_errors = _staged_tree_ok(session_dir, session.get("manifest", []))
     if tree_errors:
         return {"status": "BLOCKED", "errors": tree_errors, "staging": staging}
+
+    knowledge_requested = bool(knowledge.get("documents") or knowledge.get("system_terms") or knowledge.get("about"))
+    knowledge_rel = Path(values["paths"]["knowledge"]).relative_to(root)
+    staged_sources = session_dir / knowledge_rel / "sources.json"
+    sources = {"documents": list(knowledge.get("documents") or []),
+               "system_terms": list(knowledge.get("system_terms") or [])}
+    if "about" in knowledge:
+        sources["about"] = knowledge["about"]
+    if knowledge_requested and staged_sources.exists():
+        try:
+            uploaded_sources = json.loads(staged_sources.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            uploaded_sources = None
+        if uploaded_sources != sources:
+            return {"status": "BLOCKED",
+                    "errors": [{"field": "knowledge_sources", "code": "KNOWLEDGE_SOURCES_CONFLICT",
+                                "message": "The uploaded sources.json differs from the configured metadata."}],
+                    "staging": staging}
 
     # --- lock, then write -------------------------------------------------
     lock = _CommitLock(agents_dir)
@@ -615,6 +638,19 @@ def commit_project_setup(
     backup_path = None
     context_written = False
     moved_root = False
+    created_dirs: list[Path] = []
+    created_sources = False
+    knowledge_dir = Path(values["paths"]["knowledge"])
+
+    def ensure_directory(path: Path) -> None:
+        missing: list[Path] = []
+        current = path
+        while current != root and not current.exists():
+            missing.append(current)
+            current = current.parent
+        path.mkdir(parents=True, exist_ok=True)
+        created_dirs.extend(missing)
+
     try:
         # double-check under the lock (another commit may have finished meanwhile)
         if key in _existing_project_keys(registry_file):
@@ -638,10 +674,9 @@ def commit_project_setup(
         moved_root = True
 
         # 2. framework folders, created when the upload did not include them
-        (root / "csa-work").mkdir(parents=True, exist_ok=True)
-        (root / "Discovery").mkdir(parents=True, exist_ok=True)
-        knowledge_dir = Path(values["paths"]["knowledge"])
-        knowledge_dir.mkdir(parents=True, exist_ok=True)
+        ensure_directory(root / "csa-work")
+        ensure_directory(Path(values["paths"]["discovery"]))
+        ensure_directory(knowledge_dir)
 
         # 3. project-context file from the template fields
         context_file.parent.mkdir(parents=True, exist_ok=True)
@@ -649,20 +684,14 @@ def commit_project_setup(
         context_written = True
 
         # 4. optional knowledge sources.json (only when the upload carried it)
-        if knowledge.get("documents") or knowledge.get("system_terms"):
-            sources = {"documents": list(knowledge.get("documents") or []),
-                       "system_terms": list(knowledge.get("system_terms") or [])}
-            if "about" in knowledge:
-                sources["about"] = knowledge["about"]
+        if knowledge_requested and not (knowledge_dir / "sources.json").exists():
             (knowledge_dir / "sources.json").write_text(
                 json.dumps(sources, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            created_sources = True
 
         # 5. append the registry entry, preserving every other line
         if not registry_file.is_file():
-            return {"status": "ERROR",
-                    "errors": [{"field": "registry", "code": "REGISTRY_MISSING",
-                                "message": f"The project registry is missing: {registry_file}"}],
-                    "staging": staging}
+            raise FileNotFoundError(f"The project registry is missing: {registry_file}")
         original = registry_file.read_text(encoding="utf-8")
         backup_path = registry_file.with_name(f"PROJECTS.yaml.commit-{int(now * 1000)}.bak")
         shutil.copy2(registry_file, backup_path)
@@ -679,6 +708,8 @@ def commit_project_setup(
         sessions[session_id]["status"] = "committed"
         sessions[session_id]["committed_at"] = now
         _save_sessions(staging_root, sessions)
+        if backup_path is not None:
+            backup_path.unlink(missing_ok=True)
 
         return {
             "status": "READY",
@@ -693,14 +724,24 @@ def commit_project_setup(
             shutil.copy2(backup_path, registry_file)
         if backup_path is not None and backup_path.exists():
             backup_path.unlink(missing_ok=True)
-        if context_written:
+        if moved_root or context_written:
             context_file.unlink(missing_ok=True)
+        restored = not moved_root
+        retained = session_dir
         if moved_root:
-            _remove_tree(root)
+            try:
+                if created_sources:
+                    (knowledge_dir / "sources.json").unlink(missing_ok=True)
+                for directory in sorted(set(created_dirs), key=lambda path: len(path.parts), reverse=True):
+                    directory.rmdir()
+                os.replace(root, session_dir)
+                restored = True
+            except OSError:
+                retained = root
         return {"status": "ERROR",
                 "errors": [{"field": "commit", "code": "COMMIT_FAILED",
-                            "message": f"Registration failed and was rolled back ({error})."}],
-                "staging": staging}
+                            "message": f"Registration failed ({error}). Uploaded files remain at {retained}."}],
+                "staging": {**staging, "session_dir": str(retained), "recoverable": restored}}
     finally:
         lock.release()
 

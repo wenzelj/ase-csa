@@ -368,6 +368,38 @@ def test_commit_registers_the_project(tmp_path):
     assert sessions[sid]["status"] == "committed"
 
 
+def test_commit_creates_selected_discovery_folder(tmp_path):
+    agents = _setup_agents(tmp_path)
+    staging_root, sid = _staged_session(tmp_path, files={"readme.txt": b"x"})
+    chosen = tmp_path / "new-app" / "Collected Sources"
+    result = project_setup.commit_project_setup(
+        _payload(discovery=str(chosen)), agents_dir=agents, base_dir=tmp_path,
+        staging_root=staging_root, session_id=sid)
+    assert result["status"] == "READY", result
+    assert chosen.is_dir()
+    assert not (tmp_path / "new-app" / "Discovery").exists()
+    assert f'default_source_set: "{chosen}"' in (agents / "csa-context" / "PROJECTS.yaml").read_text()
+
+
+def test_uploaded_knowledge_sources_are_not_overwritten(tmp_path):
+    agents = _setup_agents(tmp_path)
+    uploaded = {"documents": [{"file": "vendor.pdf", "title": "Original"}], "system_terms": []}
+    staging_root, sid = _staged_session(
+        tmp_path, files={"00 Knowlege/sources.json": json.dumps(uploaded).encode()})
+    changed = {"documents": [{"file": "vendor.pdf", "title": "Changed"}], "system_terms": []}
+    blocked = project_setup.commit_project_setup(
+        _payload(knowledge_sources=changed), agents_dir=agents, base_dir=tmp_path,
+        staging_root=staging_root, session_id=sid)
+    assert blocked["status"] == "BLOCKED"
+    assert blocked["errors"][0]["code"] == "KNOWLEDGE_SOURCES_CONFLICT"
+    assert json.loads((staging_root / sid / "00 Knowlege" / "sources.json").read_text()) == uploaded
+    accepted = project_setup.commit_project_setup(
+        _payload(knowledge_sources=uploaded), agents_dir=agents, base_dir=tmp_path,
+        staging_root=staging_root, session_id=sid)
+    assert accepted["status"] == "READY", accepted
+    assert json.loads((tmp_path / "new-app" / "00 Knowlege" / "sources.json").read_text()) == uploaded
+
+
 def test_commit_writes_knowledge_sources_json_when_selected(tmp_path):
     agents = _setup_agents(tmp_path)
     staging_root, sid = _staged_session(tmp_path, files={"docs/ref.pdf": b"PDFDATA"})
@@ -522,6 +554,12 @@ def test_commit_rolls_back_when_the_context_write_fails(tmp_path, monkeypatch):
     assert not list((agents / "csa-context").glob("PROJECTS.yaml.commit-*.bak"))
     # the failure is recoverable: the caller can cancel or retry
     assert result["staging"]["recoverable"] is True
+    assert (staging_root / sid / "notes" / "readme.txt").read_bytes() == b"x"
+    monkeypatch.undo()
+    retried = project_setup.commit_project_setup(
+        _payload(), agents_dir=agents, base_dir=tmp_path,
+        staging_root=staging_root, session_id=sid)
+    assert retried["status"] == "READY", retried
 
 
 def test_commit_is_atomic_under_concurrent_attempts(tmp_path):
