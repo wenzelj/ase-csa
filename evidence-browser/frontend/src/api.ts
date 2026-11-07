@@ -12,6 +12,21 @@ export async function api<T>(url: string, init?: RequestInit): Promise<T> {
 export type NewApplicationManifestEntry = { path: string; kind: "file" | "dir"; size?: number };
 export type NewApplicationResult = { status: "READY" | "OK" | "BLOCKED" | "ERROR"; session_id?: string; offset?: number; already_received?: boolean; errors?: { field: string; code: string; message: string }[] };
 export type NewApplicationDefaults = { workspace_root: string; discovery_name: string; knowledge_name: string; max_file_bytes: number; max_total_bytes: number; chunk_bytes: number; defaults: { lane: string; stage: string; spec_mode: string }; templates: string[] };
+export type NewApplicationPreview = { status: "READY" | "BLOCKED"; errors: { field: string; code: string; message: string }[]; values: { paths: Record<string, string>; registry: Record<string, unknown>; project_context: Record<string, unknown>; knowledge: Record<string, unknown> } };
+export type NewApplicationCommit = { status: "READY" | "BLOCKED" | "ERROR"; errors?: { field: string; code: string; message: string }[]; project_key?: string; paths?: Record<string, string> };
+
+export function previewNewApplication(config: Record<string, unknown>) {
+  return api<NewApplicationPreview>("/api/new-application/preview", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(config),
+  });
+}
+
+export function commitNewApplication(sessionId: string, config: Record<string, unknown>) {
+  return api<NewApplicationCommit>("/api/new-application/commit", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session_id: sessionId, config, confirmed: true }),
+  });
+}
 
 export function fetchNewApplicationDefaults() {
   return api<NewApplicationDefaults>("/api/new-application/defaults");
