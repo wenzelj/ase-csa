@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it, vi } from "vitest";
 import App, { FirstRunSetup, loadCreatedApplication, setupScreen } from "../App";
-import { createWorkingDocumentFromTemplate, fetchWorkingDocumentOptions, selectWorkingDocument, uploadWorkingDocument, type WorkingDocumentOptions } from "../api";
+import { createWorkingDocumentFromTemplate, fetchWorkingDocumentOptions, selectLegacyDocument, selectWorkingDocument, uploadWorkingDocument, type WorkingDocumentOptions } from "../api";
 import { preferredTemplate } from "../components/WorkingDocumentSettings";
 
 it("keeps New application in navigation outside a selected system", () => {
@@ -60,7 +60,7 @@ it("loads DOCX choices and sends an explicit selection or upload", async () => {
 
 it("offers the shared DOTX separately and confirms creation of a new DOCX", async () => {
   const options: WorkingDocumentOptions = { project_key: "rms", project_root: "/assessment/RMS",
-    configured_path: "", candidates: [], max_upload_bytes: 1000,
+    configured_path: "", legacy_path: "", candidates: [], max_upload_bytes: 1000,
     templates: [
       { id: "project:02 Current State Assessment/Current_State_Assessment_Template.dotx", label: "RMS template", source: "application" },
       { id: "shared:CSA_Template_v1.6.dotx", label: "Shared CSA template", source: "shared" },
@@ -75,6 +75,16 @@ it("offers the shared DOTX separately and confirms creation of a new DOCX", asyn
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(body).toEqual({ template_id: "shared:CSA_Template_v1.6.dotx", output_path: options.suggested_output,
       system_name: "RMS", confirmed: true });
+  } finally { vi.unstubAllGlobals(); }
+});
+
+it("sets the old DOCX through its separate migration source route", async () => {
+  const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ status: "READY", legacy_docx: "/assessment/RMS/old.docx" }) });
+  vi.stubGlobal("fetch", fetchMock);
+  try {
+    await selectLegacyDocument("rms", "02 Current State Assessment/old.docx");
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/systems/rms/legacy-document");
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ relative_path: "02 Current State Assessment/old.docx" });
   } finally { vi.unstubAllGlobals(); }
 });
 

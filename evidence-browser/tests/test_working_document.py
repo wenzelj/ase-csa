@@ -69,6 +69,24 @@ def test_selection_rejects_escape_and_invalid_docx(tmp_path, monkeypatch):
     assert "working_docx:" not in registry.read_text()
 
 
+def test_legacy_source_is_separate_from_working_docx(tmp_path, monkeypatch):
+    agents, root, registry = workspace(tmp_path, monkeypatch)
+    old = root / "Old Assessment.docx"
+    new = root / "New Assessment.docx"
+    old.write_bytes(docx_bytes())
+    new.write_bytes(docx_bytes())
+    assert working_document.select(app.system_project("my-app"), agents, new.name)["status"] == "READY"
+    result = working_document.select_legacy(app.system_project("my-app"), agents, old.name)
+    assert result["status"] == "READY"
+    assert result["legacy_docx"] == str(old)
+    assert working_document.options(app.system_project("my-app"))["legacy_path"] == str(old)
+    text = registry.read_text()
+    assert text.count("legacy_docx:") == 1 and text.count("working_docx:") == 1
+    same = working_document.select_legacy(app.system_project("my-app"), agents, new.name)
+    assert same["errors"][0]["code"] == "SAME_AS_WORKING"
+    assert working_document.select_legacy(app.system_project("my-app"), agents, "../outside.docx")["status"] == "BLOCKED"
+
+
 def test_upload_docx_registers_without_overwriting(tmp_path, monkeypatch):
     agents, root, registry = workspace(tmp_path, monkeypatch)
     project = app.system_project("my-app")
@@ -92,6 +110,7 @@ def test_fastapi_working_document_routes(tmp_path, monkeypatch):
     assert client.get("/api/systems/my-app/setup").json()["document_present"] is True
     uploaded = client.put("/api/systems/my-app/working-document/upload?filename=Second.docx", content=docx_bytes())
     assert uploaded.json()["status"] == "READY"
+    assert client.post("/api/systems/my-app/legacy-document", json={"relative_path": "Assessment.docx"}).json()["status"] == "READY"
 
 
 def test_loopback_working_document_routes(tmp_path, monkeypatch):
@@ -126,6 +145,9 @@ def test_loopback_working_document_routes(tmp_path, monkeypatch):
         uploaded = call("PUT", f"/api/systems/my-app/working-document/upload?filename={quote('Second.docx')}",
                         docx_bytes(), "application/octet-stream")[1]
         assert uploaded["status"] == "READY"
+        old = call("POST", "/api/systems/my-app/legacy-document",
+                   json.dumps({"relative_path": "Assessment.docx"}).encode())[1]
+        assert old["status"] == "READY"
         template_result = call("POST", "/api/systems/my-app/working-document/from-template",
                                json.dumps({"template_id": "missing", "output_path": "new.docx", "confirmed": True}).encode())[1]
         assert template_result["errors"][0]["code"] == "TEMPLATE_MISSING"
@@ -137,7 +159,7 @@ def test_loopback_working_document_routes(tmp_path, monkeypatch):
 
 def _shared_template() -> Path:
     return Path(os.environ.get("CSA_TEST_TEMPLATE") or
-                Path(__file__).resolve().parents[3] / "CSA Template" / "CSA_Template_v1.6.dotx")
+                Path(__file__).resolve().parents[3] / "CSA Template" / "archive" / "CSA_Template_v1.6.dotx")
 
 
 def test_create_working_docx_from_shared_dotx_and_register(tmp_path, monkeypatch):

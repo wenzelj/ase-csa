@@ -61,7 +61,8 @@ def options(project: dict[str, str]) -> dict[str, Any]:
                 break
     configured = project.get("working_docx") or ""
     return {"project_key": project["key"], "project_root": str(root),
-            "configured_path": configured, "candidates": candidates, "max_upload_bytes": MAX_UPLOAD_BYTES,
+            "configured_path": configured, "legacy_path": project.get("legacy_docx") or "",
+            "candidates": candidates, "max_upload_bytes": MAX_UPLOAD_BYTES,
             "templates": templates(project),
             "suggested_output": "02 Current State Assessment/02 New Template/Current State Assessment - "
                                 + "".join(ch for ch in project.get("label", project["key"]) if ch not in "/\\:")
@@ -177,10 +178,13 @@ def create_from_template(project: dict[str, str], agents_dir: Path, payload: dic
         return _error("template_id", "TEMPLATE_CREATE_FAILED", str(error))
 
 
-def _set_registry_path(agents_dir: Path, project: dict[str, str], document: Path) -> dict[str, Any]:
+def _set_registry_path(agents_dir: Path, project: dict[str, str], document: Path,
+                       field: str = "working_docx") -> dict[str, Any]:
+    if field not in {"working_docx", "legacy_docx"}:
+        raise ValueError("Unsupported document registry field")
     lock = _CommitLock(agents_dir)
     if not lock.acquire():
-        return _error("working_docx", "REGISTRY_LOCKED", "The project registry is busy; try again.")
+        return _error(field, "REGISTRY_LOCKED", "The project registry is busy; try again.")
     try:
         registry = agents_dir / "csa-context" / "PROJECTS.yaml"
         original = registry.read_text(encoding="utf-8")
@@ -188,10 +192,10 @@ def _set_registry_path(agents_dir: Path, project: dict[str, str], document: Path
         starts = [index for index, line in enumerate(lines) if line.startswith("  - key:")]
         target = next((index for index in starts if lines[index].split(":", 1)[1].strip().strip("\"'") == project["key"]), None)
         if target is None:
-            return _error("working_docx", "PROJECT_MISSING", "The application is no longer in the project registry.")
+            return _error(field, "PROJECT_MISSING", "The application is no longer in the project registry.")
         end = next((index for index in starts if index > target), len(lines))
-        value = f"    working_docx: {json.dumps(str(document))}\n"
-        current = next((index for index in range(target + 1, end) if lines[index].startswith("    working_docx:")), None)
+        value = f"    {field}: {json.dumps(str(document))}\n"
+        current = next((index for index in range(target + 1, end) if lines[index].startswith(f"    {field}:")), None)
         if current is None:
             lines.insert(end, value)
         else:
@@ -206,9 +210,9 @@ def _set_registry_path(agents_dir: Path, project: dict[str, str], document: Path
             os.replace(temp_name, registry)
         finally:
             Path(temp_name).unlink(missing_ok=True)
-        return {"status": "READY", "project_key": project["key"], "working_docx": str(document)}
+        return {"status": "READY", "project_key": project["key"], field: str(document)}
     except OSError as error:
-        return _error("working_docx", "REGISTRY_WRITE_FAILED", str(error))
+        return _error(field, "REGISTRY_WRITE_FAILED", str(error))
     finally:
         lock.release()
 
@@ -222,6 +226,20 @@ def select(project: dict[str, str], agents_dir: Path, relative_path: str) -> dic
     if not _inside(document, root) or not _valid_docx(document):
         return _error("relative_path", "INVALID_DOCX", "The selected file must be an existing, readable DOCX inside the application folder.")
     return _set_registry_path(agents_dir, project, document)
+
+
+def select_legacy(project: dict[str, str], agents_dir: Path, relative_path: str) -> dict[str, Any]:
+    root = _root(project)
+    relative = Path(relative_path)
+    if not relative_path or relative.is_absolute() or ".." in relative.parts:
+        return _error("relative_path", "INVALID_PATH", "Choose an old DOCX inside the application folder.")
+    document = (root / relative).resolve()
+    if not _inside(document, root) or not _valid_docx(document):
+        return _error("relative_path", "INVALID_DOCX", "The old source must be a readable DOCX inside the application folder.")
+    current = project.get("working_docx")
+    if current and document == Path(current).expanduser().resolve():
+        return _error("relative_path", "SAME_AS_WORKING", "Choose a different old DOCX from the working document.")
+    return _set_registry_path(agents_dir, project, document, "legacy_docx")
 
 
 def upload(project: dict[str, str], agents_dir: Path, filename: str, data: bytes) -> dict[str, Any]:

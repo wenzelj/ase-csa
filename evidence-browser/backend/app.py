@@ -647,6 +647,11 @@ def select_working_document(system_key: str, payload: dict[str, Any]) -> dict[st
     return working_document.select(system_project(system_key), agents_dir(), str(payload.get("relative_path") or ""))
 
 
+@app.post("/api/systems/{system_key}/legacy-document")
+def select_legacy_document(system_key: str, payload: dict[str, Any]) -> dict[str, Any]:
+    return working_document.select_legacy(system_project(system_key), agents_dir(), str(payload.get("relative_path") or ""))
+
+
 @app.post("/api/systems/{system_key}/working-document/from-template")
 def create_working_document_from_template(system_key: str, payload: dict[str, Any]) -> dict[str, Any]:
     return working_document.create_from_template(system_project(system_key), agents_dir(), payload)

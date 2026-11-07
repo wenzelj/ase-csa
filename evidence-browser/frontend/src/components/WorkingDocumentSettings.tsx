@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { createWorkingDocumentFromTemplate, fetchWorkingDocumentOptions, selectWorkingDocument, uploadWorkingDocument, type WorkingDocumentOptions } from "../api";
+import { createWorkingDocumentFromTemplate, fetchWorkingDocumentOptions, selectLegacyDocument, selectWorkingDocument, uploadWorkingDocument, type WorkingDocumentOptions } from "../api";
 
 function resultError(result: { errors?: { field: string; message: string }[] }) {
   return result.errors?.map(item => `${item.field}: ${item.message}`).join(" ") || "The working document could not be set.";
@@ -12,6 +12,7 @@ export function preferredTemplate(options: WorkingDocumentOptions): string {
 export function WorkingDocumentSettings({ system, onSaved }: { system: string; onSaved: () => void }) {
   const [options, setOptions] = useState<WorkingDocumentOptions | null>(null);
   const [selected, setSelected] = useState("");
+  const [legacySelected, setLegacySelected] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [templateId, setTemplateId] = useState("");
   const [outputPath, setOutputPath] = useState("");
@@ -24,11 +25,13 @@ export function WorkingDocumentSettings({ system, onSaved }: { system: string; o
     const current = await fetchWorkingDocumentOptions(system);
     setOptions(current);
     setSelected(previous => current.candidates.some(item => item.relative_path === previous) ? previous : "");
+    setLegacySelected(previous => current.candidates.some(item => item.relative_path === previous) &&
+      `${current.project_root}/${previous}` !== current.configured_path ? previous : "");
     setTemplateId(previous => current.templates.some(item => item.id === previous) ? previous : preferredTemplate(current));
     setOutputPath(previous => previous || current.suggested_output);
     setSystemName(previous => previous || current.project_root.split("/").at(-1) || current.project_key);
   }
-  useEffect(() => { setOptions(null); setSelected(""); setError(""); void reload().catch(caught => setError((caught as Error).message)); }, [system]);
+  useEffect(() => { setOptions(null); setSelected(""); setLegacySelected(""); setError(""); void reload().catch(caught => setError((caught as Error).message)); }, [system]);
 
   async function choose() {
     if (!selected) return;
@@ -64,6 +67,17 @@ export function WorkingDocumentSettings({ system, onSaved }: { system: string; o
     } catch (caught) { setError((caught as Error).message); }
     finally { setBusy(false); }
   }
+  async function chooseLegacy() {
+    if (!legacySelected) return;
+    setBusy(true); setError(""); setNotice("");
+    try {
+      const result = await selectLegacyDocument(system, legacySelected);
+      if (result.status !== "READY") { setError(resultError(result)); return; }
+      setNotice(`Old assessment source set to ${legacySelected}.`);
+      await reload(); onSaved();
+    } catch (caught) { setError((caught as Error).message); }
+    finally { setBusy(false); }
+  }
 
   return <section className="new-app-document-settings"><h3>Working document</h3>
     {options?.configured_path ? <p>Selected: <strong>{options.configured_path}</strong></p> : <p>No working DOCX is selected for this application.</p>}
@@ -85,6 +99,16 @@ export function WorkingDocumentSettings({ system, onSaved }: { system: string; o
         <button type="button" disabled={!templateId || !systemName.trim() || !outputPath.trim() || busy}
           onClick={() => void createFromTemplate()}>Create and use DOCX</button>
         {!options.templates.length && <p>No DOTX template was found in the application or shared CSA Template folder.</p>}
+      </div>
+      <div className="new-app-template-create"><h4>Old assessment to migrate from</h4>
+        <p>This source DOCX is read only during <code>csa move</code>. Choose it separately from the new working DOCX.</p>
+        {options.legacy_path && <p>Selected old source: <strong>{options.legacy_path}</strong></p>}
+        <div className="new-app-document-choice"><label>Old DOCX<select value={legacySelected} onChange={event => setLegacySelected(event.target.value)}>
+          <option value="">Choose an old document</option>{options.candidates.filter(item =>
+            `${options.project_root}/${item.relative_path}` !== options.configured_path).map(item =>
+            <option key={item.relative_path} value={item.relative_path}>{item.relative_path}</option>)}
+        </select></label><button type="button" disabled={!legacySelected || busy} onClick={() => void chooseLegacy()}>Use as old source</button></div>
+        {options.configured_path && options.legacy_path && <p>Ready to prepare the move: <code>csa -p {options.project_key} move --prepare</code></p>}
       </div></> : !error && <p>Finding DOCX files…</p>}
     {error && <p className="new-app-error" role="alert">{error}</p>}
     {notice && <p role="status">{notice}</p>}
