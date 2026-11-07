@@ -223,3 +223,345 @@ def test_bad_key_shape_is_blocked(tmp_path):
         agents_dir=tmp_path / ".agents", base_dir=tmp_path)
     assert result["status"] == "BLOCKED"
     assert any(e["code"] == "BAD_KEY" for e in result["errors"])
+
+
+# ---------------------------------------------------------------------------
+# S514: atomic project registration (commit_project_setup)
+# ---------------------------------------------------------------------------
+
+def _setup_agents(tmp_path, extra_projects=""):
+    """A throwaway framework: agents dir with a registry and a template file."""
+    agents = tmp_path / ".agents"
+    context = agents / "csa-context"
+    templates = agents / "csa-templates"
+    context.mkdir(parents=True)
+    templates.mkdir(parents=True)
+    templates.joinpath("PROJECT_CONTEXT_TEMPLATE.yaml").write_text(
+        "project:\n  assessment_name: \"\"\n  assessment_type: \"Current State Assessment\"\n",
+        encoding="utf-8")
+    context.joinpath("PROJECTS.yaml").write_text(
+        "projects:\n"
+        "  - key: existing-app\n"
+        "    label: \"Existing Application\"\n"
+        f"    project_root: \"{tmp_path / 'existing-app'}\"\n"
+        "    work_dir: \"\"\n"
+        "    default_source_set: \"\"\n"
+        + extra_projects,
+        encoding="utf-8")
+    return agents
+
+
+def _staged_session(tmp_path, staging_root=None, files=None, dirs=None):
+    """Create and finalise a valid upload session; return (staging_root, session_id)."""
+    import json
+    import backend.project_upload as up
+    staging_root = Path(staging_root) if staging_root else tmp_path / "staging"
+    staging_root.mkdir(parents=True, exist_ok=True)
+    manifest = []
+    for name, data in (files or {}).items():
+        manifest.append({"path": name, "kind": "file", "size": len(data)})
+    for name in dirs or []:
+        manifest.append({"path": name, "kind": "dir"})
+    created = up.create_session(manifest, staging_root=staging_root)
+    assert created["status"] == "READY", created
+    sid = created["session_id"]
+    for name, data in (files or {}).items():
+        result = up.write_file(sid, name, data, staging_root=staging_root)
+        assert result["status"] == "OK", result
+    for name in dirs or []:
+        (staging_root / sid / name).mkdir(parents=True, exist_ok=True)
+    final = up.finalise(sid, staging_root=staging_root)
+    assert final["status"] == "READY", final
+    return staging_root, sid
+
+
+def _payload(key="new-app", label="New Application", **overrides):
+    payload = {"key": key, "label": label, "application": label,
+               "destination": "new-app",
+               "context": {"program": "OT Migration Program", "environment": "AZNOPS"}}
+    payload.update(overrides)
+    return payload
+
+
+def test_commit_registers_the_project(tmp_path):
+    agents = _setup_agents(tmp_path)
+    staging_root, sid = _staged_session(
+        tmp_path, files={"notes/readme.txt": b"hello\n", "notes/deep/spec.md": b"spec\n"},
+        dirs={"notes/deep", "empty-folder"})
+    result = project_setup.commit_project_setup(
+        _payload(), agents_dir=agents, base_dir=tmp_path,
+        staging_root=staging_root, session_id=sid)
+    assert result["status"] == "READY", result
+    root = tmp_path / "new-app"
+    # the uploaded tree moved into place, content unchanged
+    assert (root / "notes" / "readme.txt").read_bytes() == b"hello\n"
+    assert (root / "notes" / "deep" / "spec.md").read_bytes() == b"spec\n"
+    assert (root / "empty-folder").is_dir()
+    # framework folders created
+    assert (root / "csa-work").is_dir()
+    assert (root / "Discovery").is_dir()
+    assert (root / "00 Knowlege").is_dir()
+    # no index, no DOCX anywhere under the project
+    assert not (root / "csa-work" / "discovery-index.sqlite").exists()
+    assert [p for p in root.rglob("*.docx")] == []
+    # context file written from the template fields
+    context_file = agents / "csa-context" / "NEW_APP_PROJECT_CONTEXT.yaml"
+    assert context_file.is_file()
+    text = context_file.read_text(encoding="utf-8")
+    assert "assessment_type" in text and "Current State Assessment" in text
+    assert "program: \"OT Migration Program\"" in text
+    # registry gained the entry, preserved the existing project
+    registry = (agents / "csa-context" / "PROJECTS.yaml").read_text(encoding="utf-8")
+    assert "- key: existing-app" in registry
+    assert "- key: \"new-app\"" in registry
+    assert "label: \"Existing Application\"" in registry
+    assert "knowledge_dir: \"00 Knowlege\"" in registry
+    assert "default_source_set" in registry and "Discovery" in registry
+    # the staging area is gone (it was moved), and the session is marked committed
+    assert not (staging_root / sid).exists()
+    import json
+    sessions = json.loads((staging_root / "sessions.json").read_text(encoding="utf-8"))
+    assert sessions[sid]["status"] == "committed"
+
+
+def test_commit_writes_knowledge_sources_json_when_selected(tmp_path):
+    agents = _setup_agents(tmp_path)
+    staging_root, sid = _staged_session(tmp_path, files={"docs/ref.pdf": b"PDFDATA"})
+    knowledge = {"about": "Background knowledge for New Application only. Not evidence of the current state.",
+                 "documents": [{"file": "docs/ref.pdf", "title": "Reference", "type": "vendor"}],
+                 "system_terms": ["NewApp"]}
+    result = project_setup.commit_project_setup(
+        _payload(knowledge_sources=knowledge), agents_dir=agents, base_dir=tmp_path,
+        staging_root=staging_root, session_id=sid)
+    assert result["status"] == "READY", result
+    sources = json.loads((tmp_path / "new-app" / "00 Knowlege" / "sources.json").read_text(encoding="utf-8"))
+    assert sources["documents"] == knowledge["documents"]
+    assert sources["system_terms"] == knowledge["system_terms"]
+    assert sources["about"] == knowledge["about"]
+
+
+def test_commit_without_knowledge_writes_no_sources_json(tmp_path):
+    agents = _setup_agents(tmp_path)
+    staging_root, sid = _staged_session(tmp_path, files={"notes/readme.txt": b"x"})
+    result = project_setup.commit_project_setup(
+        _payload(), agents_dir=agents, base_dir=tmp_path,
+        staging_root=staging_root, session_id=sid)
+    assert result["status"] == "READY"
+    assert not (tmp_path / "new-app" / "00 Knowlege" / "sources.json").exists()
+
+
+def test_commit_preserves_optional_registry_fields(tmp_path):
+    agents = _setup_agents(tmp_path)
+    shared = tmp_path / "shared-template.docx"
+    shared.write_bytes(b"DOCX")
+    staging_root, sid = _staged_session(tmp_path, files={"notes/readme.txt": b"x"})
+    result = project_setup.commit_project_setup(
+        _payload(estate="corp.example", sites="ROK=Rockhampton,MKY=Mackay",
+                 spec_mode="on", lane="revise", stage="v1", template_docx=str(shared)),
+        agents_dir=agents, base_dir=tmp_path,
+        staging_root=staging_root, session_id=sid)
+    assert result["status"] == "READY", result
+    registry = (agents / "csa-context" / "PROJECTS.yaml").read_text(encoding="utf-8")
+    assert "estate: \"corp.example\"" in registry
+    assert "sites: \"ROK=Rockhampton,MKY=Mackay\"" in registry
+    assert "spec_mode: \"on\"" in registry
+    assert "stage: \"v1\"" in registry
+    assert f"template_docx: \"{shared}\"" in registry
+
+
+def test_commit_refuses_an_existing_destination(tmp_path):
+    agents = _setup_agents(tmp_path)
+    (tmp_path / "new-app").mkdir()
+    staging_root, sid = _staged_session(tmp_path, files={"notes/readme.txt": b"x"})
+    result = project_setup.commit_project_setup(
+        _payload(), agents_dir=agents, base_dir=tmp_path,
+        staging_root=staging_root, session_id=sid)
+    assert result["status"] == "BLOCKED"
+    assert any(e["code"] == "DESTINATION_EXISTS" for e in result["errors"])
+    # nothing registered, staging still recoverable
+    registry = (agents / "csa-context" / "PROJECTS.yaml").read_text(encoding="utf-8")
+    assert "- key: \"new-app\"" not in registry
+    assert not (agents / "csa-context" / "NEW_APP_PROJECT_CONTEXT.yaml").exists()
+    assert (staging_root / sid / "notes" / "readme.txt").exists()
+    assert result["staging"]["recoverable"] is True
+
+
+def test_commit_refuses_an_existing_key(tmp_path):
+    agents = _setup_agents(tmp_path)
+    staging_root, sid = _staged_session(tmp_path, files={"notes/readme.txt": b"x"})
+    result = project_setup.commit_project_setup(
+        _payload(key="existing-app"), agents_dir=agents, base_dir=tmp_path,
+        staging_root=staging_root, session_id=sid)
+    assert result["status"] == "BLOCKED"
+    assert any(e["code"] == "DUPLICATE_KEY" for e in result["errors"])
+    assert not (tmp_path / "existing-app").exists()
+    assert not (agents / "csa-context" / "EXISTING_APP_PROJECT_CONTEXT.yaml").exists()
+
+
+def test_commit_refuses_an_existing_context_file(tmp_path):
+    agents = _setup_agents(tmp_path)
+    (agents / "csa-context" / "NEW_APP_PROJECT_CONTEXT.yaml").write_text("project:\n  x: 1\n",
+                                                                        encoding="utf-8")
+    staging_root, sid = _staged_session(tmp_path, files={"notes/readme.txt": b"x"})
+    result = project_setup.commit_project_setup(
+        _payload(), agents_dir=agents, base_dir=tmp_path,
+        staging_root=staging_root, session_id=sid)
+    assert result["status"] == "BLOCKED"
+    assert any(e["code"] == "CONTEXT_EXISTS" for e in result["errors"])
+    assert (agents / "csa-context" / "NEW_APP_PROJECT_CONTEXT.yaml").read_text(encoding="utf-8") == "project:\n  x: 1\n"
+    assert not (tmp_path / "new-app").exists()
+
+
+def test_commit_refuses_a_destination_overlapping_an_existing_project(tmp_path):
+    agents = _setup_agents(tmp_path, extra_projects=(
+        "\n  - key: other-app\n"
+        f"    project_root: \"{tmp_path / 'other-app' / 'inner'}\"\n"))
+    staging_root, sid = _staged_session(tmp_path, files={"notes/readme.txt": b"x"})
+    result = project_setup.commit_project_setup(
+        _payload(destination=str(tmp_path / "other-app")),
+        agents_dir=agents, base_dir=tmp_path,
+        staging_root=staging_root, session_id=sid)
+    assert result["status"] == "BLOCKED"
+    assert any(e["code"] in ("DESTINATION_CONFLICTS", "DESTINATION_EXISTS") for e in result["errors"])
+    assert not (tmp_path / "other-app" / "inner").exists() or not (tmp_path / "other-app" / "csa-work").exists()
+
+
+def test_commit_rejects_an_invalid_configuration(tmp_path):
+    agents = _setup_agents(tmp_path)
+    staging_root, sid = _staged_session(tmp_path, files={"notes/readme.txt": b"x"})
+    result = project_setup.commit_project_setup(
+        {"key": "Bad Key!", "label": "New Application", "destination": str(tmp_path / "new-app")},
+        agents_dir=agents, base_dir=tmp_path,
+        staging_root=staging_root, session_id=sid)
+    assert result["status"] == "BLOCKED"
+    assert any(e["code"] == "BAD_KEY" for e in result["errors"])
+    assert (staging_root / sid / "notes" / "readme.txt").exists()
+
+
+def test_commit_rejects_a_staged_tree_that_does_not_match_the_manifest(tmp_path):
+    agents = _setup_agents(tmp_path)
+    staging_root, sid = _staged_session(tmp_path, files={"notes/readme.txt": b"hello\n"})
+    # someone tampered with the staging area after finalise
+    (staging_root / sid / "notes" / "stray.txt").write_bytes(b"surprise")
+    result = project_setup.commit_project_setup(
+        _payload(), agents_dir=agents, base_dir=tmp_path,
+        staging_root=staging_root, session_id=sid)
+    assert result["status"] == "BLOCKED"
+    assert any(e["code"] == "UNEXPECTED_FILE" for e in result["errors"])
+    assert not (tmp_path / "new-app").exists()
+    assert (staging_root / sid / "notes" / "stray.txt").exists()
+
+
+def test_commit_rolls_back_when_the_context_write_fails(tmp_path, monkeypatch):
+    agents = _setup_agents(tmp_path)
+    staging_root, sid = _staged_session(tmp_path, files={"notes/readme.txt": b"x"})
+    original_write = Path.write_text
+
+    def broken_write(self, *args, **kwargs):
+        if self.name == "NEW_APP_PROJECT_CONTEXT.yaml":
+            raise OSError("disk full")
+        return original_write(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", broken_write)
+    result = project_setup.commit_project_setup(
+        _payload(), agents_dir=agents, base_dir=tmp_path,
+        staging_root=staging_root, session_id=sid)
+    assert result["status"] == "ERROR", result
+    assert any(e["code"] == "COMMIT_FAILED" for e in result["errors"])
+    # rollback: the moved tree is gone, the context file is gone, the registry
+    # is byte-for-byte what it was before the commit started
+    original = (agents / "csa-context" / "PROJECTS.yaml").read_text(encoding="utf-8")
+    assert "- key: \"new-app\"" not in original
+    assert "- key: existing-app" in original
+    assert not (tmp_path / "new-app").exists()
+    assert not (agents / "csa-context" / "NEW_APP_PROJECT_CONTEXT.yaml").exists()
+    assert not list((agents / "csa-context").glob("PROJECTS.yaml.commit-*.bak"))
+    # the failure is recoverable: the caller can cancel or retry
+    assert result["staging"]["recoverable"] is True
+
+
+def test_commit_is_atomic_under_concurrent_attempts(tmp_path):
+    import threading
+    import json as _json
+    agents = _setup_agents(tmp_path)
+    staging_a, sid_a = _staged_session(tmp_path / "a", files={"notes/readme.txt": b"one\n"})
+    staging_b, sid_b = _staged_session(tmp_path / "b", files={"notes/readme.txt": b"two\n"})
+    lock = threading.Barrier(2)
+    results = []
+
+    def attempt(staging_root, session_id):
+        lock.wait()
+        results.append(project_setup.commit_project_setup(
+            _payload(), agents_dir=agents, base_dir=tmp_path,
+            staging_root=staging_root, session_id=session_id))
+
+    threads = [threading.Thread(target=attempt, args=(staging_a, sid_a)),
+               threading.Thread(target=attempt, args=(staging_b, sid_b))]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    statuses = sorted(r["status"] for r in results)
+    assert statuses == ["BLOCKED", "READY"], results
+    ready = next(r for r in results if r["status"] == "READY")
+    assert (Path(ready["project_root"]) / "notes" / "readme.txt").exists()
+    registry = (agents / "csa-context" / "PROJECTS.yaml").read_text(encoding="utf-8")
+    assert registry.count("- key: \"new-app\"") == 1
+    assert (agents / "csa-context" / "NEW_APP_PROJECT_CONTEXT.yaml").exists()
+    # exactly one registry entry was appended (the other attempt wrote nothing)
+    assert "- key: existing-app" in registry
+
+
+def test_cancel_commit_discards_the_staged_session(tmp_path):
+    agents = _setup_agents(tmp_path)
+    staging_root, sid = _staged_session(tmp_path, files={"notes/readme.txt": b"x"})
+    cancelled = project_setup.cancel_commit(sid, agents_dir=agents, staging_root=staging_root)
+    assert cancelled["status"] == "OK" and cancelled["cancelled"] is True
+    assert not (staging_root / sid).exists()
+    assert not (tmp_path / "new-app").exists()
+    # cancelling again is a no-op
+    again = project_setup.cancel_commit(sid, agents_dir=agents, staging_root=staging_root)
+    assert again["status"] == "OK" and again["cancelled"] is True
+
+
+def test_cancel_commit_refuses_a_committed_session(tmp_path):
+    agents = _setup_agents(tmp_path)
+    staging_root, sid = _staged_session(tmp_path, files={"notes/readme.txt": b"x"})
+    committed = project_setup.commit_project_setup(
+        _payload(), agents_dir=agents, base_dir=tmp_path,
+        staging_root=staging_root, session_id=sid)
+    assert committed["status"] == "READY"
+    refused = project_setup.cancel_commit(sid, agents_dir=agents, staging_root=staging_root)
+    assert refused["status"] == "BLOCKED"
+    assert any(e["code"] == "ALREADY_COMMITTED" for e in refused["errors"])
+    # the registered project is untouched
+    assert (tmp_path / "new-app" / "notes" / "readme.txt").exists()
+    assert "- key: \"new-app\"" in (agents / "csa-context" / "PROJECTS.yaml").read_text(encoding="utf-8")
+
+
+def test_re_commit_of_the_same_session_is_refused(tmp_path):
+    agents = _setup_agents(tmp_path)
+    staging_root, sid = _staged_session(tmp_path, files={"notes/readme.txt": b"x"})
+    first = project_setup.commit_project_setup(
+        _payload(), agents_dir=agents, base_dir=tmp_path,
+        staging_root=staging_root, session_id=sid)
+    assert first["status"] == "READY"
+    second = project_setup.commit_project_setup(
+        _payload(), agents_dir=agents, base_dir=tmp_path,
+        staging_root=staging_root, session_id=sid)
+    assert second["status"] == "BLOCKED"
+    assert any(e["code"] == "ALREADY_COMMITTED" for e in second["errors"])
+    registry = (agents / "csa-context" / "PROJECTS.yaml").read_text(encoding="utf-8")
+    assert registry.count("- key: \"new-app\"") == 1
+
+
+def test_commit_reports_an_unknown_session_as_not_recoverable(tmp_path):
+    agents = _setup_agents(tmp_path)
+    result = project_setup.commit_project_setup(
+        _payload(), agents_dir=agents, base_dir=tmp_path,
+        staging_root=tmp_path / "staging", session_id="0" * 32)
+    assert result["status"] == "BLOCKED"
+    assert any(e["code"] == "UNKNOWN_SESSION" for e in result["errors"])
+    assert result["staging"]["recoverable"] is False
+    assert not (tmp_path / "new-app").exists()

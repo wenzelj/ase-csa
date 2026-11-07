@@ -19,7 +19,10 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import re
+import shutil
+import time
 from pathlib import Path
 from typing import Any
 
@@ -269,6 +272,7 @@ def preview_project_setup(payload: dict[str, Any], *, agents_dir: Path, base_dir
         registry["working_docx"] = str(working_docx)
     if index_extra_sources is not None:
         registry["index_extra_sources"] = str(index_extra_sources)
+    registry["knowledge_dir"] = Path(knowledge_path).name
 
     return {
         "status": "READY" if not errors else "BLOCKED",
@@ -288,3 +292,437 @@ def preview_project_setup(payload: dict[str, Any], *, agents_dir: Path, base_dir
             "spec_mode": spec_mode,
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# Confirmed commit (S514: atomic project registration)
+# ---------------------------------------------------------------------------
+
+#: Fixed registry key order for the always-present fields (key and label first).
+_ALWAYS_KEY_ORDER = ("key", "label", "project_root", "project_context",
+                     "work_dir", "default_source_set")
+
+#: Optional registry fields, in the order they are written (only when selected).
+_OPTIONAL_KEY_ORDER = ("estate", "sites", "spec_mode", "stage", "template_docx",
+                       "legacy_docx", "working_docx", "index_extra_sources",
+                       "knowledge_dir")
+
+#: Top-level folders the commit creates when the upload did not include them.
+#: ``csa-work`` is always (re)created empty by the commit; the knowledge folder
+#: name is the project's (``00 Knowlege`` for new projects).
+_FRAMEWORK_DIRS = ("csa-work", "Discovery")
+
+
+class _CommitLock:
+    """Exclusive lock for one agents directory; holds an open file for its lifetime.
+
+    Uses ``fcntl.flock`` on a file in the agents directory so two commits (or a
+    commit and another registry writer) for the same workspace cannot interleave.
+    """
+
+    def __init__(self, agents_dir: Path):
+        self._path = Path(agents_dir) / ".commit.lock"
+        self._handle = None
+
+    def acquire(self) -> bool:
+        import fcntl
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._handle = self._path.open("a+")
+        try:
+            fcntl.flock(self._handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except OSError:
+            self._handle.close()
+            self._handle = None
+            return False
+
+    def release(self) -> None:
+        import fcntl
+        if self._handle is not None:
+            try:
+                fcntl.flock(self._handle, fcntl.LOCK_UN)
+            finally:
+                self._handle.close()
+                self._handle = None
+
+
+def _existing_project_keys(registry_file: Path) -> list[str]:
+    """Keys of the projects already in the registry (flat, first-key form)."""
+    if not registry_file.is_file():
+        return []
+    keys: list[str] = []
+    for raw in registry_file.read_text(encoding="utf-8").splitlines():
+        s = raw.strip()
+        if s.startswith("- key:"):
+            keys.append(s[len("- key:"):].strip().strip("\"'"))
+    return keys
+
+
+def _project_root_overlap(registry_file: Path, root: Path) -> str | None:
+    """Return the key of an existing project whose project_root overlaps ``root``."""
+    if not registry_file.is_file():
+        return None
+    text = registry_file.read_text(encoding="utf-8")
+    entries = text.split("  - key: ")[1:]
+    for entry in entries:
+        key = entry.split(":", 1)[0].strip().strip("\"'")
+        for line in entry.splitlines():
+            t = line.strip()
+            if t.startswith("project_root:"):
+                value = t[len("project_root:"):].strip().strip("\"'")
+                if not value:
+                    break
+                try:
+                    existing = Path(value).expanduser().resolve()
+                except OSError:
+                    break
+                if root == existing or _is_inside(root, existing) or _is_inside(existing, root):
+                    return key
+                break
+    return None
+
+
+def _registry_entry_text(registry: dict[str, Any]) -> str:
+    """Render one project entry for PROJECTS.yaml (two-space list indent)."""
+    lines = []
+    for i, field in enumerate(_ALWAYS_KEY_ORDER):
+        prefix = "  - " if i == 0 else "    "
+        lines.append(f"{prefix}{field}: {json.dumps(str(registry[field]))}")
+    for field in _OPTIONAL_KEY_ORDER:
+        if field in registry:
+            lines.append(f"    {field}: {json.dumps(str(registry[field]))}")
+    return "\n".join(lines)
+
+
+def _context_file_text(context: dict[str, Any]) -> str:
+    """Render the project-context file from the template's fixed field order."""
+    lines = ["project:"]
+    for field in ("assessment_name", "assessment_type", "program", "environment",
+                  "application", "organisation", "as_of_date", "scope_in", "scope_out",
+                  "authoritative_sources", "terminology", "known_constraints",
+                  "stakeholders", "required_deliverables"):
+        if field in context:
+            lines.append(f"  {field}: {json.dumps(context[field], ensure_ascii=False)}")
+    if context.get("application_skills"):
+        lines.append(f"  application_skills: {json.dumps(context['application_skills'], ensure_ascii=False)}")
+    return "\n".join(lines) + "\n"
+
+
+def _staged_tree_ok(source: Path, entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Revalidate a staged upload tree: symlinks, byte counts, exact manifest."""
+    errors: list[dict[str, Any]] = []
+    if not source.is_dir():
+        return [{"field": "staging", "code": "STAGING_MISSING",
+                 "message": "The staged upload folder is missing."}]
+    manifest_files = {e["path"] for e in entries if e["kind"] == "file"}
+    manifest_dirs = {e["path"] for e in entries if e["kind"] == "dir"}
+    seen: set[str] = set()
+    for dirpath, dirnames, filenames in os.walk(source):
+        rel = Path(dirpath).relative_to(source)
+        for name in dirnames:
+            p = Path(dirpath) / name
+            if p.is_symlink():
+                errors.append({"field": "staging", "code": "SYMLINK_FOUND",
+                               "message": f"Symlink found at {(rel / name).as_posix()}."})
+        for name in filenames:
+            p = Path(dirpath) / name
+            rel_path = (rel / name).as_posix()
+            seen.add(rel_path)
+            if p.is_symlink():
+                errors.append({"field": "staging", "code": "SYMLINK_FOUND",
+                               "message": f"Symlink found at {rel_path}."})
+            elif rel_path not in manifest_files:
+                errors.append({"field": "staging", "code": "UNEXPECTED_FILE",
+                               "message": f"File {rel_path} is not in the manifest."})
+    for entry in entries:
+        rel = entry["path"]
+        if entry["kind"] == "dir":
+            if not (source / rel).is_dir():
+                errors.append({"field": "staging", "code": "DIR_MISSING",
+                               "message": f"Directory {rel} is missing from the staged tree."})
+        else:
+            target = source / rel
+            if not target.is_file():
+                errors.append({"field": "staging", "code": "FILE_MISSING",
+                               "message": f"File {rel} is missing from the staged tree."})
+            else:
+                declared = entry.get("size", 0)
+                actual = target.stat().st_size
+                if actual != declared:
+                    errors.append({"field": "staging", "code": "SIZE_MISMATCH",
+                                   "message": f"{rel}: expected {declared} bytes, got {actual}."})
+    return errors
+
+
+def _remove_tree(path: Path) -> None:
+    if path.is_symlink():
+        path.unlink(missing_ok=True)
+    elif path.is_dir():
+        shutil.rmtree(path, ignore_errors=True)
+    else:
+        path.unlink(missing_ok=True)
+
+
+def _sessions_map(staging_root: Path) -> dict[str, dict[str, Any]]:
+    """The upload session map from ``sessions.json`` ({} when absent or corrupt)."""
+    sessions_file = staging_root / "sessions.json"
+    if not sessions_file.is_file():
+        return {}
+    try:
+        data = json.loads(sessions_file.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _save_sessions(staging_root: Path, sessions: dict[str, dict[str, Any]]) -> None:
+    sessions_file = staging_root / "sessions.json"
+    sessions_file.parent.mkdir(parents=True, exist_ok=True)
+    sessions_file.write_text(json.dumps(sessions, ensure_ascii=False, indent=2) + "\n",
+                             encoding="utf-8")
+
+
+def commit_project_setup(
+    payload: dict[str, Any],
+    *,
+    agents_dir: Path,
+    staging_root: Path,
+    session_id: str,
+    base_dir: Path | None = None,
+    now: float | None = None,
+) -> dict[str, Any]:
+    """Register a completed upload as one project, atomically.
+
+    Revalidates the staged manifest and the configuration, moves the staged
+    top-level folder under ``base_dir`` (the CurrentStateAssessments root),
+    creates ``csa-work`` and the ``Discovery`` and knowledge folders when absent
+    (the upload content itself is not changed), writes the project-context file
+    from the template fields, writes optional knowledge ``sources.json``
+    metadata, and appends the project's entry -- with ``knowledge_dir`` and the
+    other selected fields -- to ``PROJECTS.yaml``, preserving every other
+    registry line. Nothing is indexed and no DOCX is created.
+
+    The destination folder, the key and the context file must not already exist.
+    The commit holds an exclusive lock for the whole agents directory while it
+    writes; any failure before registration completes rolls back every write it
+    made (registry restored from its backup, context file and moved tree
+    removed) and reports the recoverable staging state, so the caller can offer
+    ``cancel_commit`` or retry.
+
+    Returns ``{"status": "READY", ...}`` on success, or
+    ``{"status": "BLOCKED", "errors": [...], "staging": {...}}`` /
+    ``{"status": "ERROR", ...}`` otherwise.
+    """
+    agents_dir = Path(agents_dir)
+    staging_root = Path(staging_root)
+    base_dir = Path(base_dir) if base_dir else agents_dir.parent
+    now = now if now is not None else time.time()
+    session_dir = staging_root / session_id
+    staging = {"session_id": session_id, "staging_root": str(staging_root),
+               "session_dir": str(session_dir), "state": "staged", "recoverable": True}
+    registry_file = agents_dir / "csa-context" / "PROJECTS.yaml"
+
+    # --- session state ---------------------------------------------------
+    sessions = _sessions_map(staging_root)
+    session = sessions.get(session_id)
+    if session is None:
+        return {"status": "BLOCKED",
+                "errors": [{"field": "session_id", "code": "UNKNOWN_SESSION",
+                            "message": "Session not found."}],
+                "staging": {**staging, "recoverable": False}}
+    if session.get("status") == "cancelled":
+        return {"status": "BLOCKED",
+                "errors": [{"field": "session_id", "code": "SESSION_CANCELLED",
+                            "message": "Session has been cancelled."}],
+                "staging": {**staging, "recoverable": False}}
+    if session.get("status") == "committed":
+        return {"status": "BLOCKED",
+                "errors": [{"field": "session_id", "code": "ALREADY_COMMITTED",
+                            "message": "Session is already committed; its project exists."}],
+                "staging": {**staging, "recoverable": False}}
+    expires_at = session.get("expires_at")
+    if expires_at is not None and now > expires_at and session.get("status") == "uploading":
+        return {"status": "BLOCKED",
+                "errors": [{"field": "session_id", "code": "SESSION_EXPIRED",
+                            "message": "Session has expired."}],
+                "staging": staging}
+
+    # --- revalidate configuration ---------------------------------------
+    # The destination is the final registered folder, not the staging area:
+    # resolve it relative to the base dir when the payload gives a relative path.
+    preview_payload = dict(payload)
+    for dest_field in ("destination", "project_root"):
+        raw = preview_payload.get(dest_field)
+        if isinstance(raw, str) and raw.strip():
+            p = Path(raw)
+            if not p.is_absolute():
+                preview_payload[dest_field] = str(base_dir / p)
+    preview = preview_project_setup(
+        preview_payload, agents_dir=agents_dir, base_dir=base_dir,
+        existing_keys=_existing_project_keys(registry_file))
+    if preview["status"] != "READY":
+        return {"status": "BLOCKED", "errors": preview["errors"], "staging": staging}
+
+    values = preview["values"]
+    key = str(preview["values"]["registry"]["key"])
+    context = values["project_context"]
+    knowledge = values["knowledge"]
+    root = Path(values["paths"]["project_root"])
+    context_file = Path(values["registry"]["project_context"])
+
+    if root.exists():
+        return {"status": "BLOCKED",
+                "errors": [{"field": "destination", "code": "DESTINATION_EXISTS",
+                            "message": "The destination folder already exists; choose a new folder name."}],
+                "staging": staging}
+    if context_file.exists():
+        return {"status": "BLOCKED",
+                "errors": [{"field": "project_context", "code": "CONTEXT_EXISTS",
+                            "message": "A project-context file already exists for this key."}],
+                "staging": staging}
+    overlap = _project_root_overlap(registry_file, root)
+    if overlap:
+        return {"status": "BLOCKED",
+                "errors": [{"field": "destination", "code": "DESTINATION_CONFLICTS",
+                            "message": f"The destination overlaps the existing project \"{overlap}\"."}],
+                "staging": staging}
+
+    # --- revalidate the staged tree --------------------------------------
+    tree_errors = _staged_tree_ok(session_dir, session.get("manifest", []))
+    if tree_errors:
+        return {"status": "BLOCKED", "errors": tree_errors, "staging": staging}
+
+    # --- lock, then write -------------------------------------------------
+    lock = _CommitLock(agents_dir)
+    if not lock.acquire():
+        return {"status": "BLOCKED",
+                "errors": [{"field": "commit", "code": "COMMIT_LOCKED",
+                            "message": "Another commit holds the registration lock; try again."}],
+                "staging": staging}
+    backup_path = None
+    context_written = False
+    moved_root = False
+    try:
+        # double-check under the lock (another commit may have finished meanwhile)
+        if key in _existing_project_keys(registry_file):
+            return {"status": "BLOCKED",
+                    "errors": [{"field": "key", "code": "DUPLICATE_KEY",
+                                "message": f"A project with key \"{key}\" is already registered."}],
+                    "staging": staging}
+        if root.exists() or context_file.exists():
+            return {"status": "BLOCKED",
+                    "errors": [{"field": "destination", "code": "DESTINATION_EXISTS",
+                                "message": "The destination folder already exists."}],
+                    "staging": staging}
+        if _project_root_overlap(registry_file, root):
+            return {"status": "BLOCKED",
+                    "errors": [{"field": "destination", "code": "DESTINATION_CONFLICTS",
+                                "message": "The destination overlaps an existing project folder."}],
+                    "staging": staging}
+
+        # 1. move the uploaded tree into place (content is not changed)
+        os.replace(session_dir, root)
+        moved_root = True
+
+        # 2. framework folders, created when the upload did not include them
+        (root / "csa-work").mkdir(parents=True, exist_ok=True)
+        (root / "Discovery").mkdir(parents=True, exist_ok=True)
+        knowledge_dir = Path(values["paths"]["knowledge"])
+        knowledge_dir.mkdir(parents=True, exist_ok=True)
+
+        # 3. project-context file from the template fields
+        context_file.parent.mkdir(parents=True, exist_ok=True)
+        context_file.write_text(_context_file_text(context), encoding="utf-8")
+        context_written = True
+
+        # 4. optional knowledge sources.json (only when the upload carried it)
+        if knowledge.get("documents") or knowledge.get("system_terms"):
+            sources = {"documents": list(knowledge.get("documents") or []),
+                       "system_terms": list(knowledge.get("system_terms") or [])}
+            if "about" in knowledge:
+                sources["about"] = knowledge["about"]
+            (knowledge_dir / "sources.json").write_text(
+                json.dumps(sources, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+        # 5. append the registry entry, preserving every other line
+        if not registry_file.is_file():
+            return {"status": "ERROR",
+                    "errors": [{"field": "registry", "code": "REGISTRY_MISSING",
+                                "message": f"The project registry is missing: {registry_file}"}],
+                    "staging": staging}
+        original = registry_file.read_text(encoding="utf-8")
+        backup_path = registry_file.with_name(f"PROJECTS.yaml.commit-{int(now * 1000)}.bak")
+        shutil.copy2(registry_file, backup_path)
+        entry = _registry_entry_text(values["registry"])
+        if original.endswith("\n"):
+            merged = original.rstrip("\n") + "\n" + entry + "\n"
+        elif original:
+            merged = original.rstrip("\n") + "\n" + entry + "\n"
+        else:
+            merged = entry + "\n"
+        registry_file.write_text(merged, encoding="utf-8")
+
+        # 6. mark the session committed (its staging area is gone -- it was moved)
+        sessions[session_id]["status"] = "committed"
+        sessions[session_id]["committed_at"] = now
+        _save_sessions(staging_root, sessions)
+
+        return {
+            "status": "READY",
+            "project_key": key,
+            "project_root": str(root),
+            "project_context": str(context_file),
+            "registry": str(registry_file),
+            "staging": {"session_id": session_id, "state": "committed", "recoverable": False},
+        }
+    except Exception as error:  # rollback: restore registry, remove partial writes
+        if backup_path is not None and backup_path.exists() and registry_file.is_file():
+            shutil.copy2(backup_path, registry_file)
+        if backup_path is not None and backup_path.exists():
+            backup_path.unlink(missing_ok=True)
+        if context_written:
+            context_file.unlink(missing_ok=True)
+        if moved_root:
+            _remove_tree(root)
+        return {"status": "ERROR",
+                "errors": [{"field": "commit", "code": "COMMIT_FAILED",
+                            "message": f"Registration failed and was rolled back ({error})."}],
+                "staging": staging}
+    finally:
+        lock.release()
+
+
+def cancel_commit(
+    session_id: str,
+    *,
+    agents_dir: Path,
+    staging_root: Path,
+) -> dict[str, Any]:
+    """Discard a staged session whose commit failed or was refused. Idempotent.
+
+    Removes the session's staging area and marks it cancelled. The registry and
+    context file are never touched here: a failed commit has already rolled its
+    own writes back, and a committed session cannot be cancelled.
+    """
+    agents_dir = Path(agents_dir)
+    staging_root = Path(staging_root)
+    sessions = _sessions_map(staging_root)
+    session = sessions.get(session_id)
+    if session is None:
+        return {"status": "OK", "cancelled": False}
+    if session.get("status") == "cancelled":
+        return {"status": "OK", "cancelled": True}
+    if session.get("status") == "committed":
+        return {"status": "BLOCKED",
+                "errors": [{"field": "session_id", "code": "ALREADY_COMMITTED",
+                            "message": "Session is already committed; its project exists."}]}
+    lock = _CommitLock(agents_dir)
+    acquired = lock.acquire()
+    try:
+        sessions[session_id]["status"] = "cancelled"
+        _save_sessions(staging_root, sessions)
+    finally:
+        if acquired:
+            lock.release()
+    _remove_tree(staging_root / session_id)
+    return {"status": "OK", "cancelled": True}
