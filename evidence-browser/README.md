@@ -8,6 +8,8 @@ Review the detected files and configure the project key, scope, source paths, kn
 
 The application appears in the selector immediately after creation. Its setup page shows the next independent steps: run discovery ingest to build the index and prepare a working DOCX through the CSA document workflow. Registration itself does not index files or create an assessment document.
 
+Use **Application setup** or **Assessment** to choose the working DOCX after registration. The browser lists DOCX files already in the application folder, or you can upload one (up to 50 MiB). The explicit selection is recorded as `working_docx` in `PROJECTS.yaml`; it does not change the DOCX content. Evidence intake remains available before indexing, while views that require an index explain the missing prerequisite in their own area.
+
 Uploads use 4 MiB request chunks and the per-file and total limits reported by `/api/new-application/defaults`. The interface reports validation or transfer failures while retaining the selected folder for retry.
 
 Local evidence inventory, matrix-first search, source preview and reviewed evidence append for IAMPS, UTC DTC and TETRA.

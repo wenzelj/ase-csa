@@ -29,3 +29,11 @@
 .new-app-preview dl div { display: grid; grid-template-columns: 10rem minmax(0, 1fr); gap: .5rem; }
 .new-app-preview dt { font-weight: 650; }
 .new-app-preview dd { margin: 0; overflow-wrap: anywhere; }
+.new-app-document-settings { display: grid; gap: .7rem; padding: 1rem; border: 1px solid var(--ase-line); border-radius: 8px; background: #fff; }
+.new-app-document-settings h3, .new-app-document-settings p { margin: 0; }
+.new-app-document-settings strong { overflow-wrap: anywhere; }
+.new-app-document-choice { display: flex; align-items: end; flex-wrap: wrap; gap: .7rem; }
+.new-app-document-choice label { display: grid; gap: .3rem; min-width: min(100%, 22rem); flex: 1; }
+.new-app-document-choice select, .new-app-document-choice input { width: 100%; box-sizing: border-box; padding: .6rem; border: 1px solid var(--ase-line); border-radius: 6px; }
+.new-app-document-settings button { padding: .65rem 1rem; border: 0; border-radius: 7px; background: var(--ase-operational); color: #fff; cursor: pointer; }
+.new-app-document-settings button:disabled { opacity: .45; cursor: default; }
