@@ -69,7 +69,7 @@ def parse(text: str) -> dict[str, dict]:
         body = text[m.end(): marks[i + 1].start() if i + 1 < len(marks) else len(text)]
         b = {"facts": [], "unknown": [], "rating": "", "rating_reason": "", "rows": [], "bullets": [],
              "search": [], "keep": "", "answer": "", "summary": "", "story": "", "text": "",
-             "dropped": [], "none": "", "covers": [], "raw": body.strip()}
+             "dropped": [], "none": "", "covers": [], "row_errors": [], "raw": body.strip()}
         if m.group(1).startswith("F"):          # the analysis frame: one line per slot, blocks or QUESTION:
             b["frame"] = {}
             for line in body.splitlines():
@@ -125,11 +125,13 @@ def parse(text: str) -> dict[str, dict]:
                 b["facts"].append({"text": (fm.group("text") if fm else s.lstrip("-* ")).strip(),
                                    "ids": _ANYID.findall(fm.group("ids") or "") if fm else _ANYID.findall(s),
                                    "basis": basis.strip().lower(), "scope": scope.strip(), "line": s})
-            elif field == "rows" and (s.startswith("|") or len(re.split(r"\s*\|\s*", s)) == 3):
+            elif field == "rows" and (s.startswith("|") or "|" in s):
                 raw = s if s.startswith("|") else "| " + s + " |"      # a row without pipe markers still answers the block
                 cells = [c.strip() for c in raw.strip().strip("|").split("|")]
                 if not all(re.fullmatch(r":?-{3,}:?", c) for c in cells):
                     b["rows"].append(cells)
+            elif field == "rows":
+                b["row_errors"].append(s)
             elif field == "bullets" and s.startswith(("-", "*")):
                 b["bullets"].append(s.lstrip("-* ").strip())
             elif field == "unknown":
@@ -257,8 +259,8 @@ RELAXED_HARD = {"CROSS_PROJECT_ONLY", "QUESTION_MISSING", "EMPTY_ANSWER", "FACT_
                 "STORY_SENTENCE_LONG", "STORY_LABEL", "STORY_PHRASE_REPEAT", "STORY_NOT_PARAGRAPHED", "STORY_SAME_OPENING",
               "SETTING_NOT_STATED", "TERM_NOT_EXPLAINED", "ROWS_DROPPED", "UNIVERSAL_CLAIM", "PROSE_NAME_UNSUPPORTED", "ADDRESS_NOT_IN_EVIDENCE",
                 "SHARE_ACCESS_MISMATCH", "NAME_NOT_RECORDED", "UNNAMED_PEER", "DUPLICATE_BULLET", "OUT_OF_SCOPE", "REPEATS_TABLE", "ACRONYM_EXPANSION", "REGISTER_ROW_MISSING", "REGISTER_HOST_WRONG", "REGISTER_HOST_MISSING", "TEXT_TOO_LONG"}
-#: Of those, the ones the document cannot be written around: the answer cannot be rendered, or cites evidence that does
-#: not exist. Any other hard error left after the fix round is applied anyway and listed in RESULT.md.
+#: Structural failures (kept for callers classifying diagnostics). Every remaining
+#: ERROR blocks document application after repair, including errors outside this set.
 FATAL_CODES = {"NO_SHEET", "QUESTION_MISSING", "EMPTY_ANSWER", "FACT_NO_EVIDENCE", "UNKNOWN_EVIDENCE", "RATING_INVALID",
                "COLUMNS", "ROW_WIDTH", "NO_ROWS"}
 
@@ -1964,7 +1966,7 @@ def regression(old: dict[str, dict], new: dict[str, dict], matrix: dict[str, dic
             gone = [r for r in ob["rows"][1:] if (r[0] if r else "").strip().lower() not in have]
             names = "; ".join(f"{r[0]} ({' '.join(r[1:2])[:110]})" for r in gone[:8])
             out.append(_f(level, "ROWS_DROPPED", qid,
-                          f"the table has {len(nb['rows']) - 1} row(s), the answer it replaces had {len(ob['rows']) - 1}"
+                          f"the table has {max(0, len(nb['rows']) - 1)} row(s), the answer it replaces had {max(0, len(ob['rows']) - 1)}"
                           + (f". Rows missing: {names}" if names else "")
                           + (": keep these rows, or add 'Dropped: <row name> <why it no longer applies>' for each one removed"
                              if level == "ERROR" else "")))
@@ -2535,6 +2537,14 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
                     findings.append(_f("ERROR", "ROLE_TABLE_REPEAT", qid,
                                        f"this row repeats per-host settings the role table above already shows ({', '.join(named[:4])}): "
                                        "keep Aspect rows for points that are not per host, or drop the row: " + " | ".join(r)[:80]))
+        if q["kind"] in ("observation", "register") and b.get("row_errors"):
+            findings.append(_f("ERROR", "ROW_WIDTH", qid,
+                               "unrecognised text under Rows: use pipe-separated cells for every row: "
+                               + b["row_errors"][0][:160]))
+        if q["kind"] == "register" and not b["rows"] and not b["keep"] and not b["search"]:
+            findings.append(_f("ERROR", "NO_ROWS", qid,
+                               "a register needs Rows: with its column header and at least one data row; "
+                               "Facts or Text do not replace the table"))
         if q["kind"] in ("observation", "register") and b["rows"]:
             want = [c.strip().lower() for c in q.get("columns", [])]
             header, data = b["rows"][0], b["rows"][1:]

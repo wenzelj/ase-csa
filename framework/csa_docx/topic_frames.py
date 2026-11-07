@@ -375,11 +375,34 @@ def flow_findings(work_dir: Path, flt: dict, req: str, area: str, section: str) 
     return out
 
 
-def build(workspace: Path, heading: str, key: str = "", evidence: bool = True) -> dict:
+def question_profile(heading: str, key: str, questions: list[dict]) -> dict | None:
+    """Fallback scope from the live specification, without inventing collectors or facts.
+
+    This stays project-local when built. Shared topic profiles remain curated and
+    always take precedence over this fallback.
+    """
+    slots = []
+    for q in questions:
+        if q.get("kind") == "comment" or not q.get("text", "").strip():
+            continue
+        slots.append({"id": f"S{len(slots) + 1}", "question": q["text"],
+                      "requirements": [q["req_id"]] if q.get("req_id") else [],
+                      "source": {}, "answer_block": q["id"]})
+    if not slots:
+        return None
+    return {"key": key, "headings": [heading], "slots": slots, "area": "",
+            "origin": "document_questions", "strict": False,
+            "scope_note": "Generated from this subsection's document questions and table columns. "
+                          "Use verified evidence to answer each question. Record what remains unknown. "
+                          "No topic-specific capture extractor is configured by this fallback."}
+
+
+def build(workspace: Path, heading: str, key: str = "", evidence: bool = True,
+          questions: list[dict] | None = None) -> dict:
     """The filled frame for ``heading``: {"status", "key", "slots": [{id, question, requirements, findings}]}."""
     workspace = Path(workspace)
     work = workspace / "csa-work"
-    fr = frame_for(heading)
+    fr = frame_for(heading) or question_profile(heading, key, questions or [])
     if not fr:
         return {"status": "NO_FRAME", "heading": heading}
     key = key or fr.get("key", "")
@@ -408,8 +431,10 @@ def build(workspace: Path, heading: str, key: str = "", evidence: bool = True) -
                                             limit=10) if matrix_rows and not found else []
         slots.append({"id": s["id"], "question": s["question"], "requirements": s.get("requirements", []),
                       "findings": found, "matrix": cand, "cross_zone": bool(src.get("flows", {}).get("cross_zone")),
-                      "must_state": bool(s.get("must_state"))})
+                      "must_state": bool(s.get("must_state")),
+                      **({"answer_block": s["answer_block"]} if s.get("answer_block") else {})})
     res = {"status": "OK", "key": key, "heading": heading, "frame": fr.get("_file", ""), "slots": slots,
+           "origin": fr.get("origin", "topic_profile"),
            "strict": bool(fr.get("strict")), "zone_conflicts": zone_conflicts(work),
            "story_groups": fr.get("story_groups", []), "scope_note": fr.get("scope_note", ""), "scope_terms": fr.get("scope_terms", []),
            "table_patterns": fr.get("table_patterns", []), "bullet_max": fr.get("bullet_max", []),
@@ -632,7 +657,9 @@ def all_ids(res: dict | None) -> set[str]:
 
 
 def card_lines(res: dict) -> list[str]:
-    out = ["", "## Analysis frame (built by the framework from the captures)", ""]
+    generated = res.get("origin") == "document_questions"
+    basis = "generated from the document questions" if generated else "built by the framework from the captures"
+    out = ["", f"## Analysis frame ({basis})", ""]
     if res.get("scope_note"):
         out += [f"Scope of this subsection: {res['scope_note']}", ""]
     if res.get("hosts_covered"):
@@ -644,11 +671,15 @@ def card_lines(res: dict) -> list[str]:
     for s in res["slots"]:
         reqs = f" ({', '.join(s['requirements'])})" if s["requirements"] else ""
         out.append(f"### {s['id']} {s['question']}{reqs}")
+        if s.get("answer_block"):
+            out.append(f"Answer in {s['answer_block']}.")
         if not s["findings"] and s.get("matrix"):
-            out.append("- the captures bind nothing to this slot. The evidence matrix holds these rows:")
+            out.append("- Related verified matrix rows (check whether they answer the question):" if generated
+                       else "- the captures bind nothing to this slot. The evidence matrix holds these rows:")
             out += [f"- {c['claim'][:240]} ({c['id']})" for c in s["matrix"]]
         elif not s["findings"]:
-            out.append("- nothing in the captures answers this")
+            out.append("- No related verified matrix rows were selected. Check the evidence pack and record any remaining gap."
+                       if generated else "- nothing in the captures answers this")
         for f in s["findings"][:25]:
             ids = f" ({', '.join(f.get('ids', []))})" if f.get("ids") else " (no citable row: state it only with other evidence)"
             out.append(f"- {f['text']}{ids}")

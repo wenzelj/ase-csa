@@ -1639,7 +1639,7 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
     fr = None                    # the analysis frame: built first, so each requirement question can list what it owes
     if evidence and workspace:   # and the evidence pack does not repeat the rows the frame already cites
         from csa_docx import topic_frames
-        fr = topic_frames.build(Path(workspace), node["title"], node.get("key", ""))
+        fr = topic_frames.build(Path(workspace), node["title"], node.get("key", ""), questions=qs)
         if fr.get("status") != "OK":
             fr = None
     on_frame = frozenset(i.upper() for i in topic_frames.all_ids(fr)) if fr else frozenset()
@@ -1796,6 +1796,8 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
                              [f"- {r['id']} VERIFIED: {name_addresses(r['claim'])}" for r in more]
                     peers["entity_ids"] = list(peers.get("entity_ids", [])) + [r["id"] for r in more]
         frame = {"peer_identity": peers["hosts"], "register_answered": peers["answered"], "network_ids": peers.get("network_ids", []), "entity_ids": peers.get("entity_ids", []), "slots": [s["id"] for s in fr["slots"]], "ids": sorted(topic_frames.all_ids(fr)),
+                 "origin": fr.get("origin", "topic_profile"),
+                 "answer_blocks": {s["id"]: s["answer_block"] for s in fr["slots"] if s.get("answer_block")},
                  "coverage": topic_frames.coverage_targets(fr), "must_address": owed,
                  "context_ids": topic_frames.context_ids(fr), "zone_conflicts": fr.get("zone_conflicts", []),
                  "strict": fr.get("strict", False), "scope_terms": fr.get("scope_terms", []),

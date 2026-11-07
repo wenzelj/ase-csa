@@ -2,7 +2,39 @@
 
 Date: 2026-10-08 · Status: stories 1–7 built and tested, story 8 open, phase 2 (V1 lane) planned
 
+## 2026-11-06: closed local answer calls
+
+Headless answer/draft calls selected through a Codex Ollama profile (including Evo in Evidence Browser)
+now use `csa_docx.closed_answer` to request a sheet directly from the configured Responses endpoint.
+The framework supplies the named card, base answer and errors inline. The request offers no tools;
+the model cannot browse the filesystem or execute validation commands. The selected model, endpoint
+and reasoning effort come from the existing profile and command overrides; no configuration is edited.
+
+The framework saves the returned B/F blocks, runs its existing validation and focused-repair loop,
+and applies only a passing answer. Unexpected tool-call replies and incomplete generations fail without
+execution or a fallback to the unrestricted agent runner. The ordinary parent timeout, heartbeat and
+cancellation controls remain in force. Request files are removed when the call finishes.
+
+Validation: 873 framework tests passed, including actual worker/launcher requests to a local mock
+endpoint, focused B2 replies, failed-generation preservation and rejection of tool calls. A small
+generation against the configured `qwen3.8:latest` endpoint returned the requested test sheet. No
+project answer or DOCX was regenerated for this change.
+
 ## 1. Why
+
+Inventory application fix (2026-11-06): row scaffolding accepts structurally recognised inventory
+registers as well as CSATable-styled tables. Existing styles, rows and unrelated package parts are
+preserved; expansion is backed up, and merged/nonrectangular tables or deletion of populated rows
+are refused. Heading matching decodes XML entities so security-group inventory headings also work.
+Answer reports stay VALIDATED until application completes; scaffold/render failures record FAILED
+with their actual diagnostics, and successful draft writes alone change the report to APPLIED.
+Validation: 898 framework tests passed, including eight new scaffold and lifecycle regressions.
+
+Inventory discovery fix (2026-11-06): the document-spec reader now uses both an explicit inventory/register
+heading and identifying table columns to recognise new populated registers without a template entry.
+Draft Answers hides empty nodes. Live `/api/systems/tetra/draft` verification lists all four new 4.5–4.8
+inventories as `register`, `not-answered`, with no specification error. No working DOCX was changed.
+Validation: 890 framework tests and 184 Evidence Browser backend tests passed.
 
 The framework does two jobs:
 

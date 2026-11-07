@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import html
 import json
 import re
 import shutil
@@ -51,7 +52,14 @@ def fail(msg, **kw):
 
 
 def text_of(xml: str) -> str:
-    return re.sub(r"\s+", " ", "".join(re.findall(r"<w:t(?: [^>]*)?>(.*?)</w:t>", xml, re.S))).strip()
+    return re.sub(r"\s+", " ", html.unescape("".join(re.findall(r"<w:t(?: [^>]*)?>(.*?)</w:t>", xml, re.S)))).strip()
+
+
+def inventory_table(heading: str, columns: list[str]) -> bool:
+    # Share document discovery's structural rule; preserve the existing style.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "framework"))
+    from csa_docx.doc_spec import _inventory_table
+    return _inventory_table(heading, columns)
 
 
 def is_placeholder_only(xml: str) -> bool:
@@ -100,10 +108,14 @@ def main() -> None:
         tm = tables[args.table - 1]
         tx = tm.group(0)
         style = re.search(r'<w:tblStyle w:val="([^"]+)"', tx)
-        if not style or style.group(1) != "CSATable":
-            fail("target table is not a CSA Table; refusing")
         rows = list(ROW.finditer(tx))
+        if not rows:
+            fail("target table has no header row")
         headers = [text_of(c) for c in CELL.findall(rows[0].group(0))]
+        if (not style or style.group(1) != "CSATable") and not inventory_table(args.heading, headers):
+            fail("target table is neither a CSA Table nor a recognised inventory register; refusing")
+        if any(len(CELL.findall(r.group(0))) != len(headers) for r in rows) or re.search(r"<w:(?:gridSpan|vMerge)\b", tx):
+            fail("row scaffolding requires a rectangular table without merged cells")
         data = rows[1:]
         cur = len(data)
         if not data and args.set_count:

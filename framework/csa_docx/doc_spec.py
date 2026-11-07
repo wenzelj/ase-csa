@@ -175,7 +175,23 @@ def _ratings_in(tbl) -> list[str]:
 
 # ---------------------------------------------------------------- classification
 
-def _table_part(rows: list[list[str]], facet: str | None, label: str | None, ratings: list[str]) -> dict:
+def _inventory_table(heading: str, columns: list[str]) -> bool:
+    """An inventory remains answerable when its rows were entered before CSA saw it.
+
+    Require both an explicit inventory/register heading and an identifying first
+    column, so ordinary descriptive and document-control tables stay references.
+    """
+    title = bare_title(heading).strip()
+    if not re.search(r"\b(?:inventory|register)(?:\s*\([^)]*\))?\s*$", title, re.I):
+        return False
+    if len(columns) < 2 or not all(c.strip() for c in columns):
+        return False
+    first = re.sub(r"[^a-z0-9]+", " ", columns[0].lower())
+    return bool(re.search(r"\b(?:name|id|identifier|host|hosts|hostname|item|asset|component|application|service|device|account|group)\b", first))
+
+
+def _table_part(rows: list[list[str]], facet: str | None, label: str | None, ratings: list[str],
+                heading: str = "") -> dict:
     header = rows[0] if rows else []
     data = rows[1:]
     low = [h.strip().lower() for h in header]
@@ -196,7 +212,10 @@ def _table_part(rows: list[list[str]], facet: str | None, label: str | None, rat
     cells = [c for r in data for c in r]
     holders = [c for c in cells if is_placeholder(c)]
     first_col_holder = bool(data) and all(is_placeholder(r[0]) for r in data if r)
-    if label and (first_col_holder or not data):
+    if _inventory_table(heading, header):
+        part["kind"] = "register"
+        part["kind_from"] = "inventory heading and identifying columns"
+    elif label and (first_col_holder or not data):
         part["kind"] = "register"                          # a labelled table: one row per host, account, ...
     elif (facet or "").lower() == "discovery information" or (low[:1] == ["aspect"] and first_col_holder):
         part["kind"] = "observation"
@@ -274,7 +293,7 @@ def read(path: Path | str) -> dict:
             topic_lines = False
             ratings = _ratings_in(el)
             all_ratings += [r for r in ratings if r not in all_ratings]
-            part = _table_part(_rows(el), facet, label, ratings)
+            part = _table_part(_rows(el), facet, label, ratings, heading=topic["title"])
             part["table"] = f"@H{hpath}-T{table_ord}"
             part["under"] = {"heading": head_text, "occurrence": head_occ, "table": table_ord}
             topic["parts"].append(part)

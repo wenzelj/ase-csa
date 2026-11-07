@@ -254,6 +254,8 @@ class DocxEngineEditor:
         self.track_changes = track_changes
 
     def apply_change(self, record: ChangeRecord, author: str, initials: str) -> EditResult:
+        if record.action.strip().lower() == "apply csa table formatting":
+            return self._apply_csa_table_format(record, author, initials)
         # Route on the location only, never on the "currently" quote after it: a paragraph that merely
         # says "table" (the optional note placeholder: "... does not fit the table ...") is not a table row.
         where_lower = re.split(r"\s+--\s+currently:", record.where, maxsplit=1)[0].lower()
@@ -954,6 +956,39 @@ class DocxEngineEditor:
             ", ".join(affected_labels),
             comment_id,
         )
+
+    def _apply_csa_table_format(self, record: ChangeRecord, author: str, initials: str) -> EditResult:
+        from csa_docx.table_format import match_csa_table
+        if self.track_changes:
+            return EditResult(record.edit_id, "BLOCKED", "CSA table formatting is supported in the plain draft lane only")
+        stable = extract_stable_id(record.where)
+        if stable is None or stable.kind != "T" or stable.row != 1:
+            return EditResult(record.edit_id, "BLOCKED", "Table formatting requires its live header-row stable ID")
+        target = self._resolve_stable_table_row(stable)
+        if target is None:
+            return EditResult(record.edit_id, "BLOCKED", "Could not resolve the target table")
+        package = self.doc._doc.package
+        part = package.main_document_part()
+        original = package.part(part)
+        root = ET.fromstring(original)
+        tables = root.find(qn(W_NS, "body")).findall(qn(W_NS, "tbl"))
+        table = tables[int(target.table_anchor[1:]) - 1]
+        reference = next((t for t in tables if t is not table and
+                          t.find("w:tblPr/w:tblStyle", {"w": W_NS}) is not None and
+                          t.find("w:tblPr/w:tblStyle", {"w": W_NS}).get(qn(W_NS, "val")) == "CSATable"), None)
+        if reference is None:
+            return EditResult(record.edit_id, "BLOCKED", "No existing CSATable reference was found")
+        styles = ET.fromstring(package.part("word/styles.xml"))
+        available = {s.get(qn(W_NS, "styleId")) for s in styles}
+        if not {"CSATable", "TableHeader", "TableText"} <= available:
+            return EditResult(record.edit_id, "BLOCKED", "The document is missing the named CSA table styles")
+        try:
+            match_csa_table(table, reference)
+        except ValueError as error:
+            return EditResult(record.edit_id, "BLOCKED", str(error))
+        package.set_part(part, _serialize_part_preserving(root, original))
+        self.doc._doc.mark_dirty()
+        return EditResult(record.edit_id, "APPLIED", "Applied existing CSA table, header and body styles; content retained", target.table_anchor)
 
     def _apply_full_table_replacement(self, record: ChangeRecord, author: str, initials: str) -> EditResult:
         """Wholesale 'replace the table content' edit: overwrite every cell of an

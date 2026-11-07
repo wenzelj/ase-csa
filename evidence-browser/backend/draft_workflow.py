@@ -16,7 +16,7 @@ from csa_docx import rating_pass
 from . import commands
 from .models import CommandRequest
 
-SKIP_KINDS = {"container", "reference", "controlled"}
+SKIP_KINDS = {"container", "reference", "controlled", "empty"}
 _BLOCK = re.compile(r"^##\s+([BC]\d+)\b", re.M)
 
 

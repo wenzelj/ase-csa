@@ -9,6 +9,21 @@ from backend.models import CommandRequest
 AGENTS = Path(__file__).resolve().parents[2]
 
 
+def test_new_populated_inventory_appears_without_manifest_and_empty_heading_is_hidden(tmp_path, monkeypatch):
+    class Result:
+        parsed = {"nodes": [
+            {"number": "4.5", "key": "NEW_INVENTORY", "kind": "register", "title": "New Inventory",
+             "status": {"state": "answered"}},
+            {"number": "4.9", "key": "UNTITLED", "kind": "empty", "title": ""},
+            {"number": "5", "key": "REFERENCE", "kind": "reference", "title": "Reference"}]}
+        stderr = ""
+
+    monkeypatch.setattr(commands, "execute", lambda *a, **k: Result())
+    snap = draft_workflow.snapshot(AGENTS, {"key": "test", "work_dir": str(tmp_path)})
+    assert [(r['number'], r['key'], r['state']) for r in snap['sections']] == [
+        ('4.5', 'NEW_INVENTORY', 'not-answered')]
+
+
 def test_answer_runs_as_one_headless_job_with_the_chosen_model():
     op, argv = commands.build_argv(AGENTS, "tetra-reveloc", "answer", CommandRequest(target="3.4", options={"cli": "evo", "fresh": True}))
     assert argv[3:] == ["answer", "--headless", "3.4", "--cli", "evo", "--fresh"]
