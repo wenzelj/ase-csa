@@ -104,12 +104,19 @@ def test_create_session_rejects_traversal(tmp_path):
 
 
 def test_create_session_rejects_reserved_top_level_paths(tmp_path):
-    for reserved in ("csa-work", "reviews", "Discovery", "00 Knowlege", "00 Knowledge"):
+    for reserved in ("csa-work", "reviews"):
         result = project_upload.create_session(
             _manifest({"path": f"{reserved}/file.txt", "kind": "file", "size": 0}),
             staging_root=tmp_path)
         assert result["status"] == "BLOCKED", reserved
         assert any(e["code"] == "RESERVED_PATH" for e in result["errors"]), reserved
+
+
+def test_create_session_accepts_discovery_and_knowledge_folders(tmp_path):
+    sid = _session(tmp_path, _manifest(_dir("Discovery"), _file("Discovery/host.txt", 1),
+                                      _dir("00 Knowlege"), _file("00 Knowlege/vendor.txt", 1)))
+    assert (tmp_path / sid / "Discovery").is_dir()
+    assert (tmp_path / sid / "00 Knowlege").is_dir()
 
 
 def test_create_session_rejects_reserved_filenames(tmp_path):
@@ -202,6 +209,22 @@ def test_write_chunk_roundtrip_preserves_bytes(tmp_path):
     assert staged == payload
 
 
+def test_chunk_retry_is_idempotent_and_conflicts_are_rejected(tmp_path):
+    sid = _session(tmp_path, _manifest(_file("a.txt", 4)))
+    first = project_upload.write_chunk(sid, "a.txt", 0, b"ab", staging_root=tmp_path)
+    retry = project_upload.write_chunk(sid, "a.txt", 0, b"ab", staging_root=tmp_path)
+    conflict = project_upload.write_chunk(sid, "a.txt", 0, b"xy", staging_root=tmp_path)
+    later = project_upload.write_chunk(sid, "a.txt", 2, b"cd", staging_root=tmp_path)
+    overflow = project_upload.write_chunk(sid, "a.txt", 1, b"cde", staging_root=tmp_path)
+    assert first["status"] == retry["status"] == "OK"
+    assert retry["already_received"] is True
+    assert {conflict["errors"][0]["code"], later["errors"][0]["code"],
+            overflow["errors"][0]["code"]} == {"CHUNK_CONFLICT", "CHUNK_OUT_OF_ORDER", "FILE_SIZE_EXCEEDED"}
+    assert (tmp_path / sid / "a.txt").read_bytes() == b"ab"
+    assert project_upload.write_chunk(sid, "a.txt", 1, b"cd", staging_root=tmp_path)["status"] == "OK"
+    assert project_upload.finalise(sid, staging_root=tmp_path)["status"] == "READY"
+
+
 def test_write_chunk_rejects_unknown_session(tmp_path):
     result = project_upload.write_chunk(
         "00000000-0000-4000-8000-000000000000", "a.txt", 0, b"x", staging_root=tmp_path)
@@ -290,15 +313,15 @@ def test_finalise_rejects_byte_count_mismatches(tmp_path):
 
 def test_finalise_rejects_missing_directories(tmp_path):
     sid = _session(tmp_path, _manifest(_dir("gone"), _file("a.txt", 0)))
+    (tmp_path / sid / "gone").rmdir()
     (tmp_path / sid / "a.txt").touch()
     result = project_upload.finalise(sid, staging_root=tmp_path)
     assert result["status"] == "BLOCKED"
     assert any(e["code"] == "DIR_MISSING" for e in result["errors"])
 
-    # a declared directory that is never created (create_session skipped it) is also rejected
+    # a declared directory removed after session creation is also rejected
     sid2 = _session(tmp_path, _manifest(_dir("never-made"), _file("b.txt", 1)))
     (tmp_path / sid2 / "b.txt").write_bytes(b"z")
-    (tmp_path / sid2 / "never-made").mkdir()
     (tmp_path / sid2 / "never-made").rmdir()
     result = project_upload.finalise(sid2, staging_root=tmp_path)
     assert result["status"] == "BLOCKED"
@@ -441,7 +464,6 @@ def test_nested_files_and_empty_directories_are_preserved(tmp_path):
     for path, data in tree.items():
         _upload_file(tmp_path, sid, path, data)
 
-    (tmp_path / sid / "archive" / "empty-folder").mkdir(parents=True, exist_ok=True)
     result = project_upload.finalise(sid, staging_root=tmp_path)
     assert result["status"] == "READY", result
     destination = Path(result["destination"])

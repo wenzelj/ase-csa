@@ -27,6 +27,7 @@ Conventions kept here:
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import shutil
@@ -47,9 +48,6 @@ from typing import Any
 RESERVED_PATHS = frozenset({
     "csa-work",
     "reviews",
-    "discovery",
-    "00 knowlege",
-    "00 knowledge",
 })
 
 #: Files that operating systems or tools create and that must never be uploaded.
@@ -180,12 +178,12 @@ def _save_sessions(staging_root: Path, sessions: dict[str, dict[str, Any]]) -> N
 
 
 def _session_lock(staging_root: Path, session_id: str) -> threading.Lock:
-    lock = threading.Lock()
-    _locks.setdefault(session_id, lock)
-    return lock
+    with _locks_guard:
+        return _locks.setdefault((str(staging_root.resolve()), session_id), threading.Lock())
 
 
-_locks: dict[str, threading.Lock] = {}
+_locks: dict[tuple[str, str], threading.Lock] = {}
+_locks_guard = threading.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -263,6 +261,9 @@ def create_session(
         return {"status": "BLOCKED", "errors": [{"field": "session_id", "code": "SESSION_EXISTS",
                                                  "message": f"A staging area for {session_id!r} already exists."}]}
     session_dir.mkdir(parents=True, exist_ok=False)
+    for entry in valid_entries:
+        if entry["kind"] == "dir":
+            (session_dir / entry["path"]).mkdir(parents=True, exist_ok=True)
 
     sessions = _load_sessions(staging_root)
     sessions[session_id] = {
@@ -296,53 +297,70 @@ def write_chunk(
     or ``{"status": "BLOCKED", "errors": [...]}`` on failure.
     """
     staging_root = Path(staging_root)
-    sessions = _load_sessions(staging_root)
-    session = sessions.get(session_id)
-    if session is None:
-        return {"status": "BLOCKED", "errors": [{"field": "session_id", "code": "UNKNOWN_SESSION",
-                                                 "message": "Session not found."}]}
-    if session["status"] == "cancelled":
-        return {"status": "BLOCKED", "errors": [{"field": "session_id", "code": "SESSION_CANCELLED",
-                                                 "message": "Session has been cancelled."}]}
-    if session["status"] == "complete":
-        return {"status": "BLOCKED", "errors": [{"field": "session_id", "code": "SESSION_COMPLETE",
-                                                 "message": "Session is already complete."}]}
-
-    now = time.time()
-    expires_at = session.get("expires_at")
-    if expires_at is not None and now > expires_at:
-        _cleanup_session(staging_root, session_id)
-        return {"status": "BLOCKED", "errors": [{"field": "session_id", "code": "SESSION_EXPIRED",
-                                                 "message": "Session has expired."}]}
-
-    # Validate file_path is in the manifest
-    manifest_paths = {e["path"]: e for e in session["manifest"]}
-    entry = manifest_paths.get(file_path)
-    if entry is None:
-        return {"status": "BLOCKED", "errors": [{"field": "file_path", "code": "NOT_IN_MANIFEST",
-                                                 "message": f"{file_path!r} is not in the session manifest."}]}
-    if entry["kind"] == "dir":
-        return {"status": "BLOCKED", "errors": [{"field": "file_path", "code": "WRONG_KIND",
-                                                 "message": f"{file_path!r} is a directory entry; write files only."}]}
-
-    if not isinstance(data, (bytes, bytearray, memoryview)):
-        return {"status": "BLOCKED", "errors": [{"field": "data", "code": "BAD_TYPE",
-                                                 "message": "data must be bytes."}]}
-    if len(data) > _CHUNK_SIZE:
-        return {"status": "BLOCKED", "errors": [{"field": "data", "code": "CHUNK_TOO_LARGE",
-                                                 "message": f"Chunk of {len(data)} bytes exceeds the {_CHUNK_SIZE} byte limit."}]}
-
-    # Ensure parent directory exists
-    target = _session_dir(staging_root, session_id) / file_path
-    try:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        with open(target, "ab") as f:
-            f.write(bytes(data))
-    except OSError as e:
-        return {"status": "ERROR", "errors": [{"field": "file_path", "code": "WRITE_FAILED",
-                                               "message": f"Failed to write {file_path!r}: {e}"}]}
-
-    return {"status": "OK", "offset": target.stat().st_size}
+    with _session_lock(staging_root, session_id):
+        sessions = _load_sessions(staging_root)
+        session = sessions.get(session_id)
+        if session is None:
+            return {"status": "BLOCKED", "errors": [{"field": "session_id", "code": "UNKNOWN_SESSION",
+                                                     "message": "Session not found."}]}
+        if session["status"] != "uploading":
+            code = "SESSION_CANCELLED" if session["status"] == "cancelled" else "SESSION_COMPLETE"
+            return {"status": "BLOCKED", "errors": [{"field": "session_id", "code": code,
+                                                     "message": "Session is no longer accepting chunks."}]}
+        if session.get("expires_at") is not None and time.time() > session["expires_at"]:
+            _cleanup_session(staging_root, session_id)
+            return {"status": "BLOCKED", "errors": [{"field": "session_id", "code": "SESSION_EXPIRED",
+                                                     "message": "Session has expired."}]}
+        entry = next((e for e in session["manifest"] if e["path"] == file_path), None)
+        if entry is None:
+            return {"status": "BLOCKED", "errors": [{"field": "file_path", "code": "NOT_IN_MANIFEST",
+                                                     "message": f"{file_path!r} is not in the session manifest."}]}
+        if entry["kind"] != "file":
+            return {"status": "BLOCKED", "errors": [{"field": "file_path", "code": "WRONG_KIND",
+                                                     "message": f"{file_path!r} is a directory entry; write files only."}]}
+        if not isinstance(data, (bytes, bytearray, memoryview)):
+            return {"status": "BLOCKED", "errors": [{"field": "data", "code": "BAD_TYPE",
+                                                     "message": "data must be bytes."}]}
+        data = bytes(data)
+        if len(data) > _CHUNK_SIZE:
+            return {"status": "BLOCKED", "errors": [{"field": "data", "code": "CHUNK_TOO_LARGE",
+                                                     "message": f"Chunk exceeds the {_CHUNK_SIZE} byte limit."}]}
+        if not isinstance(chunk_index, int) or chunk_index < 0:
+            return {"status": "BLOCKED", "errors": [{"field": "chunk_index", "code": "BAD_CHUNK_INDEX",
+                                                     "message": "Chunk index must be a non-negative integer."}]}
+        chunks = session.setdefault("chunks", {}).setdefault(file_path, [])
+        target = _session_dir(staging_root, session_id) / file_path
+        current_size = target.stat().st_size if target.is_file() else 0
+        recorded_size = sum(c["size"] for c in chunks)
+        if current_size != recorded_size:
+            return {"status": "BLOCKED", "errors": [{"field": "file_path", "code": "CHUNK_STATE_MISMATCH",
+                                                     "message": "Staged file size differs from recorded chunks."}]}
+        digest = hashlib.sha256(data).hexdigest()
+        if chunk_index < len(chunks):
+            old = chunks[chunk_index]
+            if old["size"] == len(data) and old["sha256"] == digest:
+                return {"status": "OK", "offset": current_size, "already_received": True}
+            return {"status": "BLOCKED", "errors": [{"field": "chunk_index", "code": "CHUNK_CONFLICT",
+                                                     "message": "A different chunk was already received at this index."}]}
+        if chunk_index != len(chunks):
+            return {"status": "BLOCKED", "errors": [{"field": "chunk_index", "code": "CHUNK_OUT_OF_ORDER",
+                                                     "message": "Upload the next chunk in sequence."}]}
+        if current_size + len(data) > entry.get("size", 0):
+            return {"status": "BLOCKED", "errors": [{"field": "data", "code": "FILE_SIZE_EXCEEDED",
+                                                     "message": "Chunk would exceed the declared file size."}]}
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with target.open("ab") as handle:
+                handle.write(data)
+            chunks.append({"size": len(data), "sha256": digest})
+            _save_sessions(staging_root, sessions)
+        except OSError as error:
+            if target.exists():
+                with target.open("r+b") as handle:
+                    handle.truncate(current_size)
+            return {"status": "ERROR", "errors": [{"field": "file_path", "code": "WRITE_FAILED",
+                                                   "message": f"Failed to write {file_path!r}: {error}"}]}
+        return {"status": "OK", "offset": current_size + len(data)}
 
 
 def write_file(
