@@ -140,9 +140,22 @@ def _live_manifest(p: dict) -> Path | None:
     return max(manifests, key=lambda x: x.stat().st_mtime)
 
 
-def _fw_env() -> dict:
-    """Environment for framework subprocesses: the framework first on PYTHONPATH, anything already there kept."""
-    return dict(os.environ, PYTHONPATH=os.pathsep.join(x for x in (str(FRAMEWORK), os.environ.get("PYTHONPATH", "")) if x))
+def _fw_env(p: dict | None = None) -> dict:
+    """Environment for framework subprocesses: the framework first on PYTHONPATH, anything already there kept.
+    A project whose working DOCX sits outside the standard "01 Final Version" folder (RMS: "02 New
+    Template") pins it for the build layer, which has no registry of its own."""
+    env = os.environ.copy()
+    if p:
+        env["CSA_SPEC_MODE"] = spec_mode(p)
+        env["CSA_WORK_DIR"] = str(local_path(p["work_dir"]))
+        try:
+            wd = working_docx(p)
+        except Exception:
+            wd = None
+        if wd:
+            env["_CSA_WORKING_DOCX"] = str(wd)
+    env["PYTHONPATH"] = os.pathsep.join(x for x in (str(FRAMEWORK), os.environ.get("PYTHONPATH", "")) if x)
+    return env
 
 
 def spec_mode(p: dict | None = None) -> str:
@@ -219,6 +232,8 @@ def _resolve_visible_by_number(p: dict, spec: str) -> dict:
     if manifest is None:
         return {"visible": visible, "heading": heading, "stable_path": None}
     data = json.loads(manifest.read_text(encoding="utf-8"))
+    if data.get("docx") and working_docx(p) and Path(data["docx"]).resolve() != working_docx(p).resolve():
+        return {"visible": visible, "heading": heading, "stable_path": None}
     norm = lambda s: re.sub(r"\s+", " ", str(s or "").replace("“", '"').replace("”", '"')).strip().casefold()
     matches = [e for e in data.get("entries", [])
                if e.get("kind") == "heading" and norm(e.get("text")) == norm(heading)]
@@ -563,7 +578,7 @@ def banner(p: dict):
 
 
 # ---------------------------------------------------------------- framework bridge
-def fw_call(func: str, *args, **kwargs) -> dict:
+def fw_call(func: str, *args, project: dict | None = None, **kwargs) -> dict:
     """Call csa_docx.tools.<func> in the framework interpreter and return its JSON."""
     code = (
         "import sys,json;sys.path.insert(0,sys.argv[1]);from csa_docx import tools;"
@@ -572,7 +587,7 @@ def fw_call(func: str, *args, **kwargs) -> dict:
     )
     proc = subprocess.run([framework_python(), "-c", code, str(FRAMEWORK), func,
                            json.dumps({"args": list(args), "kwargs": kwargs})],
-                          capture_output=True, text=True)
+                          capture_output=True, text=True, env=_fw_env(project))
     if proc.returncode != 0:
         return {"status": "ERROR", "message": (proc.stderr or proc.stdout).strip()[-2000:]}
     try:
@@ -969,7 +984,7 @@ def cmd_prepare(a):
     kw = {"workspace": _ws(p), "force_regenerate": a.force}
     if a.section:
         kw["section"] = a.section
-    res = fw_call("prepareDocument", **kw)
+    res = fw_call("prepareDocument", project=p, **kw)
     proj = (res.get("project") or {}).get("key")
     if proj and proj != p["key"]:
         res = {"status": "ERROR", "message": f"prepareDocument resolved project '{proj}', expected '{p['key']}'. Stopping."}
@@ -981,17 +996,17 @@ def cmd_lookup(a):
     kw = {"workspace": _ws(p)}
     if a.kind:
         kw["kind"] = a.kind
-    return _emit(fw_call("lookupStableId", a.query, **kw), a)
+    return _emit(fw_call("lookupStableId", a.query, project=p, **kw), a)
 
 
 def cmd_validate(a):
     p = project(a.project); banner(p)
-    return _emit(fw_call("validate_section", str(a.section), workspace=_ws(p)), a)
+    return _emit(fw_call("validate_section", str(a.section), workspace=_ws(p), project=p), a)
 
 
 def cmd_refresh(a):
     p = project(a.project); banner(p)
-    return _emit(fw_call("refresh_manifest", workspace=_ws(p)), a)
+    return _emit(fw_call("refresh_manifest", workspace=_ws(p), project=p), a)
 
 
 def author_dir(p: dict, section: str, label: str | None = None) -> Path:
@@ -1018,7 +1033,7 @@ def spec_call(p: dict, *args, capture: bool = True) -> subprocess.CompletedProce
     if docx:
         argv += ["--docx", str(docx)]
     return subprocess.run(argv + [str(x) for x in args], cwd=str(FRAMEWORK), capture_output=capture, text=True,
-                          env=_fw_env())
+                          env=_fw_env(p))
 
 
 def resolve_target(p: dict, target: str) -> dict:
@@ -1113,7 +1128,7 @@ def cmd_audit(a):
         return subprocess.call([framework_python(), "-m", "csa_docx.audit_report", str(d)], cwd=str(FRAMEWORK), env=env)
     docx = working_docx(p)
     if not docx:
-        res = fw_call("prepareDocument", workspace=_ws(p))
+        res = fw_call("prepareDocument", workspace=_ws(p), project=p)
         docx = Path(res["docx"]) if res.get("docx") else None
     if not docx:
         die("no working DOCX found")
@@ -1147,7 +1162,7 @@ def author_report(p: dict, cf: Path, section: str, label: str | None, summary_on
     argv = [framework_python(), "-m", "csa_docx.author_report", str(cf), "--out", str(out)]
     if summary_only:
         argv.append("--summary")
-    rc = subprocess.run(argv, cwd=str(FRAMEWORK), env=_fw_env()).returncode
+    rc = subprocess.run(argv, cwd=str(FRAMEWORK), env=_fw_env(p)).returncode
     if rc == 0 and summary_only:
         print(f"{C['d']}full report: {out} (`csa author-report {label_display(section, label)}`){C['0']}")
     return rc
@@ -1344,7 +1359,7 @@ def _apply_once(p, a, limit):
         kw["start_edit_id"] = kw["end_edit_id"] = a.edit
     if getattr(a, "file", None):
         kw["change_file"] = section_state(p, a.section, a.file)["change_file"]
-    return fw_call("apply_next_batch", str(a.section), limit, **kw)
+    return fw_call("apply_next_batch", str(a.section), limit, project=p, **kw)
 
 
 def cmd_apply(a):
@@ -1508,12 +1523,12 @@ def cmd_place(a):
                     die(f"{docx.name} is open in Word and could not be closed: {_WORD_CLOSE_MSG}")
             before = {x.name for x in fv.glob("*.docx")} | {x.name for x in fv.glob("reviews/*")} | {x.name for x in fv.glob("run-state/*")}
             if plain:
-                blocked = _fw_module_call("build", "plain_blocker", str(root), str(f), system_name=system_name)
+                blocked = _fw_module_call("build", "plain_blocker", str(root), str(f), system_name=system_name, project=p)
                 if isinstance(blocked, dict) and blocked.get("status") == "ERROR":
                     die(f"could not check {f.name} for tracked changes: {blocked.get('message')}")
                 if blocked:
                     die(f"cannot place {f.name} plain: {blocked}")
-            res = _fw_module_call("build", "place_prepare", str(root), str(f), system_name=system_name, source=f.name,
+            res = _fw_module_call("build", "place_prepare", str(root), str(f), system_name=system_name, project=p, source=f.name,
                                   prepared_for=prepared_for, prepared_by=a.prepared_by,
                                   doc_version=a.doc_version, status=a.status)
             if res.get("status") == "ERROR":
@@ -1525,7 +1540,7 @@ def cmd_place(a):
             if not plain:
                 for sec, cf in res["change_files"].items():
                     record_approval(p, Path(cf), sec, f"csa place {f.name}", "csa place")
-            applied = _fw_module_call("build", "place_apply", str(root), res["sections"],
+            applied = _fw_module_call("build", "place_apply", str(root), res["sections"], project=p,
                                       system_name=system_name, docx=res["docx"], change_files=res["change_files"],
                                       plain=plain, new_edits=res["new_edits"], new_files=res["new_files"])
             new = [e for ids in res["new_edits"].values() for e in ids]
@@ -1844,7 +1859,7 @@ def cmd_brief(a):
     argv = [framework_python(), "-m", "csa_docx.author_brief", num, "--out", str(out)]
     if docx:
         argv += ["--docx", str(docx)]
-    rc = subprocess.run(argv, cwd=str(FRAMEWORK), env=_fw_env()).returncode
+    rc = subprocess.run(argv, cwd=str(FRAMEWORK), env=_fw_env(p)).returncode
     if rc == 0:
         print(f"{C['d']}written to {out}{C['0']}", file=sys.stderr)
     return rc
@@ -1864,14 +1879,14 @@ def cmd_spec(a):
     if a.rest[0] == "blocks":
         tmpl = _project_template(p)
         argv = [framework_python(), "-m", "csa_docx.spec_blocks", str(tmpl)] + (["--write"] if "--write" in a.rest else [])
-        return subprocess.call(argv, cwd=str(FRAMEWORK), env=_fw_env())
+        return subprocess.call(argv, cwd=str(FRAMEWORK), env=_fw_env(p))
     return spec_call(p, *a.rest, capture=False).returncode
 
 
 def _project_template(p: dict) -> Path:
     r = subprocess.run([framework_python(), "-c", "import sys;from csa_docx import spec_cli;print(spec_cli.find_template(None if sys.argv[1]=='-' else __import__('pathlib').Path(sys.argv[1])) or '')",
                         str(working_docx(p).parent) if working_docx(p) else "-"], cwd=str(FRAMEWORK), capture_output=True, text=True,
-                       env=_fw_env())
+                       env=_fw_env(p))
     t = r.stdout.strip()
     if not t:
         die("no CSA template found")
@@ -1880,7 +1895,7 @@ def _project_template(p: dict) -> Path:
 
 def _fw_snippet(code: str, *args) -> dict | list:
     r = subprocess.run([framework_python(), "-c", code, *[str(x) for x in args]], cwd=str(FRAMEWORK), capture_output=True, text=True,
-                       env=_fw_env())
+                       env=_fw_env(None))
     try:
         return json.loads(r.stdout)
     except ValueError:
@@ -2137,7 +2152,7 @@ def cmd_card(a):
         argv += ["--docx", str(docx)]
     if legacy_docx(p):
         argv += ["--exclude", legacy_docx(p).name]
-    rc = subprocess.run(argv + a.rest[1:], cwd=str(FRAMEWORK), env=_fw_env()).returncode
+    rc = subprocess.run(argv + a.rest[1:], cwd=str(FRAMEWORK), env=_fw_env(p)).returncode
     if rc == 0:
         print(f"{C['d']}written to {out}{C['0']}", file=sys.stderr)
     return rc
@@ -2721,7 +2736,7 @@ def _writer_needed(p: dict, cf: Path, sec: str, label: str | None) -> tuple[bool
     if p.get("work_dir"):
         argv += ["--notes", str(author_dir(p, sec, label) / "search-notes.md"),
                  "--evidence", str(local_path(p["work_dir"]) / "evidence-matrix.csv")]
-    r = subprocess.run(argv, cwd=str(FRAMEWORK), capture_output=True, text=True, env=_fw_env())
+    r = subprocess.run(argv, cwd=str(FRAMEWORK), capture_output=True, text=True, env=_fw_env(p))
     try:
         return writer_needed_from(json.loads(r.stdout).get("findings", []))
     except ValueError:
@@ -2849,7 +2864,7 @@ def _record_author_counts(p: dict, args: list[str]) -> None:
     if not st["change_file"]:
         return
     r = subprocess.run([framework_python(), "-m", "csa_docx.author_report", str(st["change_file"]), "--json"], cwd=str(FRAMEWORK),
-                       env=_fw_env(), capture_output=True, text=True)
+                       env=_fw_env(p), capture_output=True, text=True)
     try:
         d = json.loads(r.stdout)
     except ValueError:
@@ -2869,7 +2884,7 @@ def _app_name(p: dict, reviews: Path) -> str:
 
 def _fw_json(module: str, *args) -> dict:
     r = subprocess.run([framework_python(), "-m", module, *[str(x) for x in args]], cwd=str(FRAMEWORK), capture_output=True,
-                       text=True, env=_fw_env())
+                       text=True, env=_fw_env(None))
     try:
         return json.loads(r.stdout)
     except ValueError:
@@ -3606,7 +3621,7 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
                 detail = (scaffold_run.stdout + "\n" + scaffold_run.stderr).strip()[-1500:]
                 application_failure(f"scaffold refused for {s['heading']}: {detail}; answer application did not complete",
                                     "SCAFFOLDING")
-        fw_call("prepareDocument", workspace=_ws(p), force_regenerate=True)
+        fw_call("prepareDocument", workspace=_ws(p), force_regenerate=True, project=p)
     if out.get("scaffold") and not (draft and getattr(a, "no_apply", False)):
         application_failure("the document still lacks rows for the answer after scaffolding; nothing was applied",
                             "SCAFFOLDING")
@@ -3843,7 +3858,7 @@ def cmd_gap_check(a):
         argv += ["--section", key]
     if a.json:
         argv.append("--json")
-    return subprocess.call(argv, cwd=str(FRAMEWORK), env=_fw_env())
+    return subprocess.call(argv, cwd=str(FRAMEWORK), env=_fw_env(p))
 
 
 def _gap_sweep(p: dict, section: str = "") -> dict:
@@ -3861,7 +3876,7 @@ def _gap_sweep(p: dict, section: str = "") -> dict:
                 die(resolved.get("message", f"cannot resolve '{section}'"))
             key = resolved["key"]
         argv += ["--section", key]
-    proc = subprocess.run(argv, cwd=str(FRAMEWORK), env=_fw_env(), capture_output=True, text=True)
+    proc = subprocess.run(argv, cwd=str(FRAMEWORK), env=_fw_env(p), capture_output=True, text=True)
     if proc.returncode != 0:
         die(proc.stderr.strip() or proc.stdout.strip() or "gap check failed")
     try:
@@ -4100,7 +4115,7 @@ def cmd_ingest(a):
         print(f"{C['d']}4/6 estate register: this project has no estate{C['0']}")
     print(f"{C['b']}5/6 system model{C['0']}")
     if subprocess.call([framework_python(), "-m", "csa_docx.modelstore", "build", "--work-dir", str(work),
-                        "--project", str(p.get("key") or "")], cwd=str(FRAMEWORK), env=_fw_env(), stdout=subprocess.DEVNULL) != 0:
+                        "--project", str(p.get("key") or "")], cwd=str(FRAMEWORK), env=_fw_env(p), stdout=subprocess.DEVNULL) != 0:
         print(f"{C['y']}system model not rebuilt (csa model build shows why){C['0']}")
     print(f"{C['b']}6/6 stale subsections{C['0']}")
     pending = intake_pending(p)
@@ -4888,7 +4903,7 @@ def cmd_fleet(a):
 
 
 # ---------------------------------------------------------------- build lane
-def _fw_module_call(module: str, func: str, *args, **kwargs) -> dict:
+def _fw_module_call(module: str, func: str, *args, project: dict | None = None, **kwargs) -> dict:
     """Call csa_docx.<module>.<func> in the framework interpreter; JSON back."""
     code = (
         "import sys,json;sys.path.insert(0,sys.argv[1]);"
@@ -4898,7 +4913,7 @@ def _fw_module_call(module: str, func: str, *args, **kwargs) -> dict:
     )
     proc = subprocess.run([framework_python(), "-c", code, str(FRAMEWORK), func,
                            json.dumps({"args": list(args), "kwargs": kwargs})],
-                          capture_output=True, text=True)
+                          capture_output=True, text=True, env=_fw_env(project))
     if proc.returncode != 0:
         return {"status": "ERROR", "message": (proc.stderr or proc.stdout).strip()[-2000:]}
     try:
@@ -4917,10 +4932,10 @@ def cmd_practice(a):
                               a.person, a.role, a.observed_on, document_title=a.document_title or "",
                               document_version=a.document_version or "", location=a.location or "",
                               source_path=a.source_path, corroborating_evidence_ids=a.corroborating or "",
-                              replaces=a.replaces or "")
+                              replaces=a.replaces or "", project=p)
         return _emit(res, a)
     if a.practice_cmd == "status":
-        return _emit(_fw_module_call("practice", "status", str(work), a.section or ""), a)
+        return _emit(_fw_module_call("practice", "status", str(work), a.section or "", project=p), a)
     if a.practice_cmd != "questions":
         die("practice requires a subcommand")
     key = str(a.section).upper()
@@ -4929,7 +4944,7 @@ def cmd_practice(a):
         if resolved.get("status") != "OK":
             die(resolved.get("message", f"cannot resolve '{a.section}'"))
         key = resolved["key"]
-    res = _fw_module_call("practice", "generate_questions", str(work), key,
+    res = _fw_module_call("practice", "generate_questions", str(work), key, project=p,
                           answer_path=a.answer, card_path=a.card, dry_run=a.dry_run)
     return _emit(res, a)
 
@@ -5115,7 +5130,7 @@ def cmd_build(a):
                     f.unlink(missing_ok=True)
 
     section_paths = [str(local_path(p["work_dir"]) / "sections" / r["file"]) for r in rows]
-    result = _fw_module_call("build", "prepare", str(root), section_paths,
+    result = _fw_module_call("build", "prepare", str(root), section_paths, project=p,
                              system_name=system_name, build_id=build_id, preview=a.preview,
                              prepared_for=a.prepared_for, prepared_by=a.prepared_by,
                              doc_version=a.doc_version, status=a.status)
@@ -5129,7 +5144,7 @@ def cmd_build(a):
         except SystemExit:
             rollback()
             raise
-    applied = _fw_module_call("build", "apply", result["workspace"], result["sections"],
+    applied = _fw_module_call("build", "apply", result["workspace"], result["sections"], project=p,
                               system_name=system_name, build_id=build_id, preview=a.preview,
                               root=str(root))
     if applied.get("status") == "ERROR":
@@ -5278,7 +5293,7 @@ def _convert_prepare_if_stale(p: dict) -> None:
     m = _live_manifest(p)
     if m is None or m.stat().st_mtime < d.stat().st_mtime:
         print(f"{C['d']}stable-ID manifest is stale: running prepare{C['0']}")
-        fw_call("prepareDocument", workspace=_ws(p))
+        fw_call("prepareDocument", workspace=_ws(p), project=p)
 
 
 def _convert_report_ledger(p: dict, ld: Path, target: str, res: dict) -> int:
@@ -5415,7 +5430,7 @@ def template_target(t: str) -> str:
     if not t or re.fullmatch(r"\d+(\.\d+)*", str(t)):
         return t
     r = subprocess.run([framework_python(), "-c", "import sys;from csa_docx import targets as T;print(T.canonical(sys.argv[1]))", t],
-                       cwd=str(FRAMEWORK), capture_output=True, text=True, env=_fw_env())
+                       cwd=str(FRAMEWORK), capture_output=True, text=True, env=_fw_env(None))
     out = r.stdout.strip()
     if r.returncode or not re.fullmatch(r"\d+(\.\d+)*", out):
         die(f"no template section matches '{t}'")
@@ -5479,7 +5494,7 @@ def cmd_convert(a):
     if a.audit:
         md = work / "convert" / "requirement-audit.md"
         if not (md.is_file() and "<!-- keep -->" in md.read_text(encoding="utf-8")):
-            res = _fw_module_call("requirement_audit", "audit", str(work))
+            res = _fw_module_call("requirement_audit", "audit", str(work), project=p)
             if res.get("status") != "OK":
                 die(f"audit failed: {res.get('message', res)}")
         if not md.is_file():
@@ -5487,8 +5502,8 @@ def cmd_convert(a):
         print(md.read_text(encoding="utf-8"), end="")
         return 0
     if a.parked:
-        pk = _fw_module_call("convert_ledger", "write_parked", str(work))
-        fg = _fw_module_call("convert_ledger", "write_figures", str(work))
+        pk = _fw_module_call("convert_ledger", "write_parked", str(work), project=p)
+        fg = _fw_module_call("convert_ledger", "write_figures", str(work), project=p)
         print(f"{pk.get('parked', 0)} parked block(s): {work / 'convert' / 'parked.md'}")
         print(f"{fg.get('figures', 0)} figure(s): {work / 'convert' / 'figures.md'}")
         return 0
@@ -5501,13 +5516,13 @@ MOVE_GENERATED = ("7", "5.1", "8")          # no writer agent: generated from th
 
 
 def _move_call(p: dict, ld: Path, target: str, stage: str | None = None) -> dict:
-    return _fw_module_call("move", "move", target, workspace=_ws(p), legacy_docx=str(ld), stage=stage)
+    return _fw_module_call("move", "move", target, workspace=_ws(p), legacy_docx=str(ld), stage=stage, project=p)
 
 
 def _move_generate(p: dict, ld: Path, target: str) -> dict:
     """The section file of target 7 (glossary), 5.1 (coverage) or 8 (Discovery Required, from the open items)."""
     if target == "8":
-        return _fw_module_call("move_record", "section8", _ws(p))
+        return _fw_module_call("move_record", "section8", _ws(p), project=p)
     res = _move_call(p, ld, target, "write")
     w = res.get("stages", {}).get("write", {})
     return {"status": res.get("status") if res.get("status") != "OK" else w.get("status", "OK"),
@@ -5560,7 +5575,7 @@ def _move_run(p: dict, a, ld: Path, target: str, stage: str | None) -> int:
         if "insert" in wanted:
             name = Path(res["file"]).name if res.get("file") else None
             if not name:
-                found = _fw_module_call("move_record", "section_path", _ws(p), target)
+                found = _fw_module_call("move_record", "section_path", _ws(p), target, project=p)
                 name = Path(found).name if found else None
             if not name:
                 die(f"no section file for {target}; run `csa move {target} --stage write`")
@@ -5597,7 +5612,7 @@ def _move_run(p: dict, a, ld: Path, target: str, stage: str | None) -> int:
                 return rc
             print(f"{C['b']}[write]{C['0']} done")
         elif name == "insert":
-            found = _fw_module_call("move_record", "section_path", _ws(p), target)
+            found = _fw_module_call("move_record", "section_path", _ws(p), target, project=p)
             if not found:
                 die(f"no section file for {target}; run `csa move {target} --stage write`")
             rc = _move_place(p, a, Path(found).name)
@@ -5615,7 +5630,7 @@ def _move_run(p: dict, a, ld: Path, target: str, stage: str | None) -> int:
 
 def _move_all(p: dict, a, ld: Path) -> int:
     work = local_path(p["work_dir"])
-    targets = _fw_module_call("move", "order", _ws(p))
+    targets = _fw_module_call("move", "order", _ws(p), project=p)
     if not isinstance(targets, list) or not targets:
         print("nothing mapped yet; run `csa move --prepare`")
         return 0
@@ -5651,7 +5666,7 @@ def cmd_move(a):
     ld = _convert_legacy(p)
     work = local_path(p["work_dir"])
     if a.prepare:
-        res = _fw_module_call("move", "move_prepare", _ws(p), str(ld))
+        res = _fw_module_call("move", "move_prepare", _ws(p), str(ld), project=p)
         if res.get("status") != "OK":
             print(res.get("message", res), file=sys.stderr)
             return 2
@@ -5664,7 +5679,7 @@ def cmd_move(a):
     if not (work / "legacy" / "map.csv").is_file():
         die("no map yet; run `csa move --prepare`")
     if a.status:
-        rows = _fw_module_call("move", "status", _ws(p))
+        rows = _fw_module_call("move", "status", _ws(p), project=p)
         if not isinstance(rows, list) or not rows:
             print("nothing mapped yet; run `csa move --prepare`")
             return 0

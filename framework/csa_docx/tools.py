@@ -464,6 +464,15 @@ def _resolve_shared_document(workspace: Path, section: str | None) -> _DocumentT
         entry = resolve_section(workspace, section)
         return _DocumentTarget(docx=Path(entry.docx), section=str(int(section)), change_file=entry.change_file)
 
+    # A project can pin its working document in the csa CLI environment (working_docx:
+    # in PROJECTS.yaml, e.g. RMS: "02 New Template/...") - honour that first so
+    # prepare/lookup target the document the project actually edits, not whatever
+    # the workspace scan finds.
+    import os
+    pinned = os.environ.get("_CSA_WORKING_DOCX")
+    if pinned and Path(pinned).is_file():
+        return _DocumentTarget(docx=Path(pinned))
+
     manifest = get_manifest(workspace)
     if not manifest:
         # No reviews/ change file exists anywhere yet -- there is no
