@@ -1,0 +1,44 @@
+.new-application-page { max-width: 1050px; }
+.new-app-drop { display: grid; gap: .6rem; justify-items: start; padding: 2rem; border: 2px dashed var(--ase-operational); border-radius: 14px; background: #fff; }
+.new-app-drop strong { font-size: 1.2rem; }
+.new-app-drop button, .new-app-actions button { padding: .65rem 1rem; border: 0; border-radius: 7px; background: var(--ase-operational); color: #fff; cursor: pointer; }
+.new-app-drop button:hover, .new-app-actions button:hover { background: #065e36; }
+.new-app-actions button:disabled { opacity: .45; cursor: default; }
+.new-app-picker { display: none; }
+.new-app-selection, .new-app-next { margin-top: 1.5rem; padding: 1.25rem; border: 1px solid var(--ase-line); border-radius: 10px; background: #fff; }
+.new-app-selection h2 { margin-top: 0; }
+.new-app-note { color: var(--ase-graphite); }
+.new-app-tree { max-height: 280px; overflow: auto; padding: 1rem; border-radius: 7px; background: var(--ase-paper); }
+.new-app-tree ul { margin-bottom: 0; overflow-wrap: anywhere; }
+.new-app-actions { display: flex; align-items: center; gap: 1rem; margin-top: 1rem; }
+.new-app-selection progress { width: 100%; margin-top: 1rem; accent-color: var(--ase-operational); }
+.new-app-error { color: var(--red); font-weight: 600; }
+.new-app-form-section { padding: 1rem 0; border-top: 1px solid var(--ase-line); }
+.new-app-form-section h3 { margin: 0 0 .7rem; }
+.new-app-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: .9rem; }
+.new-app-field { display: grid; gap: .3rem; min-width: 0; }
+.new-app-field span { font-weight: 650; }
+.new-app-field input, .new-app-field textarea, .new-app-field select { box-sizing: border-box; width: 100%; padding: .55rem; border: 1px solid var(--ase-line); border-radius: 6px; background: #fff; color: inherit; font: inherit; }
+.new-app-field small { color: var(--ase-graphite); }
+.new-app-check { display: flex; align-items: center; gap: .6rem; margin: .45rem 0; }
+.new-app-form-section button { padding: .65rem 1rem; border: 0; border-radius: 7px; background: var(--ase-operational); color: #fff; cursor: pointer; }
+.new-app-form-section button:disabled { opacity: .45; cursor: default; }
+.new-app-validation { color: var(--red); }
+.new-app-preview { padding: 1rem; margin-top: 1rem; border-radius: 8px; background: var(--ase-paper); }
+.new-app-preview dl { display: grid; gap: .4rem; }
+.new-app-preview dl div { display: grid; grid-template-columns: 10rem minmax(0, 1fr); gap: .5rem; }
+.new-app-preview dt { font-weight: 650; }
+.new-app-preview dd { margin: 0; overflow-wrap: anywhere; }
+.new-app-document-settings { display: grid; gap: .7rem; padding: 1rem; border: 1px solid var(--ase-line); border-radius: 8px; background: #fff; }
+.new-app-document-settings h3, .new-app-document-settings p { margin: 0; }
+.new-app-document-settings strong { overflow-wrap: anywhere; }
+.new-app-document-choice { display: flex; align-items: end; flex-wrap: wrap; gap: .7rem; }
+.new-app-document-choice label { display: grid; gap: .3rem; min-width: min(100%, 22rem); flex: 1; }
+.new-app-document-choice select, .new-app-document-choice input { width: 100%; box-sizing: border-box; padding: .6rem; border: 1px solid var(--ase-line); border-radius: 6px; }
+.new-app-document-settings button { padding: .65rem 1rem; border: 0; border-radius: 7px; background: var(--ase-operational); color: #fff; cursor: pointer; }
+.new-app-document-settings button:disabled { opacity: .45; cursor: default; }
+.new-app-template-create { display: grid; gap: .65rem; margin-top: .5rem; padding-top: 1rem; border-top: 1px solid var(--ase-line); }
+.new-app-template-create h4 { margin: 0; }
+.new-app-template-create label { display: grid; gap: .3rem; }
+.new-app-template-create input, .new-app-template-create select { box-sizing: border-box; width: 100%; padding: .6rem; border: 1px solid var(--ase-line); border-radius: 6px; }
+.new-app-template-create button { justify-self: start; }

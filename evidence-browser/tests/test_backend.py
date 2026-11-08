@@ -6,10 +6,47 @@ from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
 
 from backend import app as workspace
 from backend import word_review
 from backend.models import PipelineDocument, PipelineIssue, PipelineSection, PipelineSnapshot
+
+
+def test_new_application_api_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    agents = tmp_path / ".agents"
+    (agents / "csa-context").mkdir(parents=True)
+    (agents / "csa-context" / "PROJECTS.yaml").write_text("projects:\n", encoding="utf-8")
+    monkeypatch.setenv("CSA_AGENTS_DIR", str(agents))
+    monkeypatch.delenv("CSA_PROJECTS_FILE", raising=False)
+    client = TestClient(workspace.app)
+    defaults = client.get("/api/new-application/defaults").json()
+    assert defaults["workspace_root"] == str(tmp_path)
+    assert defaults["knowledge_name"] == "00 Knowlege"
+    manifest = [
+        {"path": "Discovery", "kind": "dir"},
+        {"path": "00 Knowlege", "kind": "dir"},
+        {"path": "Discovery/host.txt", "kind": "file", "size": 4},
+        {"path": "00 Knowlege/guide.txt", "kind": "file", "size": 5},
+    ]
+    created = client.post("/api/new-application/uploads", json={"manifest": manifest}).json()
+    assert created["status"] == "READY"
+    sid = created["session_id"]
+    for path, data in (("Discovery/host.txt", b"host"), ("00 Knowlege/guide.txt", b"guide")):
+        response = client.put(f"/api/new-application/uploads/{sid}/files/{path}?index=0", content=data)
+        assert response.json()["status"] == "OK", response.text
+        assert client.put(f"/api/new-application/uploads/{sid}/files/{path}?index=0", content=data).json()["already_received"]
+    assert client.get(f"/api/new-application/uploads/{sid}").json()["received_bytes"] == 9
+    assert client.post(f"/api/new-application/uploads/{sid}/finalise").json()["status"] == "READY"
+    config = {"key": "new-app", "label": "New Application", "destination": "new-app"}
+    assert client.post("/api/new-application/preview", json=config).json()["status"] == "READY"
+    assert client.post("/api/new-application/commit", json={"session_id": sid, "config": config}).json()["status"] == "BLOCKED"
+    committed = client.post("/api/new-application/commit", json={
+        "session_id": sid, "config": config, "confirmed": True}).json()
+    assert committed["status"] == "READY", committed
+    assert (tmp_path / "new-app" / "Discovery" / "host.txt").read_bytes() == b"host"
+    assert (tmp_path / "new-app" / "00 Knowlege" / "guide.txt").read_bytes() == b"guide"
+    assert any(item["key"] == "new-app" for item in client.get("/api/systems").json()["systems"])
 
 
 def make_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
@@ -499,3 +536,79 @@ def test_word_review_refresh_recomputes_lock(tmp_path: Path, monkeypatch: pytest
     )
     assert review["gate"] == "word_locked"
     assert review["word_lock"]["owner"] == "jdoe"
+
+
+def test_systems_includes_existing_aliases_and_new_registry_entry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    project, _ = make_workspace(tmp_path, monkeypatch)
+    # Register a brand-new project that is not covered by any stable browser alias.
+    new_root = tmp_path / "NewApp"
+    (new_root / "csa-work").mkdir(parents=True)
+    (new_root / "Discovery").mkdir()
+    (new_root / "versions" / "v1" / "reviews").mkdir(parents=True)
+    (new_root / "versions" / "v1" / "reviews" / "ChangesCSA_01.md").write_text("# Change\n", encoding="utf-8")
+    _make_doc(new_root / "versions" / "v1" / "Assessment.docx")
+    registry = (tmp_path / ".agents" / "csa-context" / "PROJECTS.yaml")
+    registry.write_text(
+        registry.read_text(encoding="utf-8")
+        + f"\n  - key: newapp\n    label: \"New App\"\n    project_root: \"{new_root}\"\n"
+        f"    work_dir: \"{new_root / 'csa-work'}\"\n    default_source_set: \"{new_root / 'Discovery'}\"\n",
+        encoding="utf-8",
+    )
+    result = workspace.get_systems()
+    keys = {s["key"] for s in result["systems"]}
+    assert "iamps" in keys
+    assert "newapp" in keys
+    newapp = next(s for s in result["systems"] if s["key"] == "newapp")
+    assert newapp["label"] == "New App"
+    assert newapp["project_key"] == "newapp"
+    assert newapp["available"] is True
+    # The stable alias still resolves to its registered project.
+    iamps = next(s for s in result["systems"] if s["key"] == "iamps")
+    assert iamps["project_key"] == "iamps-08"
+
+
+def test_system_project_accepts_new_project_key_and_rejects_unknown(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    project, _ = make_workspace(tmp_path, monkeypatch)
+    new_root = tmp_path / "NewApp"
+    (new_root / "csa-work").mkdir(parents=True)
+    (new_root / "Discovery").mkdir()
+    registry = (tmp_path / ".agents" / "csa-context" / "PROJECTS.yaml")
+    registry.write_text(
+        registry.read_text(encoding="utf-8")
+        + f"\n  - key: newapp\n    label: \"New App\"\n    project_root: \"{new_root}\"\n"
+        f"    work_dir: \"{new_root / 'csa-work'}\"\n    default_source_set: \"{new_root / 'Discovery'}\"\n",
+        encoding="utf-8",
+    )
+    resolved = workspace.system_project("newapp")
+    assert resolved["key"] == "newapp"
+    # A key that is neither an alias nor a registered project key is unknown.
+    with pytest.raises(HTTPException) as caught:
+        workspace.system_project("not-a-system")
+    assert caught.value.status_code == 404
+
+
+def test_system_setup_reports_missing_index_and_document(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    project, _ = make_workspace(tmp_path, monkeypatch)
+    # Remove the discovery index so the setup check reports it absent.
+    (project / "csa-work" / "discovery-index.sqlite").unlink()
+    result = workspace.system_setup("iamps")
+    assert result["status"] == "BLOCKED"
+    assert result["index_present"] is False
+    assert result["document_present"] is False
+    assert any("index" in r.lower() for r in result["reasons"])
+
+
+def test_system_setup_reports_invalid_registered_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    project, _ = make_workspace(tmp_path, monkeypatch)
+    # Point the registered source at a directory that does not exist.
+    registry = (tmp_path / ".agents" / "csa-context" / "PROJECTS.yaml")
+    text = registry.read_text(encoding="utf-8").replace(
+        f"default_source_set: \"{project / 'source'}\"",
+        f"default_source_set: \"{tmp_path / 'no-such-dir'}\"",
+    )
+    assert text != registry.read_text(encoding="utf-8")
+    registry.write_text(text, encoding="utf-8")
+    result = workspace.system_setup("iamps")
+    assert result["status"] == "BLOCKED"
+    assert len(result["invalid_paths"]) == 1
+    assert any("paths" in r.lower() for r in result["reasons"])

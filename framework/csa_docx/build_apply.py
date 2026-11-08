@@ -346,8 +346,13 @@ def apply_build_records(workspace, sections, *, app: str, track_changes: bool, b
     fv = workspace / "01 Current State AS Built" / "01 Final Version"
     # The DOCX always sits in the workspace's own "01 Final Version". A preview
     # runs in its own throw-away workspace (build.prepare), so this never
-    # touches the project's real folders.
-    docx_dir = fv
+    # touches the project's real folders. A project whose working document lives
+    # elsewhere (RMS: "02 New Template") pins it with _CSA_WORKING_DOCX, which
+    # wins when it exists.
+    pinned = Path(os.environ["_CSA_WORKING_DOCX"]) if os.environ.get("_CSA_WORKING_DOCX") else None
+    if pinned is not None and not pinned.is_file():
+        pinned = None
+    docx_dir = pinned.parent if pinned else fv
     fixed_docx = Path(docx) if docx else None
     if plain:
         # Plain placement: untracked edits in the real document, no evidence comments, no archive.

@@ -8,6 +8,8 @@ import { BuildPanel } from "./components/BuildPanel";
 import { AuditPanel } from "./components/AuditPanel";
 import { DraftLane } from "./components/DraftLane";
 import { EvidenceIntake } from "./components/EvidenceIntake";
+import { NewApplication } from "./components/NewApplication";
+import { WorkingDocumentSettings } from "./components/WorkingDocumentSettings";
 import { settleTarget, type PendingSettle } from "./components/intakeSteps";
 
 const MarkupViewer = lazy(() => import("./components/MarkupViewer").then(module => ({ default: module.MarkupViewer })));
@@ -41,7 +43,8 @@ type DocumentInfo = { state: string; reason?: string; candidates?: string[]; fil
 type DocumentPreview = { state: string; reason?: string; filename?: string; cache_key?: string; page_count?: number; pdf_url?: string; revision_url?: string; revisions_in_pdf?: boolean; comments_in_pdf?: boolean };
 type RevisionView = { filename: string; notice: string; sections: { index: number; title: string }[]; paragraphs: { index: number; style: string; tokens: { kind: string; text: string }[] }[] };
 type DocumentComment = { id: string; author: string; date?: string; text: string; anchored_text: string };
-type View = "portrait" | "intake" | "draft" | "assessment" | "evidence" | "explorer" | "figures" | "network" | "sources" | "tables";
+type View = "portrait" | "intake" | "draft" | "assessment" | "evidence" | "explorer" | "figures" | "network" | "sources" | "tables" | "new-application" | "setup";
+type Setup = { status: string; index_present: boolean; document_present: boolean; source_roots: string[]; reasons: string[]; project_key: string };
 
 const STATUSES = ["VERIFIED", "INFERRED", "UNCONFIRMED", "CONFLICTING", "NOT_FOUND"];
 const EMPTY_DRAFT: Draft = { csa_area: "", question: "", claim: "", status: "VERIFIED", source_title: "", source_version: "", section: "", page_or_location: "", evidence_excerpt: "", inference_reason: "", confidence: "high", gap_or_action: "", review_state: "pending" };
@@ -60,10 +63,38 @@ const DRAFT_NAV: { id: View; title: string; note: string } = { id: "draft", titl
 
 function bytes(value: number) { return value < 1000 ? `${value} B` : value < 1e6 ? `${(value / 1000).toFixed(1)} KB` : `${(value / 1e6).toFixed(1)} MB`; }
 
+export function FirstRunSetup({ setup, openIntake, openAssessment, refresh }: { setup: Setup; openIntake: () => void; openAssessment: () => void; refresh: () => void }) {
+  return <section className="page new-application-page"><div className="page-heading"><div><span>Application setup</span><h1>{setup.project_key} is registered</h1>
+    <p>The uploaded Discovery and 00 Knowlege folders are in place. Indexing and document preparation are separate steps.</p></div></div>
+    <div className="new-app-selection"><h2>Discovery and evidence</h2><p>{setup.index_present ? "Discovery index present." : "The discovery index has not been built yet."}</p>
+      <p>{setup.source_roots.join(" · ")}</p><button type="button" onClick={openIntake}>Open Evidence intake</button>
+      {!setup.index_present && <p>Run <code>csa -p {setup.project_key} ingest</code> to index the uploaded discovery data.</p>}</div>
+    <div className="new-app-selection"><h2>Assessment document</h2><p>{setup.document_present ? "Working document present." : "A working DOCX has not been selected or created."}</p>
+      <WorkingDocumentSettings system={setup.project_key} onSaved={refresh} />
+      {setup.document_present && <button type="button" onClick={openAssessment}>Open Assessment</button>}</div>
+    <button type="button" onClick={refresh}>Refresh setup</button>
+  </section>;
+}
+
+export async function loadCreatedApplication(key: string): Promise<{ systems: System[]; key: string }> {
+  const result = await api<{ systems: System[] }>("/api/systems");
+  if (!result.systems.some(item => item.key === key)) throw new Error(`Application ${key} is not visible in the registry yet.`);
+  return { systems: result.systems, key };
+}
+
+export function setupScreen(view: View, setup: Setup | null): "setup" | "document" | "index" | "content" {
+  if (!setup) return "content";
+  if (view === "setup" || (view === "portrait" && !setup.index_present)) return "setup";
+  if (view === "assessment" && !setup.document_present) return "document";
+  if (!setup.index_present && view !== "intake" && view !== "new-application") return "index";
+  return "content";
+}
+
 export default function App() {
   const [systems, setSystems] = useState<System[]>([]);
   const [system, setSystem] = useState(new URLSearchParams(location.search).get("system") || "iamps");
-  const [view, setView] = useState<View>("portrait"); const [summary, setSummary] = useState<Summary | null>(null); const [portrait, setPortrait] = useState<Portrait | null>(null);
+  const [view, setView] = useState<View>(new URLSearchParams(location.search).get("view") === "new-application" ? "new-application" : "portrait"); const [summary, setSummary] = useState<Summary | null>(null); const [portrait, setPortrait] = useState<Portrait | null>(null);
+  const [setup, setSetup] = useState<Setup | null>(null);
   const [evidence, setEvidence] = useState<EvidenceRow[]>([]); const [files, setFiles] = useState<FileRow[]>([]); const [fileTotal, setFileTotal] = useState(0);
   const [facets, setFacets] = useState<{ statuses: string[]; extensions: string[]; source_classes: string[] }>({ statuses: [], extensions: [], source_classes: [] });
   const [tables, setTables] = useState<TableInfo[]>([]); const [tableRows, setTableRows] = useState<Record<string, unknown>[] | null>(null); const [activeTable, setActiveTable] = useState("");
@@ -77,16 +108,23 @@ export default function App() {
 
   useEffect(() => { api<{ systems: System[] }>("/api/systems").then(x => setSystems(x.systems)).catch(e => setError(e.message)); }, []);
   useEffect(() => {
-    window.history.replaceState(null, "", `?system=${system}`); setLoading(true); setError(""); setSearch(null); setPreview(null); setDocumentInfo(null); setDocumentPreview(null); setRevisionView(null); setDocumentComments([]);
-    Promise.all([
+    if (view === "new-application") return;
+    window.history.replaceState(null, "", `?system=${encodeURIComponent(system)}`); setLoading(true); setError(""); setSearch(null); setPreview(null); setDocumentInfo(null); setDocumentPreview(null); setRevisionView(null); setDocumentComments([]);
+    let current = true;
+    api<Setup>(`/api/systems/${encodeURIComponent(system)}/setup`).then(value => {
+      if (!current) return;
+      setSetup(value);
+      if (!value.index_present) { setSummary(null); setPortrait(null); setEvidence([]); setFiles([]); setTables([]); setLoading(false); return; }
+      return Promise.all([
       api<Summary>(`/api/systems/${system}/summary`), api<Portrait>(`/api/systems/${system}/portrait`),
       api<{ rows: EvidenceRow[] }>(`/api/systems/${system}/evidence?limit=500`),
       api<{ files: FileRow[]; total: number; facets: typeof facets }>(`/api/systems/${system}/files?limit=500`),
       api<{ tables: TableInfo[] }>(`/api/systems/${system}/tables`),
-    ]).then(([s, p, e, f, t]) => { setSummary(s); setPortrait(p); setEvidence(e.rows); setFiles(f.files); setFileTotal(f.total); setFacets(f.facets); setTables(t.tables); })
-      .catch(e => setError(e.message)).finally(() => setLoading(false));
-  }, [system]);
-  useEffect(() => { const timer = window.setTimeout(() => { const p = new URLSearchParams({ limit: "500", all_captures: String(history), include_archive: String(history) }); if (fileQuery) p.set("q", fileQuery); if (fileStatus) p.set("status", fileStatus); if (fileExt) p.set("ext", fileExt); if (fileClass) p.set("source_class", fileClass); api<{ files: FileRow[]; total: number; facets: typeof facets }>(`/api/systems/${system}/files?${p}`).then(x => { setFiles(x.files); setFileTotal(x.total); setFacets(x.facets); }).catch(e => setError(e.message)); }, 180); return () => clearTimeout(timer); }, [system, history, fileQuery, fileStatus, fileExt, fileClass]);
+      ]).then(([s, p, e, f, t]) => { if (current) { setSummary(s); setPortrait(p); setEvidence(e.rows); setFiles(f.files); setFileTotal(f.total); setFacets(f.facets); setTables(t.tables); } });
+    }).catch(e => { if (current) setError(e.message); }).finally(() => { if (current) setLoading(false); });
+    return () => { current = false; };
+  }, [system, view === "new-application"]);
+  useEffect(() => { if (!setup?.index_present || view === "new-application") return; const timer = window.setTimeout(() => { const p = new URLSearchParams({ limit: "500", all_captures: String(history), include_archive: String(history) }); if (fileQuery) p.set("q", fileQuery); if (fileStatus) p.set("status", fileStatus); if (fileExt) p.set("ext", fileExt); if (fileClass) p.set("source_class", fileClass); api<{ files: FileRow[]; total: number; facets: typeof facets }>(`/api/systems/${system}/files?${p}`).then(x => { setFiles(x.files); setFileTotal(x.total); setFacets(x.facets); }).catch(e => setError(e.message)); }, 180); return () => clearTimeout(timer); }, [system, setup?.index_present, view, history, fileQuery, fileStatus, fileExt, fileClass]);
 
   async function runSearch(text: string) { if (!text.trim()) return; setQuery(text); setBusy(true); setError(""); try { setSearch(await api<SearchResponse>(`/api/systems/${system}/search`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query: text }) })); } catch (e) { setError((e as Error).message); } finally { setBusy(false); } }
   function submit(event: FormEvent) { event.preventDefault(); void runSearch(query); }
@@ -107,22 +145,36 @@ export default function App() {
   async function openTable(name: string) { setActiveTable(name); try { setTableRows((await api<{ results: { row: Record<string, unknown> }[] }>(`/api/systems/${system}/tables?table=${encodeURIComponent(name)}&limit=100`)).results.map(x => x.row)); } catch (e) { setError((e as Error).message); } }
   async function loadAssessment() { try { const info = await api<DocumentInfo>(`/api/systems/${system}/document`); setDocumentInfo(info); if (info.state === "ready") { const [descriptor, revisions, comments] = await Promise.allSettled([api<DocumentPreview>(`/api/systems/${system}/document/preview`), api<RevisionView>(`/api/systems/${system}/document/preview?mode=revisions`), api<{ comments: DocumentComment[] }>(`/api/systems/${system}/document/comments`)]); setDocumentPreview(descriptor.status === "fulfilled" ? descriptor.value : { state: "unavailable", reason: descriptor.reason instanceof Error ? descriptor.reason.message : "Rendered page preview unavailable" }); if (revisions.status === "fulfilled") setRevisionView(revisions.value); if (comments.status === "fulfilled") setDocumentComments(comments.value.comments); } } catch (e) { setError((e as Error).message); } }
   async function selectAssessmentSection(section: PipelineSection | null) { setSelectedSection(section); setSectionInspection(null); if (!section) return; try { setSectionInspection(await api<SectionInspection>(`/api/systems/${system}/sections/${encodeURIComponent(section.stable_key || section.visible_number)}`)); } catch (e) { setError((e as Error).message); } }
-  useEffect(() => { if (view !== "assessment") return; let current = true; setPipeline(null); setSelectedSection(null); api<PipelineSnapshot>(`/api/systems/${system}/pipeline`).then(value => { if (current) setPipeline(value); }).catch(e => { if (current) setError(e.message); }); return () => { current = false; }; }, [view, system]);
+  useEffect(() => { if (view !== "assessment" || !setup?.document_present) return; let current = true; setPipeline(null); setSelectedSection(null); api<PipelineSnapshot>(`/api/systems/${system}/pipeline`).then(value => { if (current) setPipeline(value); }).catch(e => { if (current) setError(e.message); }); return () => { current = false; }; }, [view, system, setup?.document_present]);
   useEffect(() => { if (view === "assessment" && showDocument && !documentInfo) void loadAssessment(); }, [view, system, showDocument]);
-  function switchSystem(next: string) { setSelectedSection(null); setPipeline(null); setShowDocument(false); setPreview(null); setDocumentInfo(null); setDocumentPreview(null); setRevisionView(null); setDocumentComments([]); setTableRows(null); setActiveTable(""); setDraft(null); setSettleAfter(null); setChoices(null); setSystem(next); }
+  function switchSystem(next: string) { setLoading(true); setSelectedSection(null); setPipeline(null); setSetup(null); setSummary(null); setPortrait(null); setShowDocument(false); setPreview(null); setDocumentInfo(null); setDocumentPreview(null); setRevisionView(null); setDocumentComments([]); setTableRows(null); setActiveTable(""); setDraft(null); setSettleAfter(null); setChoices(null); setSystem(next); }
+  async function createdApplication(key: string) {
+    try {
+      const result = await loadCreatedApplication(key);
+      setSystems(result.systems);
+      switchSystem(result.key);
+      setView("setup");
+    } catch (caught) { setError((caught as Error).message); }
+  }
+  function openNewApplication() { setSearch(null); setError(""); setView("new-application"); window.history.replaceState(null, "", "?view=new-application"); }
+  async function refreshSetup() {
+    try { setSetup(await api<Setup>(`/api/systems/${encodeURIComponent(system)}/setup`)); setError(""); }
+    catch (caught) { setError((caught as Error).message); }
+  }
   const matrix = search?.stages.find(x => x.kind === "matrix"); const index = search?.stages.find(x => x.kind === "index");
   const draftStage = (systems.find(x => x.key === system)?.stage || "draft") === "draft";
   const nav = draftStage ? [NAV[0], DRAFT_NAV, ...NAV.slice(1)] : NAV;
+  const screen = setupScreen(view, setup);
   const [draftFocus, setDraftFocus] = useState("");
 
   return <div className="shell">
     <header className="masthead"><button className="product-mark" onClick={() => { setSearch(null); setView("portrait"); }}><span className="mark-lines" /><span><b>CSA evidence</b><small>Application assessment workspace</small></span></button>
       <label className="system-picker"><span>Application</span><select value={system} onChange={e => switchSystem(e.target.value)}>{systems.map(x => <option key={x.key} value={x.key} disabled={!x.available}>{x.label}</option>)}</select></label>
-      <form className="global-search" onSubmit={submit}><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Ask about the application, host, service or control" aria-label="Trace evidence" /><button disabled={busy}>{busy ? "Tracing…" : "Trace evidence"}</button></form>
+      <form className="global-search" onSubmit={submit}><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Ask about the application, host, service or control" aria-label="Trace evidence" disabled={view === "new-application" || !setup?.index_present} /><button disabled={busy || view === "new-application" || !setup?.index_present}>{busy ? "Tracing…" : "Trace evidence"}</button></form>
       <div className="ase-brand" aria-label="ASE"><img src="/ase-logo.png" alt="ASE" /></div>
     </header>
-    <aside className="rail"><div className="rail-app"><span>Assessing</span><strong>{portrait?.application.name || summary?.label || "Application"}</strong><small>within {portrait?.application.system || "the selected system"}</small></div><nav>{nav.map(x => <button key={x.id} className={view === x.id && !search ? "active" : ""} onClick={() => { setView(x.id); setSearch(null); }}><span>{x.title}</span><small>{x.note}</small></button>)}</nav><div className="rail-note"><i className={summary?.index_complete ? "lamp good" : "lamp"} /><div>{summary?.index_complete ? "Sources ready" : "Index incomplete"}<small>{summary?.built_at_utc ? `Indexed ${summary.built_at_utc.slice(0, 10)}` : "Build date unavailable"}</small></div></div></aside>
-    <main className="workspace">{error && <div className="error" role="alert"><div><b>Action needed</b><span>{error}</span></div><button onClick={() => setError("")}>×</button></div>}{loading ? <Loading /> : search ? <SearchDesk data={search} matrix={matrix} index={index} openFile={openFile} openEvidence={openEvidence} prepare={prepare} close={() => setSearch(null)} /> : view === "portrait" ? <ApplicationPortrait portrait={portrait} summary={summary} openEvidence={id => openEvidence(byId(id))} investigate={runSearch} navigate={setView} /> : view === "intake" ? <EvidenceIntake system={system} draftStage={draftStage} refreshKey={intakeRefresh} openEvidence={row => void openEvidence(row as EvidenceRow)} writeFact={prepareFact} openSection={key => { if (draftStage) { setDraftFocus(key); setView("draft"); } else setView("assessment"); }} /> : view === "draft" ? <DraftLane system={system} focus={draftFocus} investigate={runSearch} /> : view === "assessment" ? showDocument ? <AssessmentReader info={documentInfo} preview={documentPreview} revisions={revisionView} comments={documentComments} reload={loadAssessment} back={() => setShowDocument(false)} /> : <>{draftStage && <div className="draft-banner" role="status"><strong>Draft lane (before V1)</strong><span>Sections are answered on the Draft answers page and written straight into the document. Authoring, review and cleanup start once the assessment is frozen at V1.</span><button onClick={() => setView("draft")}>Open Draft answers</button></div>}<AssessmentShell snapshot={pipeline} selected={draftStage ? null : selectedSection} inspection={sectionInspection} select={draftStage ? (section => { if (section) { setDraftFocus(section.stable_key || section.visible_number); setView("draft"); } }) : selectAssessmentSection} openEvidence={openEvidence} investigate={runSearch} refresh={async () => { setPipeline(await api<PipelineSnapshot>(`/api/systems/${system}/pipeline`)); await loadAssessment(); }} readDocument={() => setShowDocument(true)} />{!draftStage && pipeline && pipeline.sections.some(s => pipelineState(s) === "awaiting-word-decision") && <WordReviewPanel system={system} />}</> : view === "evidence" ? <EvidenceLedger rows={evidence} areas={portrait?.areas || []} openEvidence={openEvidence} investigate={runSearch} /> : view === "explorer" ? <SystemExplorer system={system} openEvidenceId={id => openEvidence(byId(id))} /> : view === "figures" ? <FiguresPage system={system} openEvidenceId={id => openEvidence(byId(id))} /> : view === "network" ? <NetworkMap system={system} openEvidenceId={id => openEvidence(byId(id))} /> : view === "sources" ? <SourceCoverage summary={summary} portrait={portrait} files={files} total={fileTotal} facets={facets} controls={{ fileQuery, fileStatus, fileExt, fileClass, history, setFileQuery, setFileStatus, setFileExt, setFileClass, setHistory }} openFile={openFile} /> : <Tables tables={tables} rows={tableRows} active={activeTable} openTable={openTable} />}</main>
+    <aside className="rail"><div className="rail-app"><span>Assessing</span><strong>{portrait?.application.name || summary?.label || "Application"}</strong><small>within {portrait?.application.system || "the selected system"}</small></div><nav className="rail-create"><button className={view === "new-application" ? "active" : ""} onClick={openNewApplication}><span>New application</span><small>Import and register a folder</small></button><button className={view === "setup" ? "active" : ""} onClick={() => { setView("setup"); setSearch(null); }}><span>Application setup</span><small>Sources and working document</small></button></nav><nav>{nav.map(x => <button key={x.id} className={view === x.id && !search ? "active" : ""} onClick={() => { setView(x.id); setSearch(null); }}><span>{x.title}</span><small>{x.note}</small></button>)}</nav><div className="rail-note"><i className={summary?.index_complete ? "lamp good" : "lamp"} /><div>{summary?.index_complete ? "Sources ready" : "Index incomplete"}<small>{summary?.built_at_utc ? `Indexed ${summary.built_at_utc.slice(0, 10)}` : "Build date unavailable"}</small></div></div></aside>
+    <main className="workspace">{error && <div className="error" role="alert"><div><b>Action needed</b><span>{error}</span></div><button onClick={() => setError("")}>×</button></div>}{view === "new-application" ? <NewApplication onCreated={key => void createdApplication(key)} /> : loading ? <Loading /> : screen === "setup" && setup ? <FirstRunSetup setup={setup} openIntake={() => setView("intake")} openAssessment={() => setView("assessment")} refresh={() => void refreshSetup()} /> : screen === "document" ? <section className="page new-application-page"><div className="page-heading"><div><span>Assessment</span><h1>Choose a working document</h1><p>Select an existing DOCX from this application or upload one to continue.</p></div></div><WorkingDocumentSettings system={system} onSaved={() => void refreshSetup()} /></section> : screen === "index" ? <section className="page new-application-page"><div className="page-heading"><div><span>{human(view)}</span><h1>{human(view)} needs a discovery index</h1><p>Index the uploaded Discovery folder before using this area. Evidence intake and working-document settings remain available.</p></div></div><button type="button" onClick={() => setView("intake")}>Open Evidence intake</button><button type="button" onClick={() => setView("setup")}>Open application setup</button></section> : search ? <SearchDesk data={search} matrix={matrix} index={index} openFile={openFile} openEvidence={openEvidence} prepare={prepare} close={() => setSearch(null)} /> : view === "portrait" ? <ApplicationPortrait portrait={portrait} summary={summary} openEvidence={id => openEvidence(byId(id))} investigate={runSearch} navigate={setView} /> : view === "intake" ? <EvidenceIntake system={system} draftStage={draftStage} refreshKey={intakeRefresh} openEvidence={row => void openEvidence(row as EvidenceRow)} writeFact={prepareFact} openSection={key => { if (draftStage) { setDraftFocus(key); setView("draft"); } else setView("assessment"); }} /> : view === "draft" ? <DraftLane system={system} focus={draftFocus} investigate={runSearch} /> : view === "assessment" ? showDocument ? <AssessmentReader info={documentInfo} preview={documentPreview} revisions={revisionView} comments={documentComments} reload={loadAssessment} back={() => setShowDocument(false)} /> : <>{draftStage && <div className="draft-banner" role="status"><strong>Draft lane (before V1)</strong><span>Sections are answered on the Draft answers page and written straight into the document. Authoring, review and cleanup start once the assessment is frozen at V1.</span><button onClick={() => setView("draft")}>Open Draft answers</button></div>}<AssessmentShell snapshot={pipeline} selected={draftStage ? null : selectedSection} inspection={sectionInspection} select={draftStage ? (section => { if (section) { setDraftFocus(section.stable_key || section.visible_number); setView("draft"); } }) : selectAssessmentSection} openEvidence={openEvidence} investigate={runSearch} refresh={async () => { setPipeline(await api<PipelineSnapshot>(`/api/systems/${system}/pipeline`)); await loadAssessment(); }} readDocument={() => setShowDocument(true)} />{!draftStage && pipeline && pipeline.sections.some(s => pipelineState(s) === "awaiting-word-decision") && <WordReviewPanel system={system} />}</> : view === "evidence" ? <EvidenceLedger rows={evidence} areas={portrait?.areas || []} openEvidence={openEvidence} investigate={runSearch} /> : view === "explorer" ? <SystemExplorer system={system} openEvidenceId={id => openEvidence(byId(id))} /> : view === "figures" ? <FiguresPage system={system} openEvidenceId={id => openEvidence(byId(id))} /> : view === "network" ? <NetworkMap system={system} openEvidenceId={id => openEvidence(byId(id))} /> : view === "sources" ? <SourceCoverage summary={summary} portrait={portrait} files={files} total={fileTotal} facets={facets} controls={{ fileQuery, fileStatus, fileExt, fileClass, history, setFileQuery, setFileStatus, setFileExt, setFileClass, setHistory }} openFile={openFile} /> : <Tables tables={tables} rows={tableRows} active={activeTable} openTable={openTable} />}</main>
     {preview && <SourceReader preview={preview} close={() => setPreview(null)} />}{draft && <DraftPanel draft={draft} setDraft={setDraft} result={draftResult} validate={validateDraft} commit={commitDraft} close={() => { setDraft(null); setSettleAfter(null); }} />}{choices && <SourceChooser row={choices.row} files={choices.files} close={() => setChoices(null)} choose={file => { const row = choices.row; setChoices(null); void openFile(file.file_id, row.page_or_location); }} />}
   </div>;
 }

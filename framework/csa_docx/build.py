@@ -15,6 +15,7 @@ See ``.agents/docs/build-lane-spec.md`` section 5.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -106,7 +107,8 @@ def prepare(root: Path, section_paths: list, *, system_name: str, build_id: str,
     root = Path(root).resolve()
     section_paths = [Path(p) for p in section_paths]
     ws = _preview_workspace(root, build_id) if preview else root
-    docx = ws / "01 Current State AS Built" / "01 Final Version" / f"Current State Assessment - {system_name}.docx"
+    docx = (Path(os.environ["_CSA_WORKING_DOCX"]) if os.environ.get("_CSA_WORKING_DOCX")
+            else ws / "01 Current State AS Built" / "01 Final Version" / f"Current State Assessment - {system_name}.docx")
     try:
         new_document(ws, docx, system_name=system_name, prepared_for=prepared_for,
                      prepared_by=prepared_by, doc_version=doc_version, status=status)
@@ -155,7 +157,13 @@ def apply(workspace: Path, sections: list, *, system_name: str, build_id: str, p
 
 def working_document(root: Path, system_name: str) -> Path | None:
     """The project's working DOCX in ``01 Final Version`` (``None`` when there is none yet).
-    With several, the one named after the system wins; otherwise there must be exactly one."""
+    With several, the one named after the system wins; otherwise there must be exactly one.
+    A project whose working document lives in a non-standard folder (RMS: "02 New
+    Template") pins it with the ``_CSA_WORKING_DOCX`` environment variable (set by the
+    CLI from the project's ``working_docx:`` entry)."""
+    pinned = os.environ.get("_CSA_WORKING_DOCX")
+    if pinned and Path(pinned).is_file():
+        return Path(pinned)
     fv = Path(root).resolve() / "01 Current State AS Built" / "01 Final Version"
     docs = sorted(d for d in fv.glob("*.docx") if not d.name.startswith("~$"))
     if not docs:
@@ -186,7 +194,8 @@ def place_prepare(root: Path, section_path, *, system_name: str, source: str,
     docx = working_document(root, system_name)
     created = docx is None
     if created:
-        docx = root / "01 Current State AS Built" / "01 Final Version" / f"Current State Assessment - {system_name}.docx"
+        docx = (Path(os.environ["_CSA_WORKING_DOCX"]) if os.environ.get("_CSA_WORKING_DOCX")
+                else root / "01 Current State AS Built" / "01 Final Version" / f"Current State Assessment - {system_name}.docx")
         new_document(root, docx, system_name=system_name, prepared_for=prepared_for,
                      prepared_by=prepared_by, doc_version=doc_version, status=status)
     prep = tools.prepareDocument(workspace=root, force_regenerate=not created)
