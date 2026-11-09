@@ -5457,6 +5457,8 @@ def cmd_convert(a):
         m = res["map"]
         print(f"{C['g']}prepared{C['0']} {ld.name}: {m['blocks']} blocks, {m['mapped']} mapped, {m['unmapped']} unmapped, "
               f"{m['low_confidence']} low confidence; {res['parked']} parked, {res['figures']} figures")
+        if m.get("missing_targets"):
+            print(f"  missing template destinations: {', '.join(m['missing_targets'])}", file=sys.stderr)
         print(f"  map report: {work / 'legacy' / 'map-report.md'}")
         print(f"  overrides:  {work / 'legacy' / 'legacy-map.csv'}  (checked before the defaults)")
         return 0
@@ -5673,6 +5675,8 @@ def cmd_move(a):
         m = res["map"]
         print(f"{C['g']}prepared{C['0']} {ld.name}: {m['blocks']} blocks, {m['mapped']} mapped, {m['unmapped']} unmapped, "
               f"{m['low_confidence']} low confidence; {res['parked']} parked, {res['figures']} figures")
+        if m.get("missing_targets"):
+            print(f"  missing template destinations: {', '.join(m['missing_targets'])}", file=sys.stderr)
         print(f"  map report: {work / 'legacy' / 'map-report.md'}")
         print(f"  overrides:  {work / 'legacy' / 'legacy-map.csv'}  (checked before the defaults)")
         return 0

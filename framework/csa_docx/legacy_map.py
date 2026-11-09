@@ -86,10 +86,14 @@ def map_blocks(blocks: list[dict], *, project_rules=(), default_rules=None,
             out.append(row("convert", moved[b["id"]], "moved", "high"))
             continue
 
-        ordered = [(f"project:{r['row']}", r) for r in project_rules] + [(f"default:{r['row']}", r) for r in default_rules]
+        # Specific exceptions must beat a broad project section rule. Preserve project precedence
+        # for equally specific rules, while allowing shared rules to split a mixed legacy section.
+        ordered = [(f"project:{r['row']}", r, 0) for r in project_rules] + [
+            (f"default:{r['row']}", r, 1) for r in default_rules]
+        ordered.sort(key=lambda item: (-len(item[1]["pattern"].pattern), item[2], item[1]["row"]))
         mined = False
         rule, label = None, ""
-        for lab, r in ordered:
+        for lab, r, _priority in ordered:
             if not r["pattern"].search(path):
                 continue
             if r["job"] == "mine":          # keep the job, but route by the rules that follow
@@ -142,6 +146,26 @@ def _lines(title: str, rows: list[dict]) -> list[str]:
     return out + [f"- `{r['id']}` {r['path'] or '(front matter)'}" for r in rows] + [""]
 
 
+def migration_targets() -> list[str]:
+    """Visible template destinations that a legacy migration may need to populate."""
+    spec = targets.template_spec()
+    if not spec:
+        return []
+    wanted = []
+    for node in spec.get("nodes", []):
+        number = str(node.get("number") or "")
+        if re.fullmatch(r"(?:2\.1|3\.\d+|4\.\d+|7|8)", number):
+            wanted.append(number)
+    return sorted(set(wanted), key=_target_key)
+
+
+def missing_targets(rows: list[dict], required: list[str] | None = None) -> list[str]:
+    """Return current migration destinations with no live legacy blocks."""
+    required = migration_targets() if required is None else list(required)
+    mapped = {r.get("target") for r in rows if r.get("job") in ("convert", "context", "mine") and r.get("target")}
+    return [t for t in required if t not in mapped]
+
+
 def write_map(rows: list[dict], out_dir: Path) -> dict:
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -170,12 +194,16 @@ def write_map(rows: list[dict], out_dir: Path) -> dict:
     md += _lines("Evidence only", [r for r in rows if r["job"] == "evidence-only"])
     md += _lines("Figures", [r for r in rows if r["job"] == "figure"])
     md += _lines("Controlled", [r for r in rows if r["job"] == "controlled"])
+    missing = missing_targets(rows)
+    md += ["## Required template destinations with no mapped blocks", ""]
+    md += ([f"- `{t}`" for t in missing] if missing else ["None."]) + [""]
     (out_dir / "map-report.md").write_text("\n".join(md) + "\n", encoding="utf-8")
 
     return {"status": "OK", "blocks": len(rows),
             "mapped": sum(len(v) for v in by_target.values()),
             "unmapped": len(unmapped), "low_confidence": len(low),
-            "by_target": {t: len(by_target[t]) for t in sorted(by_target, key=_target_key)}}
+            "by_target": {t: len(by_target[t]) for t in sorted(by_target, key=_target_key)},
+            "missing_targets": missing}
 
 
 def main(argv: list[str] | None = None) -> int:
