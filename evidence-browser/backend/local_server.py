@@ -250,6 +250,15 @@ class Handler(BaseHTTPRequestHandler):
             match = re.fullmatch(r"/api/systems/([^/]+)/devices/([^/]+)/aliases", path)
             if match:
                 return self.dispatch_result(api.add_device_alias(match.group(1), match.group(2), payload))
+            match = re.fullmatch(r"/api/systems/([^/]+)/devices/([^/]+)/host-conversion/preview", path)
+            if match:
+                return self.dispatch_result(api.preview_host_conversion(match.group(1), match.group(2), payload))
+            match = re.fullmatch(r"/api/systems/([^/]+)/devices/([^/]+)/host-conversion", path)
+            if match:
+                return self.dispatch_result(api.convert_device_to_host(match.group(1), match.group(2), payload))
+            match = re.fullmatch(r"/api/systems/([^/]+)/devices/([^/]+)/host-conversion/reverse", path)
+            if match:
+                return self.dispatch_result(api.reverse_host_conversion(match.group(1), match.group(2), payload))
             match = re.fullmatch(r"/api/systems/([^/]+)/devices/([^/]+)/retire", path)
             if match:
                 return self.dispatch_result(api.retire_connected_device(match.group(1), match.group(2), payload))

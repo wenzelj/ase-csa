@@ -468,3 +468,140 @@ def test_retired_devices_are_listed_only_on_request_and_never_connect(tmp_path: 
     assert detail["asset"]["active"] is False and detail["asset"]["revision"] == "2"
     back = api.restore_connected_device("alpha-app", "CD-000001", {"expected_revision": detail["asset"]["revision"]})
     assert back["device"]["active"] == "true"
+
+
+# --- guarded conversion of a connected device to an application host (S547) -----------------------
+
+def _ups(api) -> dict:
+    return api.create_connected_device("alpha-app", {"name": "UPS monitor", "device_type": "ups", "site_zone": "Perth",
+                                                     "reviewer": "WM", "addresses": ["10.124.32.230"]})["device"]
+
+
+_CONVERT = {"host_name": "powermon1", "source": "Asset register v3, row 41", "operator": "WM"}
+
+
+def test_preview_is_read_only_and_names_every_block(tmp_path: Path, monkeypatch) -> None:
+    from backend import app as api
+
+    _register_two(tmp_path, monkeypatch)
+    root = tmp_path / "alpha"
+    dev = _ups(api)
+    before = _snapshot(root)
+    ready = api.preview_host_conversion("alpha-app", dev["device_id"], _CONVERT)
+    assert ready["status"] == "READY" and ready["host"] == "POWERMON1" and ready["ips"] == ["10.124.32.230"]
+    assert ready["revision"] == "1" and ready["preview_id"] and "hosts/hosts.csv" in ready["unchanged"]
+    assert _snapshot(root) == before                                       # nothing written by a preview
+    blocked = {
+        "host exists": api.preview_host_conversion("alpha-app", dev["device_id"], {**_CONVERT, "host_name": "APP1"}),
+        "owned address": api.preview_host_conversion("alpha-app", "CD-000001", _CONVERT),     # alias 10.124.32.40 belongs to APP1
+        "no source": api.preview_host_conversion("alpha-app", dev["device_id"], {**_CONVERT, "source": ""}),
+        "no operator": api.preview_host_conversion("alpha-app", dev["device_id"], {**_CONVERT, "operator": ""}),
+        "bad name": api.preview_host_conversion("alpha-app", dev["device_id"], {**_CONVERT, "host_name": "9 bad name"}),
+        "unknown device": api.preview_host_conversion("alpha-app", "CD-404404", _CONVERT),
+    }
+    assert all(p["status"] == "BLOCKED" for p in blocked.values())
+    assert any("already in the host register" in x for x in blocked["host exists"]["problems"])
+    assert any("10.124.32.40 is already owned by register host APP1" in x for x in blocked["owned address"]["problems"])
+    assert any("unknown device" in x for x in blocked["unknown device"]["problems"])
+    no_ip = api.create_connected_device("alpha-app", {"name": "Name only"})["device"]
+    assert any("no active IP address alias" in x for x in api.preview_host_conversion("alpha-app", no_ip["device_id"], _CONVERT)["problems"])
+    api.patch_connected_device("alpha-app", "CD-000002", {"expected_revision": "1", "changes": {"identification_state": "disputed"}})
+    assert any("disputed" in x for x in api.preview_host_conversion("alpha-app", "CD-000002", _CONVERT)["problems"])
+    assert _snapshot(root) != before                                       # (only the setup edits above)
+
+
+def test_conversion_needs_the_preview_confirmation_and_a_current_revision(tmp_path: Path, monkeypatch) -> None:
+    import pytest
+    from fastapi import HTTPException
+
+    from backend import app as api
+
+    _register_two(tmp_path, monkeypatch)
+    dev = _ups(api)
+    plan = api.preview_host_conversion("alpha-app", dev["device_id"], _CONVERT)
+    base = {**_CONVERT, "expected_revision": "1", "preview_id": plan["preview_id"], "confirm": True}
+    for bad, code, status in (({**base, "confirm": False}, "confirmation_required", 422),
+                              ({**base, "preview_id": ""}, "preview_required", 422),
+                              ({**base, "expected_revision": ""}, "revision_required", 422),
+                              ({**base, "expected_revision": "9"}, "conflict", 409),
+                              ({**base, "preview_id": "0000000000000000"}, "stale_preview", 409),
+                              ({**base, "host_name": "APP1"}, "scope_conflict", 409)):
+        with pytest.raises(HTTPException) as exc:
+            api.convert_device_to_host("alpha-app", dev["device_id"], bad)
+        assert (exc.value.status_code, exc.value.detail["code"]) == (status, code), bad
+    assert not (tmp_path / "alpha" / "csa-work" / "hosts" / "host_scope.csv").exists()
+
+
+def test_conversion_writes_only_its_decision_and_can_be_reversed(tmp_path: Path, monkeypatch) -> None:
+    import pytest
+    from fastapi import HTTPException
+
+    from backend import app as api
+
+    _register_two(tmp_path, monkeypatch)
+    root = tmp_path / "alpha"
+    dev = _ups(api)
+    plan = api.preview_host_conversion("alpha-app", dev["device_id"], _CONVERT)
+    before = _snapshot(root)
+    done = api.convert_device_to_host("alpha-app", dev["device_id"], {
+        **_CONVERT, "expected_revision": "1", "preview_id": plan["preview_id"], "confirm": True})
+    assert done["rebuild_required"] is True and done["decision"]["decision_id"] == "HS-000001"
+    assert done["decision"]["host"] == "POWERMON1" and done["decision"]["active"] == "true"
+    after = _snapshot(root)
+    changed = {k for k in set(before) | set(after) if before.get(k) != after.get(k)}
+    assert {Path(k).name for k in changed} == {"host_scope.csv", "device-audit.jsonl"}
+    assert (root / "csa-work" / "hosts" / "hosts.csv").read_bytes() == before["csa-work/hosts/hosts.csv"]
+    # the device, its aliases and its history stay; its own revision did not move
+    still = api.system_asset_detail("alpha-app", dev["device_id"], "devices")["asset"]
+    assert still["revision"] == "1" and still["aliases"] == ["10.124.32.230"]
+    with pytest.raises(HTTPException) as exc:                              # a second conversion is refused
+        api.preview_host_conversion("alpha-app", dev["device_id"], {**_CONVERT, "host_name": "OTHERNAME"})
+        api.convert_device_to_host("alpha-app", dev["device_id"], {**_CONVERT, "host_name": "OTHERNAME", "expected_revision": "1",
+                                                                   "preview_id": plan["preview_id"], "confirm": True})
+    assert exc.value.status_code == 409
+    assert any("already has an active conversion" in p for p in api.preview_host_conversion(
+        "alpha-app", dev["device_id"], {**_CONVERT, "host_name": "OTHERNAME"})["problems"])
+    undone = api.reverse_host_conversion("alpha-app", dev["device_id"], {"operator": "WM", "reason": "it is a switch, not a host"})
+    assert undone["decision"]["active"] == "false" and undone["decision"]["reversed_by"] == "WM"
+    assert "switch" in undone["decision"]["reverse_reason"] and undone["rebuild_required"] is True
+    with pytest.raises(HTTPException) as exc:
+        api.reverse_host_conversion("alpha-app", dev["device_id"], {"operator": "WM", "reason": "again"})
+    assert exc.value.status_code == 404
+    with pytest.raises(HTTPException) as exc:
+        api.reverse_host_conversion("alpha-app", dev["device_id"], {"operator": "", "reason": ""})
+    assert exc.value.status_code == 422
+    assert api.preview_host_conversion("alpha-app", dev["device_id"], _CONVERT)["status"] == "READY"   # free to decide again
+
+
+def test_creating_editing_and_confirming_never_changes_host_membership(tmp_path: Path, monkeypatch) -> None:
+    from backend import app as api
+
+    _register_two(tmp_path, monkeypatch)
+    root = tmp_path / "alpha"
+    hosts_before = (root / "csa-work" / "hosts" / "hosts.csv").read_bytes()
+    dev = _ups(api)
+    api.patch_connected_device("alpha-app", dev["device_id"], {"expected_revision": "1", "source": "site walk",
+                                                              "changes": {"identification_state": "confirmed", "role": "monitor a host"}})
+    api.add_device_alias("alpha-app", dev["device_id"], {"address": "10.124.32.231", "expected_revision": "2"})
+    assert not (root / "csa-work" / "hosts" / "host_scope.csv").exists()
+    assert (root / "csa-work" / "hosts" / "hosts.csv").read_bytes() == hosts_before
+    counts = api.system_assets("alpha-app", "", "", "", "", 1, 50)["counts"]
+    assert counts["application_hosts"] == 1
+
+
+def test_conversion_cannot_cross_projects(tmp_path: Path, monkeypatch) -> None:
+    import pytest
+    from fastapi import HTTPException
+
+    from backend import app as api
+
+    _register_two(tmp_path, monkeypatch)
+    dev = _ups(api)
+    assert api.preview_host_conversion("beta-app", dev["device_id"], _CONVERT)["status"] == "BLOCKED"
+    with pytest.raises(HTTPException) as exc:
+        api.convert_device_to_host("beta-app", dev["device_id"], {**_CONVERT, "expected_revision": "1", "preview_id": "x", "confirm": True})
+    assert exc.value.status_code in (404, 409)
+    assert not (tmp_path / "beta" / "csa-work" / "hosts" / "host_scope.csv").exists()
+    with pytest.raises(HTTPException) as exc:
+        api.preview_host_conversion("nope", dev["device_id"], _CONVERT)
+    assert exc.value.status_code == 404

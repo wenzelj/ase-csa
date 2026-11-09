@@ -352,6 +352,7 @@ def build(work_dir: Path, agents: Path, *, page: int = 1, per_page: int = 50,
 import re as _re
 
 REGISTER_FILES = ("connected_devices.csv", "device_addresses.csv", "device-audit.jsonl")
+SCOPE_FILES = ("host_scope.csv", "device-audit.jsonl")
 _ISO_DATE = _re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _DEVICE_FIELDS = ("name", "device_type", "role", "owner", "site_zone", "relationship", "classification",
                   "identification_state", "provenance", "reviewer")
@@ -381,6 +382,12 @@ def _root(project_root: Path, work_dir: Path) -> Path:
 def _translate(error: ValueError) -> AssetError:
     text = str(error)
     low = text.lower()
+    if low.startswith("stale preview"):
+        return AssetError(409, text, "stale_preview")
+    if low.startswith("blocked:"):
+        return AssetError(409, text[len("blocked:"):].strip(), "scope_conflict")
+    if low.startswith("unknown conversion"):
+        return AssetError(404, text, "not_found")
     if "stale revision" in low or "already an active alias" in low or "already attached" in low:
         return AssetError(409, text, "conflict")
     if low.startswith("unknown device"):
@@ -621,3 +628,42 @@ def set_active(project_root: Path, work_dir: Path, agents: Path, device_id: str,
     except ValueError as exc:
         raise _translate(exc) from exc
     return {"status": "OK", "device": _device_view(agents, root, device_id), "writes": list(REGISTER_FILES)}
+
+
+def convert_preview(project_root: Path, work_dir: Path, agents: Path, device_id: str, payload: dict) -> dict[str, Any]:
+    """Read-only plan for making a device an application host (a BLOCKED plan is still a normal answer)."""
+    root, cd = _root(project_root, work_dir), _store(agents)
+    try:
+        return cd.scope_plan(root, device_id, host_name=str(payload.get("host_name") or ""),
+                             source=str(payload.get("source") or ""), operator=str(payload.get("operator") or ""))
+    except ValueError as exc:
+        raise _translate(exc) from exc
+
+
+def convert_apply(project_root: Path, work_dir: Path, agents: Path, device_id: str, payload: dict) -> dict[str, Any]:
+    """Record the conversion. Needs the previewed plan's ``preview_id``, the device revision and an explicit ``confirm``."""
+    root, cd = _root(project_root, work_dir), _store(agents)
+    expected = _expected(payload.get("expected_revision"))
+    if payload.get("confirm") is not True:
+        raise AssetError(422, "confirm must be true: converting a device to an application host is a deliberate decision", "confirmation_required")
+    if not str(payload.get("preview_id") or "").strip():
+        raise AssetError(422, "preview_id is required: preview the conversion first", "preview_required")
+    try:
+        result = cd.convert_to_host(root, device_id, host_name=str(payload.get("host_name") or ""),
+                                    source=str(payload.get("source") or ""), operator=str(payload.get("operator") or ""),
+                                    preview_id=str(payload["preview_id"]), expected_revision=expected)
+    except ValueError as exc:
+        raise _translate(exc) from exc
+    return {"status": "OK", "decision": result["decision"], "rebuild_required": True, "message": result["message"],
+            "writes": list(SCOPE_FILES)}
+
+
+def convert_reverse(project_root: Path, work_dir: Path, agents: Path, device_id: str, payload: dict) -> dict[str, Any]:
+    root, cd = _root(project_root, work_dir), _store(agents)
+    try:
+        result = cd.reverse_conversion(root, device_id, operator=str(payload.get("operator") or ""),
+                                       reason=str(payload.get("reason") or ""))
+    except ValueError as exc:
+        raise _translate(exc) from exc
+    return {"status": "OK", "decision": result["decision"], "rebuild_required": True, "message": result["message"],
+            "writes": list(SCOPE_FILES)}

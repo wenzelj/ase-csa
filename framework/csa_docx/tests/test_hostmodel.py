@@ -484,3 +484,55 @@ def test_dropping_the_register_removes_a_stale_peer_projection(tmp_path):
     hm.build_addresses(work, _REG)
     assert not (work / "hosts" / "device_peers.csv").exists()
     assert "10.124.32.200" in {r["address"] for r in _csv(work / "hosts" / "addresses.csv")}
+
+
+# --- a device converted to an application host (S547) ---------------------------------------------
+
+_SCOPE_HEAD = "decision_id,device_id,host,ips,system,role,site,source,operator,decided,active,reversed_on,reversed_by,reverse_reason\n"
+
+
+def _scope_project(tmp: Path, decision: str) -> Path:
+    _index(tmp)
+    (tmp / "hosts").mkdir()
+    (tmp / "hosts" / "roles.csv").write_text(
+        "kind,match,system,role,site,basis,reviewed\ninventory,tcs_computers/tcs_computers,,ComputerName,,test,yes\n", encoding="utf-8")
+    (tmp / "hosts" / "host_scope.csv").write_text(_SCOPE_HEAD + decision, encoding="utf-8")
+    return tmp
+
+
+def _register(tmp: Path) -> dict[str, dict]:
+    with (tmp / "hosts" / "hosts.csv").open(newline="", encoding="utf-8") as fh:
+        return {r["host"]: r for r in csv.DictReader(fh)}
+
+
+def test_an_active_conversion_decision_registers_the_host_and_a_reversal_removes_it(tmp_path):
+    work = _scope_project(tmp_path, "HS-000001,CD-000004,POWERMON1,10.0.0.77,,UPS monitor,Perth,Asset register v3,WM,2026-11-09T01:00:00Z,true,,,\n")
+    res = hm.build(work)
+    h = _register(work)["POWERMON1"]
+    assert h["in_scope"] == "Yes" and h["ips"] == "10.0.0.77" and h["role"] == "UPS monitor" and h["site"] == "Perth"
+    assert "scope decision HS-000001" in h["sources"] and "Asset register v3" in h["role_source"]
+    assert res["hosts"] == 5
+    # reversed: the decision stays in the file but the host leaves the register on the next build
+    (work / "hosts" / "host_scope.csv").write_text(
+        _SCOPE_HEAD + "HS-000001,CD-000004,POWERMON1,10.0.0.77,,UPS monitor,Perth,Asset register v3,WM,2026-11-09T01:00:00Z,false,2026-11-10T01:00:00Z,WM,wrong\n",
+        encoding="utf-8")
+    hm.build(work)
+    assert "POWERMON1" not in _register(work)
+
+
+def test_a_conversion_never_overwrites_an_inventorys_scope(tmp_path):
+    work = _scope_project(tmp_path, "HS-000001,CD-000004,HOST101,10.0.0.78,,,,Asset register v3,WM,2026-11-09T01:00:00Z,true,,,\n")
+    hm.build(work)
+    h = _register(work)["HOST101"]
+    assert h["in_scope"] == "No"                                   # the inventory's value stands
+    assert "scope decision HS-000001" in h["conflicts"] and "says in scope" in h["conflicts"]
+
+
+def test_no_decision_file_changes_nothing(tmp_path):
+    work = _scope_project(tmp_path, "")
+    assert "POWERMON1" not in _register_after(work)
+
+
+def _register_after(work: Path) -> dict[str, dict]:
+    hm.build(work)
+    return _register(work)

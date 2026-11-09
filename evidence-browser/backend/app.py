@@ -1148,6 +1148,22 @@ def remove_device_alias(system_key: str, device_id: str, address: str,
         root, work, agents, device_id, address, expected_revision))
 
 
+@app.post("/api/systems/{system_key}/devices/{device_id}/host-conversion/preview")
+def preview_host_conversion(system_key: str, device_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Read-only plan for making a connected device an application host; nothing is written."""
+    return _device_edit(system_key, lambda root, work, agents: assets.convert_preview(root, work, agents, device_id, payload))
+
+
+@app.post("/api/systems/{system_key}/devices/{device_id}/host-conversion")
+def convert_device_to_host(system_key: str, device_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    return _device_edit(system_key, lambda root, work, agents: assets.convert_apply(root, work, agents, device_id, payload))
+
+
+@app.post("/api/systems/{system_key}/devices/{device_id}/host-conversion/reverse")
+def reverse_host_conversion(system_key: str, device_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    return _device_edit(system_key, lambda root, work, agents: assets.convert_reverse(root, work, agents, device_id, payload))
+
+
 @app.post("/api/systems/{system_key}/devices/{device_id}/retire")
 def retire_connected_device(system_key: str, device_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     return _device_edit(system_key, lambda root, work, agents: assets.set_active(root, work, agents, device_id, payload, retire=True))

@@ -14,6 +14,15 @@ independently of rebuilds, in three files under ``<work_dir>/hosts/``:
 * ``device-audit.jsonl``     append-only create/update/retire/restore events
                             with before/after records.
 
+A fourth, separate input records the rare decision that a device is in fact an application host:
+
+* ``host_scope.csv``        one row per conversion decision (stable ID, device, host name, the
+                            addresses it takes, source, operator, date, active). ``hostmodel.build``
+                            reads the active rows and registers the host as in scope on the next
+                            rebuild. Creating, editing or confirming a device never writes it: only
+                            ``convert_to_host``, after a read-only ``scope_plan`` whose ``preview_id``
+                            the caller hands back, and ``reverse_conversion`` undoes it.
+
 Retiring a device or an alias only turns off this register's decision; capture
 observations, evidence-matrix rows and graph history are left untouched.
 Standard library only. Writes take an exclusive project lock, write atomically
@@ -58,6 +67,13 @@ EDITABLE_FIELDS = {
     "classification", "identification_state", "provenance", "reviewer",
 }
 ACTIVE = {"active": "true", "retired": "false"}
+#: durable fields of a host_scope.csv row, in file order
+SCOPE_FIELDS = [
+    "decision_id", "device_id", "host", "ips", "system", "role", "site", "source", "operator",
+    "decided", "active", "reversed_on", "reversed_by", "reverse_reason",
+]
+SCOPE_ID = re.compile(r"^HS-\d{6}$")
+HOST_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9-]{2,30}$")     # the same shape hostmodel accepts for a host name
 
 
 def _utc() -> str:
@@ -103,6 +119,10 @@ def _address_file(project: Path) -> Path:
 
 def _audit_file(project: Path) -> Path:
     return _work_dir(project) / "hosts" / "device-audit.jsonl"
+
+
+def _scope_file(project: Path) -> Path:
+    return _work_dir(project) / "hosts" / "host_scope.csv"
 
 
 def _lock_file(project: Path) -> Path:
@@ -537,6 +557,139 @@ def resolve(project: str | Path, address: str) -> dict | None:
         if row.get("normalized") == normalized and row.get("active") == "true":
             return row
     return None
+
+
+def _scope_rows(work_dir: Path) -> list[dict]:
+    return _read_csv(Path(work_dir) / "hosts" / "host_scope.csv")
+
+
+def scope_decisions(work_dir: str | Path) -> list[dict]:
+    """Active conversion decisions, read-only, for a host rebuild (takes the project's ``csa-work`` folder)."""
+    return [r for r in _scope_rows(Path(work_dir)) if r.get("active") == "true" and SCOPE_ID.fullmatch(r.get("decision_id", ""))]
+
+
+def _hash(*parts: object) -> str:
+    import hashlib
+    return hashlib.sha256(json.dumps(parts, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()[:16]
+
+
+def scope_plan(project: str | Path, device_id: str, *, host_name: str, source: str, operator: str) -> dict:
+    """Read-only preview of making a connected device an application host. Writes nothing.
+
+    ``status`` is READY only when nothing blocks it; ``problems`` lists every reason otherwise. Blocks: no
+    cited source or operator; a name that is not a valid host name; a device that is retired, disputed or
+    has no active IP alias; a host of that name, or one that already owns any of the addresses, in the
+    generated host register (a captured, inventory or peer entry: scope is never silently overwritten); an
+    active conversion decision for the device or the host name. ``preview_id`` binds the plan to the device
+    revision and to the register as read, so an apply after anything changed is refused."""
+    project = _project(project)
+    work = _work_dir(project)
+    problems: list[str] = []
+    device = None
+    try:
+        device = get_device(project, device_id, include_retired=True)
+        if device.get("active") != "true":
+            problems.append(f"{device_id} is retired; restore it first")
+    except ValueError as exc:
+        problems.append(str(exc))
+    host = str(host_name or "").strip().upper()
+    source, operator = str(source or "").strip(), str(operator or "").strip()
+    if not HOST_NAME.fullmatch(host):
+        problems.append(f"{host_name!r} is not a usable host name (letters, digits and hyphens, 3-31 characters, starting with a letter)")
+    if not source:
+        problems.append("a source that identifies the device as an application host is required")
+    if not operator:
+        problems.append("the operator making the decision must be named")
+    ips: list[str] = []
+    if device is not None:
+        if device.get("identification_state") == "disputed":
+            problems.append(f"{device_id} is disputed; resolve the identification first")
+        ips = sorted({r["normalized"] for r in _address_rows(project)
+                      if r.get("device_id") == device_id and r.get("active") == "true"
+                      and _address_type(r.get("normalized", "")) != "fqdn"})
+        if not ips:
+            problems.append(f"{device_id} has no active IP address alias to give the host")
+    register = _read_csv(work / "hosts" / "hosts.csv")
+    for r in register:
+        name = (r.get("host") or "").strip().upper()
+        owned = {x.strip() for x in (r.get("ips") or "").split(";") if x.strip()}
+        if name == host:
+            problems.append(f"{host} is already in the host register (in_scope: {r.get('in_scope') or 'not recorded'}); "
+                            "it is not converted over an existing host")
+        for ip in ips:
+            if ip in owned and name != host:
+                problems.append(f"{ip} is already owned by register host {name}")
+    for r in scope_decisions(work):
+        if r.get("device_id") == device_id:
+            problems.append(f"{device_id} already has an active conversion decision ({r['decision_id']}, host {r['host']})")
+        elif r.get("host", "").upper() == host:
+            problems.append(f"host name {host} is already taken by conversion decision {r['decision_id']}")
+    plan = {
+        "status": "BLOCKED" if problems else "READY", "device_id": device_id,
+        "revision": (device or {}).get("revision", ""), "host": host, "ips": ips, "source": source, "operator": operator,
+        "role": (device or {}).get("role") or (device or {}).get("device_type", ""),
+        "site": (device or {}).get("site_zone", ""),
+        "problems": list(dict.fromkeys(problems)),
+        "will_write": ["hosts/host_scope.csv", "hosts/device-audit.jsonl"],
+        "unchanged": ["hosts/hosts.csv", "connected_devices.csv", "device_addresses.csv", "captures", "evidence-matrix.csv", "graph"],
+        "after_rebuild": f"`csa hosts build` registers {host} as an in-scope application host with {', '.join(ips) or 'no addresses'}; "
+                         "the device and its aliases stay in the register, so the conversion can be reversed",
+    }
+    plan["preview_id"] = _hash(device_id, plan["revision"], host, ips, source, operator,
+                               _hash([sorted(r.items()) for r in register]), _hash([sorted(r.items()) for r in _scope_rows(work)]))
+    return plan
+
+
+def convert_to_host(project: str | Path, device_id: str, *, host_name: str, source: str, operator: str,
+                    preview_id: str, expected_revision: str | int) -> dict:
+    """Record the decision that a device is an application host. Needs the ``preview_id`` of a READY
+    ``scope_plan`` still current for the same device revision; it appends to ``host_scope.csv`` and the
+    audit log only, so the device, its aliases and every generated file are left as they are."""
+    project = _project(project)
+    lock = _lock(project)
+    try:
+        plan = scope_plan(project, device_id, host_name=host_name, source=source, operator=operator)
+        if str(plan["revision"]) != str(expected_revision):
+            raise ValueError(f"stale revision: expected {expected_revision}, current {plan['revision']}")
+        if plan["status"] != "READY":
+            raise ValueError("blocked: " + "; ".join(plan["problems"]))
+        if plan["preview_id"] != str(preview_id or ""):
+            raise ValueError("stale preview: the plan changed since it was previewed; preview it again")
+        rows = _scope_rows(_work_dir(project))
+        top = max([int(r["decision_id"][3:]) for r in rows if SCOPE_ID.fullmatch(r.get("decision_id", ""))] or [0])
+        new = {"decision_id": f"HS-{top + 1:06d}", "device_id": device_id, "host": plan["host"],
+               "ips": ";".join(plan["ips"]), "system": "", "role": plan["role"], "site": plan["site"],
+               "source": plan["source"], "operator": plan["operator"], "decided": _utc(), "active": "true",
+               "reversed_on": "", "reversed_by": "", "reverse_reason": ""}
+        rows.append(new)
+        _write_csv(_scope_file(project), SCOPE_FIELDS, rows)
+        _append_audit(project, "scope_convert", device_id, None, new)
+        return _ok(decision=new, rebuild_required=True,
+                   message="Recorded. Run `csa hosts build` to register the host; nothing else was changed.")
+    finally:
+        _unlock(lock)
+
+
+def reverse_conversion(project: str | Path, device_id: str, *, operator: str, reason: str) -> dict:
+    """Undo the active conversion of a device: the decision stays in the file (active=false) with who, when and why."""
+    project = _project(project)
+    operator, reason = str(operator or "").strip(), str(reason or "").strip()
+    if not operator or not reason:
+        raise ValueError("the operator and a reason are required to reverse a conversion")
+    lock = _lock(project)
+    try:
+        rows = _scope_rows(_work_dir(project))
+        target = next((r for r in rows if r.get("device_id") == device_id and r.get("active") == "true"), None)
+        if target is None:
+            raise ValueError(f"unknown conversion: {device_id} has no active host conversion")
+        before = dict(target)
+        target.update(active="false", reversed_on=_utc(), reversed_by=operator, reverse_reason=_check_length("reason", reason))
+        _write_csv(_scope_file(project), SCOPE_FIELDS, rows)
+        _append_audit(project, "scope_reverse", device_id, before, dict(target))
+        return _ok(decision=target, rebuild_required=True,
+                   message="Reversed. Run `csa hosts build` to take the host out of the register.")
+    finally:
+        _unlock(lock)
 
 
 def resolution_map(work_dir: str | Path) -> dict:

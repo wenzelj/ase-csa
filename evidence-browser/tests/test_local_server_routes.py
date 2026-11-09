@@ -205,3 +205,48 @@ def test_device_edit_routes_work_in_the_dependency_free_server(tmp_path, monkeyp
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+def test_host_conversion_routes_work_in_the_dependency_free_server(tmp_path, monkeypatch) -> None:
+    import http.client
+    import json
+    import threading
+    from http.server import ThreadingHTTPServer
+
+    from backend.local_server import Handler
+    from tests.test_assets import _register_two
+
+    _register_two(tmp_path, monkeypatch)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    def post(path, payload):
+        connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+        connection.request("POST", path, body=json.dumps(payload).encode(), headers={"Content-Type": "application/json"})
+        response = connection.getresponse()
+        data = json.loads(response.read())
+        status = response.status
+        connection.close()
+        return status, data
+
+    base = "/api/systems/alpha-app/devices"
+    try:
+        status, made = post(base, {"name": "UPS monitor", "addresses": ["10.124.32.230"]})
+        dev = made["device"]["device_id"]
+        body = {"host_name": "POWERMON1", "source": "Asset register v3", "operator": "WM"}
+        status, plan = post(f"{base}/{dev}/host-conversion/preview", body)
+        assert status == 200 and plan["status"] == "READY"
+        status, err = post(f"{base}/{dev}/host-conversion", {**body, "expected_revision": "1", "preview_id": plan["preview_id"]})
+        assert status == 422 and err["detail"]["code"] == "confirmation_required"
+        status, err = post(f"{base}/{dev}/host-conversion", {**body, "expected_revision": "1", "preview_id": "stale", "confirm": True})
+        assert status == 409 and err["detail"]["code"] == "stale_preview"
+        status, done = post(f"{base}/{dev}/host-conversion", {**body, "expected_revision": "1", "preview_id": plan["preview_id"], "confirm": True})
+        assert status == 200 and done["decision"]["decision_id"] == "HS-000001" and done["rebuild_required"] is True
+        status, undone = post(f"{base}/{dev}/host-conversion/reverse", {"operator": "WM", "reason": "wrong"})
+        assert status == 200 and undone["decision"]["active"] == "false"
+        assert post("/api/systems/beta-app/devices/CD-000001/host-conversion/reverse", {"operator": "WM", "reason": "x"})[0] == 404
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)

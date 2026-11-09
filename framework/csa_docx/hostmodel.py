@@ -456,6 +456,22 @@ def build(work_dir: Path) -> dict:
             scope = d.get("In Scope") or d.get("In Scope of CSA") or d.get("In Scope (CSA)") or ""
             e["in_scope"] = e["in_scope"] or scope
             e["sources"].add(Path(rel).name)
+    # 1b. hosts an operator converted from a connected device (hosts/host_scope.csv, written only by
+    #     connected_devices.convert_to_host after a preview). A host the inventory already lists keeps the
+    #     inventory's values; a conflicting scope is recorded, not overwritten.
+    from csa_docx import connected_devices
+    for dec in connected_devices.scope_decisions(work_dir):
+        e = entry(dec["host"])
+        note = f"scope decision {dec['decision_id']} ({dec['operator']}, {dec['decided'][:10]}): {dec['source']}"
+        if e["in_scope"] and e["in_scope"].strip().lower() not in ("yes", "y"):
+            e["conflicts"].append(f"scope: {note} says in scope; the register says {e['in_scope']}")
+        e["in_scope"] = e["in_scope"] or "Yes"
+        e["ips"].update(x for x in (dec.get("ips") or "").split(";") if x)
+        if dec.get("role") and not e["role"]:
+            e["role"], e["role_source"] = dec["role"], note
+        if dec.get("site") and not e["site"]:
+            e["site"], e["site_source"] = dec["site"], note
+        e["sources"].add(f"scope decision {dec['decision_id']}")
     # 2. captures
     for host, cap in con.execute("select host, folder from captures where superseded_by is null and archived = 0"):
         if host:
