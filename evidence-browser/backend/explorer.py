@@ -133,6 +133,29 @@ def _validate(spec: dict, matrix: dict[str, dict], edges: set[tuple], hosts: set
     return issues
 
 
+def connected_devices(work: Path, net: dict[str, Any]) -> list[dict[str, Any]]:
+    """Confirmed connected devices seen as peers, each with its raw address, the connections the captures
+    recorded to or from it, and the DNS/time servers hosts are *configured* to use that it owns. The two
+    are kept apart: an observed connection is not a configured service, and neither is a dependency."""
+    services = _csv(work / "hosts" / "host_services.csv")
+    out = []
+    for n in net["nodes"]:
+        d = n.get("device")
+        if not d:
+            continue
+        address = n["id"]
+        out.append({
+            **d, "address": address,
+            "observed_connections": [{"src": e["s"], "dst": e["t"], "port": e["port"], "processes": e["procs"],
+                                      "evidence_ids": e["ids"], "established": e["est"]}
+                                     for e in net["edges"] if address in (e["s"], e["t"])],
+            "configured_services": [{"client_host": s.get("client_host", ""), "service": s.get("service", ""),
+                                     "preference": s.get("preference", ""), "source": s.get("source", "")}
+                                    for s in services if (s.get("server_ip") or "").strip() == address],
+        })
+    return out
+
+
 def build(project: dict[str, str], agents: Path, document: Path | None) -> dict[str, Any]:
     work = Path(project["work_dir"]).expanduser()
     net = network.build(work, agents)
@@ -200,7 +223,9 @@ def build(project: dict[str, str], agents: Path, document: Path | None) -> dict[
         cited.update(h["evidence_ids"])
     evidence = {i: _evidence_view(matrix[i]) for i in sorted(cited) if i in matrix}
 
+    devices = connected_devices(work, net)
     return {"application": spec.get("application") or project.get("label", ""), "hosts": hosts, "edges": net["edges"],
+            "devices": devices,
             "components": spec.get("components", []), "dependencies": spec.get("dependencies", []),
             "journeys": spec.get("journeys", []), "issues": issues, "evidence": evidence, "document": doc_state,
             "sources": {"links": net["source"], "journeys": str(spec_path.name) if spec else "",

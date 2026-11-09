@@ -30,6 +30,12 @@ overrides a reviewed row):
 7. peer hints in hosts/unrecorded-peers.csv: the role text without "Likely " and
    without anything from ", confirm" on; confidence = likely.
 
+A peer a confirmed connected device owns (hosts/device_peers.csv, checked against the live
+register so a retired or disputed device is dropped) takes the device's name with confidence
+"confirmed" and the device ID, revision and provenance in the basis. It is filled after step 5 and
+before steps 6 and 7. A reviewed row, a gap-lookup name or a peer hint that disagrees with the
+device is not replaced: the clash is listed in `conflicts`.
+
     python3 -m csa_docx.endpoints build  --work-dir <work_dir>
 """
 from __future__ import annotations
@@ -122,6 +128,24 @@ def _peer_names(work_dir: Path) -> dict[str, str]:
     return out
 
 
+def _device_peers(work_dir: Path) -> dict[str, dict]:
+    """{address: device identity} for the observed peers hosts/device_peers.csv resolves to a device that the
+    register still holds as active and confirmed. A stale projection row for a device since retired, disputed or
+    given another address is dropped."""
+    from csa_docx import connected_devices
+    live = connected_devices.resolution_map(Path(work_dir))["confirmed"]
+    out: dict[str, dict] = {}
+    for r in _csv(work_dir, "hosts", "device_peers.csv"):
+        ip = (r.get("address") or "").strip()
+        now = live.get(ip)
+        if not ip or not now or now["device_id"] != (r.get("device_id") or "").strip():
+            continue
+        out[ip] = {"device_id": now["device_id"], "name": now["name"], "revision": now["revision"],
+                   "provenance": now["provenance"],
+                   "evidence": [x for x in (r.get("evidence_ids") or "").split(";") if x.strip()]}
+    return out
+
+
 def build(work_dir: Path) -> dict:
     """Merge the endpoint sources into hosts/endpoints.csv; reviewed rows are never overwritten."""
     work_dir = Path(work_dir)
@@ -200,6 +224,18 @@ def build(work_dir: Path) -> dict:
             if key_u in reg and str(part).strip():
                 fill(row(key_u), name=str(part).strip(), conf="documented", basis="parts.json assign")
 
+    # 5b. peers a confirmed connected device owns (the peer projection hostmodel writes), still confirmed in the register
+    devices = _device_peers(work_dir)
+    for ip, d in devices.items():
+        e = row(ip)
+        shown = f"connected device {d['device_id']} (revision {d['revision']}): {d['provenance'] or 'provenance not recorded'}"
+        if e["reviewed"]:
+            if (e["name"] or "").strip() and e["name"].strip().lower() != d["name"].lower():
+                conflicts.append(f"{ip}: reviewed label {e['name']!r} differs from confirmed device {d['device_id']} "
+                                 f"{d['name']!r} (kept the reviewed label)")
+            continue
+        fill(e, name=d["name"], conf="confirmed", basis=shown, ev=";".join(d["evidence"]))
+
     # 6. VERIFIED gap_lookup evidence rows naming the end. The claim's <end> is written as-is;
     # an <end> that a register host carries in its ips then also fills that host's empty name
     # (E-1547: "10.45.229.194 is the internal address of MOTPRDPDM101 ..., the Mackay ...").
@@ -213,6 +249,15 @@ def build(work_dir: Path) -> dict:
     # 7. peer hints from unrecorded-peers.csv
     for peer, name in _peer_names(work_dir).items():
         fill(row(peer), name=name, conf="likely", basis="unrecorded-peer hint")
+
+    # a name another source gave an address a confirmed device owns is surfaced, not silently replaced
+    hints = _peer_names(work_dir)
+    for ip, d in devices.items():
+        if row(ip)["reviewed"]:
+            continue
+        for source, other in (("gap lookup evidence", (ev.get(ip.upper()) or ("", ""))[0]), ("unrecorded-peer hint", hints.get(ip.upper(), ""))):
+            if other and other.lower() != d["name"].lower():
+                conflicts.append(f"{ip}: {source} says {other!r}, confirmed device {d['device_id']} says {d['name']!r} (kept the device)")
 
     # reviewed rows are kept as they are; everything else in first-seen order
     out_rows = []
@@ -235,7 +280,7 @@ def build(work_dir: Path) -> dict:
     proposed = [r["end"] for r in rows.values()
                 if not r["reviewed"] and r["name"] and any("gap lookup" in b or "unrecorded-peer" in b for b in r["basis"])]
     return {"status": "OK", "rows": len(out_rows), "conflicts": conflicts, "proposed": proposed,
-            "out": str(path(work_dir))}
+            "devices": sorted(devices), "out": str(path(work_dir))}
 
 
 def load(work_dir: Path) -> dict[str, dict]:

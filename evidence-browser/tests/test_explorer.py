@@ -126,3 +126,21 @@ def test_system_types_come_from_the_recorded_role() -> None:
     for role, kind in cases.items():
         assert classify(role, "captured")[0] == kind, role
     assert classify("", "dc")[0] == "directory"
+
+
+def test_connected_devices_keep_observed_connections_and_configured_services_apart(tmp_path: Path) -> None:
+    from tests.test_network import _device_project
+
+    work = _device_project(tmp_path)
+    (work / "hosts" / "host_services.csv").write_text(
+        "client_host,service,server_ip,server_host,preference,capture,source,excerpt\n"
+        "APP1,dns,10.124.32.200,,1,2026-01-05,14_resolver.txt,line 3\n"
+        "APP1,dns,10.124.32.99,,2,2026-01-05,14_resolver.txt,line 4\n", encoding="utf-8")
+    net = explorer.network.build(work, Path(__file__).resolve().parents[2])
+    devices = explorer.connected_devices(work, net)
+    assert len(devices) == 1
+    d = devices[0]
+    assert d["device_id"] == "CD-000001" and d["address"] == "10.124.32.200" and d["revision"] == "4"
+    assert d["observed_connections"] == [{"src": "APP1", "dst": "10.124.32.200", "port": "445", "processes": ["svchost.exe"],
+                                          "evidence_ids": ["E-1"], "established": True}]
+    assert d["configured_services"] == [{"client_host": "APP1", "service": "dns", "preference": "1", "source": "14_resolver.txt"}]
