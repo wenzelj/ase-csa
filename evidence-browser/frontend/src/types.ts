@@ -201,13 +201,33 @@ export type AssetItem = {
   connected_application_hosts?: string[]; direction?: string[]; directions?: string[]; ports?: string[]; processes?: string[];
   observation_type?: string[]; seen_from?: string[]; sessions?: string; claimed_by_device?: string; claimed_by?: string[]; host?: string;
   source?: string; evidence?: AssetEvidence[];
+  revision?: string; active?: boolean; provenance?: string; reviewer?: string; recorded?: string;
 };
 export type AssetGroup = { items: AssetItem[]; total: number; page: number; per_page: number };
 export type AssetList = {
   system: string; project_key: string; groups: Partial<Record<AssetKind, AssetGroup>>;
-  counts: Record<AssetKind, number>; sources: string[]; matrix_rows: number; note: string;
+  counts: Record<AssetKind, number>; sources: string[]; matrix_rows: number; note: string; retired_devices?: number;
 };
 export type AssetDetail = {
   system: string; project_key: string; id: string; kind: AssetKind; asset: AssetItem; other_kinds: AssetKind[];
   source_links: { files: string[]; evidence: AssetEvidence[] };
+};
+
+export type DeviceAlias = { address: string; normalized: string; active: string; source: string };
+export type DeviceRecord = {
+  device_id: string; name: string; device_type: string; role: string; owner: string; site_zone: string; relationship: string;
+  classification: string; identification_state: string; provenance: string; reviewer: string; recorded: string;
+  active: string; revision: string; aliases: DeviceAlias[];
+};
+export type DeviceEditResult = { status: string; device: DeviceRecord; writes: string[] };
+export type AliasState = { resolves_to: string; id: string; name: string };
+export type AliasPreviewRow = {
+  action: "add" | "remove"; address: string; normalized: string; status: "ready" | "blocked"; reasons: string[];
+  before: AliasState | null; after: AliasState | null;
+};
+export type AliasPreview = { device_id: string; changes: AliasPreviewRow[]; blocked: boolean; writes: string[]; note: string };
+export type DevicePayload = {
+  name?: string; device_type?: string; role?: string; owner?: string; site_zone?: string; relationship?: string;
+  classification?: string; identification_state?: string; reviewer?: string; source?: string; owner_confirmed_on?: string;
+  addresses?: string[];
 };
