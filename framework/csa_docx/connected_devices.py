@@ -14,6 +14,11 @@ independently of rebuilds, in three files under ``<work_dir>/hosts/``:
 * ``device-audit.jsonl``     append-only create/update/retire/restore events
                             with before/after records.
 
+A reviewed ``hosts/endpoints.csv`` label can be brought in with ``import_endpoints_plan`` (a
+read-only dry run that lists what would be created and what needs a person) and
+``import_endpoints_apply`` (explicit, idempotent). Imported devices are ``proposed``, never
+``confirmed``; ``endpoints.csv`` itself is only read.
+
 A fourth, separate input records the rare decision that a device is in fact an application host:
 
 * ``host_scope.csv``        one row per conversion decision (stable ID, device, host name, the
@@ -692,6 +697,142 @@ def reverse_conversion(project: str | Path, device_id: str, *, operator: str, re
         _unlock(lock)
 
 
+IMPORT_SOURCE = "hosts/endpoints.csv (reviewed label)"
+
+
+def import_endpoints_plan(project: str | Path) -> dict:
+    """Dry run: which reviewed ``endpoints.csv`` rows could become connected devices. Writes nothing.
+
+    A row is READY only when it is reviewed (reviewed=yes), its ``end`` is an exact IP or FQDN, it has a
+    name and a basis, no register host owns the address or carries the name, and no existing device
+    claims the address with another name. Everything else is listed under ``review`` with the reason and is
+    never guessed at: ``host_owned``, ``uncited``, ``no_name``, ``not_an_address`` (a bare host name),
+    ``conflict`` (another device claims the address, or two reviewed rows disagree) and ``ambiguous`` (the
+    address is claimed by more than one device). Rows a device already carries under the same name are
+    ``already_imported``; unreviewed rows are only counted."""
+    project = _project(project)
+    work = _work_dir(project)
+    reviewed_rows, unreviewed = [], 0
+    for r in _read_csv(work / "hosts" / "endpoints.csv"):
+        if not (r.get("end") or "").strip():
+            continue
+        if (r.get("reviewed") or "").strip().lower() in ("yes", "y"):
+            reviewed_rows.append(r)
+        else:
+            unreviewed += 1
+    owned: dict[str, str] = {}
+    for h in _read_csv(work / "hosts" / "hosts.csv"):
+        name = (h.get("host") or "").strip().upper()
+        if name:
+            owned[name.lower()] = h.get("in_scope") or "not recorded"
+        for ip in (h.get("ips") or "").split(";"):
+            if ip.strip():
+                owned[ip.strip().lower()] = f"{name} ({h.get('in_scope') or 'not recorded'})"
+    devices = {r["device_id"]: r for r in _device_rows(project) if r.get("active") == "true"}
+    claims: dict[str, set[str]] = {}
+    for a in _address_rows(project):
+        if a.get("active") == "true" and a.get("device_id") in devices:
+            claims.setdefault(a["normalized"], set()).add(a["device_id"])
+    by_address: dict[str, list[dict]] = {}
+    out_ready, review, imported = [], [], []
+
+    def problem(r: dict, kind: str, why: str) -> None:
+        review.append({"end": r["end"].strip(), "name": (r.get("name") or "").strip(), "problem": kind, "detail": why})
+
+    for r in reviewed_rows:
+        end = r["end"].strip()
+        try:
+            n = _normalize_address(end)
+        except ValueError:
+            problem(r, "not_an_address", "the end is a host name or label, not an exact IP address or FQDN; "
+                                        "host names belong to the host register")
+            continue
+        by_address.setdefault(n, []).append(r)
+    for n, rows in sorted(by_address.items()):
+        names = {(r.get("name") or "").strip().lower() for r in rows if (r.get("name") or "").strip()}
+        r = rows[0]
+        if len(names) > 1:
+            problem(r, "conflict", f"{len(rows)} reviewed rows name {n} differently: "
+                                   + "; ".join(sorted((x.get("name") or "").strip() for x in rows)))
+            continue
+        name = (r.get("name") or "").strip()
+        basis = "; ".join(x for x in dict.fromkeys((x.get("basis") or "").strip() for x in rows) if x)
+        evidence = ";".join(sorted({e for x in rows for e in (x.get("evidence") or "").split(";") if e.strip()}))
+        if n in owned or (name.lower() in owned):
+            problem(r, "host_owned", f"{n if n in owned else name} belongs to register host {owned.get(n) or owned.get(name.lower())}; "
+                                     "an application host or peer is not a connected device")
+            continue
+        if not name:
+            problem(r, "no_name", "the reviewed row has no name")
+            continue
+        if not basis:
+            problem(r, "uncited", "the reviewed row has no source or basis")
+            continue
+        owners = sorted(claims.get(n, set()))
+        if len(owners) > 1:
+            problem(r, "ambiguous", f"{n} is claimed by {', '.join(owners)}")
+            continue
+        if owners:
+            if devices[owners[0]].get("name", "").strip().lower() == name.lower():
+                imported.append({"end": n, "name": name, "device_id": owners[0]})
+            else:
+                problem(r, "conflict", f"{owners[0]} already claims {n} as {devices[owners[0]].get('name')!r}; the label says {name!r}")
+            continue
+        out_ready.append({"address": n, "name": name, "zone": (r.get("zone") or "").strip(), "basis": basis,
+                          "evidence": evidence, "provenance": f"imported from {IMPORT_SOURCE}: {basis}"
+                                                              + (f"; evidence {evidence}" if evidence else "")})
+    plan = {"status": "READY" if out_ready else "NOTHING_TO_IMPORT", "ready": out_ready, "review": review,
+            "already_imported": imported, "ignored_unreviewed": unreviewed,
+            "counts": {"ready": len(out_ready), "review": len(review), "already_imported": len(imported), "unreviewed": unreviewed},
+            "will_write": ["hosts/connected_devices.csv", "hosts/device_addresses.csv", "hosts/device-audit.jsonl"],
+            "unchanged": ["hosts/endpoints.csv", "hosts/hosts.csv", "captures", "evidence-matrix.csv", "graph"],
+            "note": "Imported devices are `proposed`: confirm each one in the Evidence Browser before it labels a peer."}
+    plan["plan_id"] = _hash(out_ready, [sorted(d.items()) for d in map(devices.get, sorted(devices))],
+                            sorted((k, sorted(v)) for k, v in claims.items()))
+    return plan
+
+
+def import_endpoints_apply(project: str | Path, *, operator: str, plan_id: str) -> dict:
+    """Create one proposed device (with its alias) for each READY row of a still-current plan.
+
+    Needs the ``plan_id`` of a dry run, so only what was previewed is created. Idempotent: a second run
+    finds every row ``already_imported`` and creates nothing. Writes the register files (with backups) and
+    the audit log; ``endpoints.csv``, captures, the matrix and the graph are not touched."""
+    project = _project(project)
+    operator = str(operator or "").strip()
+    if not operator:
+        raise ValueError("the operator importing the labels must be named")
+    lock = _lock(project)
+    try:
+        plan = import_endpoints_plan(project)
+        if plan["plan_id"] != str(plan_id or ""):
+            raise ValueError("stale preview: the register or endpoints changed since the dry run; run the dry run again")
+        if not plan["ready"]:
+            return _ok(created=[], skipped=plan["counts"], message="Nothing to import.")
+        rows, araws = _device_rows(project), _address_rows(project)
+        created, now = [], _utc()
+        for item in plan["ready"]:
+            dev = {f: "" for f in DEVICE_FIELDS}
+            dev.update(device_id=_next_device_id(rows), name=_check_length("name", item["name"]),
+                       site_zone=_check_length("site_zone", item["zone"]), classification="unknown",
+                       identification_state="proposed", provenance=_check_length("provenance", item["provenance"]),
+                       reviewer=_check_length("reviewer", operator), recorded=now, active="true", revision="1")
+            alias = {"device_id": dev["device_id"], "address": item["address"], "normalized": item["address"],
+                     "address_type": _address_type(item["address"]), "first_seen": "", "last_seen": "",
+                     "source": IMPORT_SOURCE, "active": "true"}
+            rows.append(dev)
+            araws.append(alias)
+            created.append({"device_id": dev["device_id"], "address": item["address"], "name": dev["name"]})
+            _append_audit(project, "import_endpoint", dev["device_id"], None, dev,
+                          addresses_before=None, addresses_after=[alias])
+        _write_csv(_device_file(project), DEVICE_FIELDS, rows)
+        _write_csv(_address_file(project), ADDRESS_FIELDS, araws)
+        return _ok(created=created, skipped=plan["counts"],
+                   message=f"Created {len(created)} proposed device(s). Confirm each one before it labels a peer.")
+    finally:
+        _unlock(lock)
+
+
 def resolution_map(work_dir: str | Path) -> dict:
     """Read-only view of the register for a host rebuild: which observed IP addresses a confirmed device owns.
 
@@ -767,6 +908,11 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--address", action="append", default=[])
     s = sub.add_parser("verify")
     s.add_argument("project")
+    s = sub.add_parser("import-endpoints", help="dry run of importing reviewed endpoints.csv labels; --apply creates them")
+    s.add_argument("project")
+    s.add_argument("--apply", action="store_true")
+    s.add_argument("--plan-id", default="", help="the plan_id the dry run printed (required with --apply)")
+    s.add_argument("--operator", default="")
     a = ap.parse_args(argv)
     if a.cmd == "list":
         print(json.dumps(list_devices(a.project, include_retired=a.retired), indent=1))
@@ -776,6 +922,11 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(create_device(a.project, name=a.name, addresses=a.address or None), indent=1))
     elif a.cmd == "verify":
         print(json.dumps(verify(a.project), indent=1))
+    elif a.cmd == "import-endpoints":
+        if a.apply:
+            print(json.dumps(import_endpoints_apply(a.project, operator=a.operator, plan_id=a.plan_id), indent=1))
+        else:
+            print(json.dumps(import_endpoints_plan(a.project), indent=1))
     return 0
 
 

@@ -263,3 +263,137 @@ def test_resolution_map_reads_only_and_separates_confirmed_from_the_rest(tmp_pat
     assert list(out["unresolved"]) == ["10.0.0.2"] and out["ambiguous"] == {} and out["present"] is True
     assert {p.name: p.read_bytes() for p in hosts.iterdir()} == before
     assert cd.resolution_map(tmp_path / "nowhere") == {"confirmed": {}, "ambiguous": {}, "unresolved": {}, "present": False}
+
+
+# --- importing reviewed endpoints.csv labels (S548); synthetic data only ------------------------------
+
+_EP_HEAD = "end,name,zone,confidence,basis,evidence,reviewed\n"
+
+
+def _import_project(tmp_path: Path, endpoints: str, devices: str = "", aliases: str = "") -> Path:
+    project = _project(tmp_path)
+    hosts = project / "csa-work" / "hosts"
+    (hosts / "endpoints.csv").write_text(_EP_HEAD + endpoints, encoding="utf-8")
+    (hosts / "hosts.csv").write_text(
+        "host,in_scope,system,role,site,ips\nAPP1,Yes,S,Application server,Perth,10.1.1.10\nPEER9,peer,,,,10.1.1.9\n",
+        encoding="utf-8")
+    if devices or aliases:
+        (hosts / "connected_devices.csv").write_text(",".join(cd.DEVICE_FIELDS) + "\n" + devices, encoding="utf-8")
+        (hosts / "device_addresses.csv").write_text(",".join(cd.ADDRESS_FIELDS) + "\n" + aliases, encoding="utf-8")
+    return project
+
+
+def _tree(project: Path) -> dict[str, bytes]:
+    return {str(p.relative_to(project)): p.read_bytes() for p in project.rglob("*") if p.is_file()}
+
+
+_MIXED = (
+    "10.1.1.5,Print server,OT Perth,observed,asset register row 9,E-3;E-4,yes\n"       # ready
+    "print.site.example,Plotter,,observed,site walk,,yes\n"                            # ready (an FQDN)
+    "10.1.1.6,Unreviewed thing,,likely,hint,,no\n"                                     # only counted
+    "ROTPRDREV102,OT Reveloc Server,OT Perth,observed,register role,,yes\n"            # a host name, not an address
+    "10.1.1.10,Dell box,,observed,somewhere,,yes\n"                                    # owned by APP1
+    "10.1.1.9,Peer label,,observed,somewhere,,yes\n"                                   # owned by a register peer
+    "10.1.1.7,No source,,observed,,,yes\n"                                             # uncited
+    "10.1.1.8,,,observed,somewhere,,yes\n"                                             # no name
+    "10.1.1.20,Name A,,observed,b1,,yes\n10.1.1.20,Name B,,observed,b2,,yes\n"         # two reviewed rows disagree
+    "10.1.1.30,Switch 1,,observed,b3,,yes\n"                                           # an existing device says otherwise
+    "10.1.1.31,Camera,,observed,b4,,yes\n"                                             # claimed by two devices
+    "10.1.1.32,Badge reader,,observed,b5,,yes\n"                                       # already imported
+)
+_DEVS = (
+    "CD-000001,Core switch,,,,,,unknown,proposed,x,WM,t,true,1\n"
+    "CD-000002,Cam A,,,,,,unknown,proposed,x,WM,t,true,1\n"
+    "CD-000003,Cam B,,,,,,unknown,proposed,x,WM,t,true,1\n"
+    "CD-000004,Badge reader,,,,,,unknown,proposed,x,WM,t,true,1\n"
+)
+_ALS = (
+    "CD-000001,10.1.1.30,10.1.1.30,ipv4,,,s,true\n"
+    "CD-000002,10.1.1.31,10.1.1.31,ipv4,,,s,true\n"
+    "CD-000003,10.1.1.31,10.1.1.31,ipv4,,,s,true\n"
+    "CD-000004,10.1.1.32,10.1.1.32,ipv4,,,s,true\n"
+)
+
+
+def test_dry_run_sorts_every_row_and_writes_nothing(tmp_path):
+    project = _import_project(tmp_path, _MIXED, _DEVS, _ALS)
+    before = _tree(project)
+    plan = cd.import_endpoints_plan(project)
+    assert _tree(project) == before
+    assert plan["status"] == "READY" and plan["ignored_unreviewed"] == 1
+    assert [(r["address"], r["name"]) for r in plan["ready"]] == [("10.1.1.5", "Print server"), ("print.site.example", "Plotter")]
+    first = plan["ready"][0]
+    assert first["zone"] == "OT Perth" and first["evidence"] == "E-3;E-4"
+    assert first["provenance"] == "imported from hosts/endpoints.csv (reviewed label): asset register row 9; evidence E-3;E-4"
+    problems = {r["end"]: r["problem"] for r in plan["review"]}
+    assert problems == {"ROTPRDREV102": "not_an_address", "10.1.1.10": "host_owned", "10.1.1.9": "host_owned",
+                        "10.1.1.7": "uncited", "10.1.1.8": "no_name", "10.1.1.20": "conflict",
+                        "10.1.1.30": "conflict", "10.1.1.31": "ambiguous"}
+    assert plan["already_imported"] == [{"end": "10.1.1.32", "name": "Badge reader", "device_id": "CD-000004"}]
+    assert "hosts/endpoints.csv" in plan["unchanged"] and plan["plan_id"]
+
+
+def test_apply_needs_the_current_plan_and_an_operator(tmp_path):
+    project = _import_project(tmp_path, _MIXED, _DEVS, _ALS)
+    plan = cd.import_endpoints_plan(project)
+    before = _tree(project)
+    with pytest.raises(ValueError, match="stale preview"):
+        cd.import_endpoints_apply(project, operator="WM", plan_id="0000000000000000")
+    with pytest.raises(ValueError, match="operator"):
+        cd.import_endpoints_apply(project, operator="", plan_id=plan["plan_id"])
+    assert {k: v for k, v in _tree(project).items() if not k.endswith(".lock")} == before
+
+
+def test_apply_creates_proposed_devices_and_touches_only_the_register(tmp_path):
+    project = _import_project(tmp_path, _MIXED, _DEVS, _ALS)
+    plan = cd.import_endpoints_plan(project)
+    before = _tree(project)
+    out = cd.import_endpoints_apply(project, operator="WM", plan_id=plan["plan_id"])
+    assert [c["address"] for c in out["created"]] == ["10.1.1.5", "print.site.example"]
+    assert [c["device_id"] for c in out["created"]] == ["CD-000005", "CD-000006"]
+    after = _tree(project)
+    changed = {Path(k).name for k in set(before) | set(after) if before.get(k) != after.get(k)}
+    assert all(n.startswith(("connected_devices.csv", "device_addresses.csv", "device-audit.jsonl", ".connected-devices.lock")) for n in changed), changed
+    assert any(".bak-" in n for n in changed)                                  # the existing register files were backed up
+    for untouched in ("endpoints.csv", "hosts.csv"):
+        assert after[f"csa-work/hosts/{untouched}"] == before[f"csa-work/hosts/{untouched}"]
+    made = {d["device_id"]: d for d in _devices(project)}
+    new = made["CD-000005"]
+    assert new["name"] == "Print server" and new["identification_state"] == "proposed" and new["revision"] == "1"
+    assert new["site_zone"] == "OT Perth" and new["reviewer"] == "WM" and new["active"] == "true"
+    assert "asset register row 9" in new["provenance"] and "E-3;E-4" in new["provenance"]
+    alias = next(a for a in _addresses(project) if a["device_id"] == "CD-000005")
+    assert alias["normalized"] == "10.1.1.5" and alias["source"] == cd.IMPORT_SOURCE and alias["address_type"] == "ipv4"
+    assert next(a for a in _addresses(project) if a["device_id"] == "CD-000006")["address_type"] == "fqdn"
+    events = [e for e in _audit(project) if e["action"] == "import_endpoint"]
+    assert [e["device_id"] for e in events] == ["CD-000005", "CD-000006"] and events[0]["before"] is None
+    assert events[0]["after"]["name"] == "Print server" and events[0]["addresses_after"][0]["normalized"] == "10.1.1.5"
+    # imported labels are only proposed: they do not resolve a peer until someone confirms them
+    assert "10.1.1.5" not in cd.resolution_map(project / "csa-work")["confirmed"]
+    assert "10.1.1.5" in cd.resolution_map(project / "csa-work")["unresolved"]
+
+
+def test_apply_is_idempotent(tmp_path):
+    project = _import_project(tmp_path, _MIXED, _DEVS, _ALS)
+    cd.import_endpoints_apply(project, operator="WM", plan_id=cd.import_endpoints_plan(project)["plan_id"])
+    again = cd.import_endpoints_plan(project)
+    assert again["status"] == "NOTHING_TO_IMPORT" and again["ready"] == []
+    assert {a["end"] for a in again["already_imported"]} == {"10.1.1.5", "print.site.example", "10.1.1.32"}
+    snapshot = _tree(project)
+    out = cd.import_endpoints_apply(project, operator="WM", plan_id=again["plan_id"])
+    assert out["created"] == [] and _tree(project) == snapshot
+
+
+def test_import_works_with_no_register_and_no_endpoints_file(tmp_path):
+    project = _import_project(tmp_path, "10.1.1.5,Print server,,observed,asset register,,yes\n")
+    out = cd.import_endpoints_apply(project, operator="WM", plan_id=cd.import_endpoints_plan(project)["plan_id"])
+    assert out["created"][0]["device_id"] == "CD-000001"
+    (project / "csa-work" / "hosts" / "endpoints.csv").unlink()
+    assert cd.import_endpoints_plan(project)["counts"] == {"ready": 0, "review": 0, "already_imported": 0, "unreviewed": 0}
+
+
+def test_cli_dry_run_prints_the_plan(tmp_path, capsys):
+    project = _import_project(tmp_path, "10.1.1.5,Print server,,observed,asset register,,yes\n")
+    assert cd.main(["import-endpoints", str(project)]) == 0
+    printed = json.loads(capsys.readouterr().out)
+    assert printed["counts"]["ready"] == 1 and not (project / "csa-work" / "hosts" / "connected_devices.csv").exists()
