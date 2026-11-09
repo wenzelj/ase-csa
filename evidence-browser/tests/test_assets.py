@@ -183,3 +183,71 @@ def test_does_not_mutate_project_data(tmp_path: Path) -> None:
     assets.build(work, AGENTS, kind="devices", query="x")
     after = {p: p.read_bytes() for p in work.rglob("*") if p.is_file()}
     assert before == after
+
+
+def _register_two(tmp_path: Path, monkeypatch):
+    """Two registered projects: 'alpha' has the full fixture, 'beta' one host of its own."""
+    alpha = tmp_path / "alpha"
+    alpha.mkdir()
+    work_a = _work(alpha)
+    beta = tmp_path / "beta"
+    (beta / "csa-work" / "hosts").mkdir(parents=True)
+    (beta / "csa-work" / "hosts" / "hosts.csv").write_text(
+        "host,in_scope,system,role,site,ips,capture,sources,ad_site\n"
+        "BETAONLY,Yes,Other,Server,Perth,10.77.0.5,,inventory,\n", encoding="utf-8")
+    reg = tmp_path / "PROJECTS.yaml"
+    reg.write_text(
+        "projects:\n"
+        f"  - key: alpha-app\n    label: Alpha\n    project_root: {alpha}\n    work_dir: {work_a}\n"
+        f"  - key: beta-app\n    label: Beta\n    project_root: {beta}\n    work_dir: {beta / 'csa-work'}\n",
+        encoding="utf-8")
+    monkeypatch.setenv("CSA_PROJECTS_FILE", str(reg))
+
+
+def test_assets_routes_filter_paginate_and_scope_to_project(tmp_path: Path, monkeypatch) -> None:
+    import pytest
+    from fastapi import HTTPException
+
+    from backend import app as api
+
+    _register_two(tmp_path, monkeypatch)
+    out = api.system_assets("alpha-app", "", "", "", "", 1, 50)
+    assert out["project_key"] == "alpha-app" and out["counts"]["devices"] == 2
+    assert set(out["groups"]) == {"application_hosts", "devices", "unidentified", "conflicts"}
+    printers = api.system_assets("alpha-app", "", "devices", "Printer", "confirmed", 1, 50)
+    assert [d["id"] for d in printers["groups"]["devices"]["items"]] == ["CD-000001"]
+    assert printers["groups"]["devices"]["total"] == 1
+    paged = api.system_assets("alpha-app", "", "unidentified", "", "", 2, 2)
+    assert paged["groups"]["unidentified"]["total"] == 3 and len(paged["groups"]["unidentified"]["items"]) == 1
+    # the other project's data is not reachable through the selected key
+    beta = api.system_assets("beta-app", "", "", "", "", 1, 50)
+    assert [h["name"] for h in beta["groups"]["application_hosts"]["items"]] == ["BETAONLY"]
+    assert beta["groups"]["devices"]["items"] == []
+    with pytest.raises(HTTPException) as exc:
+        api.system_asset_detail("beta-app", "CD-000001", "")
+    assert exc.value.status_code == 404
+    with pytest.raises(HTTPException) as exc:
+        api.system_assets("nope", "", "", "", "", 1, 50)
+    assert exc.value.status_code == 404
+    with pytest.raises(HTTPException) as exc:
+        api.system_assets("alpha-app", "", "bogus", "", "", 1, 50)
+    assert exc.value.status_code == 422
+
+
+def test_asset_detail_has_source_links_and_stable_shape(tmp_path: Path, monkeypatch) -> None:
+    import pytest
+    from fastapi import HTTPException
+
+    from backend import app as api
+
+    _register_two(tmp_path, monkeypatch)
+    dev = api.system_asset_detail("alpha-app", "CD-000001", "")
+    assert dev["kind"] == "devices" and dev["asset"]["name"] == "Printer room 2"
+    assert set(dev) == {"system", "project_key", "id", "kind", "asset", "other_kinds", "source_links"}
+    assert dev["source_links"]["files"] == ["asset register"]
+    assert {e["evidence_id"] for e in dev["source_links"]["evidence"]} == {"E-200"}
+    host = api.system_asset_detail("alpha-app", "APP1", "application_hosts")
+    assert host["source_links"]["files"] == ["hosts/hosts.csv"]
+    with pytest.raises(HTTPException) as exc:
+        api.system_asset_detail("alpha-app", "CD-999999", "")
+    assert exc.value.status_code == 404 and "CD-999999" in exc.value.detail

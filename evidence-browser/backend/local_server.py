@@ -87,6 +87,15 @@ class Handler(BaseHTTPRequestHandler):
             match = re.fullmatch(r"/api/systems/([^/]+)/network", path)
             if match:
                 return self.dispatch_result(api.host_network(match.group(1)))
+            match = re.fullmatch(r"/api/systems/([^/]+)/assets", path)
+            if match:
+                return self.dispatch_result(api.system_assets(
+                    match.group(1), scalar(query, "q"), scalar(query, "kind"), scalar(query, "type"),
+                    scalar(query, "state"), int(scalar(query, "page", "1")), int(scalar(query, "per_page", "50"))))
+            match = re.fullmatch(r"/api/systems/([^/]+)/assets/([^/]+)", path)
+            if match:
+                return self.dispatch_result(api.system_asset_detail(
+                    match.group(1), match.group(2), scalar(query, "kind")))
             match = re.fullmatch(r"/api/systems/([^/]+)/explorer", path)
             if match:
                 return self.dispatch_result(api.system_explorer(match.group(1)))

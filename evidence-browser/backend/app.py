@@ -21,7 +21,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import intake_errors, apply_workflow, audit_workflow, author_workflow, intake_workflow, build_workflow, cleanup_workflow, commands, documents, draft_workflow, prompts_workflow, explorer, csa_figures, network, pipeline, project_setup, project_upload, proposals, review_workflow, sections, validation, word_review, working_document
+from . import assets, intake_errors, apply_workflow, audit_workflow, author_workflow, intake_workflow, build_workflow, cleanup_workflow, commands, documents, draft_workflow, prompts_workflow, explorer, csa_figures, network, pipeline, project_setup, project_upload, proposals, review_workflow, sections, validation, word_review, working_document
 from .jobs import JobManager
 from .models import CommandRequest, IntakeErrorsResponse, JobCreateRequest
 
@@ -1043,6 +1043,62 @@ def host_network(system_key: str) -> dict[str, Any]:
     """Every connection the captures recorded, as nodes and edges, from the matrix and host register."""
     project = system_project(system_key)
     return network.build(work_dir(project), agents_dir())
+
+
+ASSET_KINDS = ("application_hosts", "devices", "unidentified", "conflicts")
+
+
+def _asset_groups(system_key: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    """The project-scoped inventory for the selected system key, resolved through the registry."""
+    project = system_project(system_key)
+    return project, assets.build(work_dir(project), agents_dir(), page=1, per_page=10**9)
+
+
+@app.get("/api/systems/{system_key}/assets")
+def system_assets(system_key: str, q: str = Query(""), kind: str = Query(""), type: str = Query(""),
+                  state: str = Query(""), page: int = Query(1, ge=1),
+                  per_page: int = Query(50, ge=1, le=500)) -> dict[str, Any]:
+    """Hosts, connected devices, unidentified addresses and conflicts for one system, filtered and paginated.
+
+    ``kind`` picks one group; ``type`` and ``state`` match an item's type and state exactly (ignoring case)."""
+    if kind and kind not in ASSET_KINDS:
+        raise HTTPException(422, f"Unknown asset kind '{kind}'; expected one of {', '.join(ASSET_KINDS)}")
+    project = system_project(system_key)
+    page, per_page = max(1, page), min(500, max(1, per_page))
+    built = assets.build(work_dir(project), agents_dir(), page=1, per_page=10**9, query=q, kind=kind)
+    wanted_type, wanted_state = type.strip().lower(), state.strip().lower()
+    groups: dict[str, Any] = {}
+    for name in ASSET_KINDS:
+        if name not in built["groups"]:
+            continue
+        items = built["groups"][name]["items"]
+        if wanted_type:
+            items = [i for i in items if str(i.get("type") or "").lower() == wanted_type]
+        if wanted_state:
+            items = [i for i in items if str(i.get("state") or i.get("identification_state") or "").lower() == wanted_state]
+        start = (page - 1) * per_page
+        groups[name] = {"items": items[start:start + per_page], "total": len(items), "page": page, "per_page": per_page}
+    return {"system": system_key, "project_key": project["key"], "groups": groups,
+            "counts": built["counts"], "sources": built["sources"], "matrix_rows": built["matrix_rows"],
+            "note": built["note"]}
+
+
+@app.get("/api/systems/{system_key}/assets/{asset_id}")
+def system_asset_detail(system_key: str, asset_id: str, kind: str = Query("")) -> dict[str, Any]:
+    """One asset with its source files and evidence links. ``kind`` disambiguates an id shared by two groups."""
+    if kind and kind not in ASSET_KINDS:
+        raise HTTPException(422, f"Unknown asset kind '{kind}'; expected one of {', '.join(ASSET_KINDS)}")
+    project, built = _asset_groups(system_key)
+    found = [(name, item) for name in ASSET_KINDS if not kind or name == kind
+             for item in built["groups"][name]["items"] if str(item.get("id")) == asset_id]
+    if not found:
+        raise HTTPException(404, f"Asset '{asset_id}' not found in this system")
+    name, item = found[0]
+    source = item.get("source")
+    files = [source] if source else [s for s in built["sources"] if s == "hosts/hosts.csv"]
+    return {"system": system_key, "project_key": project["key"], "id": asset_id, "kind": name,
+            "asset": item, "other_kinds": [n for n, _ in found[1:]],
+            "source_links": {"files": files, "evidence": item.get("evidence", [])}}
 
 
 @app.get("/api/systems/{system_key}/explorer")

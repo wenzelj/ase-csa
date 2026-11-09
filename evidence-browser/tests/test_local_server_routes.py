@@ -107,3 +107,43 @@ def test_intake_errors_route_returns_runs_and_warnings(tmp_path, monkeypatch) ->
     with pytest.raises(HTTPException) as exc:
         workspace.get_intake_errors("nope")
     assert exc.value.status_code == 404
+
+
+def test_assets_routes_match_between_both_servers(tmp_path, monkeypatch) -> None:
+    import http.client
+    import json
+    import threading
+    from http.server import ThreadingHTTPServer
+
+    from backend import app as api
+    from backend.local_server import Handler
+    from tests.test_assets import _register_two
+
+    _register_two(tmp_path, monkeypatch)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    def get(path):
+        connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+        connection.request("GET", path)
+        response = connection.getresponse()
+        data = json.loads(response.read())
+        status = response.status
+        connection.close()
+        return status, data
+
+    try:
+        status, listing = get("/api/systems/alpha-app/assets?kind=devices&type=printer&state=confirmed")
+        assert status == 200
+        assert listing == json.loads(json.dumps(api.system_assets("alpha-app", "", "devices", "printer", "confirmed", 1, 50)))
+        status, detail = get("/api/systems/alpha-app/assets/CD-000001")
+        assert status == 200 and detail == json.loads(json.dumps(api.system_asset_detail("alpha-app", "CD-000001", "")))
+        assert get("/api/systems/beta-app/assets/CD-000001")[0] == 404
+        assert get("/api/systems/unknown/assets")[0] == 404
+        assert get("/api/systems/alpha-app/assets?kind=bogus")[0] == 422
+        assert get("/api/systems/alpha-app/network")[0] == 200
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
