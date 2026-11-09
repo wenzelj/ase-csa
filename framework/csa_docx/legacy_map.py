@@ -41,6 +41,7 @@ def load_rules(path: Path | str) -> list[dict]:
                 "row": n,
                 "pattern": re.compile(pattern, re.IGNORECASE),
                 "target": (row.get("target") or "").strip(),
+                "also": [x.strip() for x in (row.get("also") or "").split("|") if x.strip()],
                 "job": (row.get("job") or "").strip(),
                 "note": (row.get("note") or "").strip(),
             })
@@ -102,10 +103,15 @@ def map_blocks(blocks: list[dict], *, project_rules=(), default_rules=None,
             rule, label = r, lab
             break
 
-        def final(job, target, rule_name, conf):
+        def final(job, target, rule_name, conf, also=()):
             if mined:
                 job, rule_name = "mine", f"mine+{rule_name}"
             out.append(row(job, target, rule_name, conf))
+            for extra in also:
+                extra_target = extra
+                if extra_target and targets.spec_mode() == "on":
+                    extra_target = targets.canonical(extra_target)
+                out.append(row(job, extra_target, f"{rule_name}+also", conf))
 
         if rule:
             job = rule["job"] or "convert"
@@ -118,7 +124,7 @@ def map_blocks(blocks: list[dict], *, project_rules=(), default_rules=None,
                     target, conf = "", "low"
                 else:
                     target, conf = key, "low" if tie else "medium"
-            final(job, target, label, conf)
+            final(job, target, label, conf, rule.get("also", ()))
             continue
 
         keys = scope_map.legacy_hosts(b["path"][0], domains) if b["path"] else []

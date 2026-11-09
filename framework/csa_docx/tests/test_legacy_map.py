@@ -1,4 +1,6 @@
 import csv
+import json
+import re
 from pathlib import Path
 
 from csa_docx import legacy_map
@@ -52,6 +54,33 @@ def test_project_rule_can_override_a_default_for_nested_group_policy(monkeypatch
     assert rows[0]["target"] == "4.5"
 
 
+def test_migration_topics_fan_out_without_losing_domain_owner(monkeypatch):
+    monkeypatch.setenv("CSA_SPEC_MODE", "off")
+    rows = legacy_map.map_blocks(_blocks(
+        ("Identity & Access Management > Observed > Confirmed > Group Policy", "RMS firewall policy was applied."),
+        ("Patch & Lifecycle Management > Observed > Confirmed", "Configuration Manager client was observed."),
+        ("Storage & Data Transfer > Observed > Confirmed", "SMB file transfer was observed."),
+        ("Architectural Review > Observed > Confirmed > GeoSCADA service state", "The active primary was observed."),
+    ))
+    targets = [r["target"] for r in rows]
+    assert targets == ["4.5", "3.2", "4.4", "3.10", "4.6", "3.7", "4.3", "3.1"]
+    assert all("+also" in rows[n]["rule"] for n in (1, 3, 5, 7))
+
+
 def test_missing_targets_are_reported():
     rows = [{"job": "convert", "target": "3.6"}, {"job": "skip", "target": ""}]
     assert legacy_map.missing_targets(rows, ["3.6", "3.13", "3.17", "4.1"]) == ["3.13", "3.17", "4.1"]
+
+
+def test_rms_fixture_covers_split_destinations_and_evidence_only():
+    fixture = json.loads((Path(__file__).parent / "fixtures" / "rms_legacy_mapping.json").read_text())
+    project_rules = [{"row": 999, "pattern": re.compile(r"^Network Segmentation, Perimeter & Internet Access", re.I),
+                      "target": "3.6", "job": "convert", "note": "fixture broad network rule", "also": []}]
+    rows = legacy_map.map_blocks(fixture["blocks"], project_rules=project_rules)
+    by_id = {}
+    for row in rows:
+        if row["job"] in ("convert", "context", "mine") and row["target"]:
+            by_id.setdefault(row["id"], []).append(row["target"])
+    assert by_id == {k: v for k, v in fixture["expected_targets"].items() if v}
+    assert any(row["id"] == "L-APPX" and row["job"] == "evidence-only" for row in rows)
+    assert legacy_map.missing_targets(rows, ["3.6", "3.13", "3.17", "4.1", "4.2", "4.3", "4.4", "4.5", "4.6"]) == []

@@ -1,0 +1,26 @@
+{
+  "blocks": [
+    {"id": "L-NET", "path": ["Network Segmentation, Perimeter & Internet Access", "Observed", "Confirmed", "Network Segmentation and F5 Access"], "kind": "para", "text": "F5 access and network segmentation were observed."},
+    {"id": "L-PERIM", "path": ["Network Segmentation, Perimeter & Internet Access", "Observed", "Confirmed", "Windows Firewall and configured application ports"], "kind": "para", "text": "Windows Firewall and application ports were observed."},
+    {"id": "L-INET", "path": ["Network Segmentation, Perimeter & Internet Access", "Observed", "Confirmed", "Proxy and Internet Access"], "kind": "para", "text": "Proxy and public destinations were observed."},
+    {"id": "L-DISC", "path": ["System Assessment Overview", "Assessment Approach and Evidence", "Discovery Activity"], "kind": "para", "text": "Discovery was performed on five hosts."},
+    {"id": "L-INST", "path": ["Architectural Review", "Observed", "Confirmed", "Installed RMS and related Software"], "kind": "para", "text": "GeoSCADA Expert was installed."},
+    {"id": "L-FAIL", "path": ["Architectural Review", "Observed", "Confirmed", "GeoSCADA service state"], "kind": "para", "text": "The active primary and replication state were observed."},
+    {"id": "L-PATCH", "path": ["Patch & Lifecycle Management", "Observed", "Confirmed"], "kind": "para", "text": "Configuration Manager client and update source were observed."},
+    {"id": "L-GPO", "path": ["Identity & Access Management", "Observed", "Confirmed", "Group Policy"], "kind": "para", "text": "The RMS firewall GPO was applied."},
+    {"id": "L-FILE", "path": ["Storage & Data Transfer", "Observed", "Confirmed"], "kind": "para", "text": "SMB file-transfer traffic was observed."},
+    {"id": "L-APPX", "path": ["Appendices", "Evidence Appendix"], "kind": "para", "text": "Evidence appendix index."}
+  ],
+  "expected_targets": {
+    "L-NET": ["3.6"],
+    "L-PERIM": ["3.13"],
+    "L-INET": ["3.17"],
+    "L-DISC": ["4.1"],
+    "L-INST": ["4.2"],
+    "L-FAIL": ["4.3", "3.1"],
+    "L-PATCH": ["4.4", "3.10"],
+    "L-GPO": ["4.5", "3.2"],
+    "L-FILE": ["4.6", "3.7"],
+    "L-APPX": []
+  }
+}

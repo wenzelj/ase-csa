@@ -1,4 +1,4 @@
-pattern,target,job,note
+pattern,target,job,note,also
 ^Document Control,,controlled,Controlled fields: set by new_csa.py; the old revision history is not carried
 ^(Document Information|Document Revision|Document Approvals|Document Ownership|Distribution List|Document Control Notes|Document Map),,controlled,Controlled fields
 recommendation,,mine,Recommendation subsections are mined: factual sentences are kept; recommendation sentences go to convert/parked.md
@@ -8,15 +8,19 @@ readiness score,,parked,Scores are not template content; kept in convert/parked.
 ^(Appendix(es)?|Appendices)$,,evidence-only,Old appendices feed the evidence matrix
 ^Glossary,7,convert,Appendix B Glossary and Acronyms
 (^| > )(Group Policy|GPO),4.5,convert,Group Policy Observations
+(^Identity & Access Management > Observed > Confirmed > Group Policy),4.5,convert,Group Policy facts also remain available to Identity & Authentication,3.2
 (Always-?On|failover|replication|cluster architecture|survivability),4.3,convert,Failover and Replication Behaviour
+(^Architectural Review > Observed > Confirmed > (GeoSCADA service state|UAT secondary/failover state|Production replication/failover)),4.3,convert,Failover facts also remain available to the owning domain,3.1
 (^| > )Installed (Applications|Software|RMS and related Software),4.2,convert,Installed Applications
 (^| > )Patch and Update Tooling,4.4,convert,Patch and Update Tooling
+(^Patch & Lifecycle Management > Observed > Confirmed),4.4,convert,Patch tooling facts also remain available to Patch & Lifecycle Management,3.10
 (^| > )(File Transfer|Local Storage),4.6,convert,File Transfer and Local Storage
+(^Storage & Data Transfer > Observed > Confirmed),4.6,convert,File-transfer facts also remain available to Storage & Data Transfer,3.7
 (scope gaps|Discovery Required),8,convert,Appendix E Discovery Required
 ((^| > )Discovery activity|(^| > )Methodology|(^| > )Evidence Sources|(^| > )Assessment Method|(^| > )Network-Flow Assessment|(^| > )Evidence Limitations)( > |$),4.1,convert,Discovery Coverage (method notes)
 (^| > )Discovery Coverage,4.1,convert,Discovery Coverage
 (^| > )(Overall drawbridge|Drawbridge assessment),3.12,convert,Isolation and Resilience Validation
-(^| > )(Perimeter|Firewall|Boundary Protection|Network Boundary|Windows Firewall|IT-side privileged access)( > |$),3.13,convert,Perimeter / Firewall & Network Boundary Validation
+(^| > )(Perimeter|Firewall|Boundary Protection|Network Boundary|Windows Firewall|Windows Firewall and configured application ports|IT-side privileged access)( > |$),3.13,convert,Perimeter / Firewall & Network Boundary Validation
 (^| > )(Proxy|Proxy and Internet Access|Internet Access|SMTP|Public Destinations)( > |$),3.17,convert,Internet Access & Communications
 (^| > )(Dependency impact|Drawbridge Impacts?)( > |$),signal,convert,Each row goes to the domain its terms name (its Drawbridge Impact)
 ^(Executive Overview > Executive Summary|Executive Summary),2.1,context,Summary is rewritten last from the converted sections
