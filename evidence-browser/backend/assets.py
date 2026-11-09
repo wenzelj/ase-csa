@@ -314,3 +314,286 @@ def build(work_dir: Path, agents: Path, *, page: int = 1, per_page: int = 50,
             "matrix_rows": len(live),
             "note": "Observed connections, configured services and documented dependencies are recorded "
                     "distinctly; none of them implies a migration dependency."}
+
+
+# ---------------------------------------------------------------------------------------------
+# Editing the durable connected-device register (S539 store) and the alias reconciliation preview.
+#
+# Every mutation goes through ``csa_docx.connected_devices``, which writes only the register
+# (``connected_devices.csv``, ``device_addresses.csv``), its audit log and timestamped backups of
+# those files. Nothing here touches generated host CSVs, captures, the evidence matrix, the graph
+# or a DOCX, and a ``confirmed`` device never adds an evidence row: confirmation is recorded as
+# provenance on the register row only.
+# ---------------------------------------------------------------------------------------------
+import re as _re
+
+REGISTER_FILES = ("connected_devices.csv", "device_addresses.csv", "device-audit.jsonl")
+_ISO_DATE = _re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_DEVICE_FIELDS = ("name", "device_type", "role", "owner", "site_zone", "relationship", "classification",
+                  "identification_state", "provenance", "reviewer")
+
+
+class AssetError(Exception):
+    """A rejected edit: ``status`` is the HTTP status the routes return, ``code`` a stable machine label."""
+
+    def __init__(self, status: int, message: str, code: str = "invalid") -> None:
+        super().__init__(message)
+        self.status, self.message, self.code = status, message, code
+
+
+def _store(agents: Path):
+    _framework(agents)
+    from csa_docx import connected_devices
+    return connected_devices
+
+
+def _root(project_root: Path, work_dir: Path) -> Path:
+    if Path(work_dir).resolve() != (Path(project_root) / "csa-work").resolve():
+        raise AssetError(409, "The connected-device register lives in <project_root>/csa-work; this project's "
+                              "work folder is elsewhere, so editing is not available.", "unsupported_layout")
+    return Path(project_root)
+
+
+def _translate(error: ValueError) -> AssetError:
+    text = str(error)
+    low = text.lower()
+    if "stale revision" in low or "already an active alias" in low or "already attached" in low:
+        return AssetError(409, text, "conflict")
+    if low.startswith("unknown device"):
+        return AssetError(404, text, "not_found")
+    if "retired" in low and "restore" in low:
+        return AssetError(409, text, "retired")
+    if "not attached" in low:
+        return AssetError(404, text, "not_found")
+    return AssetError(422, text, "invalid")
+
+
+def _expected(value: Any) -> str:
+    text = str(value if value is not None else "").strip()
+    if not text.isdigit():
+        raise AssetError(422, "expected_revision is required (the revision the editor last read)", "revision_required")
+    return text
+
+
+def _confirmation(payload: dict, existing_provenance: str = "") -> str:
+    """Provenance text for a ``confirmed`` device: a cited source, or a dated owner confirmation."""
+    source = str(payload.get("source") or "").strip()
+    when = str(payload.get("owner_confirmed_on") or "").strip()
+    if when and not _ISO_DATE.match(when):
+        raise AssetError(422, "owner_confirmed_on must be a date written YYYY-MM-DD", "invalid_date")
+    if not source and not when:
+        raise AssetError(422, "A confirmed device needs a cited source (`source`) or a dated owner "
+                              "confirmation (`owner_confirmed_on`, YYYY-MM-DD).", "confirmation_required")
+    parts = [str(payload.get("provenance") or existing_provenance or "").strip()]
+    if source:
+        parts.append(f"source: {source}")
+    if when:
+        parts.append(f"owner confirmed {when}")
+    return "; ".join(p for p in parts if p)
+
+
+def _register_hosts(work_dir: Path) -> dict[str, dict]:
+    """Normalised IP / FQDN / host name -> register host row, for every host in the register."""
+    owners: dict[str, dict] = {}
+    for r in _rows(work_dir / "hosts" / "hosts.csv"):
+        host = (r.get("host") or "").strip()
+        if not host:
+            continue
+        for x in _split(r.get("ips", "")) + [host]:
+            n = _norm(x) or _norm(x.lower())
+            if n:
+                owners.setdefault(n, r)
+    return owners
+
+
+def _active_aliases(work_dir: Path) -> dict[str, list[str]]:
+    """Normalised alias -> the active devices that claim it (more than one means the register is ambiguous)."""
+    devices = {r.get("device_id", "") for r in _rows(work_dir / "hosts" / "connected_devices.csv")
+               if (r.get("active") or "").lower() == "true"}
+    out: dict[str, list[str]] = defaultdict(list)
+    for r in _rows(work_dir / "hosts" / "device_addresses.csv"):
+        n = _norm(r.get("normalized", ""))
+        if n and (r.get("active") or "").lower() == "true" and r.get("device_id") in devices \
+                and r["device_id"] not in out[n]:
+            out[n].append(r["device_id"])
+    return dict(out)
+
+
+def _normalise(agents: Path, address: str) -> str:
+    try:
+        return _store(agents)._normalize_address(address)
+    except ValueError as exc:
+        raise AssetError(422, str(exc), "invalid_address") from exc
+
+
+def _check_free(work_dir: Path, agents: Path, address: str, device_id: str | None) -> str:
+    """The normalised address, or a rejection when a register host or another active device already owns it."""
+    n = _normalise(agents, address)
+    host = _register_hosts(work_dir).get(n)
+    if host:
+        raise AssetError(409, f"{n} is claimed by register host {host.get('host', '').strip()}; an application "
+                              "host's address cannot become a connected-device alias.", "host_owned")
+    others = [o for o in _active_aliases(work_dir).get(n, []) if o != device_id]
+    if others:
+        raise AssetError(409, f"{n} is already an active alias of {', '.join(others)}.", "alias_claimed")
+    return n
+
+
+def reconcile_preview(work_dir: Path, agents: Path, *, device_id: str = "", add: list[str] | None = None,
+                      remove: list[str] | None = None) -> dict[str, Any]:
+    """Read-only before/after: what each address resolves to now, and after the proposed alias change.
+
+    Nothing is written. ``add`` addresses that a register host or another device owns come back
+    ``blocked`` with the reason; ``remove`` addresses fall back to what the captures say (an
+    unidentified address) or to nothing."""
+    hosts = _register_hosts(work_dir)
+    aliases = _active_aliases(work_dir)
+    unidentified = {_norm(r.get("address", "")) for r in _rows(work_dir / "hosts" / "addresses.csv")}
+    names = {r.get("device_id", ""): r.get("name", "") for r in _rows(work_dir / "hosts" / "connected_devices.csv")}
+    target = device_id.strip()
+    if target and target not in {k for k, _ in names.items()}:
+        raise AssetError(404, f"unknown device: {target}", "not_found")
+
+    def resolve(n: str, gain: set[str], lose: set[str]) -> dict[str, str]:
+        if n in hosts:
+            return {"resolves_to": "application_host", "id": hosts[n].get("host", "").strip(), "name": hosts[n].get("host", "").strip()}
+        owners = list(aliases.get(n, []))
+        if n in gain and (target or "(new device)") not in owners:
+            owners.append(target or "(new device)")
+        if n in lose:
+            owners = [o for o in owners if o != target]
+        if len(owners) > 1:
+            return {"resolves_to": "ambiguous", "id": ", ".join(sorted(owners)), "name": ""}
+        if owners:
+            return {"resolves_to": "connected_device", "id": owners[0], "name": names.get(owners[0], "")}
+        if n in unidentified:
+            return {"resolves_to": "unidentified_address", "id": n, "name": ""}
+        return {"resolves_to": "nothing_recorded", "id": "", "name": ""}
+
+    out, any_blocked = [], False
+    requests = [("add", a) for a in (add or [])] + [("remove", a) for a in (remove or [])]
+    for action, raw in requests:
+        item: dict[str, Any] = {"action": action, "address": raw, "normalized": "", "status": "ready", "reasons": []}
+        try:
+            n = _normalise(agents, raw)
+        except AssetError as exc:
+            item.update(status="blocked", reasons=[exc.message], before=None, after=None)
+            out.append(item); any_blocked = True
+            continue
+        item["normalized"] = n
+        before = resolve(n, set(), set())
+        if action == "add":
+            if n in hosts:
+                item["reasons"].append(f"claimed by register host {hosts[n].get('host', '').strip()}")
+            elif [o for o in aliases.get(n, []) if o != target]:
+                item["reasons"].append("already an active alias of " + ", ".join(o for o in aliases[n] if o != target))
+            elif target and target in aliases.get(n, []):
+                item["reasons"].append("already an active alias of this device")
+            after = resolve(n, {n}, set()) if not item["reasons"] else before
+        else:
+            if not target or target not in aliases.get(n, []):
+                item["reasons"].append("not an active alias of this device")
+            after = resolve(n, set(), {n}) if not item["reasons"] else before
+        item.update(before=before, after=after)
+        if item["reasons"]:
+            item["status"] = "blocked"; any_blocked = True
+        out.append(item)
+    return {"device_id": target, "changes": out, "blocked": any_blocked, "writes": [],
+            "note": "Preview only: nothing was written. Aliases match exactly (normalised IP or FQDN)."}
+
+
+def _device_view(agents: Path, project_root: Path, device_id: str) -> dict:
+    cd = _store(agents)
+    try:
+        device = cd.get_device(project_root, device_id, include_retired=True)
+    except ValueError as exc:
+        raise _translate(exc) from exc
+    return {**device, "aliases": [a for a in cd.list_addresses(project_root, device_id)]}
+
+
+def _clean(values: dict) -> dict:
+    return {k: str(values[k]).strip() for k in _DEVICE_FIELDS if k in values and values[k] is not None}
+
+
+def create_device(project_root: Path, work_dir: Path, agents: Path, payload: dict) -> dict[str, Any]:
+    root, cd = _root(project_root, work_dir), _store(agents)
+    values = _clean(payload)
+    if str(values.get("identification_state") or "") == "confirmed":
+        values["provenance"] = _confirmation({**payload, "provenance": values.get("provenance", "")})
+    values.setdefault("provenance", "Evidence Browser entry")
+    if not values["provenance"]:
+        values["provenance"] = "Evidence Browser entry"
+    addresses = [str(a) for a in (payload.get("addresses") or [])]
+    seen: set[str] = set()
+    for a in addresses:
+        n = _check_free(work_dir, agents, a, None)
+        if n in seen:
+            raise AssetError(422, f"{n} is listed twice", "duplicate_address")
+        seen.add(n)
+    try:
+        result = cd.create_device(root, name=str(payload.get("name") or ""), values=values,
+                                  reviewer=str(payload.get("reviewer") or ""), addresses=addresses or None)
+    except ValueError as exc:
+        raise _translate(exc) from exc
+    return {"status": "OK", "device": _device_view(agents, root, result["device_id"]), "writes": list(REGISTER_FILES)}
+
+
+def patch_device(project_root: Path, work_dir: Path, agents: Path, device_id: str, payload: dict) -> dict[str, Any]:
+    root, cd = _root(project_root, work_dir), _store(agents)
+    expected = _expected(payload.get("expected_revision"))
+    changes = payload.get("changes")
+    if not isinstance(changes, dict) or not changes:
+        raise AssetError(422, "changes must be a non-empty object", "invalid")
+    changes = {k: ("" if v is None else v) for k, v in changes.items()}
+    existing = _device_view(agents, root, device_id)
+    if changes.get("identification_state") == "confirmed" and existing.get("identification_state") != "confirmed":
+        changes["provenance"] = _confirmation({**payload, "provenance": changes.get("provenance", "")}, existing.get("provenance", ""))
+    if payload.get("reviewer") and "reviewer" not in changes:
+        changes["reviewer"] = str(payload["reviewer"])
+    try:
+        cd.edit_device(root, device_id, changes=changes, expected_revision=expected)
+    except ValueError as exc:
+        raise _translate(exc) from exc
+    return {"status": "OK", "device": _device_view(agents, root, device_id), "writes": list(REGISTER_FILES)}
+
+
+def _check_revision(agents: Path, root: Path, device_id: str, expected: str) -> dict:
+    device = _device_view(agents, root, device_id)
+    if str(device.get("revision")) != expected:
+        raise AssetError(409, f"stale revision: expected {expected}, current {device.get('revision')}", "conflict")
+    return device
+
+
+def add_alias(project_root: Path, work_dir: Path, agents: Path, device_id: str, payload: dict) -> dict[str, Any]:
+    root, cd = _root(project_root, work_dir), _store(agents)
+    _check_revision(agents, root, device_id, _expected(payload.get("expected_revision")))
+    n = _check_free(work_dir, agents, str(payload.get("address") or ""), device_id)
+    if device_id in _active_aliases(work_dir).get(n, []):
+        raise AssetError(409, f"{n} is already an active alias of this device.", "alias_claimed")
+    try:
+        cd.add_address(root, device_id, str(payload.get("address") or ""), source=str(payload.get("source") or ""),
+                       first_seen=str(payload.get("first_seen") or ""), last_seen=str(payload.get("last_seen") or ""))
+    except ValueError as exc:
+        raise _translate(exc) from exc
+    return {"status": "OK", "device": _device_view(agents, root, device_id), "writes": list(REGISTER_FILES)}
+
+
+def remove_alias(project_root: Path, work_dir: Path, agents: Path, device_id: str, address: str, expected_revision: Any) -> dict[str, Any]:
+    root, cd = _root(project_root, work_dir), _store(agents)
+    _check_revision(agents, root, device_id, _expected(expected_revision))
+    try:
+        cd.remove_address(root, device_id, address)
+    except ValueError as exc:
+        raise _translate(exc) from exc
+    return {"status": "OK", "device": _device_view(agents, root, device_id), "writes": list(REGISTER_FILES)}
+
+
+def set_active(project_root: Path, work_dir: Path, agents: Path, device_id: str, payload: dict, *, retire: bool) -> dict[str, Any]:
+    root, cd = _root(project_root, work_dir), _store(agents)
+    _check_revision(agents, root, device_id, _expected(payload.get("expected_revision")))
+    reviewer = str(payload.get("reviewer") or "")
+    try:
+        (cd.retire_device if retire else cd.restore_device)(root, device_id, reviewer=reviewer)
+    except ValueError as exc:
+        raise _translate(exc) from exc
+    return {"status": "OK", "device": _device_view(agents, root, device_id), "writes": list(REGISTER_FILES)}

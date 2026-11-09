@@ -1101,6 +1101,61 @@ def system_asset_detail(system_key: str, asset_id: str, kind: str = Query("")) -
             "source_links": {"files": files, "evidence": item.get("evidence", [])}}
 
 
+def _device_edit(system_key: str, action) -> dict[str, Any]:
+    """Run one register edit for the selected system; a rejected edit becomes a clear HTTP error."""
+    project = system_project(system_key)
+    try:
+        return action(Path(project["project_root"]).expanduser(), work_dir(project), agents_dir())
+    except assets.AssetError as error:
+        raise HTTPException(error.status, {"message": error.message, "code": error.code}) from error
+
+
+@app.post("/api/systems/{system_key}/devices")
+def create_connected_device(system_key: str, payload: dict[str, Any]) -> dict[str, Any]:
+    return _device_edit(system_key, lambda root, work, agents: assets.create_device(root, work, agents, payload))
+
+
+@app.post("/api/systems/{system_key}/devices/reconcile-preview")
+def preview_device_aliases(system_key: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Read-only before/after for proposed alias changes; nothing is written."""
+    def run(root: Path, work: Path, agents: Path) -> dict[str, Any]:
+        def texts(name: str) -> list[str]:
+            value = payload.get(name) or []
+            if not isinstance(value, list):
+                raise assets.AssetError(422, f"{name} must be a list of addresses")
+            return [str(v) for v in value]
+        return assets.reconcile_preview(work, agents, device_id=str(payload.get("device_id") or ""),
+                                        add=texts("add"), remove=texts("remove"))
+    return _device_edit(system_key, run)
+
+
+@app.patch("/api/systems/{system_key}/devices/{device_id}")
+def patch_connected_device(system_key: str, device_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    return _device_edit(system_key, lambda root, work, agents: assets.patch_device(root, work, agents, device_id, payload))
+
+
+@app.post("/api/systems/{system_key}/devices/{device_id}/aliases")
+def add_device_alias(system_key: str, device_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    return _device_edit(system_key, lambda root, work, agents: assets.add_alias(root, work, agents, device_id, payload))
+
+
+@app.delete("/api/systems/{system_key}/devices/{device_id}/aliases/{address}")
+def remove_device_alias(system_key: str, device_id: str, address: str,
+                        expected_revision: str = Query("")) -> dict[str, Any]:
+    return _device_edit(system_key, lambda root, work, agents: assets.remove_alias(
+        root, work, agents, device_id, address, expected_revision))
+
+
+@app.post("/api/systems/{system_key}/devices/{device_id}/retire")
+def retire_connected_device(system_key: str, device_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    return _device_edit(system_key, lambda root, work, agents: assets.set_active(root, work, agents, device_id, payload, retire=True))
+
+
+@app.post("/api/systems/{system_key}/devices/{device_id}/restore")
+def restore_connected_device(system_key: str, device_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    return _device_edit(system_key, lambda root, work, agents: assets.set_active(root, work, agents, device_id, payload, retire=False))
+
+
 @app.get("/api/systems/{system_key}/explorer")
 def system_explorer(system_key: str) -> dict[str, Any]:
     """Hosts, captured links, per-host facts, CSA mentions and evidence-backed journeys for the System explorer."""

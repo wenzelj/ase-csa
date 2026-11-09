@@ -240,6 +240,21 @@ class Handler(BaseHTTPRequestHandler):
                 return self.dispatch_result(api.new_application_finalise_upload(match.group(1)))
             if path == "/api/new-application/commit":
                 return self.dispatch_result(api.new_application_commit(payload))
+            match = re.fullmatch(r"/api/systems/([^/]+)/devices", path)
+            if match:
+                return self.dispatch_result(api.create_connected_device(match.group(1), payload))
+            match = re.fullmatch(r"/api/systems/([^/]+)/devices/reconcile-preview", path)
+            if match:
+                return self.dispatch_result(api.preview_device_aliases(match.group(1), payload))
+            match = re.fullmatch(r"/api/systems/([^/]+)/devices/([^/]+)/aliases", path)
+            if match:
+                return self.dispatch_result(api.add_device_alias(match.group(1), match.group(2), payload))
+            match = re.fullmatch(r"/api/systems/([^/]+)/devices/([^/]+)/retire", path)
+            if match:
+                return self.dispatch_result(api.retire_connected_device(match.group(1), match.group(2), payload))
+            match = re.fullmatch(r"/api/systems/([^/]+)/devices/([^/]+)/restore", path)
+            if match:
+                return self.dispatch_result(api.restore_connected_device(match.group(1), match.group(2), payload))
             match = re.fullmatch(r"/api/systems/([^/]+)/working-document", path)
             if match:
                 return self.dispatch_result(api.select_working_document(match.group(1), payload))
@@ -352,12 +367,29 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as error:
             self.fail(error)
 
+    def do_PATCH(self) -> None:
+        try:
+            path = unquote(urlparse(self.path).path)
+            length = int(self.headers.get("Content-Length", "0"))
+            payload = json.loads(self.rfile.read(length) or b"{}")
+            match = re.fullmatch(r"/api/systems/([^/]+)/devices/([^/]+)", path)
+            if match:
+                return self.dispatch_result(api.patch_connected_device(match.group(1), match.group(2), payload))
+            self.send_json({"detail": "Route not found"}, 404)
+        except Exception as error:
+            self.fail(error)
+
     def do_DELETE(self) -> None:
         try:
             path = unquote(urlparse(self.path).path)
             match = re.fullmatch(r"/api/new-application/uploads/([^/]+)", path)
             if match:
                 return self.dispatch_result(api.new_application_cancel_upload(match.group(1)))
+            match = re.fullmatch(r"/api/systems/([^/]+)/devices/([^/]+)/aliases/([^/]+)", path)
+            if match:
+                return self.dispatch_result(api.remove_device_alias(
+                    match.group(1), match.group(2), match.group(3),
+                    scalar(parse_qs(urlparse(self.path).query), "expected_revision")))
             match = re.fullmatch(r"/api/systems/([^/]+)/jobs/([^/]+)", path)
             if match:
                 return self.dispatch_result(api.cancel_job(match.group(1), match.group(2)))
