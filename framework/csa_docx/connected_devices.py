@@ -539,6 +539,44 @@ def resolve(project: str | Path, address: str) -> dict | None:
     return None
 
 
+def resolution_map(work_dir: str | Path) -> dict:
+    """Read-only view of the register for a host rebuild: which observed IP addresses a confirmed device owns.
+
+    Takes the project's ``csa-work`` folder and writes nothing. Only an active device whose
+    identification is ``confirmed`` resolves an address, and only through an active IP alias.
+    An alias claimed by more than one active device is ``ambiguous`` and resolves to no one.
+    Proposed, disputed and unidentified devices are ``unresolved``: the address stays unidentified.
+    Retired devices and retired aliases are ignored (an address may be reused by another device).
+    Matching is exact on the normalised address; nothing is inferred from subnets or names."""
+    hosts = Path(work_dir) / "hosts"
+    devices = {r["device_id"]: r for r in _read_csv(hosts / "connected_devices.csv")
+               if r.get("active") == "true" and DEVICE_ID.fullmatch(r.get("device_id", ""))}
+    claims: dict[str, list[dict]] = {}
+    for row in _read_csv(hosts / "device_addresses.csv"):
+        if row.get("active") != "true" or row.get("device_id") not in devices:
+            continue
+        if _address_type(row.get("normalized", "")) == "fqdn":
+            continue                              # a name cannot resolve an observed address
+        claims.setdefault(row.get("normalized", ""), []).append(row)
+    out: dict = {"confirmed": {}, "ambiguous": {}, "unresolved": {},
+                 "present": (hosts / "connected_devices.csv").is_file() or (hosts / "device_addresses.csv").is_file()}
+    for address, rows in sorted(claims.items()):
+        ids = sorted({r["device_id"] for r in rows})
+        if len(ids) > 1:
+            out["ambiguous"][address] = ids
+            continue
+        device, alias = devices[ids[0]], rows[0]
+        record = {"device_id": ids[0], "name": device.get("name", ""), "device_type": device.get("device_type", ""),
+                  "role": device.get("role", ""), "owner": device.get("owner", ""), "site_zone": device.get("site_zone", ""),
+                  "classification": device.get("classification", ""),
+                  "identification_state": device.get("identification_state", ""),
+                  "revision": device.get("revision", ""), "provenance": device.get("provenance", ""),
+                  "alias": alias.get("address", ""), "alias_source": alias.get("source", "")}
+        bucket = "confirmed" if device.get("identification_state") == "confirmed" else "unresolved"
+        out[bucket][address] = record
+    return out
+
+
 def verify(project: str | Path) -> dict:
     """Consistency report for the register: duplicate active aliases, orphaned rows, bad revisions."""
     project = _project(project)

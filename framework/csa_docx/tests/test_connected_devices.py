@@ -241,3 +241,25 @@ def test_resolve_and_verify(tmp_path):
     assert cd.resolve(project, "10.7.7.7") is None
     assert cd.verify(project)["status"] == "OK"
     assert cd.list_devices(project, include_retired=False) and len(cd.list_addresses(project, a)) == 1
+
+
+def test_resolution_map_reads_only_and_separates_confirmed_from_the_rest(tmp_path):
+    hosts = tmp_path / "hosts"
+    hosts.mkdir()
+    (hosts / "connected_devices.csv").write_text(
+        ",".join(cd.DEVICE_FIELDS) + "\n"
+        "CD-000001,A,printer,,,,,unknown,confirmed,src,WM,x,true,2\n"
+        "CD-000002,B,printer,,,,,unknown,proposed,,WM,x,true,1\n"
+        "CD-000003,C,printer,,,,,unknown,confirmed,src,WM,x,false,1\n", encoding="utf-8")
+    (hosts / "device_addresses.csv").write_text(
+        ",".join(cd.ADDRESS_FIELDS) + "\n"
+        "CD-000001,10.0.0.1,10.0.0.1,ipv4,,,s,true\n"
+        "CD-000001,a.example.org,a.example.org,fqdn,,,s,true\n"
+        "CD-000002,10.0.0.2,10.0.0.2,ipv4,,,s,true\n"
+        "CD-000003,10.0.0.3,10.0.0.3,ipv4,,,s,true\n", encoding="utf-8")
+    before = {p.name: p.read_bytes() for p in hosts.iterdir()}
+    out = cd.resolution_map(tmp_path)
+    assert list(out["confirmed"]) == ["10.0.0.1"] and out["confirmed"]["10.0.0.1"]["revision"] == "2"
+    assert list(out["unresolved"]) == ["10.0.0.2"] and out["ambiguous"] == {} and out["present"] is True
+    assert {p.name: p.read_bytes() for p in hosts.iterdir()} == before
+    assert cd.resolution_map(tmp_path / "nowhere") == {"confirmed": {}, "ambiguous": {}, "unresolved": {}, "present": False}

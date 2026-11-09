@@ -345,3 +345,142 @@ def test_fact_role_and_fact_site_take_the_documented_role_and_site_over_a_subnet
     res = hm.verify_roles(tmp_path)
     verdicts = {r["kind"]: r["verdict"] for r in res["results"]}
     assert verdicts["fact_role"] == "VALID" and verdicts["fact_site"] == "VALID"
+
+
+# --- connected-device aliases and address resolution (S545) -------------------------------------
+
+_DEV_HEAD = ("device_id,name,device_type,role,owner,site_zone,relationship,classification,identification_state,"
+             "provenance,reviewer,recorded,active,revision\n")
+_ALIAS_HEAD = "device_id,address,normalized,address_type,first_seen,last_seen,source,active\n"
+
+
+def _peer_project(tmp: Path, devices: str = "", aliases: str = "") -> Path:
+    work = tmp / "csa-work"
+    (work / "hosts").mkdir(parents=True)
+    rows = [
+        ("E-1", "10.124.32.99 has an established connection to APP1 on port 5985, served by wsmprovhost.exe"),
+        ("E-2", "APP1 has an established connection from svchost.exe to 10.124.32.200 on port 445"),
+        ("E-3", "APP1 has an established connection from svchost.exe to 10.124.32.201 on port 445"),
+        ("E-4", "APP1 has an established connection from Edge.exe to 203.0.113.9 on a dynamic (https)"),
+    ]
+    with (work / "evidence-matrix.csv").open("w", encoding="utf-8", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(["evidence_id", "csa_area", "status", "claim", "review_state"])
+        for eid, claim in rows:
+            w.writerow([eid, "network_and_connectivity", "VERIFIED", claim, "reviewed"])
+    con = sqlite3.connect(work / "discovery-index.sqlite")           # an index with no captures: matrix rows only
+    con.executescript("""
+      create table captures(capture_id, folder, host, collector, capture_utc, archived, superseded_by, file_count);
+      create table files(file_id, rel_path, capture_id, host, ext, size, mtime, sha1, status, reason, dup_of, source_class);
+      create table rows(file_id, table_name, fmt, block_no, line_no, data);
+    """)
+    con.commit()
+    con.close()
+    if devices or aliases:
+        (work / "hosts" / "connected_devices.csv").write_text(_DEV_HEAD + devices, encoding="utf-8")
+        (work / "hosts" / "device_addresses.csv").write_text(_ALIAS_HEAD + aliases, encoding="utf-8")
+    return work
+
+
+def _csv(path: Path) -> list[dict]:
+    with path.open(newline="", encoding="utf-8") as fh:
+        return list(csv.DictReader(fh))
+
+
+_REG = {"APP1": {"ips": {"10.124.32.10"}}}
+
+
+def test_no_register_leaves_addresses_as_they_were(tmp_path):
+    work = _peer_project(tmp_path)
+    summary: dict = {}
+    hm.build_addresses(work, _REG, summary)
+    assert [r["address"] for r in _csv(work / "hosts" / "addresses.csv")] == [
+        "10.124.32.200", "10.124.32.201", "10.124.32.99", "203.0.113.9"]
+    assert not (work / "hosts" / "device_peers.csv").exists()
+    assert summary == {"resolved": [], "ambiguous": {}, "conflicts": []}
+
+
+def test_confirmed_device_resolves_inbound_and_outbound_peers_with_provenance(tmp_path):
+    work = _peer_project(
+        tmp_path,
+        "CD-000001,Print server,print server,print,ops,Rockhampton,supporting IT,supporting IT,confirmed,"
+        "asset register row 9,WM,2026-01-06,true,3\n",
+        "CD-000001,10.124.32.200,10.124.32.200,ipv4,,,asset register,true\n"
+        "CD-000001,10.124.32.99,10.124.32.99,ipv4,,,asset register,true\n"
+        "CD-000001,print.site.local,print.site.local,fqdn,,,asset register,true\n")
+    before = {p.name: p.read_bytes() for p in (work / "hosts").glob("*.csv") if p.name.startswith(("connected", "device"))}
+    reg = {"APP1": {"ips": {"10.124.32.10"}}}
+    summary: dict = {}
+    out = hm.build_addresses(work, reg, summary)
+    assert sorted(out) == ["10.124.32.201", "203.0.113.9"]                 # the unnamed ones still unnamed
+    assert [r["address"] for r in _csv(work / "hosts" / "addresses.csv")] == ["10.124.32.201", "203.0.113.9"]
+    peers = {r["address"]: r for r in _csv(work / "hosts" / "device_peers.csv")}
+    assert set(peers) == {"10.124.32.200", "10.124.32.99"}                 # several addresses, one device
+    out_peer, in_peer = peers["10.124.32.200"], peers["10.124.32.99"]
+    assert out_peer["device_id"] == "CD-000001" and out_peer["device_name"] == "Print server"
+    assert out_peer["revision"] == "3" and out_peer["provenance"] == "asset register row 9"
+    assert out_peer["directions"] == "outbound" and out_peer["ports"] == "445" and out_peer["evidence_ids"] == "E-2"
+    assert out_peer["basis"] == "observed connection" and out_peer["seen_from"] == "APP1"
+    assert in_peer["directions"] == "inbound" and in_peer["ports"] == "5985" and in_peer["processes"] == "wsmprovhost.exe"
+    assert summary["resolved"] == ["10.124.32.200", "10.124.32.99"]
+    assert set(reg) == {"APP1"}                                            # a device never joins the host register
+    after = {p.name: p.read_bytes() for p in (work / "hosts").glob("*.csv") if p.name.startswith(("connected", "device_a"))}
+    assert after == {k: v for k, v in before.items() if k in after}        # the register is only read
+    hm.build_addresses(work, reg)                                          # a second rebuild gives the same result
+    assert {r["address"] for r in _csv(work / "hosts" / "device_peers.csv")} == set(peers)
+
+
+def test_proposed_disputed_and_retired_claims_stay_unidentified(tmp_path):
+    work = _peer_project(
+        tmp_path,
+        "CD-000001,A,t,,,,,unknown,proposed,,WM,x,true,1\n"
+        "CD-000002,B,t,,,,,unknown,disputed,,WM,x,true,1\n"
+        "CD-000003,C,t,,,,,unknown,confirmed,src,WM,x,false,2\n",
+        "CD-000001,10.124.32.200,10.124.32.200,ipv4,,,s,true\n"
+        "CD-000002,10.124.32.201,10.124.32.201,ipv4,,,s,true\n"
+        "CD-000003,10.124.32.99,10.124.32.99,ipv4,,,s,false\n")
+    summary: dict = {}
+    hm.build_addresses(work, _REG, summary)
+    assert {r["address"] for r in _csv(work / "hosts" / "addresses.csv")} == {
+        "10.124.32.200", "10.124.32.201", "10.124.32.99", "203.0.113.9"}
+    assert _csv(work / "hosts" / "device_peers.csv") == [] and summary["resolved"] == []
+
+
+def test_reused_address_resolves_to_the_device_that_holds_it_now(tmp_path):
+    work = _peer_project(
+        tmp_path,
+        "CD-000001,Old,t,,,,,unknown,confirmed,src,WM,x,true,2\n"
+        "CD-000002,New,t,,,,,unknown,confirmed,src2,WM,x,true,1\n",
+        "CD-000001,10.124.32.200,10.124.32.200,ipv4,,,s,false\n"
+        "CD-000002,10.124.32.200,10.124.32.200,ipv4,,,s,true\n")
+    hm.build_addresses(work, _REG)
+    rows = _csv(work / "hosts" / "device_peers.csv")
+    assert [(r["address"], r["device_id"], r["provenance"]) for r in rows] == [("10.124.32.200", "CD-000002", "src2")]
+
+
+def test_ambiguous_and_host_owned_aliases_are_reported_not_resolved(tmp_path):
+    work = _peer_project(
+        tmp_path,
+        "CD-000001,A,t,,,,,unknown,confirmed,s,WM,x,true,1\n"
+        "CD-000002,B,t,,,,,unknown,confirmed,s,WM,x,true,1\n",
+        "CD-000001,10.124.32.200,10.124.32.200,ipv4,,,s,true\n"
+        "CD-000002,10.124.32.200,10.124.32.200,ipv4,,,s,true\n"
+        "CD-000002,10.124.32.10,10.124.32.10,ipv4,,,s,true\n")
+    summary: dict = {}
+    hm.build_addresses(work, _REG, summary)
+    assert summary["ambiguous"] == {"10.124.32.200": ["CD-000001", "CD-000002"]}
+    assert summary["conflicts"] == [{"address": "10.124.32.10", "device_id": "CD-000002", "host": "APP1"}]
+    assert "10.124.32.200" in {r["address"] for r in _csv(work / "hosts" / "addresses.csv")}
+    assert _csv(work / "hosts" / "device_peers.csv") == []
+
+
+def test_dropping_the_register_removes_a_stale_peer_projection(tmp_path):
+    work = _peer_project(tmp_path, "CD-000001,A,t,,,,,unknown,confirmed,s,WM,x,true,1\n",
+                         "CD-000001,10.124.32.200,10.124.32.200,ipv4,,,s,true\n")
+    hm.build_addresses(work, _REG)
+    assert (work / "hosts" / "device_peers.csv").is_file()
+    (work / "hosts" / "connected_devices.csv").unlink()
+    (work / "hosts" / "device_addresses.csv").unlink()
+    hm.build_addresses(work, _REG)
+    assert not (work / "hosts" / "device_peers.csv").exists()
+    assert "10.124.32.200" in {r["address"] for r in _csv(work / "hosts" / "addresses.csv")}
