@@ -189,3 +189,25 @@ export type PromptInfo = { name: string; title: string; use: string; kinds: stri
 export type PromptSection = { key: string; number: string; title: string; blocks: { id: string; kind: string; label: string }[] };
 export type PromptList = { prompts: PromptInfo[]; max_bytes: number; sections: PromptSection[] };
 export type PromptPreview = { text: string; words: number; sources: { name: string; source: string }[]; kinds: string[] };
+
+export type AssetKind = "application_hosts" | "devices" | "unidentified" | "conflicts";
+export type AssetEvidence = { evidence_id: string; claim: string };
+export type AssetService = { service: string; server_host: string; server_ip: string; preference: string; source: string };
+export type AssetConnection = { src: string; dst: string; dst_port: string; connections: string; basis: string; source: string };
+export type AssetItem = {
+  id: string; kind: string; name?: string; address?: string; type?: string; role?: string; site?: string; owner?: string;
+  state?: string; classification?: string; relationship?: string; in_scope?: string;
+  aliases?: string[]; services?: AssetService[]; observed_connections?: AssetConnection[]; documented_dependencies?: string[];
+  connected_application_hosts?: string[]; direction?: string[]; directions?: string[]; ports?: string[]; processes?: string[];
+  observation_type?: string[]; seen_from?: string[]; sessions?: string; claimed_by_device?: string; claimed_by?: string[]; host?: string;
+  source?: string; evidence?: AssetEvidence[];
+};
+export type AssetGroup = { items: AssetItem[]; total: number; page: number; per_page: number };
+export type AssetList = {
+  system: string; project_key: string; groups: Partial<Record<AssetKind, AssetGroup>>;
+  counts: Record<AssetKind, number>; sources: string[]; matrix_rows: number; note: string;
+};
+export type AssetDetail = {
+  system: string; project_key: string; id: string; kind: AssetKind; asset: AssetItem; other_kinds: AssetKind[];
+  source_links: { files: string[]; evidence: AssetEvidence[] };
+};
