@@ -91,7 +91,8 @@ class Handler(BaseHTTPRequestHandler):
             if match:
                 return self.dispatch_result(api.system_assets(
                     match.group(1), scalar(query, "q"), scalar(query, "kind"), scalar(query, "type"),
-                    scalar(query, "state"), int(scalar(query, "page", "1")), int(scalar(query, "per_page", "50"))))
+                    scalar(query, "state"), int(scalar(query, "page", "1")), int(scalar(query, "per_page", "50")),
+                    boolean(query, "include_retired")))
             match = re.fullmatch(r"/api/systems/([^/]+)/assets/([^/]+)", path)
             if match:
                 return self.dispatch_result(api.system_asset_detail(

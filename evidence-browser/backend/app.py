@@ -1051,13 +1051,13 @@ ASSET_KINDS = ("application_hosts", "devices", "unidentified", "conflicts")
 def _asset_groups(system_key: str) -> tuple[dict[str, Any], dict[str, Any]]:
     """The project-scoped inventory for the selected system key, resolved through the registry."""
     project = system_project(system_key)
-    return project, assets.build(work_dir(project), agents_dir(), page=1, per_page=10**9)
+    return project, assets.build(work_dir(project), agents_dir(), page=1, per_page=10**9, include_retired=True)
 
 
 @app.get("/api/systems/{system_key}/assets")
 def system_assets(system_key: str, q: str = Query(""), kind: str = Query(""), type: str = Query(""),
                   state: str = Query(""), page: int = Query(1, ge=1),
-                  per_page: int = Query(50, ge=1, le=500)) -> dict[str, Any]:
+                  per_page: int = Query(50, ge=1, le=500), include_retired: bool = Query(False)) -> dict[str, Any]:
     """Hosts, connected devices, unidentified addresses and conflicts for one system, filtered and paginated.
 
     ``kind`` picks one group; ``type`` and ``state`` match an item's type and state exactly (ignoring case)."""
@@ -1065,7 +1065,9 @@ def system_assets(system_key: str, q: str = Query(""), kind: str = Query(""), ty
         raise HTTPException(422, f"Unknown asset kind '{kind}'; expected one of {', '.join(ASSET_KINDS)}")
     project = system_project(system_key)
     page, per_page = max(1, page), min(500, max(1, per_page))
-    built = assets.build(work_dir(project), agents_dir(), page=1, per_page=10**9, query=q, kind=kind)
+    include_retired = include_retired is True          # a direct call that omits it gets the default, not the Query marker
+    built = assets.build(work_dir(project), agents_dir(), page=1, per_page=10**9, query=q, kind=kind,
+                         include_retired=include_retired)
     wanted_type, wanted_state = type.strip().lower(), state.strip().lower()
     groups: dict[str, Any] = {}
     for name in ASSET_KINDS:
@@ -1080,7 +1082,7 @@ def system_assets(system_key: str, q: str = Query(""), kind: str = Query(""), ty
         groups[name] = {"items": items[start:start + per_page], "total": len(items), "page": page, "per_page": per_page}
     return {"system": system_key, "project_key": project["key"], "groups": groups,
             "counts": built["counts"], "sources": built["sources"], "matrix_rows": built["matrix_rows"],
-            "note": built["note"]}
+            "note": built["note"], **({"retired_devices": built["retired_devices"]} if include_retired else {})}
 
 
 @app.get("/api/systems/{system_key}/assets/{asset_id}")

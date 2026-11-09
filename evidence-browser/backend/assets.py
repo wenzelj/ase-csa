@@ -126,13 +126,17 @@ def _evidence(map_: dict[str, list[dict]], *keys: str) -> list[dict]:
 
 
 def build(work_dir: Path, agents: Path, *, page: int = 1, per_page: int = 50,
-          query: str = "", kind: str = "") -> dict[str, Any]:
+          query: str = "", kind: str = "", include_retired: bool = False) -> dict[str, Any]:
     """Assemble the inventory read model. Read-only: nothing under the project is written.
 
     ``kind`` narrows the response to one group (``application_hosts``, ``devices``,
     ``unidentified``, ``conflicts`` or "" for all); ``query`` filters that group's rows by name,
     role, site, type or address; ``page``/``per_page`` paginate. Every group carries its own
-    ``items``, ``total``, ``page`` and ``per_page``; ``sources`` lists the files that existed."""
+    ``items``, ``total``, ``page`` and ``per_page``; ``sources`` lists the files that existed.
+
+    ``include_retired`` adds retired register devices to the ``devices`` group (``active`` false, no
+    aliases, nothing derived from observations) and a ``retired_devices`` count; ``counts`` still
+    counts active devices only."""
     _framework(agents)
     from csa_docx import evidence_digest, evidence_live
 
@@ -143,8 +147,9 @@ def build(work_dir: Path, agents: Path, *, page: int = 1, per_page: int = 50,
     link_rows = _rows(work_dir / "hosts" / "host_links.csv")
     svc_rows = _rows(work_dir / "hosts" / "host_services.csv")
     addr_rows = _rows(work_dir / "hosts" / "addresses.csv")
-    dev_rows = [r for r in _rows(work_dir / "hosts" / "connected_devices.csv")
-                if (r.get("active") or "true").strip().lower() in ("true", "1", "yes")]
+    all_dev_rows = _rows(work_dir / "hosts" / "connected_devices.csv")
+    dev_rows = [r for r in all_dev_rows if (r.get("active") or "true").strip().lower() in ("true", "1", "yes")]
+    retired_rows = [r for r in all_dev_rows if r not in dev_rows]
     alias_rows = [r for r in _rows(work_dir / "hosts" / "device_addresses.csv")
                   if (r.get("active") or "true").strip().lower() in ("true", "1", "yes")]
 
@@ -209,8 +214,23 @@ def build(work_dir: Path, agents: Path, *, page: int = 1, per_page: int = 50,
                if _norm(a["normalized"])}
 
     devices = []
-    for d in sorted(dev_rows, key=lambda x: x.get("device_id", "")):
+    for d in sorted(dev_rows + (retired_rows if include_retired else []), key=lambda x: x.get("device_id", "")):
         dev_id = (d.get("device_id") or "").strip()
+        register = {"revision": (d.get("revision") or "").strip(), "provenance": (d.get("provenance") or "").strip(),
+                    "reviewer": (d.get("reviewer") or "").strip(), "recorded": (d.get("recorded") or "").strip()}
+        if d in retired_rows:
+            # a retired identification keeps its register row only: no aliases, no connections inferred from it
+            devices.append({
+                "id": dev_id, "name": (d.get("name") or "").strip(), "kind": "connected_device", "active": False,
+                "type": (d.get("device_type") or "").strip(), "role": (d.get("role") or "").strip(),
+                "owner": (d.get("owner") or "").strip(), "site": (d.get("site_zone") or "").strip(),
+                "state": (d.get("identification_state") or "").strip(),
+                "classification": (d.get("classification") or "").strip(),
+                "relationship": (d.get("relationship") or "").strip(), "aliases": [],
+                "connected_application_hosts": [], "direction": [], "ports": [], "processes": [],
+                "observation_type": [], "source": (d.get("provenance") or "hosts/connected_devices.csv").strip(),
+                "evidence": [], **register})
+            continue
         dev_aliases = aliases_by_device.get(dev_id, [])
         keys = {_norm(a["normalized"]) for a in dev_aliases if _norm(a["normalized"])}
         name_n = _norm(d.get("name", ""))
@@ -260,6 +280,7 @@ def build(work_dir: Path, agents: Path, *, page: int = 1, per_page: int = 50,
             "observation_type": observation_type,
             "source": (d.get("provenance") or "hosts/connected_devices.csv").strip(),
             "evidence": ev(d.get("name", ""), *[_norm(a["normalized"]) for a in dev_aliases]),
+            "active": True, **register,
         })
 
     # --- unidentified addresses -------------------------------------------------------
@@ -310,7 +331,10 @@ def build(work_dir: Path, agents: Path, *, page: int = 1, per_page: int = 50,
     else:
         out = {k: {"items": _page(v, page, per_page, query),
                    "total": len(v), "page": max(1, page), "per_page": per_page} for k, v in groups.items()}
-    return {"groups": out, "counts": {k: len(v) for k, v in groups.items()}, "sources": sources,
+    counts = {k: len(v) for k, v in groups.items()}
+    counts["devices"] = len([d for d in devices if d["active"]])
+    extra = {"retired_devices": len(retired_rows)} if include_retired else {}
+    return {"groups": out, "counts": counts, "sources": sources, **extra,
             "matrix_rows": len(live),
             "note": "Observed connections, configured services and documented dependencies are recorded "
                     "distinctly; none of them implies a migration dependency."}

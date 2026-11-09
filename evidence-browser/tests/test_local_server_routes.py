@@ -139,6 +139,9 @@ def test_assets_routes_match_between_both_servers(tmp_path, monkeypatch) -> None
         assert listing == json.loads(json.dumps(api.system_assets("alpha-app", "", "devices", "printer", "confirmed", 1, 50)))
         status, detail = get("/api/systems/alpha-app/assets/CD-000001")
         assert status == 200 and detail == json.loads(json.dumps(api.system_asset_detail("alpha-app", "CD-000001", "")))
+        status, withheld = get("/api/systems/alpha-app/assets?kind=devices&include_retired=true")
+        assert status == 200 and withheld == json.loads(json.dumps(
+            api.system_assets("alpha-app", "", "devices", "", "", 1, 50, True))) and withheld["retired_devices"] == 0
         assert get("/api/systems/beta-app/assets/CD-000001")[0] == 404
         assert get("/api/systems/unknown/assets")[0] == 404
         assert get("/api/systems/alpha-app/assets?kind=bogus")[0] == 422

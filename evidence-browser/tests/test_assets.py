@@ -437,3 +437,34 @@ def test_device_edits_cannot_cross_projects(tmp_path: Path, monkeypatch) -> None
     assert [d["id"] for d in api.system_assets("alpha-app", "", "devices", "", "", 1, 50)["groups"]["devices"]["items"]] == ["CD-000001", "CD-000002"]
     assert not (tmp_path / "alpha" / "csa-work" / "hosts" / "device-audit.jsonl").exists()
     assert (beta / "csa-work" / "hosts" / "device-audit.jsonl").is_file() and _snapshot(beta) != before
+
+
+def test_device_items_carry_revision_and_register_provenance(tmp_path: Path) -> None:
+    out = assets.build(_work(tmp_path), AGENTS, kind="devices")
+    printer = next(d for d in out["groups"]["devices"]["items"] if d["id"] == "CD-000001")
+    assert printer["revision"] == "1" and printer["active"] is True
+    assert printer["provenance"] == "asset register" and printer["reviewer"] == "WM" and printer["recorded"] == "2026-01-06"
+    assert "retired_devices" not in out and out["counts"]["devices"] == 2      # default response is unchanged
+
+
+def test_retired_devices_are_listed_only_on_request_and_never_connect(tmp_path: Path, monkeypatch) -> None:
+    from backend import app as api
+
+    _register_two(tmp_path, monkeypatch)
+    api.retire_connected_device("alpha-app", "CD-000001", {"expected_revision": "1", "reviewer": "WM"})
+    default = api.system_assets("alpha-app", "", "", "", "", 1, 50, False)
+    assert default["counts"]["devices"] == 1 and "retired_devices" not in default
+    assert [d["id"] for d in default["groups"]["devices"]["items"]] == ["CD-000002"]
+    full = api.system_assets("alpha-app", "", "devices", "", "", 1, 50, True)
+    assert full["counts"]["devices"] == 1 and full["retired_devices"] == 1
+    by = {d["id"]: d for d in full["groups"]["devices"]["items"]}
+    gone = by["CD-000001"]
+    assert gone["active"] is False and gone["revision"] == "2" and gone["reviewer"] == "WM"
+    assert gone["aliases"] == [] and gone["connected_application_hosts"] == [] and gone["observation_type"] == []
+    assert by["CD-000002"]["active"] is True
+    # a retired device no longer makes its addresses conflict, and its row is reachable for Restore
+    assert api.system_assets("alpha-app", "", "conflicts", "", "", 1, 50, True)["groups"]["conflicts"]["items"] == []
+    detail = api.system_asset_detail("alpha-app", "CD-000001", "devices")
+    assert detail["asset"]["active"] is False and detail["asset"]["revision"] == "2"
+    back = api.restore_connected_device("alpha-app", "CD-000001", {"expected_revision": detail["asset"]["revision"]})
+    assert back["device"]["active"] == "true"
