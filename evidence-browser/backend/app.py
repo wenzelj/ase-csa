@@ -1084,7 +1084,8 @@ def figure_detail(system_key: str, section_key: str) -> dict[str, Any]:
 
 FIGURE_FILES = {"figure.docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 "figure-print.svg": "image/svg+xml", "figure.png": "image/png",
-                "figure-screen.png": "image/png"}
+                "figure-screen.png": "image/png", "figure-screen-landscape.svg": "image/svg+xml",
+                "figure-screen-landscape.png": "image/png"}
 
 
 @app.get("/api/systems/{system_key}/figures/{section_key}/file/{name}")

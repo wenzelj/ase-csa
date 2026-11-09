@@ -12,7 +12,7 @@ import "./figures.css";
  * from the latest evidence; the figure design agent designs, builds or reviews a figure (csa figure KEY --design). */
 
 type Req = { id: string; text: string; current_state: string; rating: string };
-type Saved = { at?: string; drawn?: string; hash: string; fit?: Record<string, number>; gaps?: number; placed?: { at: string; hash: string; drawing?: string; layout?: string }; docx?: string | null } | null;
+type Saved = { at?: string; drawn?: string; hash: string; fit?: Record<string, number>; gaps?: number; screen_landscape?: boolean; placed?: { at: string; hash: string; drawing?: string; layout?: string; screen_landscape?: boolean }; docx?: string | null } | null;
 type Row = { key: string; number: string; title: string; level: number; status: string; reason: string; profile: string | null;
   archetype: string | null; question?: string; must_show?: string[]; caption?: string; requirements: Req[]; hosts_in_text: string[];
   slot: { placeholder: boolean; caption: string | null } | null; saved: Saved };
@@ -27,7 +27,7 @@ type Gap = { id: string; what: string; why: string };
 type Brief = { purpose: Text; caption: Text; source: Text; items: Item[]; gaps: Gap[]; question?: string; requirements: string[] };
 type Check = { level: "ok" | "note" | "flag"; kind: string; text: string; evidence: string[] };
 type Detail = { state: string; reason?: string; row: Row; brief: Brief; problems: string[]; fit: { checks: Check[]; counts: Record<string, number> };
-  relations: Rel[]; svg: string | null; hash: string | null; print_svg?: string | null;
+  relations: Rel[]; svg: string | null; hash: string | null; print_svg?: string | null; screen_landscape_svg?: string | null;
   print?: { width_mm: number; height_mm: number; fits_page: boolean; min_text_pt: number } | null; notes: string[]; nodes?: number; lines?: number; saved: Saved;
   freshness: "current" | "changed" | "not-saved"; placement: "not-placed" | "placed" | "out-of-date";
   agent?: { design?: AgentNote; review?: AgentNote; build?: AgentNote } };
@@ -256,7 +256,10 @@ function Panel({ d, busy, job, fit, setFit, openEvidenceId, save, edit, place, r
   const setLayout = (v: "print" | "screen") => { setLayoutState(v); try { localStorage.setItem(LAYOUT_KEY, v); } catch { /* per-browser only */ } };
   const placedLayout = d.saved?.placed?.layout === "screen" ? "screen" : "print";
   const placedAs = d.saved?.placed?.drawing === "word" ? "word" : "picture";
-  const canPlace = d.freshness === "current" && (d.placement !== "placed" || placedAs !== drawing);
+  // Placement is an explicit user decision. Do not disable the action because the manifest says the
+  // same figure/layout was placed before, or because Word no longer contains that placement.
+  const canPlace = d.freshness === "current";
+  const canSave = d.freshness !== "current" || !d.saved?.screen_landscape;
   const fileUrl = (name: string) => `/api/systems/${system}/figures/${r.key}/file/${name}`;
   useEffect(() => { setDraft(null); }, [r.key]);
   const ev = (id: string) => /^E-\d+$/.test(id) && openEvidenceId
@@ -326,8 +329,8 @@ function Panel({ d, busy, job, fit, setFit, openEvidenceId, save, edit, place, r
               <button className={view === "print" ? "on" : ""} onClick={() => setView("print")}>As printed</button>
               <button className={view === "screen" ? "on" : ""} onClick={() => setView("screen")}>Screen view</button></span>}
             {view === "screen" && <button onClick={() => setFit(!fit)}>{fit ? "Actual size" : "Fit to width"}</button>}
-            <button className="primary" disabled={!!busy || d.freshness === "current"} onClick={save}>
-              {busy === "save" ? "Saving…" : d.freshness === "changed" ? "Save the new version" : d.freshness === "current" ? "Saved" : "Save figure"}
+            <button className="primary" disabled={!!busy || !canSave} onClick={save}>
+              {busy === "save" ? "Saving…" : d.freshness === "changed" ? "Save the new version" : d.freshness === "current" && !d.saved?.screen_landscape ? "Regenerate layouts" : d.freshness === "current" ? "Saved" : "Save figure"}
             </button>
             <button className="primary" disabled={!!busy || !canPlace} onClick={() => place(drawing, layout)}
               title="Inserts the figure, caption and source as a tracked change. Accept or reject it in Word.">
@@ -355,14 +358,14 @@ function Panel({ d, busy, job, fit, setFit, openEvidenceId, save, edit, place, r
             <button className={layout === "print" ? "on" : ""} onClick={() => setLayout("print")}>As printed</button>
             <button className={layout === "screen" ? "on" : ""} onClick={() => setLayout("screen")}>Screen view</button>
           </span>
-          <small className="fg-muted">Choose which version of the figure goes into the document. "As printed" is the readable-at-print-width layout; "Screen view" is the on-screen explorer layout. This is separate from Picture vs Word drawing above.</small>
+          <small className="fg-muted">Choose which version of the figure goes into the document. "As printed" is the portrait paper layout; "Screen view" is the detailed landscape canvas with compact host spacing. This choice is separate from the preview tabs and from Picture vs Word drawing above.</small>
         </div>
         {jobRunning && <div className="fg-note">Running: {job!.operation.replace("figure_", "")} ({job!.state})…</div>}
         {job && DONE.includes(job.state) && job.state !== "succeeded" && <div className="fg-msg">The job {job.state}: {lastMeaningfulLine(job.stderr_tail) || lastMeaningfulLine(job.stdout_tail) || job.message || ""}</div>}
         {view === "print" && d.print_svg
           ? <div className="fg-paper"><div className="fg-sheet" dangerouslySetInnerHTML={{ __html: d.print_svg }} />
               {d.print && <small className="fg-muted">In the document: {Math.round(d.print.width_mm)} × {Math.round(d.print.height_mm)} mm at the text width; smallest text {d.print.min_text_pt} pt.</small>}</div>
-          : <div className={`fg-drawing ${fit ? "fit" : ""}`} dangerouslySetInnerHTML={{ __html: d.svg }} />}
+          : <div className={`fg-drawing ${fit ? "fit" : ""}`} dangerouslySetInnerHTML={{ __html: view === "screen" ? (d.screen_landscape_svg || d.svg || "") : (d.svg || "") }} />}
         <p className="fg-caption">Figure: {b.caption.text}</p>
       </>}
       {!d.svg && r.status === "not-built" && <div className="fg-note">This section needs {r.archetype && KIND[r.archetype] ? (/^[AEIOU]/.test(KIND[r.archetype]) ? "an " : "a ") + KIND[r.archetype].toLowerCase() : "a"} figure. Drawing that kind is not built yet, so nothing is drawn.</div>}

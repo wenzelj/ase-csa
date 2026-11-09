@@ -11,6 +11,7 @@ touched here; place.py puts a saved figure into the document as a tracked change
 from __future__ import annotations
 
 import json
+import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -108,6 +109,8 @@ def figure(ctx: Ctx, key: str, save: bool = False, png: bool = True, edits: dict
         F.print_checks(fit, out["print"])
     saved = manifest(ctx.work).get(key)
     result = {"row": row, "brief": brief, "problems": problems, "svg": out["svg"] if out else None,
+              "screen_landscape_svg": out.get("screen_landscape_svg") if out else None,
+              "screen_landscape": out.get("screen_landscape") if out else None,
               "print_svg": out.get("print_svg") if out else None, "print": out.get("print") if out else None,
               "model": out["model"] if out else None, "hash": out["hash"] if out else None, "fit": fit,
               "relations": [r for r in rel if (r["provider"], r["state"]) not in B.excluded(brief)],
@@ -115,6 +118,11 @@ def figure(ctx: Ctx, key: str, save: bool = False, png: bool = True, edits: dict
     if out and saved:
         result["freshness"] = "current" if saved.get("hash") == out["hash"] else "changed"
     result["placement"] = placement(saved, out["hash"] if out else None)
+    # The manifest records the last framework placement, but a user can accept/reject or delete the
+    # tracked figure directly in Word. Treat a missing bookmark as not placed so the Browser offers Put
+    # in document again instead of disabling the action as a no-op.
+    if result["placement"] == "placed" and not _document_has_figure(ctx.docx, key):
+        result["placement"] = "not-placed"
     if save and out:
         B.save(ctx.work, key, brief)
         entry = D.save(row, out, ctx.work, png=png)
@@ -264,7 +272,9 @@ def place(ctx: Ctx, key: str, author: str, close_word: bool = True, drawing: str
                 if cur["freshness"] == "changed" else "Save the figure first"}
     if layout not in LAYOUTS:
         return {"status": "BLOCKED", "message": f"layout must be one of {', '.join(LAYOUTS)}"}
-    png = ctx.work / "figures" / key / ("figure-screen.png" if layout == "screen" else "figure.png")
+    # Screen placement uses the detailed landscape reflow generated for the document. It retains the
+    # detailed screen-view content while giving labels a page-sized coordinate system.
+    png = ctx.work / "figures" / key / ("figure-screen-landscape.png" if layout == "screen" else "figure.png")
     if not png.is_file():
         name = "screen-view PNG" if layout == "screen" else "PNG"
         return {"status": "BLOCKED", "message": f"the saved figure has no {name} (save the figure first)"
@@ -272,14 +282,19 @@ def place(ctx: Ctx, key: str, author: str, close_word: bool = True, drawing: str
     if drawing not in DRAWINGS:
         return {"status": "BLOCKED", "message": f"drawing must be one of {', '.join(DRAWINGS)}"}
     node = ctx.node(key)
-    word = {"model": cur["model"], "aggregate": cur["row"].get("archetype") in ("A", "C")} if drawing == "word" else None
+    word = ({"model": cur["model"], "aggregate": cur["row"].get("archetype") in ("A", "C"),
+             "svg": cur.get("screen_landscape_svg") if layout == "screen" else cur.get("print_svg")}
+            if drawing == "word" else None)
     res = P.place(ctx.docx, node["title"], node["level"], key, png, cur["brief"]["caption"]["text"],
                   "", author,                     # no Source line under a figure (the brief still keeps its source text) close_word=close_word, word=word,
-                  after_key=cur["row"].get("node_key") if cur["row"].get("part") else None)
+                  after_key=cur["row"].get("node_key") if cur["row"].get("part") else None,
+                  landscape=layout == "screen",
+                  section_number=str(cur["row"]["number"]).split(".", 1)[0])
     if res["status"] == "OK":
         import time
         _manifest_update(ctx.work, key, {"placed": {"hash": cur["hash"], "at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-                                                    "mode": res["mode"], "document": ctx.docx.name, "drawing": drawing, "layout": layout}})
+                                                    "mode": res["mode"], "document": ctx.docx.name, "drawing": drawing,
+                                                    "layout": layout, "screen_landscape": layout == "screen"}})
     return res
 
 
@@ -289,3 +304,12 @@ def placement(saved: dict | None, current_hash: str | None) -> str:
     if not p:
         return "not-placed"
     return "placed" if not current_hash or p.get("hash") == current_hash else "out-of-date"
+
+
+def _document_has_figure(docx: Path, key: str) -> bool:
+    try:
+        with zipfile.ZipFile(docx) as z:
+            xml = z.read("word/document.xml").decode("utf-8", errors="ignore")
+        return f'_CSAFig_{key}' in xml
+    except (OSError, KeyError, zipfile.BadZipFile):
+        return False

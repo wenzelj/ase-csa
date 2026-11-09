@@ -79,6 +79,10 @@ def _heading_level(style: str) -> int | None:
     return int(m.group(1)) if m else None
 
 
+def _section_break_para(chunk: bytes) -> bool:
+    return _style(chunk) == "" and not _text(chunk) and b"<w:sectPr" in chunk
+
+
 def locate(xml: bytes, title: str, level: int, key: str, after_key: str | None = None) -> dict:
     kids = _body_children(xml)
     heads = [i for i, (s, e, t) in enumerate(kids) if t == b"w:p" and _heading_level(_style(xml[s:e])) and _text(xml[s:e]) == title]
@@ -95,6 +99,13 @@ def locate(xml: bytes, title: str, level: int, key: str, after_key: str | None =
     if ours:
         i = ours[0]
         block = [i] + [j for j in (i + 1, i + 2) if j < end and _style(xml[kids[j][0]:kids[j][1]]) in ("Caption", "FigureSource")]
+        # Landscape blocks inserted by this framework are bounded by two empty section-property
+        # paragraphs. Include them when replacing, otherwise repeated previews accumulate section
+        # breaks and can leave the superseded figure on a separate visible page.
+        if i - 1 in span and _section_break_para(xml[kids[i - 1][0]:kids[i - 1][1]]):
+            block.insert(0, i - 1)
+        if block[-1] + 1 < end and _section_break_para(xml[kids[block[-1] + 1][0]:kids[block[-1] + 1][1]]):
+            block.append(block[-1] + 1)
         return {"mode": "replace", "kids": kids, "block": block}
     if after_key:                                    # a second figure: straight after the section's first one
         first = [i for i in span if f'w:name="_CSAFig_{after_key}"'.encode() in xml[kids[i][0]:kids[i][1]]]
@@ -105,9 +116,11 @@ def locate(xml: bytes, title: str, level: int, key: str, after_key: str | None =
         return {"mode": "insert", "kids": kids, "after": block[-1], "after_figure": True}
     for i in figs:
         chunk = xml[kids[i][0]:kids[i][1]]
-        if b"<w:drawing" in chunk:
-            raise Blocked("the section's figure slot already holds an image that this step did not place")
         block = [i] + [j for j in (i + 1, i + 2) if j < end and _style(xml[kids[j][0]:kids[j][1]]) in ("Caption", "FigureSource")]
+        if b"<w:drawing" in chunk:
+            # The user may deliberately replace a figure that was inserted outside this framework.
+            # Treat the slot as a normal tracked replacement rather than blocking on provenance.
+            return {"mode": "replace", "kids": kids, "block": block, "external": True}
         return {"mode": "slot", "kids": kids, "block": block}
     di = next((i for i in span if kids[i][2] == b"w:p" and _text(xml[kids[i][0]:kids[i][1]]).lower() == "discovery information"), None)
     tbl = next((i for i in range(di + 1, end) if kids[i][2] == b"w:tbl"), None) if di is not None else None
@@ -124,6 +137,13 @@ def locate(xml: bytes, title: str, level: int, key: str, after_key: str | None =
             j += 1
         if last is not None:
             tbl = last
+    # Executive Summary is prose-only in templates that no longer retain the original empty
+    # Figure/Caption/Source slot.  Its overview belongs after the summary prose and immediately
+    # before the next section heading, which is also the closest safe location to its discussion.
+    if tbl is None and key == "EXECUTIVE_SUMMARY":
+        prose = [i for i in span if kids[i][2] == b"w:p" and _text(xml[kids[i][0]:kids[i][1]])]
+        if prose:
+            return {"mode": "insert", "kids": kids, "after": prose[-1]}
     if tbl is None:
         raise Blocked("the section has no figure slot and no Discovery Information table to put the figure after")
     return {"mode": "insert", "kids": kids, "after": tbl}
@@ -147,14 +167,25 @@ def _png_size(png: bytes) -> tuple[int, int]:
     return struct.unpack(">II", png[16:24])
 
 
-def _text_width_emu(xml: bytes) -> int:
+def _text_width_emu(xml: bytes, landscape: bool = False) -> int:
     sect = re.findall(rb"<w:sectPr[\s>].*?</w:sectPr>", xml, re.S)
     s = sect[-1] if sect else b""
     w = re.search(rb'<w:pgSz [^>]*w:w="(\d+)"', s)
     l = re.search(rb'<w:pgMar [^>]*w:left="(\d+)"', s)
     r = re.search(rb'<w:pgMar [^>]*w:right="(\d+)"', s)
-    twips = (int(w.group(1)) - int(l.group(1)) - int(r.group(1))) if (w and l and r) else 9638
+    page_w, page_h = (int(w.group(1)), int(re.search(rb'<w:pgSz [^>]*w:h="(\d+)"', s).group(1))) if (w and re.search(rb'<w:pgSz [^>]*w:h="(\d+)"', s)) else (11906, 16838)
+    if landscape:
+        page_w = max(page_w, page_h)
+    twips = (page_w - int(l.group(1)) - int(r.group(1))) if (w and l and r) else (14570 if landscape else 9638)
     return twips * 635
+
+
+def _section_para(landscape: bool) -> str:
+    w, h = (16838, 11906) if landscape else (11906, 16838)
+    orient = ' w:orient="landscape"' if landscape else ''
+    return (f'<w:p><w:pPr><w:sectPr><w:pgSz w:w="{w}" w:h="{h}"{orient}/>'
+            '<w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134" '
+            'w:header="567" w:footer="567" w:gutter="0"/></w:sectPr></w:pPr></w:p>')
 
 
 def _drawing(rid: str, cx: int, cy: int, doc_pr: int, key: str) -> str:
@@ -176,10 +207,19 @@ def _t(text: str) -> str:
     return f'<w:t xml:space="preserve">{escape(text)}</w:t>'
 
 
-def _seq_runs(n: int) -> str:
-    return ('<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> SEQ Figure \\* ARABIC </w:instrText></w:r>'
-            f'<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:rPr><w:noProof/></w:rPr><w:t>{n}</w:t></w:r>'
+def _field_runs(instruction: str, result: str) -> str:
+    return ('<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+            f'<w:r><w:instrText xml:space="preserve"> {escape(instruction)} </w:instrText></w:r>'
+            f'<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:rPr><w:noProof/></w:rPr><w:t>{escape(result)}</w:t></w:r>'
             '<w:r><w:fldChar w:fldCharType="end"/></w:r>')
+
+
+def _section_figure_runs(section: str, sequence: int) -> str:
+    # The framework already owns the section number. Keep it as literal text because LibreOffice
+    # renders STYLEREF 1 \s as the heading words rather than its list number. The SEQ component
+    # remains a real field and restarts at each Heading 1.
+    return (f'<w:r><w:t>{escape(section)}.</w:t></w:r>'
+            + _field_runs(r"SEQ Figure \* ARABIC \s 1", str(sequence)))
 
 
 def _renumber_figures(text: str) -> tuple[str, int]:
@@ -209,6 +249,12 @@ def _renumber_figures(text: str) -> tuple[str, int]:
             end = fin
             chunk = text[start:fin]
         out.append(text[i:start])
+        # Chapter-based fields carry their own restart rule and cached section.sequence
+        # results. The legacy global renumber pass must not rewrite them.
+        if r"\s 1" in chunk:
+            out.append(chunk)
+            i = end
+            continue
         deleted = "<w:del " in text[max(0, start - 1000):start] and "</w:del>" not in text[max(0, start - 1000):start]
         if not deleted:
             fields += 1
@@ -219,7 +265,7 @@ def _renumber_figures(text: str) -> tuple[str, int]:
     return "".join(out), fields
 
 
-def _pointer(num: int, caption: str) -> str:
+def _pointer(num: str, caption: str) -> str:
     """A one-sentence pointer to the figure: its number, then the caption up to its first full stop."""
     head = re.split(r"\s*\.", caption, maxsplit=1)[0].strip()
     if head.endswith("."):
@@ -227,13 +273,14 @@ def _pointer(num: int, caption: str) -> str:
     return f"Figure {num} shows {head}."
 
 
-def _new_block(drawing: str, caption: str, source: str, n: int, ids: _Ids, author: str, date: str, key: str) -> str:
+def _new_block(drawing: str, caption: str, source: str, section: str, sequence: int,
+               ids: _Ids, author: str, date: str, key: str) -> str:
     bm = ids.next()
     mark = lambda: f'<w:rPr><w:ins {_rev("ins", ids, author, date)}/></w:rPr>'
     return (f'<w:p><w:pPr><w:pStyle w:val="Figure"/>{mark()}</w:pPr><w:bookmarkStart w:id="{bm}" w:name="_CSAFig_{escape(key)}"/>'
             f'<w:ins {_rev("ins", ids, author, date)}><w:r>{drawing}</w:r></w:ins><w:bookmarkEnd w:id="{bm}"/></w:p>'
             f'<w:p><w:pPr><w:pStyle w:val="Caption"/>{mark()}</w:pPr><w:ins {_rev("ins", ids, author, date)}>'
-            f'<w:r>{_t("Figure ")}</w:r>{_seq_runs(n)}<w:r>{_t(": " + caption)}</w:r></w:ins></w:p>'
+            f'<w:r>{_t("Figure ")}</w:r>{_section_figure_runs(section, sequence)}<w:r>{_t(": " + caption)}</w:r></w:ins></w:p>'
             + (f'<w:p><w:pPr><w:pStyle w:val="FigureSource"/>{mark()}</w:pPr><w:ins {_rev("ins", ids, author, date)}>'
                f'<w:r>{_t(source)}</w:r></w:ins></w:p>' if source else ""))
 
@@ -333,7 +380,8 @@ def _author_from_cli(agents: Path) -> str:
 
 
 def place(docx: Path, title: str, level: int, key: str, png: Path, caption: str, source: str, author: str,
-          close_word: bool = True, backup: bool = True, word: dict | None = None, after_key: str | None = None) -> dict:
+          close_word: bool = True, backup: bool = True, word: dict | None = None, after_key: str | None = None,
+          landscape: bool = False, section_number: str = "1") -> dict:
     """word: {"model": ..., "aggregate": bool} draws the figure as editable Word shapes (the picture is kept as the
     fallback for readers without Word 2010 drawing support); None inserts the picture."""
     docx, png = Path(docx), Path(png)
@@ -367,11 +415,11 @@ def place(docx: Path, title: str, level: int, key: str, png: Path, caption: str,
     ct = parts["[Content_Types].xml"].decode("utf-8")
     if 'Extension="png"' not in ct:
         ct = ct.replace("<Types ", "<Types ", 1).replace("<Default ", '<Default Extension="png" ContentType="image/png"/><Default ', 1)
-    width = _text_width_emu(xml)
+    width = _text_width_emu(xml, landscape=landscape)
     if word:
         from csa_docx.techdiagram.word_drawing import drawing_xml
         drawing, _info = drawing_xml(word["model"], aggregate=word.get("aggregate", False), width_mm=width / 36000,
-                                     png_rid=rid, doc_pr=ids.doc_pr, name=f"CSA figure {key}")
+                                     png_rid=rid, doc_pr=ids.doc_pr, name=f"CSA figure {key}", svg=word.get("svg"))
         ids.doc_pr += 2
     else:
         drawing = _drawing(rid, width, int(width * ph / pw), ids.doc_pr, key)
@@ -382,13 +430,33 @@ def place(docx: Path, title: str, level: int, key: str, png: Path, caption: str,
     block = ""
     if where["mode"] in ("insert", "replace"):
         at = epos(where["after"]) if where["mode"] == "insert" else bpos(where["block"][0])
-        n = len(re.findall(r"SEQ Figure", text[:at])) + 1
-        block = _new_block(drawing, caption, source, n, ids, author, date, key)
+        current_child = where["after"] + 1 if where["mode"] == "insert" else where["block"][0]
+        section_start = max([i for i in range(current_child + 1)
+                             if kids[i][2] == b"w:p" and _style(xml[kids[i][0]:kids[i][1]]) == "Heading1"] or [0])
+        sequence = 1 + sum(
+            1 for i in range(section_start + 1, current_child)
+            if kids[i][2] == b"w:p" and _style(xml[kids[i][0]:kids[i][1]]) == "Figure"
+            and b"<w:drawing" in xml[kids[i][0]:kids[i][1]]
+            and b"<w:del " not in xml[kids[i][0]:kids[i][1]]
+        )
+        block = _new_block(drawing, caption, source, section_number, sequence, ids, author, date, key)
+        if landscape:
+            # Word stores the previous section's properties on the paragraph before a new section,
+            # and the landscape section's properties on the paragraph after the figure block.
+            block = _section_para(False) + block + _section_para(True)
         if where["mode"] == "insert":
             text = text[:at] + block + text[at:]
         else:
             first, last = where["block"][0], where["block"][-1]
-            old = "".join(_delete_paragraph(text[bpos(i):epos(i)], ids, author, date) for i in where["block"])
+            # If Word has not yet accepted the earlier framework insertion, supersede that pending
+            # proposal physically. Wrapping an already inserted w:ins block in w:del makes both
+            # versions visible in review/rendering and creates duplicate landscape pages.
+            figure_chunks = [text[bpos(i):epos(i)] for i in where["block"]
+                             if f'w:name="_CSAFig_{key}"' in text[bpos(i):epos(i)]]
+            pending = bool(figure_chunks and any("<w:ins " in chunk for chunk in figure_chunks))
+            old = "" if pending else "".join(
+                _delete_paragraph(text[bpos(i):epos(i)], ids, author, date) for i in where["block"]
+            )
             text = text[:bpos(first)] + old + block + text[epos(last):]
     else:                                                    # slot: fill the template's placeholder paragraphs
         fig, *rest = where["block"]
@@ -407,11 +475,14 @@ def place(docx: Path, title: str, level: int, key: str, png: Path, caption: str,
                 ins = f'<w:ins {_rev("ins", ids, author, date)}><w:r>{_t(source)}</w:r></w:ins>'
             cut = last if last >= 0 else chunk.rindex("</w:p>")
             new_parts.append(chunk[:cut] + ins + chunk[cut:])
-        text = text[:bpos(fig)] + "".join(new_parts) + text[epos(where["block"][-1]):]
-    # Renumber every SEQ Figure field in document order: the cached results now read 1, 2, 3 ....
-    # A field inside a tracked deletion is not live and does not take a number.
-    text, nfields = _renumber_figures(text)
-    pointer = _pointer(nfields, caption)
+        replacement = "".join(new_parts)
+        if landscape:
+            replacement = _section_para(False) + replacement + _section_para(True)
+        text = text[:bpos(fig)] + replacement + text[epos(where["block"][-1]):]
+    # Keep legacy global fields internally consistent while leaving the new chapter-restarting
+    # fields untouched. Existing documents migrate progressively as figures are replaced.
+    text, _legacy_fields = _renumber_figures(text)
+    pointer = _pointer(f"{section_number}.{sequence}", caption)
     bak = create_backup(docx, f"figure_{key}") if backup else None
     parts["word/document.xml"] = text.encode("utf-8")
     parts["word/_rels/document.xml.rels"] = rels.encode("utf-8")

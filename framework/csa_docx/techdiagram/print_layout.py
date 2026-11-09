@@ -183,12 +183,15 @@ def aggregate_zones(model: dict) -> dict:
 
 
 # ------------------------------------------------------------------ layout + render
-def render_print_svg(model: dict, aggregate: bool = False) -> tuple[str, dict]:
+def render_print_svg(model: dict, aggregate: bool = False, width_mm: float = 170.0,
+                     page_height_mm: float | None = None, screen_reflow: bool = False) -> tuple[str, dict]:
     """The figure as printed in the CSA: the band design (IT, boundary, OT; one icon per role; one line per
     function). aggregate: zones-and-conduits figures, whose OT lines join sites rather than roles."""
     from .band_layout import render_band_svg
     opts = model.get("print") or {}
-    return render_band_svg(model, conduits=bool(aggregate or opts.get("conduits")))
+    return render_band_svg(model, conduits=bool(aggregate or opts.get("conduits")),
+                           width_mm=width_mm, page_height_mm=page_height_mm,
+                           screen_reflow=screen_reflow)
 
 
 def render_card_svg(model: dict, aggregate: bool = False) -> tuple[str, dict]:
