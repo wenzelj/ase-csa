@@ -605,3 +605,132 @@ def test_conversion_cannot_cross_projects(tmp_path: Path, monkeypatch) -> None:
     with pytest.raises(HTTPException) as exc:
         api.preview_host_conversion("nope", dev["device_id"], _CONVERT)
     assert exc.value.status_code == 404
+
+
+# --- end to end: identify -> rebuild -> resolved in the browser read model -> retire (S549) -------
+
+def _captured_project(tmp_path: Path, monkeypatch) -> Path:
+    """A synthetic project with a real discovery index: APP1 captured, one outbound session to 10.9.9.9."""
+    import json
+    import sqlite3
+
+    root = tmp_path / "e2e"
+    work = root / "csa-work"
+    (work / "hosts").mkdir(parents=True)
+    con = sqlite3.connect(work / "discovery-index.sqlite")
+    con.executescript("""
+      create table captures(capture_id, folder, host, collector, capture_utc, archived, superseded_by, file_count);
+      create table files(file_id, rel_path, capture_id, host, ext, size, mtime, sha1, status, reason, dup_of, source_class);
+      create table rows(file_id, table_name, fmt, block_no, line_no, data);
+    """)
+    con.execute("insert into captures values ('c1','cap/APP1','APP1','t','x',0,null,1)")
+    con.execute("insert into files values (1,'cap/APP1/21.txt','c1','APP1','x',0,0,'','indexed','',null,'other')")
+    con.execute("insert into rows values (1,'established_connections_raw','csv',0,2,?)", (json.dumps({
+        "LocalAddress": "10.9.9.1", "LocalPort": "50000", "RemoteAddress": "10.9.9.9", "RemotePort": "445"}),))
+    con.commit()
+    con.close()
+    (work / "evidence-matrix.csv").write_text(
+        "evidence_id,csa_area,status,claim,review_state\n"
+        "E-1,network_and_connectivity,VERIFIED,APP1 has an established connection from svchost.exe to 10.9.9.9 on port 445,reviewed\n",
+        encoding="utf-8")
+    reg = tmp_path / "PROJECTS.yaml"
+    reg.write_text(f"projects:\n  - key: e2e-app\n    label: E2E\n    project_root: {root}\n    work_dir: {work}\n", encoding="utf-8")
+    monkeypatch.setenv("CSA_PROJECTS_FILE", str(reg))
+    return work
+
+
+def _rebuild(work: Path) -> dict:
+    from csa_docx import hostmodel
+    return hostmodel.build(work)
+
+
+def _csv_rows(path: Path) -> list[dict]:
+    import csv as _csv
+    with path.open(newline="", encoding="utf-8") as fh:
+        return list(_csv.DictReader(fh))
+
+
+def test_identified_peer_survives_a_rebuild_and_retirement_leaves_the_observation(tmp_path: Path, monkeypatch) -> None:
+    from backend import app as api
+    from backend import network
+
+    work = _captured_project(tmp_path, monkeypatch)
+    _rebuild(work)
+    # 1. unidentified: the address is listed with what was seen, and no device exists yet
+    first = api.system_assets("e2e-app", "", "", "", "", 1, 50, False)
+    seen = {u["address"]: u for u in first["groups"]["unidentified"]["items"]}
+    assert seen["10.9.9.9"]["ports"] == ["445"] and seen["10.9.9.9"]["directions"] == ["outbound"]
+    assert first["counts"]["devices"] == 0
+
+    # 2. identify it: preview first, then save a confirmed device with a role and a cited source
+    preview = api.preview_device_aliases("e2e-app", {"add": ["10.9.9.9"]})
+    assert preview["changes"][0]["before"]["resolves_to"] == "unidentified_address" and preview["blocked"] is False
+    made = api.create_connected_device("e2e-app", {
+        "name": "Label printer", "device_type": "printer", "role": "labels the despatch", "owner": "Logistics",
+        "site_zone": "Perth", "classification": "supporting IT", "identification_state": "confirmed",
+        "source": "Asset register v3, row 41", "reviewer": "WM", "addresses": ["10.9.9.9"]})["device"]
+    assert made["identification_state"] == "confirmed" and made["revision"] == "1"
+    registers = {n: (work / "hosts" / n).read_bytes() for n in ("connected_devices.csv", "device_addresses.csv", "device-audit.jsonl")}
+
+    # 3. rebuild: the decision survives, the address is resolved, and the browser read model shows the connection
+    result = _rebuild(work)
+    assert result["devices_resolved"] == 1 and result["device_conflicts"] == []
+    assert {n: (work / "hosts" / n).read_bytes() for n in registers} == registers        # the register is untouched
+    assert "10.9.9.9" not in {r["address"] for r in _csv_rows(work / "hosts" / "addresses.csv")}
+    peer = _csv_rows(work / "hosts" / "device_peers.csv")[0]
+    assert (peer["address"], peer["device_id"], peer["revision"]) == ("10.9.9.9", made["device_id"], "1")
+    assert "Asset register v3" in peer["provenance"] and peer["ports"] == "445"
+    after = api.system_assets("e2e-app", "", "", "", "", 1, 50, False)
+    assert "10.9.9.9" not in {u["address"] for u in after["groups"]["unidentified"]["items"]}
+    device = next(d for d in after["groups"]["devices"]["items"] if d["id"] == made["device_id"])
+    assert "captured_connection" in device["observation_type"] and {e["evidence_id"] for e in device["evidence"]} == {"E-1"}
+    assert [h["name"] for h in after["groups"]["application_hosts"]["items"]] == ["APP1"]    # still the only host
+    node = next(n for n in network.build(work, api.agents_dir())["nodes"] if n["id"] == "10.9.9.9")
+    assert node["device"]["device_id"] == made["device_id"] and node["device"]["state"] == "confirmed" and node["ips"] == "10.9.9.9"
+
+    # 4. retire: the observation is still there and the address is unidentified again
+    api.retire_connected_device("e2e-app", made["device_id"], {"expected_revision": "1", "reviewer": "WM"})
+    _rebuild(work)
+    assert "10.9.9.9" in {r["address"] for r in _csv_rows(work / "hosts" / "addresses.csv")}
+    assert _csv_rows(work / "hosts" / "device_peers.csv") == []
+    back = api.system_assets("e2e-app", "", "", "", "", 1, 50, False)
+    again = {u["address"]: u for u in back["groups"]["unidentified"]["items"]}
+    assert again["10.9.9.9"]["ports"] == ["445"] and back["counts"]["devices"] == 0
+    node = next(n for n in network.build(work, api.agents_dir())["nodes"] if n["id"] == "10.9.9.9")
+    assert "device" not in node and node["kind"] == "unnamed"
+    assert any(e["ids"] == ["E-1"] for e in network.build(work, api.agents_dir())["edges"])         # the connection is still recorded
+    retired = api.system_assets("e2e-app", "", "devices", "", "", 1, 50, True)["groups"]["devices"]["items"]
+    assert retired[0]["active"] is False and retired[0]["revision"] == "2"                          # restorable, history kept
+
+
+def test_a_new_capture_that_conflicts_with_the_saved_identity_does_not_overwrite_it(tmp_path: Path, monkeypatch) -> None:
+    import json
+    import sqlite3
+
+    from backend import app as api
+
+    work = _captured_project(tmp_path, monkeypatch)
+    made = api.create_connected_device("e2e-app", {
+        "name": "Label printer", "identification_state": "confirmed", "source": "Asset register v3",
+        "reviewer": "WM", "addresses": ["10.9.9.9"]})["device"]
+    _rebuild(work)
+    assert _csv_rows(work / "hosts" / "device_peers.csv")[0]["device_id"] == made["device_id"]
+    registers = {n: (work / "hosts" / n).read_bytes() for n in ("connected_devices.csv", "device_addresses.csv", "device-audit.jsonl")}
+
+    # a later capture of another machine reports 10.9.9.9 as its own address
+    con = sqlite3.connect(work / "discovery-index.sqlite")
+    con.execute("insert into captures values ('c2','cap/NEWBOX','NEWBOX','t','x',0,null,1)")
+    con.execute("insert into files values (2,'cap/NEWBOX/21.txt','c2','NEWBOX','x',0,0,'','indexed','',null,'other')")
+    con.execute("insert into rows values (2,'established_connections_raw','csv',0,2,?)", (json.dumps({
+        "LocalAddress": "10.9.9.9", "LocalPort": "50001", "RemoteAddress": "10.9.9.50", "RemotePort": "80"}),))
+    con.commit()
+    con.close()
+    result = _rebuild(work)
+    assert result["device_conflicts"] == [{"address": "10.9.9.9", "device_id": made["device_id"], "host": "NEWBOX"}]
+    assert _csv_rows(work / "hosts" / "device_peers.csv") == []                    # the capture's host keeps the address
+    assert {n: (work / "hosts" / n).read_bytes() for n in registers} == registers   # the saved identity is not overwritten
+    hosts = {r["host"]: r for r in _csv_rows(work / "hosts" / "hosts.csv")}
+    assert "10.9.9.9" in hosts["NEWBOX"]["ips"]
+    conflicts = api.system_assets("e2e-app", "", "conflicts", "", "", 1, 50, False)["groups"]["conflicts"]["items"]
+    assert [(c["kind"], c["address"], c["host"], c["claimed_by"]) for c in conflicts] == [
+        ("host_owned_alias", "10.9.9.9", "NEWBOX", [made["device_id"]])]

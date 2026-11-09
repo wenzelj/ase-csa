@@ -397,3 +397,80 @@ def test_cli_dry_run_prints_the_plan(tmp_path, capsys):
     assert cd.main(["import-endpoints", str(project)]) == 0
     printed = json.loads(capsys.readouterr().out)
     assert printed["counts"]["ready"] == 1 and not (project / "csa-work" / "hosts" / "connected_devices.csv").exists()
+
+
+# --- the register survives rebuilds, end to end (S549) --------------------------------------------
+
+def _rebuild_addresses(project: Path, reg: dict | None = None) -> dict:
+    from csa_docx import hostmodel
+    return hostmodel.build_addresses(project / "csa-work", reg if reg is not None else {"APP1": {"ips": {"10.9.9.1"}}}, {})
+
+
+def _seed_observation(project: Path) -> None:
+    import sqlite3
+    work = project / "csa-work"
+    con = sqlite3.connect(work / "discovery-index.sqlite")
+    con.executescript("""
+      create table captures(capture_id, folder, host, collector, capture_utc, archived, superseded_by, file_count);
+      create table files(file_id, rel_path, capture_id, host, ext, size, mtime, sha1, status, reason, dup_of, source_class);
+      create table rows(file_id, table_name, fmt, block_no, line_no, data);
+    """)
+    con.commit()
+    con.close()
+    (work / "evidence-matrix.csv").write_text(
+        "evidence_id,csa_area,status,claim,review_state\n"
+        "E-1,network_and_connectivity,VERIFIED,APP1 has an established connection from svchost.exe to 10.9.9.9 on port 445,reviewed\n",
+        encoding="utf-8")
+
+
+def _addresses_listed(project: Path) -> set[str]:
+    with (project / "csa-work" / "hosts" / "addresses.csv").open(newline="", encoding="utf-8") as fh:
+        return {r["address"] for r in csv.DictReader(fh)}
+
+
+def test_identity_retire_and_restore_survive_every_rebuild(tmp_path):
+    project = _project(tmp_path)
+    _seed_observation(project)
+    _rebuild_addresses(project)
+    assert "10.9.9.9" in _addresses_listed(project)                       # unidentified to begin with
+
+    made = cd.create_device(project, name="Label printer", values={
+        "device_type": "printer", "role": "labels", "identification_state": "confirmed",
+        "provenance": "Asset register v3"}, reviewer="WM", addresses=["10.9.9.9"])
+    device_id = made["device_id"]
+    _rebuild_addresses(project)
+    assert "10.9.9.9" not in _addresses_listed(project)                    # resolved to the device
+    peers = list(csv.DictReader((project / "csa-work" / "hosts" / "device_peers.csv").open(encoding="utf-8")))
+    assert [(p["device_id"], p["revision"], p["provenance"]) for p in peers] == [(device_id, "1", "Asset register v3")]
+
+    cd.retire_device(project, device_id, reviewer="WM")
+    snapshot = {n: (project / "csa-work" / "hosts" / n).read_bytes()
+                for n in ("connected_devices.csv", "device_addresses.csv", "device-audit.jsonl")}
+    _rebuild_addresses(project)
+    _rebuild_addresses(project)                                            # a repeat rebuild changes nothing either
+    assert {n: (project / "csa-work" / "hosts" / n).read_bytes() for n in snapshot} == snapshot
+    assert "10.9.9.9" in _addresses_listed(project)                        # the observation is back, unidentified
+    assert "E-1" in (project / "csa-work" / "evidence-matrix.csv").read_text(encoding="utf-8")
+
+    cd.restore_device(project, device_id)
+    cd.add_address(project, device_id, "10.9.9.9", source="asset register")  # retiring switched its alias off; re-attach it
+    _rebuild_addresses(project)
+    assert "10.9.9.9" not in _addresses_listed(project)
+    events = [e["action"] for e in _audit(project)]
+    assert events == ["create", "retire", "restore", "add_address"]
+    assert _devices(project)[0]["revision"] == "3"                         # create 1, retire 2, restore 3
+
+
+def test_a_register_host_that_later_owns_the_address_wins_and_the_clash_is_reported(tmp_path):
+    from csa_docx import hostmodel
+    project = _project(tmp_path)
+    _seed_observation(project)
+    made = cd.create_device(project, name="Label printer", values={"identification_state": "confirmed", "provenance": "Asset register v3"},
+                            reviewer="WM", addresses=["10.9.9.9"])
+    before = {n: (project / "csa-work" / "hosts" / n).read_bytes() for n in ("connected_devices.csv", "device_addresses.csv")}
+    summary: dict = {}
+    hostmodel.build_addresses(project / "csa-work", {"APP1": {"ips": {"10.9.9.1"}}, "NEWBOX": {"ips": {"10.9.9.9"}}}, summary)
+    assert summary["conflicts"] == [{"address": "10.9.9.9", "device_id": made["device_id"], "host": "NEWBOX"}]
+    assert summary["resolved"] == []
+    assert {n: (project / "csa-work" / "hosts" / n).read_bytes() for n in before} == before     # the saved identity is untouched
+    assert cd.get_device(project, made["device_id"])["identification_state"] == "confirmed"

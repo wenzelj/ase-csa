@@ -38,6 +38,46 @@ csa -p tetra-reveloc browse
 
 The server accepts loopback connections only. Add `--no-open` for a server-only launch or `--port 9000` to select another local port.
 
+## Hosts and connected devices
+
+**Hosts & connected devices** in the left rail is the one place to find what the project's evidence names and to identify what it cannot. It has four separate views, and a row is never moved between them by guesswork:
+
+| View | What it holds |
+| --- | --- |
+| Application hosts | Hosts in the host register (`hosts/hosts.csv`) that are part of the application under assessment. |
+| Connected devices | Devices an assessor has identified (printers, switches, appliances and the like). They are **not** application hosts. |
+| Unidentified addresses | Addresses seen in captures that no register host or device owns (`hosts/addresses.csv`). |
+| Conflicts | An address claimed by two devices, or claimed by a device while a register host owns it. Nothing is resolved by guess. |
+
+An observed connection (what a capture saw), a configured service (what a host is set to use, such as DNS or time) and a documented dependency (a verified statement) are labelled separately. None of them is a migration dependency on its own.
+
+### Identify an unknown IP
+
+1. Open **Unidentified addresses** and select the address. The detail shows the direction, ports, processes and evidence behind it.
+2. Choose **Identify as a new device** (or **Attach to an existing device** if the device is already recorded). Give it a name, type, operational role, owner, site or zone, and classification.
+3. The browser shows a **before and after** table for every alias change. Read it before confirming: it says what the address resolves to now and what it will resolve to after saving. An address a register host already owns, or another active device holds, is blocked with the reason.
+4. Save. Only the connected-device register changes (`hosts/connected_devices.csv`, `hosts/device_addresses.csv`) with a timestamped backup and an audit entry in `hosts/device-audit.jsonl`. Generated host files, the evidence matrix, the graph, captures and the DOCX are never edited here.
+
+Every edit sends the revision the editor last read. If someone else saved first, the browser says so and keeps what you typed; use **Use latest revision**, check the current values, then save again.
+
+### Confirmation, source and provenance
+
+A device is `unidentified`, `proposed`, `confirmed` or `disputed`. **Confirmed** needs a cited source (a document, register or capture reference) or a dated owner confirmation. That basis is stored as the device's provenance, with the reviewer and the date. Confirming a device never adds a VERIFIED evidence row: it is an assessor decision recorded in the register, not evidence from a capture. Only a confirmed, active device labels an observed peer in the Host network, System explorer and `endpoints.csv`; proposed, disputed and retired devices leave the address unidentified.
+
+### Retire and restore
+
+**Retire** removes the identification and its address aliases from the register after an explicit confirmation. It does not remove the observed connection, the capture or the evidence: the address goes back to the unidentified list. The row stays in the register with its history, and **Restore** (with *Show retired devices* ticked) brings it back. An address can be reused by another device later; only active aliases resolve.
+
+### Application host or connected device
+
+Creating, editing or confirming a device never makes it an application host. If a device proves to be one, the conversion is a separate, deliberate action: preview it (the plan names every collision with an existing host, address or decision), then apply it with the preview's ID, the device revision, a source and the operator. It records a decision in `hosts/host_scope.csv`; the next `csa hosts build` registers the host as in scope. The decision can be reversed with a reason, and the device and its aliases stay in the register throughout.
+
+### Rebuilds and reviewed endpoint labels
+
+`csa hosts build` regenerates `hosts.csv` and `addresses.csv` but never writes the connected-device register, so decisions, revisions and the audit log survive every rebuild. After a rebuild, a confirmed device's observed addresses move out of `addresses.csv` into `hosts/device_peers.csv`, which carries the device ID, revision and provenance. If a new capture shows that a register host now owns an address a device claims, the host keeps it and the clash is reported; the saved identity is not overwritten.
+
+Reviewed `endpoints.csv` labels can be brought in with `python3 -m csa_docx.connected_devices import-endpoints <project root>` (run from `.agents/framework`). The dry run lists what would be created and what needs a person (host-owned, uncited, conflicting or ambiguous rows); adding `--apply --plan-id <id> --operator <name>` creates them as `proposed` devices, and running it again creates nothing. `endpoints.csv` is only read.
+
 ## Draft answers (before V1)
 
 While a project is at `stage: draft` (PROJECTS.yaml, the default), the rail shows **Draft answers**: ingest new data,
