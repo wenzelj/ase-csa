@@ -19,7 +19,9 @@
       "source": {
         "settings": [
           "platform.hardware",
-          "platform.os"
+          "platform.os",
+          "platform.running_applications",
+          "scope.script_allow_list"
         ]
       },
       "search": [

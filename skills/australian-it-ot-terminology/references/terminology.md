@@ -235,9 +235,9 @@ The lint reports these as `TERM_REVIEW_REQUIRED` in CSA narrative. They are not 
 | ecosystem | Consulting and AI tell | Name the systems |
 | data coverage | Describes the data set | Which hosts or components were examined? |
 | evidence coverage | Describes the evidence | Which hosts or components were examined? |
-| dataset | Data-analysis framing | Name the source (asset list, discovery captures) or the system it describes |
+| dataset | Data-analysis framing | Name the source (asset list) or the system it describes |
 | data set | Data-analysis framing | As above |
-| discovery population | Framework term for hosts with captures | "hosts with discovery captures", "captured hosts" |
+| discovery population | Framework term for hosts with captures | Name the system as "the <application> hosts", or the role group or the host names |
 | declared population | Framework term for the asset list | "hosts in the asset list" |
 | capture campaign | Framework term | "discovery run (date)" |
 | platform tooling | Vague | Management and security agents? Name them |
@@ -251,10 +251,10 @@ The lint reports these as `TERM_REVIEW_REQUIRED` in CSA narrative. They are not 
 | solution | Consulting word for a system | Name the application or system |
 | stakeholder landscape | Consulting | Name the owners and teams |
 | as-is state | Consulting | Current state, current configuration |
-| application sample | Data-analysis framing for hosts examined on one date | "hosts with May 2026 discovery captures" |
-| evidence sample | Data-analysis framing | "the hosts whose Group Policy results were captured" |
-| sampled hosts | Data-analysis framing; often a stale count | "hosts with discovery captures (date)" |
-| sampled | Data-analysis framing ("39 sampled hosts"); often a stale count | Which hosts, captured when? |
+| application sample | Data-analysis framing for hosts examined on one date | Name the system as "the <application> hosts", or the role group or the host names |
+| evidence sample | Data-analysis framing | Name the system as "the <application> hosts", or the role group or the host names |
+| sampled hosts | Data-analysis framing; often a stale count | Name the system as "the <application> hosts", or the role group or the host names |
+| sampled | Data-analysis framing ("39 sampled hosts"); often a stale count | Which hosts? Name the system as "the <application> hosts", or the role group or the host names |
 | to-be | Consulting | Target state (program term) |
 
 ## 14. Evidence-centric phrases
@@ -332,3 +332,21 @@ The lint flags the US form as `AU_SPELLING` outside code spans, quotes, file nam
 | signaling | signalling |
 | license holder | licence holder |
 | licenses\b | licences (noun) |
+
+## 16. Framework terms (never in CSA text)
+
+| Phrase | Say instead |
+|---|---|
+| captured hosts | Name the system, the role group or the host |
+| captured host | Name the system, the role group or the host |
+| not captured | Say the setting is not known, or is assumed to match the other hosts of the same role |
+| discovery data | Name the system, the role group or the host |
+| discovery capture | Name the system, the role group or the host |
+| discovery captures | Name the system, the role group or the host |
+| host register | Name the system, the role group or the host |
+| answer sheet | Name the system, the role group or the host |
+| flow map | Say what the connection is and what was seen. The discovery script's list of expected flows (flow IDs such as R1) is a template, not evidence of a designed flow |
+| expected flow map | Say what the connection is and what was seen. The discovery script's list of expected flows is a template, not evidence of a designed flow |
+| condition C1 | Name the condition by what it says ("the requirement for OT-resident storage") |
+| condition C2 | Name the condition by what it says ("the requirement that storage does not depend on IT-hosted shares") |
+| condition C3 | Name the condition by what it says ("the requirement for a documented fallback") |

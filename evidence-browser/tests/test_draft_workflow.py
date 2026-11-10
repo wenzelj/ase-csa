@@ -9,6 +9,21 @@ from backend.models import CommandRequest
 AGENTS = Path(__file__).resolve().parents[2]
 
 
+def test_new_populated_inventory_appears_without_manifest_and_empty_heading_is_hidden(tmp_path, monkeypatch):
+    class Result:
+        parsed = {"nodes": [
+            {"number": "4.5", "key": "NEW_INVENTORY", "kind": "register", "title": "New Inventory",
+             "status": {"state": "answered"}},
+            {"number": "4.9", "key": "UNTITLED", "kind": "empty", "title": ""},
+            {"number": "5", "key": "REFERENCE", "kind": "reference", "title": "Reference"}]}
+        stderr = ""
+
+    monkeypatch.setattr(commands, "execute", lambda *a, **k: Result())
+    snap = draft_workflow.snapshot(AGENTS, {"key": "test", "work_dir": str(tmp_path)})
+    assert [(r['number'], r['key'], r['state']) for r in snap['sections']] == [
+        ('4.5', 'NEW_INVENTORY', 'not-answered')]
+
+
 def test_answer_runs_as_one_headless_job_with_the_chosen_model():
     op, argv = commands.build_argv(AGENTS, "tetra-reveloc", "answer", CommandRequest(target="3.4", options={"cli": "evo", "fresh": True}))
     assert argv[3:] == ["answer", "--headless", "3.4", "--cli", "evo", "--fresh"]
@@ -49,3 +64,22 @@ def test_snapshot_marks_answered_stale_and_open(tmp_path, monkeypatch):
     assert rows["DNS"]["state"] == "not-answered"
     assert snap["changes"]["rows"][0]["subsection"] == "3.4 Time (TIME)"
     assert snap["open_questions"]["total"] == 2 and snap["stage"] == "draft"
+
+
+def test_snapshot_carries_the_rating_history_and_the_blocks_that_got_worse(tmp_path, monkeypatch):
+    from csa_docx import rating_pass
+    work = tmp_path / "csa-work"
+    (work / "cards").mkdir(parents=True)
+    (work / "cards" / "TIME.manifest.json").write_text("{}")
+    for a, b in ((8.0, 7.0), (7.0, 7.0)):
+        rating_pass.record(work, "TIME", {"B1": {"score": a, "reason": "r"}, "B2": {"score": b, "reason": "r"}})
+
+    class Result:
+        parsed = {"nodes": [{"key": "TIME", "number": "3.1", "title": "Time", "kind": "subsection"},
+                            {"key": "NONE", "number": "3.2", "title": "None", "kind": "subsection"}]}
+        stderr = ""
+
+    monkeypatch.setattr(draft_workflow.commands, "execute", lambda *a, **k: Result())
+    rows = {r["key"]: r for r in draft_workflow.snapshot(AGENTS, {"key": "p", "work_dir": str(work)})["sections"]}
+    assert rows["TIME"]["rating"]["worse"] == ["B1"] and rows["TIME"]["rating"]["latest"] == 7.0
+    assert rows["NONE"]["rating"] is None

@@ -14,6 +14,7 @@ Reads a CSA .docx or a Markdown draft and reports, per Heading 1 section:
   UNEXPANDED_ABBREVIATION
                         known abbreviation used before its full term in an independently
                         readable subsection, or used in a standalone heading or label
+  FRAMEWORK_TERM        the framework's own wording ("captured hosts", "discovery data"): name the system
   AU_SPELLING           US spelling outside code, quotes, paths and product names
 
 The phrase lists come from ../references/terminology.md (parts 12 to 15), so the
@@ -88,6 +89,16 @@ def load_terms() -> tuple[list[tuple[str, str, str]], list[tuple[str, str]], lis
     return review, abbreviations, evidence, spelling
 
 
+def load_framework_terms() -> list[tuple[re.Pattern, str]]:
+    md = TERMS.read_text(encoding="utf-8")
+    out = []
+    for row in _table(md, r"16\. Framework terms"):
+        if len(row) >= 2 and row[0].strip():
+            phrase = row[0].strip()
+            out.append((re.compile(rf"(?<!\w){re.escape(phrase)}(?!\w)", re.I), row[1].strip()))
+    return out
+
+
 def _mask(text: str) -> str:
     """Blank out spans that must keep their spelling: code, quotes, paths, LDAP paths, allowed names."""
     t = re.sub(r"`[^`]*`", lambda m: " " * len(m.group()), text)
@@ -104,7 +115,9 @@ def _snip(text: str, start: int, end: int) -> str:
     return ("..." if a else "") + text[a:b].replace("\n", " ") + ("..." if b < len(text) else "")
 
 
-def lint_section(sec: Section, review, abbreviations, evidence, spelling) -> list[dict]:
+def lint_section(sec: Section, review, abbreviations, evidence, spelling, framework_terms=None) -> list[dict]:
+    if framework_terms is None:
+        framework_terms = load_framework_terms()
     out: list[dict] = []
     ev_hits: list[tuple[int, str, int, bool]] = []
     introduced: set[str] = set()
@@ -147,6 +160,10 @@ def lint_section(sec: Section, review, abbreviations, evidence, spelling) -> lis
             for m in rx.finditer(masked):
                 sentence_start = m.start() == 0 or bool(re.search(r"[.!?:]\s*$|^\s*$", masked[: m.start()][-3:]))
                 ev_hits.append((i, text[m.start():m.end()], m.start(), sentence_start))
+        for rx, say in framework_terms:
+            for m in rx.finditer(masked):
+                out.append({"code": "FRAMEWORK_TERM", "where": where, "para": i, "found": text[m.start():m.end()],
+                            "ask": say, "context": _snip(text, m.start(), m.end())})
         for rx in IT_OT_RES:
             for m in rx.finditer(masked):
                 target = bool(TARGET_STATE_RE.search(masked[max(0, m.start() - 60): m.end() + 60]))
@@ -184,6 +201,7 @@ def main() -> int:
     if not path.exists():
         sys.exit(f"not found: {path}")
     review, abbreviations, evidence, spelling = load_terms()
+    framework_terms = load_framework_terms()
     paras = read_docx(path) if path.suffix.lower() == ".docx" else read_markdown(path)
     sections = split_sections(paras)
     if not any(s.index for s in sections):
@@ -196,7 +214,7 @@ def main() -> int:
         chosen = [s for s in sections if s.index and (a.section is None or s.index == a.section)]
     results = []
     for s in chosen:
-        items = lint_section(s, review, abbreviations, evidence, spelling)
+        items = lint_section(s, review, abbreviations, evidence, spelling, framework_terms)
         results.append({"section": s.index, "title": s.title, "counts": dict(Counter(i["code"] for i in items)), "items": items})
     if a.json:
         print(json.dumps({"file": str(path), "sections": results}, indent=2))

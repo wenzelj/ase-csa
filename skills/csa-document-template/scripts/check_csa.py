@@ -32,7 +32,7 @@ NS = {"w": W}
 q = lambda t: f"{{{W}}}{t}"
 GUIDANCE_AUTHOR = "CSA Template"
 RATINGS = {"Met", "Partially Met", "Not Met", "Not Applicable"}
-ALLOWED_TABLE_STYLES = {"CSATable", "CSACover"}
+ALLOWED_TABLE_STYLES = {"CSATable", "CSACover", "CSACoverBlock"}
 DIRECT_RUN_PROPS = {"rFonts", "sz", "szCs", "color", "b", "bCs", "i", "iCs", "u", "highlight", "shd", "caps", "smallCaps"}
 DIRECT_PARA_PROPS = {"spacing", "ind", "jc", "pBdr", "shd", "tabs", "keepNext", "keepLines", "pageBreakBefore"}
 
@@ -254,6 +254,11 @@ def main() -> None:
         for name, cached in doc.field_caches(root):
             if name in props and cached != props[name]:
                 add("ERROR", "field-stale", f"{part}: DOCPROPERTY {name} shows {cached!r} but the property is {props[name]!r}; refresh fields")
+        if doc.comments is None:
+            orphan_count = sum(1 for kind in ("commentReference", "commentRangeStart", "commentRangeEnd")
+                               for _ in root.iter(q(kind)))
+            if orphan_count:
+                add("ERROR", "orphan-comment", f"{part}: {orphan_count} comment marker(s) have no comments part")
 
     # ---- requirement tables
     seen_reqs, unfilled_ratings, bad_ratings = set(), 0, []

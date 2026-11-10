@@ -295,3 +295,43 @@ class PipelineSnapshot(BaseModel):
     sections: list[PipelineSection]
     issues: list[PipelineIssue] = Field(default_factory=list)
     etag: str
+
+
+class IntakeProblem(BaseModel):
+    kind: str
+    signature: str
+    count: int
+    first_line: int
+    last_line: int
+    sample: str
+    stream: Literal["stdout", "stderr"]
+
+
+class IntakeRun(BaseModel):
+    id: str
+    operation: str
+    step: str
+    state: str
+    exit_code: int | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
+    elapsed_seconds: float | None = None
+    reason: str = ""
+    problems: list[IntakeProblem] = Field(default_factory=list)
+    problem_count: int = 0
+    has_problems: bool = False
+    log_truncated: bool = False
+
+
+class IntakeWarning(BaseModel):
+    step: str
+    severity: str
+    code: str
+    message: str
+    count: int = 1
+
+
+class IntakeErrorsResponse(BaseModel):
+    generated_at: str
+    runs: list[IntakeRun]
+    warnings: list[IntakeWarning]

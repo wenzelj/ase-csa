@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import csv
 import json
+import re
 from pathlib import Path
 
 
@@ -64,8 +65,19 @@ def is_verified(r: dict) -> bool:
     return r.get("status") == "VERIFIED" and str(r.get("review_state") or "").lower() in ("reviewed", "accepted")
 
 
+#: The discovery script ships a list of the flows it expects ("02_reveloc_expected_flow_map.txt": flow IDs such as R1, ports marked
+#: "expected, confirm", a risk rating). It is a template, not a design document and not an observation, so rows that quote it
+#: are not offered to a writer or cited by an answer. They stay in the matrix and in every other reader (hosts, graph, flows).
+_TEMPLATE_SOURCE = re.compile(r"expected_flow_map", re.I)
+
+
+def is_template_row(r: dict) -> bool:
+    """True when the row's source is the discovery script's expected-flow list."""
+    return bool(_TEMPLATE_SOURCE.search(f"{r.get('source_title') or ''} {r.get('page_or_location') or ''}"))
+
+
 def get_verified_evidence(matrix: Path) -> list[dict]:
     """The evidence rows an answer may use, and nothing else. A project whose rows have never been reviewed has no proof to
-    ask for, so its rows are returned as they are."""
-    rows = read(matrix)
+    ask for, so its rows are returned as they are. Rows that quote the script's expected-flow list are not offered."""
+    rows = [r for r in read(matrix) if not is_template_row(r)]
     return [r for r in rows if is_verified(r)] if any(is_verified(r) for r in rows) else rows

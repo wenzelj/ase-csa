@@ -1,0 +1,14 @@
+{
+ "topic": "File Transfer and Local Storage",
+ "key": "FTLS",
+ "headings": ["File Transfer and Local Storage"],
+ "requirements": ["SEP-STOR-02"],
+ "columns": [
+  {"label": "Shares and who may open them", "attribute": "storage.share_access", "explains": "file shares a host offers and their access",
+   "common": "offer {value}"},
+  {"label": "Transfer tools", "attribute": "transfer.tools", "explains": "ad hoc file transfer capability",
+   "common": "have file transfer tools {value}", "common_none": "have no file transfer tools installed"}
+ ],
+ "common_values": {"Default and administrative shares only": "offer only the default and administrative shares",
+                   "None found": "have no file transfer tools installed"}
+}

@@ -109,7 +109,7 @@ def test_the_3_7_faults_are_refused(tmp_path, monkeypatch):
     b3_bad = f"- RADIO1 opens outbound connections to the internet, so OT pushes data out. ({web})"
     codes = _codes(_sheet(b1_bad, b3_bad, r3="Met"), card)
     assert ("ZONE_CONTRADICTED", "ERROR") in codes            # the IT host called OT-resident
-    assert ("SLOT_NOT_ANSWERED", "ERROR") in codes            # the PDM1 pull is missing from SEP-STOR-03
+    assert ("SLOT_NOT_ANSWERED", "WARN") in codes             # the PDM1 pull is missing from SEP-STOR-03: a warning, a finding may be left out
     assert ("FLOW_NOT_COVERED", "ERROR") in codes             # and covered nowhere
     assert ("NOT_OT_FLOW_IN_REQUIREMENT", "WARN") in codes    # the IT to internet flow used as an OT push
     assert ("RATING_ABOVE_FLOOR", "WARN") in codes            # Met although OT data is pulled out

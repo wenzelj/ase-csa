@@ -7,8 +7,10 @@ product does. The framework uses knowledge to explain evidence, never as evidenc
 Two folders, both outside the discovery data:
 
 - shared:  ``<CurrentStateAssessments>/Knowledge/``      general how-it-works material for every CSA
-- project: ``<project root>/00 Knowledge/``              third-party material for one system, plus its
-                                                          reviewed system model (``system-model.json``)
+- project: ``<project root>/<knowledge_dir>/``           third-party material for one system, plus its
+                                                          reviewed system model (``system-model.json``).
+                                                          ``knowledge_dir`` comes from the project's entry in
+                                                          PROJECTS.yaml; without it the folder is ``00 Knowledge``.
 
 Each folder has a ``sources.json`` registering its documents: ``{"documents": [{"file", "title", "publisher",
 "url", "licence", "version", "retrieved", "type"}], "system_terms": [...]}``. ``type`` is ``vendor``,
@@ -41,6 +43,7 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import os
 import re
 import sqlite3
 import sys
@@ -68,10 +71,62 @@ against requirement rate rating one row per aspect aspects observed which""".spl
 
 # ---------------------------------------------------------------- folders and sources
 
+def _registry() -> list[dict]:
+    """Projects in $CSA_PROJECTS_FILE (else csa-context/PROJECTS.yaml), read like estate._registry."""
+    reg = Path(os.environ["CSA_PROJECTS_FILE"]) if os.environ.get("CSA_PROJECTS_FILE") \
+        else BASE / ".agents" / "csa-context" / "PROJECTS.yaml"
+    if not reg.is_file():
+        return []
+    out, cur = [], None
+    for line in reg.read_text(encoding="utf-8").splitlines():
+        st = line.strip()
+        if not st or st.startswith("#"):
+            continue
+        if st.startswith("- key:"):
+            cur = {}
+            out.append(cur)
+            st = st[2:]
+        elif cur is None or ":" not in st:
+            continue
+        if ":" in st:
+            k, _, v = st.partition(":")
+            cur[k.strip()] = v.strip().strip('"').strip("'")
+    return [p for p in out if p.get("key")]
+
+
+def knowledge_dir(workspace: Path | None) -> str:
+    """The project's knowledge folder name. A registered project sets it with ``knowledge_dir:`` in
+    PROJECTS.yaml (new projects may register ``00 Knowlege``); without the setting the folder is the
+    historic ``00 Knowledge``. A configured path must stay inside the project root."""
+    if workspace is None:
+        return PROJECT_DIR
+    ws = Path(workspace).resolve()
+    for p in _registry():
+        root = p.get("project_root")
+        if not root:
+            continue
+        try:
+            root_p = Path(root).expanduser().resolve()
+        except OSError:
+            continue
+        if ws != root_p and root_p not in ws.parents:
+            continue
+        name = (p.get("knowledge_dir") or "").strip()
+        if not name:
+            return PROJECT_DIR
+        path = Path(name)
+        resolved = (root_p / path).resolve()
+        if path.is_absolute() or ".." in path.parts or resolved == root_p or root_p not in resolved.parents:
+            raise ValueError("knowledge_dir must be a folder inside the project root: "
+                             f"{ws / 'knowledge_dir'} resolves outside {root_p}")
+        return str(resolved.relative_to(root_p))
+    return PROJECT_DIR
+
+
 def folders(workspace: Path | None) -> list[tuple[str, Path]]:
     out = [("shared", SHARED)]
     if workspace:
-        out.append(("project", Path(workspace) / PROJECT_DIR))
+        out.append(("project", Path(workspace) / knowledge_dir(workspace)))
     return [(scope, d) for scope, d in out if d.is_dir()]
 
 
@@ -92,8 +147,9 @@ def _signature(workspace: Path | None) -> str:
             if f.is_file():
                 st = f.stat()
                 h.update(f"{scope}|{f.relative_to(d)}|{st.st_size}|{int(st.st_mtime)}".encode())
-    h.update(Path(__file__).read_bytes())                  # a change in chunking rebuilds the index
-    return h.hexdigest()
+    h.update(f"knowledge_dir={knowledge_dir(workspace)}".encode())   # the configured folder is part of the
+    h.update(Path(__file__).read_bytes())                            # signature: a change in chunking or
+    return h.hexdigest()                                             # folder rebuilds the index
 
 
 # ---------------------------------------------------------------- text extraction and passages
@@ -294,7 +350,7 @@ def search(workspace: Path, query: str, limit: int = 5, must: list[str] | None =
 def system_model(workspace: Path | None) -> dict:
     if not workspace:
         return {}
-    p = Path(workspace) / PROJECT_DIR / MODEL
+    p = Path(workspace) / knowledge_dir(workspace) / MODEL
     return json.loads(p.read_text(encoding="utf-8")) if p.is_file() else {}
 
 

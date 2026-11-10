@@ -124,7 +124,8 @@ def test_time_card_lists_only_explicit_time_dependencies_without_generic_isolati
     spec = doc_spec.read(_template())
     node = doc_spec.resolve(spec, "TIME")
     text = section_card.card(node, spec, ws, evidence=False)["text"]
-    question = text[text.index("B3 Drawbridge Impact"):text.index("## Requirement summaries")]
+    start = text.index("B3 Drawbridge Impact")
+    question = text[start:text.index("\n## ", start)]
     assert "Function with an explicit Time Synchronisation dependency to assess: Voice and SDS recording" in question
     assert "NTP for timestamps" in question
     assert "Analogue radio interconnect" not in question

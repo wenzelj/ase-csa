@@ -1,4 +1,4 @@
-import type { IntakeSnapshot, DraftSnapshot, WordReview, ReviewSubmit, ReviewJob, ReviewJobResponse, ReviewLatest, AuthorSetup, AuthorSubmit, AuthorJobResponse, AuthorOptions, CleanupSubmit, CleanupJobResponse, CleanupLatest, CleanupPreflight, BuildSetup, BuildOutcome, AuditSnapshot } from "./types";
+import type { PromptList, PromptPreview, JobLogPage, IntakeSnapshot, IntakeErrors, DraftSnapshot, WordReview, ReviewSubmit, ReviewJob, ReviewJobResponse, ReviewLatest, AuthorSetup, AuthorSubmit, AuthorJobResponse, AuthorOptions, CleanupSubmit, CleanupJobResponse, CleanupLatest, CleanupPreflight, BuildSetup, BuildOutcome, AuditSnapshot } from "./types";
 
 export async function api<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
@@ -7,6 +7,85 @@ export async function api<T>(url: string, init?: RequestInit): Promise<T> {
     throw new Error(typeof data.detail === "string" ? data.detail : data.detail?.message || `Request failed (${response.status})`);
   }
   return data as T;
+}
+
+export type NewApplicationManifestEntry = { path: string; kind: "file" | "dir"; size?: number };
+export type NewApplicationResult = { status: "READY" | "OK" | "BLOCKED" | "ERROR"; session_id?: string; offset?: number; already_received?: boolean; errors?: { field: string; code: string; message: string }[] };
+export type NewApplicationDefaults = { workspace_root: string; discovery_name: string; knowledge_name: string; max_file_bytes: number; max_total_bytes: number; chunk_bytes: number; defaults: { lane: string; stage: string; spec_mode: string }; templates: string[] };
+export type NewApplicationPreview = { status: "READY" | "BLOCKED"; errors: { field: string; code: string; message: string }[]; values: { paths: Record<string, string>; registry: Record<string, unknown>; project_context: Record<string, unknown>; knowledge: Record<string, unknown> } };
+export type NewApplicationCommit = { status: "READY" | "BLOCKED" | "ERROR"; errors?: { field: string; code: string; message: string }[]; project_key?: string; paths?: Record<string, string> };
+export type WorkingDocumentOptions = { project_key: string; project_root: string; configured_path: string; legacy_path: string; candidates: { relative_path: string; size: number }[]; max_upload_bytes: number; templates: { id: string; label: string; source: "application" | "shared" }[]; suggested_output: string };
+export type WorkingDocumentResult = { status: "READY" | "BLOCKED"; project_key?: string; working_docx?: string; legacy_docx?: string; errors?: { field: string; code: string; message: string }[] };
+
+export function fetchWorkingDocumentOptions(system: string) {
+  return api<WorkingDocumentOptions>(`/api/systems/${encodeURIComponent(system)}/working-document`);
+}
+
+export function selectWorkingDocument(system: string, relativePath: string) {
+  return api<WorkingDocumentResult>(`/api/systems/${encodeURIComponent(system)}/working-document`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ relative_path: relativePath }),
+  });
+}
+
+export function selectLegacyDocument(system: string, relativePath: string) {
+  return api<WorkingDocumentResult>(`/api/systems/${encodeURIComponent(system)}/legacy-document`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ relative_path: relativePath }),
+  });
+}
+
+export function uploadWorkingDocument(system: string, file: File) {
+  return api<WorkingDocumentResult>(`/api/systems/${encodeURIComponent(system)}/working-document/upload?filename=${encodeURIComponent(file.name)}`, {
+    method: "PUT", headers: { "Content-Type": "application/octet-stream" }, body: file,
+  });
+}
+
+export function createWorkingDocumentFromTemplate(system: string, templateId: string, outputPath: string, systemName: string) {
+  return api<WorkingDocumentResult>(`/api/systems/${encodeURIComponent(system)}/working-document/from-template`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ template_id: templateId, output_path: outputPath, system_name: systemName, confirmed: true }),
+  });
+}
+
+export function previewNewApplication(config: Record<string, unknown>) {
+  return api<NewApplicationPreview>("/api/new-application/preview", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(config),
+  });
+}
+
+export function commitNewApplication(sessionId: string, config: Record<string, unknown>) {
+  return api<NewApplicationCommit>("/api/new-application/commit", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session_id: sessionId, config, confirmed: true }),
+  });
+}
+
+export function fetchNewApplicationDefaults() {
+  return api<NewApplicationDefaults>("/api/new-application/defaults");
+}
+
+export function createNewApplicationUpload(manifest: NewApplicationManifestEntry[]) {
+  return api<NewApplicationResult>("/api/new-application/uploads", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ manifest }),
+  });
+}
+
+export function getNewApplicationUpload(sessionId: string) {
+  return api<NewApplicationResult & { received_bytes: number; total_bytes: number; effective_status: string }>(`/api/new-application/uploads/${encodeURIComponent(sessionId)}`);
+}
+
+export async function putNewApplicationChunk(sessionId: string, path: string, index: number, data: ArrayBuffer, signal?: AbortSignal): Promise<NewApplicationResult> {
+  const encodedPath = path.split("/").map(encodeURIComponent).join("/");
+  return api<NewApplicationResult>(`/api/new-application/uploads/${encodeURIComponent(sessionId)}/files/${encodedPath}?index=${index}`, {
+    method: "PUT", headers: { "Content-Type": "application/octet-stream" }, body: data, signal,
+  });
+}
+
+export function finaliseNewApplicationUpload(sessionId: string) {
+  return api<NewApplicationResult>(`/api/new-application/uploads/${encodeURIComponent(sessionId)}/finalise`, { method: "POST" });
+}
+
+export function cancelNewApplicationUpload(sessionId: string) {
+  return api<NewApplicationResult>(`/api/new-application/uploads/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
 }
 
 export async function fetchWordReview(system: string): Promise<WordReview> {
@@ -103,9 +182,18 @@ export async function fetchJobs(system: string): Promise<ReviewJob[]> { const da
 export async function fetchJob(system: string, id: string): Promise<ReviewJob> { return api(`/api/systems/${system}/jobs/${id}`); }
 
 export async function fetchIntake(system: string): Promise<IntakeSnapshot> { return api(`/api/systems/${system}/intake`); }
+export async function fetchIntakeErrors(system: string): Promise<IntakeErrors> { return api(`/api/systems/${system}/intake/errors`); }
+export async function fetchJobLog(system: string, jobId: string, stream: "stdout" | "stderr", start: number, limit: number): Promise<JobLogPage> { return api(`/api/systems/${system}/jobs/${jobId}/log?stream=${stream}&start=${start}&limit=${limit}`); }
 export async function reviewEvidence(system: string, id: string, state: "rejected" | "reviewed", note: string): Promise<{ status: string; reviewed: string[]; state: string }> {
   return api(`/api/systems/${system}/evidence/${encodeURIComponent(id)}/review`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ state, note }) });
 }
 export async function reviewLead(system: string, id: string, state: "open" | "not_an_answer" | "resolved" | "retired", note: string, evidenceIds: string[] = []): Promise<{ status: string; reviewed: string[]; reused: string[]; state: string }> {
   return api(`/api/systems/${system}/leads/${encodeURIComponent(id)}/review`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ state, note, evidence_ids: evidenceIds }) });
 }
+
+const JSON_HEADERS = { "Content-Type": "application/json" };
+export async function fetchPrompts(system: string): Promise<PromptList> { return api(`/api/systems/${system}/prompts`); }
+export async function savePrompt(system: string, name: string, text: string, etag: string): Promise<{ saved: boolean; etag: string }> { return api(`/api/systems/${system}/prompts/${name}`, { method: "PUT", headers: JSON_HEADERS, body: JSON.stringify({ text, etag }) }); }
+export async function resetPrompt(system: string, name: string): Promise<{ reset: boolean }> { return api(`/api/systems/${system}/prompts/${name}`, { method: "DELETE" }); }
+export async function fetchPromptHistory(system: string, name: string): Promise<{ versions: { file: string; text: string }[] }> { return api(`/api/systems/${system}/prompts/${name}/history`); }
+export async function fetchPromptPreview(system: string, key: string, block: string): Promise<PromptPreview> { return api(`/api/systems/${system}/prompt-preview?key=${encodeURIComponent(key)}&block=${encodeURIComponent(block)}`); }

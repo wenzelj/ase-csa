@@ -13,7 +13,7 @@ wording, narrowed by the section's subject:
 Digests are built only from VERIFIED matrix rows in the host-profile link grammar and the host register;
 every line carries the E-ids it rests on, so the writer can cite what it reads. A peer's zone is never
 guessed: it comes from the host register (captured system host, domain controller, named peer) or from the
-address itself (public address); anything else is "unnamed internal address".
+address itself (public address); anything else is "internal address".
 
 A per-question override is read from the scope map / spec part as `evidence_need:`; the rules apply otherwise.
 """
@@ -104,7 +104,7 @@ def _zone(peer: str, reg: dict) -> str:
         return "named host, role not recorded"
     try:
         ip = ipaddress.ip_address(peer.split("%")[0])
-        return "unnamed internal address" if ip.is_private else "public address (internet / cloud)"
+        return "internal address" if ip.is_private else "public address (internet / cloud)"
     except ValueError:
         return "named host, role not recorded"
 
@@ -173,11 +173,11 @@ def dependency_table(rows: list[dict], workspace: Path, flt=None, external_only:
     for (d, peer, port), g in list(groups.items()):
         if g["zone"].startswith("public"):
             key = (d, f"public internet addresses", port)
-        elif g["zone"] == "unnamed internal address" and len(g["hosts"]) == 1:
-            key = (d, f"other unnamed addresses from {next(iter(g['hosts']))}", "various")
+        elif g["zone"] == "internal address" and len(g["hosts"]) == 1:
+            key = (d, f"other internal addresses from {next(iter(g['hosts']))}", "various")
         else:
             continue
-        m = merged.setdefault(key, {"zone": g["zone"] if "public" in g["zone"] else "unnamed internal address",
+        m = merged.setdefault(key, {"zone": g["zone"] if "public" in g["zone"] else "internal address",
                                     "hosts": set(), "procs": set(), "ids": [], "states": set(), "psvc": set(), "peers": []})
         m["hosts"] |= g["hosts"]; m["procs"] |= g["procs"]; m["ids"] += g["ids"]; m["states"] |= g["states"]
         m["peers"].append(peer if key[2] != "various" else f"{peer}:{port}")
@@ -245,7 +245,7 @@ def host_summary(rows: list[dict], workspace: Path, match=None, max_items: int =
 
 CAVEAT = ("Connections were sampled over a short window per host (about 30 seconds), so a peer that connects "
           "occasionally can be missing: never write that these are all the dependencies. 'Attempted only' means the "
-          "connection was not established when sampled. An unnamed address stays an address; say its name was not captured.")
+          "connection was not established when sampled. A peer with no recorded name is written by its IP address, never as \"unnamed\" or \"unidentified\"; do not add that its name was not recorded or captured.")
 
 
 # a row that states what something needs: a declared dependency, a required service, an application path or a
@@ -256,7 +256,7 @@ _PREVIOUS = re.compile(r"Current_State_Assessment|NetSeg_Current", re.I)
 
 
 def declared_dependencies(rows: list[dict], workspace: Path | None, limit: int = 10) -> tuple[list[str], set[str]]:
-    """VERIFIED rows that declare what a function needs (flow map, system matrix, dependency summaries), newest
+    """VERIFIED rows that declare what a function needs (system matrix, dependency summaries), newest
     sources first: captures and supplied documents before the previous assessment. One line per row, with its ID."""
     picked = []
     for r in rows:
@@ -307,7 +307,7 @@ def digest(q: dict, need: str, node: dict, rows: list[dict], workspace: Path | N
     if need == "isolation":
         l, i = declared_dependencies(rows, workspace)
         if l:
-            blocks.append(["Declared dependencies and flows (what each function of the system needs, from the flow map, "
+            blocks.append(["Declared dependencies and flows (what each function of the system needs, from the "
                            "system matrix and dependency summaries). Use them to say which functions an isolation event "
                            "stops: a function stops when something it needs is cut, and only where these rows name the need:"] + l)
             ids |= i

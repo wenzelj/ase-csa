@@ -1,12 +1,26 @@
 import { useEffect, useRef, useState } from "react";
-import { api, cancelJob, fetchIntake, fetchJob, reviewLead, submitJob } from "../api";
+import { api, cancelJob, fetchIntake, fetchIntakeErrors, fetchJob, reviewLead, submitJob } from "../api";
 import { AGENT_CLIS, rememberedAgentCli, rememberAgentCli } from "../agentClis";
-import type { IntakeLead, IntakeEvidenceRow, IntakeFile, IntakeSnapshot, ReviewJob } from "../types";
+import type { IntakeLead, IntakeEvidenceRow, IntakeFile, IntakeErrors, IntakeSnapshot, ReviewJob } from "../types";
+import { IntakeErrors as IntakeErrorsPanel } from "./IntakeErrors";
 import { deriveIntakeSteps, gapFindings, resumableJob, type StepKey } from "./intakeSteps";
 
 const TERMINAL = ["succeeded", "failed", "cancelled", "interrupted"];
 const OP_LABEL: Record<string, string> = { ingest: "Ingest new data", intake: "Evidence agent", gap_check: "Check open questions", resolve_gaps: "Resolve evidence and update answers" };
 const VERDICT: Record<string, string> = { ANSWERED: "Answered", CANDIDATES: "Possible answer found", NOT_FOUND: "Not found" };
+
+export const ERROR_REFRESH_MS = 10000;
+// Reload the errors while a job runs; a failed refresh is ignored and the next tick tries again. Returns the stop function.
+export function refreshWhileRunning(running: boolean, refresh: () => Promise<unknown>): () => void {
+  if (!running) return () => {};
+  const timer = setInterval(() => { void refresh().catch(() => {}); }, ERROR_REFRESH_MS);
+  return () => clearInterval(timer);
+}
+export function runningText(jobId: string, errors: IntakeErrors | null): string {
+  const live = (errors?.runs || []).find(r => r.id === jobId);
+  const n = live?.problem_count || 0;
+  return n > 0 ? `Running… ${n} ${n === 1 ? "problem" : "problems"} so far` : "Running…";
+}
 
 function when(value?: string | null) { if (!value) return "—"; const d = new Date(value); return isNaN(d.getTime()) ? value : d.toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }); }
 function name(path: string) { return path.split("/").pop() || path; }
@@ -20,10 +34,17 @@ type Props = {
 export function EvidenceIntake({ system, draftStage, refreshKey, openEvidence, writeFact, openSection }: Props) {
   const [snap, setSnap] = useState<IntakeSnapshot | null>(null); const [job, setJob] = useState<ReviewJob | null>(null);
   const [error, setError] = useState(""); const [cli, setCli] = useState(rememberedAgentCli()); const [showLog, setShowLog] = useState(false);
-  const [onlyFound, setOnlyFound] = useState(true);
+  const [onlyFound, setOnlyFound] = useState(true); const [errors, setErrors] = useState<IntakeErrors | null>(null);
   const poll = useRef<number | undefined>(undefined);
 
+  async function loadErrors() {
+    try { setErrors(await fetchIntakeErrors(system)); }
+    catch { /* no error report: show nothing new */ }
+  }
+  const watching = !!job && !TERMINAL.includes(job.state);
+  useEffect(() => refreshWhileRunning(watching, () => fetchIntakeErrors(system).then(setErrors)), [watching, system]);
   async function load() {
+    void loadErrors();
     try { setSnap(await fetchIntake(system)); }
     catch (e) {
       const message = (e as Error).message;
@@ -43,7 +64,7 @@ export function EvidenceIntake({ system, draftStage, refreshKey, openEvidence, w
     try { const live = resumableJob((await api<{ jobs: ReviewJob[] }>(`/api/systems/${system}/jobs`)).jobs); if (live) { setJob(live); watch(live.id); } }
     catch { /* no job list: nothing to resume */ }
   }
-  useEffect(() => { setSnap(null); setJob(null); void load(); void resume(); return () => window.clearInterval(poll.current); }, [system]);
+  useEffect(() => { setSnap(null); setJob(null); setErrors(null); void load(); void resume(); return () => window.clearInterval(poll.current); }, [system]);
   useEffect(() => { if (refreshKey) void load(); }, [refreshKey]);
   useEffect(() => { rememberAgentCli(cli); }, [cli]);
 
@@ -61,9 +82,10 @@ export function EvidenceIntake({ system, draftStage, refreshKey, openEvidence, w
 
   if (!snap) return <section className="page draft-page intake-page">{error ? <div className="desk-error" role="alert">{error}</div> : <div className="loading"><span /><strong>Reading what came in…</strong></div>}</section>;
 
-  const { steps, next, busy, canResolve } = deriveIntakeSteps(snap, job);
+  const { steps, next, busy, canResolve } = deriveIntakeSteps(snap, job, errors);
   const running = !!job && !TERMINAL.includes(job.state);
   const rec = snap.intake;
+  const problemCount = (key: StepKey) => (errors?.runs || []).find(r => r.step === key && !!r.state && TERMINAL.includes(r.state))?.problem_count || 0;
   const questions = (snap.gap_check?.questions || []).filter(q => !onlyFound || q.verdict !== "NOT_FOUND");
   const files: IntakeFile[] = rec ? [...rec.added, ...rec.changed] : [];
   const resolveAction = <span className="intake-action"><select value={cli} onChange={e => setCli(e.target.value)} disabled={busy} aria-label="Agent for evidence settlement">{AGENT_CLIS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}</select><button onClick={() => void run("resolve_gaps", { cli })} disabled={busy || !canResolve}>Resolve and update answers</button></span>;
@@ -78,9 +100,11 @@ export function EvidenceIntake({ system, draftStage, refreshKey, openEvidence, w
   return <section className="page draft-page intake-page">
     <header className="page-heading"><div><span>Evidence intake</span><h1>Bring new data in and use it</h1><p>New files go into the index first. The evidence agent records what the sources state, checks open questions against the matrix and index, settles each finding from its source, and updates the affected answers. The final step can change the working document through the normal framework pipeline.</p></div></header>
 
-    <ol className="intake-steps">{steps.map((s, i) => <li key={s.key} className={`intake-step intake-${s.status}${s.key === next ? " intake-next" : ""}`}>
-      <span className="intake-num">{i + 1}</span><div><b>{s.title}</b><small>{s.detail || " "}</small></div>{action(s.key)}
+    <ol className="intake-steps">{steps.map((s, i) => <li key={s.key} className={`intake-step intake-${s.status}${s.status === "failed" ? " intake-failed" : ""}${s.key === next ? " intake-next" : ""}`}>
+      <span className="intake-num">{i + 1}</span><div><b>{s.title}{s.status === "failed" && <span className="intake-badge">failed{problemCount(s.key) > 0 ? ` · ${problemCount(s.key)}` : ""}</span>}</b><small>{s.detail || " "}</small></div>{action(s.key)}
     </li>)}</ol>
+
+    <IntakeErrorsPanel runs={errors?.runs || []} warnings={errors?.warnings || []} />
 
     <div className="draft-counts">
       <div className="draft-count"><strong>{snap.matrix.evidence_rows}</strong><span>Evidence rows</span></div>
@@ -93,7 +117,7 @@ export function EvidenceIntake({ system, draftStage, refreshKey, openEvidence, w
 
     {snap.sync && !snap.sync.ok && <div className="intake-warn" role="alert"><b>{snap.sync.failed ? "The host files did not rebuild" : "The host files are older than the evidence"}</b><p>{snap.sync.failed ? `${snap.sync.last?.hosts_index || "Graph sync failed"}. ` : ""}Hosts, links, flows and per-host evidence shown elsewhere in the workspace may be out of date. Run Ingest new data{snap.sync.failed ? " once the error is fixed" : ""}.</p></div>}
     {error && <p className="desk-error" role="alert">{error}</p>}
-    {job && <div className={`draft-job draft-job-${job.state}`} role="status"><div><b>{OP_LABEL[job.operation] || job.operation}</b><span>{running ? "Running…" : job.state === "succeeded" ? "Done" : `Stopped: ${job.state}`}</span></div><div className="draft-job-buttons"><button className="quiet" onClick={() => setShowLog(!showLog)}>{showLog ? "Hide output" : "Show output"}</button>{running && <button className="quiet" onClick={() => void cancelJob(system, job.id).then(() => fetchJob(system, job.id)).then(setJob)}>Stop</button>}</div>{showLog && <pre>{[job.stdout_tail, job.stderr_tail].filter(Boolean).join("\n") || "No output yet."}</pre>}</div>}
+    {job && <div className={`draft-job draft-job-${job.state}`} role="status"><div><b>{OP_LABEL[job.operation] || job.operation}</b><span>{running ? runningText(job.id, errors) : job.state === "succeeded" ? "Done" : `Stopped: ${job.state}`}</span></div><div className="draft-job-buttons"><button className="quiet" onClick={() => setShowLog(!showLog)}>{showLog ? "Hide output" : "Show output"}</button>{running && <button className="quiet" onClick={() => void cancelJob(system, job.id).then(() => fetchJob(system, job.id)).then(setJob)}>Stop</button>}</div>{showLog && <pre>{[job.stdout_tail, job.stderr_tail].filter(Boolean).join("\n") || "No output yet."}</pre>}</div>}
 
     <section className="decision-desk"><header><div><h2>1 · What came in</h2><p>{rec ? `Last ingest that brought something in: ${when(rec.built_at_utc)}.` : "Run Ingest new data after adding files to the project's discovery folders."}{snap.nothing_new_since ? ` The index was refreshed since then with nothing new.` : ""}</p></div></header>
       {rec && rec.unreadable.length > 0 && <div className="intake-warn" role="note"><b>Not readable: supply a text or PDF copy</b><ul>{rec.unreadable.map(f => <li key={f.rel_path}>{name(f.rel_path)} <small>{f.reason}</small></li>)}</ul></div>}

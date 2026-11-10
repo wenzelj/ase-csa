@@ -287,7 +287,7 @@ def index(doc: dict) -> dict[str, dict]:
 
 
 _LABEL = re.compile(r"\b(?:not identified|unidentified)\b", re.I)
-PLAIN_LABEL = "unidentified internal peers"
+PLAIN_LABEL = "peers known only by address (name each by its address, as the findings give it)"
 
 
 def is_label(p: dict) -> bool:
@@ -299,7 +299,7 @@ def names(p: dict) -> list[str]:
     """The names that count as naming a part: its name, its aliases and, for a dependency, its members (an
     unidentified peer can only be named by its address)."""
     return ([p["name"]] + list(p.get("aliases") or []) + (list(p["members"]) if p["kind"] == "dependency" else [])
-            + ([PLAIN_LABEL, "unidentified peers", "unnamed internal peers"] if is_label(p) else []))
+            + ([PLAIN_LABEL, "unidentified internal peers", "unidentified peers", "unnamed internal peers"] if is_label(p) else []))
 
 
 def _norm(s: str) -> str:
@@ -449,8 +449,8 @@ def card_view(work_dir: Path, fr: dict | None, qs: list[dict]) -> dict | None:
              "Write about the system as these parts, by these names (\"also\" gives accepted short names). A system part "
              "is named by its machines' role in the host register: a role written as two roles (\"A, B\") is one part, "
              "the same machines, never two; in a sentence write one of its roles (its first short name), not the whole \"A, B\" "
-             "list, which reads as two things. A dependency's name is a label: write it as plain English (\"an unidentified "
-             "internal peer at 10.1.2.3\"), never as a name in a sentence. Say something about a part only where a "
+             "list, which reads as two things. A dependency's name is a label: name each peer by its address (\"the peer at "
+             "10.1.2.3\"), never as \"unnamed\" or \"unidentified\", and never as a label in a sentence. Say something about a part only where a "
              "finding listed under that part shows it: a share, a setting or a connection belongs to the part whose "
              "machines the finding names (PART_MISATTRIBUTED). In Text: lines "
              "name the part, never a host of the system (HOST_IN_TEXT): the role table and the Discovery rows carry the "
@@ -642,7 +642,7 @@ def owed_lines(view: dict | None, qid: str) -> list[str]:
     for p in pids:
         v = view["parts"].get(p) if isinstance(view["parts"], dict) else None
         names.append(v if isinstance(v, str) else display_name(v))
-    return ["  Parts these findings are about (name them in the Facts; in the Story name only the parts that decide the rating, by their display name): "
+    return ["  Parts these findings are about (display names): "
             + ", ".join(names)]
 
 

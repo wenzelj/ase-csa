@@ -77,6 +77,31 @@
       ]
     },
     {
+      "id": "S6",
+      "question": "Does any host take its time from a host in another site, so that isolating the site would cut it off from its time source?",
+      "requirements": [
+        "SEP-TIME-01"
+      ],
+      "source": {
+        "cross_site": {
+          "attr": "time.source",
+          "blocks": [
+            "SEP-TIME-01",
+            "Drawbridge Impact"
+          ]
+        }
+      },
+      "search": [
+        "w32tm /query /source"
+      ],
+      "look_for": [
+        "time source",
+        "time server",
+        "synchronis",
+        "NTP"
+      ]
+    },
+    {
       "id": "S5",
       "question": "Does the application keep its own time or rely on Windows time, and which records (logs, call records, recordings) depend on the clocks agreeing?",
       "requirements": [

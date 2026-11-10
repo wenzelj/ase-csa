@@ -1,0 +1,62 @@
+{
+  "topic": "Group Policy Observations",
+  "key": "GROUP_POLICY_OBSERVATIONS",
+  "strict": false,
+  "area": "identity_and_access",
+  "section": "group policy observations",
+  "headings": [
+    "Group Policy Observations"
+  ],
+  "basis": "Migration Discovery, Group Policy Observations: the Group Policy objects each host's computer policy applies, read from the newest gpresult capture of every host (migration-discovery-analysis skill). The move to the new OT domain replaces these objects, so the register must list every one with the hosts that apply it.",
+  "slots": [
+    {
+      "id": "S1",
+      "question": "Which Group Policy objects does each host's computer policy apply?",
+      "requirements": [],
+      "source": {
+        "settings": [
+          "gpo.applied"
+        ]
+      },
+      "search": [
+        "gpresult",
+        "Applied Group Policy Objects"
+      ]
+    },
+    {
+      "id": "S2",
+      "question": "Which Group Policy objects are linked to a host but not applied to it?",
+      "requirements": [],
+      "source": {
+        "settings": [
+          "gpo.not_applied"
+        ]
+      },
+      "search": [
+        "gpresult",
+        "filtered out"
+      ]
+    }
+  ],
+  "story_groups": [
+    {
+      "title": "the Group Policy objects the hosts apply",
+      "slots": [
+        "S1",
+        "S2"
+      ]
+    }
+  ],
+  "scope_note": "the Group Policy objects (GPOs) applied to each host and how the hosts differ. Every host that has a gpresult capture is covered, so never say the evidence comes from one host or sampled hosts. The register has one row per GPO name. Columns: GPO Name | Category (baseline, firewall, restricted groups, antivirus, auditing, security fix, local admin additions and so on) | Applied on (the role groups, each with its hosts in brackets, from the S1 lines) | Linked but not applied on (the hosts from the S2 lines, or a dash). A GPO that every host applies is one row, with Applied on: all hosts. Do not write marks or a sample-hosts note under the register.",
+  "register_columns": [
+    "GPO Name",
+    "Category",
+    "Applied on",
+    "Linked but not applied on"
+  ],
+  "register_lists": "gpo.applied",
+  "register_host_columns": {
+    "Applied on": "gpo.applied",
+    "Linked but not applied on": "gpo.not_applied"
+  }
+}

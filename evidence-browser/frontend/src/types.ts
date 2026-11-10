@@ -147,7 +147,8 @@ export type ApplyJob = { id: string; state: string; stdout_tail?: string; stderr
 export type ApplyOutcome = { state: string; applied: string[]; already_applied: string[]; skipped: string[]; blocked: string[]; backup?: string; warnings: string[]; next_edit_id?: string };
 export type ValidationFinding = { severity: string; code: string; edit_id?: string; record_id?: string; field?: string; stable_anchor?: string; evidence_ids: string[]; message: string };
 
-export type DraftSection = { number: string; key: string; title: string; kind: string; level: number; document_state: string; state: "current" | "stale" | "answered" | "not-answered"; answered_at?: string | null; open: number };
+export type DraftRating = { latest: number; average: number; worse: string[]; runs: { at: string; average: number; blocks: Record<string, number> }[]; reasons: Record<string, string>; improve?: Record<string, string[]> };
+export type DraftSection = { number: string; key: string; title: string; kind: string; level: number; document_state: string; state: "current" | "stale" | "answered" | "not-answered"; answered_at?: string | null; open: number; rating?: DraftRating | null };
 export type DraftSnapshot = {
   project_key: string; stage: string; stale_checked_at?: string | null; counts: Record<string, number>; sections: DraftSection[];
   changes: { rows: { day: string; time: string; subsection: string; change: string; open: string }[]; file?: string | null };
@@ -175,3 +176,16 @@ export type IntakeSnapshot = {
 };
 export type IntakeSync = { ok: boolean; failed: boolean; behind: boolean; last: { at: string; status: string; hosts_index: string; merged_nodes: string[] } | null };
 export type IntakeRecheck = { evidence_id: string; file: string; kind: string; why: string; claim: string };
+export type IntakeProblem = { kind: string; signature: string; count: number; first_line: number; last_line: number; sample: string; stream: "stdout" | "stderr" };
+export type IntakeRun = {
+  id: string; operation: string; step: string; state: string; exit_code?: number | null; started_at?: string | null; finished_at?: string | null;
+  elapsed_seconds?: number | null; reason: string; problems: IntakeProblem[]; problem_count: number; has_problems: boolean; log_truncated: boolean;
+};
+export type IntakeWarning = { step: string; severity: string; code: string; message: string; count: number };
+export type JobLogPage = { stream: "stdout" | "stderr"; total_lines: number; start: number; lines: { n: number; text: string }[]; truncated: boolean };
+export type IntakeErrors = { generated_at: string; runs: IntakeRun[]; warnings: IntakeWarning[] };
+
+export type PromptInfo = { name: string; title: string; use: string; kinds: string[]; required: string[]; text: string; source: "default" | "project"; etag: string; words: number };
+export type PromptSection = { key: string; number: string; title: string; blocks: { id: string; kind: string; label: string }[] };
+export type PromptList = { prompts: PromptInfo[]; max_bytes: number; sections: PromptSection[] };
+export type PromptPreview = { text: string; words: number; sources: { name: string; source: string }[]; kinds: string[] };

@@ -46,6 +46,13 @@ def candidates(project: dict[str, str]) -> list[Path]:
 
 
 def resolve(project: dict[str, str]) -> dict[str, Any]:
+    configured = project.get("working_docx")
+    if configured:
+        path = Path(configured).expanduser().resolve()
+        if path.is_file() and path.suffix.lower() == ".docx" and not path.name.startswith("~$"):
+            return {"state": "ready", "path": path, "candidates": [str(path)]}
+        return {"state": "blocked", "path": None, "candidates": [str(path)],
+                "reason": "The configured working DOCX is missing or is not a DOCX."}
     found = candidates(project)
     if len(found) == 1:
         return {"state": "ready", "path": found[0], "candidates": [str(found[0])]}

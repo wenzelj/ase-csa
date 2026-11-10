@@ -68,8 +68,19 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path, query = unquote(parsed.path), parse_qs(parsed.query)
         try:
+            if path == "/api/new-application/defaults":
+                return self.dispatch_result(api.new_application_defaults())
+            match = re.fullmatch(r"/api/new-application/uploads/([^/]+)", path)
+            if match:
+                return self.dispatch_result(api.new_application_upload_status(match.group(1)))
             if path == "/api/systems":
                 return self.dispatch_result(api.get_systems())
+            match = re.fullmatch(r"/api/systems/([^/]+)/setup", path)
+            if match:
+                return self.dispatch_result(api.system_setup_status(match.group(1)))
+            match = re.fullmatch(r"/api/systems/([^/]+)/working-document", path)
+            if match:
+                return self.dispatch_result(api.working_document_options(match.group(1)))
             match = re.fullmatch(r"/api/systems/([^/]+)/summary", path)
             if match:
                 return self.dispatch_result(api.get_summary(match.group(1)))
@@ -208,7 +219,27 @@ class Handler(BaseHTTPRequestHandler):
         path = unquote(parsed.path)
         try:
             length = int(self.headers.get("Content-Length", "0"))
+            if path.startswith("/api/new-application/") and length > 8 * 1024 * 1024:
+                return self.send_json({"detail": "Request body exceeds the size limit"}, 413)
             payload = json.loads(self.rfile.read(length) or b"{}")
+            if path == "/api/new-application/preview":
+                return self.dispatch_result(api.new_application_preview(payload))
+            if path == "/api/new-application/uploads":
+                return self.dispatch_result(api.new_application_create_upload(payload))
+            match = re.fullmatch(r"/api/new-application/uploads/([^/]+)/finalise", path)
+            if match:
+                return self.dispatch_result(api.new_application_finalise_upload(match.group(1)))
+            if path == "/api/new-application/commit":
+                return self.dispatch_result(api.new_application_commit(payload))
+            match = re.fullmatch(r"/api/systems/([^/]+)/working-document", path)
+            if match:
+                return self.dispatch_result(api.select_working_document(match.group(1), payload))
+            match = re.fullmatch(r"/api/systems/([^/]+)/legacy-document", path)
+            if match:
+                return self.dispatch_result(api.select_legacy_document(match.group(1), payload))
+            match = re.fullmatch(r"/api/systems/([^/]+)/working-document/from-template", path)
+            if match:
+                return self.dispatch_result(api.create_working_document_from_template(match.group(1), payload))
             match = re.fullmatch(r"/api/systems/([^/]+)/figures/refresh", parsed.path)
             if match:
                 return self.dispatch_result(api.figure_refresh(match.group(1)))
@@ -279,9 +310,31 @@ class Handler(BaseHTTPRequestHandler):
             self.fail(error)
 
     def do_PUT(self) -> None:
-        path = unquote(urlparse(self.path).path)
+        parsed = urlparse(self.path)
+        path = unquote(parsed.path)
         try:
             length = int(self.headers.get("Content-Length", "0"))
+            match = re.fullmatch(r"/api/systems/([^/]+)/working-document/upload", path)
+            if match:
+                if length > api.working_document.MAX_UPLOAD_BYTES:
+                    return self.send_json({"detail": "Working DOCX exceeds the upload size limit"}, 413)
+                filename = scalar(parse_qs(parsed.query), "filename")
+                return self.dispatch_result(api.working_document.upload(
+                    api.system_project(match.group(1)), api.agents_dir(), filename, self.rfile.read(length)))
+            match = re.fullmatch(r"/api/new-application/uploads/([^/]+)/files/(.+)", path)
+            if match:
+                if length > api.project_upload._CHUNK_SIZE:
+                    return self.send_json({"detail": "Upload chunk exceeds the size limit"}, 413)
+                query = parse_qs(urlparse(self.path).query)
+                try:
+                    index = int(scalar(query, "index"))
+                except ValueError:
+                    return self.send_json({"detail": "A non-negative chunk index is required"}, 400)
+                if index < 0:
+                    return self.send_json({"detail": "A non-negative chunk index is required"}, 400)
+                data = self.rfile.read(length)
+                return self.dispatch_result(api.new_application_write_chunk(
+                    match.group(1), match.group(2), index, data))
             payload = json.loads(self.rfile.read(length) or b"{}")
             match = re.fullmatch(r"/api/systems/([^/]+)/sections/([^/]+)/proposal", path)
             if match:
@@ -293,6 +346,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_DELETE(self) -> None:
         try:
             path = unquote(urlparse(self.path).path)
+            match = re.fullmatch(r"/api/new-application/uploads/([^/]+)", path)
+            if match:
+                return self.dispatch_result(api.new_application_cancel_upload(match.group(1)))
             match = re.fullmatch(r"/api/systems/([^/]+)/jobs/([^/]+)", path)
             if match:
                 return self.dispatch_result(api.cancel_job(match.group(1), match.group(2)))

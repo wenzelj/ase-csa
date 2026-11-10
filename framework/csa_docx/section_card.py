@@ -147,13 +147,8 @@ def _role_table_lines(ts) -> list[str]:
     t = ts[0]
     split = any(x.get("requirement") for x in ts)
     title = "Requirement evidence tables" if split else "Role table"
-    placement = ("The framework puts each table directly after its matching SEP story under Discovery Information. "
-                 if split else
-                 "The framework puts this table under Discovery Information, above the Aspect table, every time this subsection is written. ")
     out = ["", f"## {title} (built by the framework from the captures)", "",
-           placement + "It is the detailed discovery evidence for this topic. Keep the SEP story as the synthesis and "
-           "do not recreate these tables in an Aspect block (ROLE_TABLE_REPEAT). Write about hosts by these role groups, never by a number of hosts "
-           "(NO_TOTALS). Use it in the Current State and Drawbridge Impact text, citing the evidence rows for the same facts.",
+           "The framework places this table in the document. It is the detailed discovery evidence for this topic.",
            "", topic_markdown(ts)]
     if t.get("gaps"):
         out += ["", "Already raised as Discovery Required by the framework (do not write these as QUESTION: lines):"]
@@ -228,6 +223,33 @@ def brief_markdown(node: dict, spec: dict | None = None) -> str:
 
 # ---------------------------------------------------------------- evidence pack
 
+def _load_framework_terms() -> list:
+    """Framework terms from term_lint.py (loaded by path); [] when the file cannot be loaded."""
+    import importlib.util
+    script = Path(__file__).resolve().parents[2] / "skills" / "australian-it-ot-terminology" / "scripts" / "term_lint.py"
+    try:
+        spec = importlib.util.spec_from_file_location("term_lint_s510", script)
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules["term_lint_s510"] = mod
+        spec.loader.exec_module(mod)
+        return list(mod.load_framework_terms())
+    except Exception:
+        return []
+
+
+def forbidden_terms_lines() -> list[str]:
+    """'## Words that must not appear in the text': each framework phrase with its 'Say instead' text; [] if unavailable."""
+    terms = _load_framework_terms()
+    if not terms:
+        return []
+    out = ["", "## Words that must not appear in the text", ""]
+    for pat, instead in terms:
+        phrase = pat.pattern.removeprefix("(?<!\\w)").removesuffix("(?!\\w)")
+        phrase = re.sub(r"\\(.)", r"\1", phrase)
+        out.append(f"- {phrase}: {instead}")
+    return out
+
+
 def _skills() -> Path:
     return Path(__file__).resolve().parents[2] / "skills"
 
@@ -246,11 +268,84 @@ def _matrix(workspace: Path, query: str, limit: int = MAX_ROWS_PER_QUESTION) -> 
     return (res or {}).get("matches", []) if (res or {}).get("status") == "OK" else []
 
 
+_IP_NAMES: dict[str, str] = {}          # address -> host name, set for the card being built
+
+
+def load_ip_names(workspace) -> None:
+    """The host register's addresses, so a claim that names a host only by address is shown with the host's name."""
+    global _IP_NAMES
+    _IP_NAMES = {}
+    try:
+        work = Path(workspace) / "csa-work"
+        for r in _file_rows(work, "hosts/hosts.csv"):
+            host = (r.get("host") or "").strip().upper()
+            for ip in re.split(r"[;,\s]+", r.get("ips") or ""):
+                if host and re.fullmatch(r"\d{1,3}(?:\.\d{1,3}){3}", ip):
+                    _IP_NAMES.setdefault(ip, host)
+    except Exception:                   # the card still builds without the names
+        _IP_NAMES = {}
+    try:                                # hosts the register does not hold (an enterprise server a capture only connects to)
+        from csa_docx import evidence_live
+        for ip, host in evidence_address_hosts(evidence_live.get_verified_evidence(Path(workspace) / "csa-work" / "evidence-matrix.csv")).items():
+            _IP_NAMES.setdefault(ip, host)
+    except Exception:
+        pass
+
+
+_EV_HOST = re.compile(r"\b([A-Z]{3}[A-Z]{3}[A-Z]{3}\d{3})\b")
+_EV_ADDR = re.compile(r"(?:\bat|\bfurther address(?:es)?|\baddress(?:es)?)\s+(\d{1,3}(?:\.\d{1,3}){3})(?!\.?\d)")
+
+
+def evidence_address_hosts(rows) -> dict[str, str]:
+    """address -> host from evidence rows that say it outright: 'IPTPRDCCM202 is MECM 2 at 10.89.161.67 and a further address
+    10.89.163.66'. Only a row whose subject is its one named host counts, and an address two rows give to different hosts is dropped."""
+    seen: dict[str, set[str]] = {}
+    for r in rows:
+        c = " ".join((r.get("claim") or "").split())
+        hosts = set(_EV_HOST.findall(c))
+        if len(hosts) != 1:
+            continue
+        host = next(iter(hosts))
+        if not c.startswith(host):
+            continue
+        for m in _EV_ADDR.finditer(c):
+            seen.setdefault(m.group(1), set()).add(host)
+    return {ip: next(iter(h)) for ip, h in seen.items() if len(h) == 1}
+
+
+_HOST_RUN = re.compile(r"\b(?:[A-Z]{3}[A-Z]{3}[A-Z]{3}\d{3})(?:(?:, | and | and the )[A-Z]{3}[A-Z]{3}[A-Z]{3}\d{3})+\b")
+_ONE_HOST = re.compile(r"[A-Z]{3}[A-Z]{3}[A-Z]{3}\d{3}")
+
+
+def role_groups(line: str, host_roles: dict[str, str]) -> str:
+    """'Primary DNS server on MOTPRDCLU101, MOTPRDCLU103 and ROTPRDLOG102: X' -> 'Primary DNS server on 2 SQL Server cluster nodes and
+    1 OT TETRA Log Server: X'. A run of hosts that the register knows by role is shown by role and count, so a slot finding is read as
+    what a kind of machine does, not as a list of machines (the host names stay in the Host register). A run with a host the register
+    does not know is left as it is."""
+    def swap(m: re.Match) -> str:
+        names = _ONE_HOST.findall(m.group(0))
+        roles = [host_roles.get(n) for n in names]
+        if not all(roles):
+            return m.group(0)
+        counts: dict[str, int] = {}
+        for r in roles:
+            counts[r] = counts.get(r, 0) + 1
+        return " and ".join(f"{r} (x{n})" for r, n in counts.items())
+    return _HOST_RUN.sub(swap, line)
+
+
+def name_addresses(claim: str) -> str:
+    """'10.40.228.180 opened ...' -> '10.40.228.180 (ROKPRDOPS110) opened ...' for every address of a host with a name. The
+    matrix is not changed: only the card shows it, so the writer cannot take an address for another host of the same role."""
+    return re.sub(r"(?<![\d.])(\d{1,3}(?:\.\d{1,3}){3})(?![\d.]|\s*\([A-Z0-9]{7,}\))", lambda m: f"{m.group(1)} ({_IP_NAMES[m.group(1)]})"
+                  if m.group(1) in _IP_NAMES and _IP_NAMES[m.group(1)] not in claim else m.group(1), claim)
+
+
 def _row(m: dict) -> dict:
     """One evidence row as the card shows it."""
     legacy = (m.get("gap_or_action") or "").startswith("legacy L-")
     return {"id": m["evidence_id"], "status": m.get("status", ""),
-            "claim": " ".join((m.get("claim") or "").split())[:EXCERPT],
+            "claim": name_addresses(" ".join((m.get("claim") or "").split()))[:EXCERPT],
             "source": (m.get("source_title") or "")[:160],
             "note": "previous assessment, not checked against the captures" if legacy else
                     ("searched: " + (m.get("source_title") or "")[:160]) if m.get("status") == "NOT_FOUND" else ""}
@@ -340,6 +435,119 @@ def _index_hits(workspace: Path, term: str, exclude: tuple[str, ...], cache: dic
     return cache[term]
 
 
+# S495: prefer the newest capture. A row is superseded when every capture folder it names (read from the
+# host+timestamp pairs in source_title) is not the newest capture of that host for the same capture file;
+# the newest capture per host is read from hosts/host_facts.csv, with the matrix's own source_title
+# timestamps as fallback. Superseded rows are never dropped from the card; they are listed under their
+# question with the ID of the newer row that replaces them, and answer_sheet warns (SUPERSEDED_EVIDENCE)
+# when a block cites one without citing the newer row.
+
+_CAP_REF = re.compile(r"discovery_([A-Za-z0-9\-]+?)_(\d{8}T\d{6}Z)")
+
+
+def capture_refs(row: dict) -> list[tuple[str, str]]:
+    """(host, capture timestamp) pairs named in a row's source_title, in citation order, no repeats."""
+    out: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for host, ts in _CAP_REF.findall((row.get("source_title") or "")):
+        key = (host.upper(), ts)
+        if key not in seen:
+            seen.add(key)
+            out.append(key)
+    return out
+
+
+def _latest_capture(workspace: Path | None) -> dict[tuple[str, str], tuple[str, list[str]]]:
+    """{(host, capture file): (timestamp, evidence row ids)}: the newest capture of each host, per capture
+    file, and the matrix rows that cite it. The capture set is hosts/host_facts.csv; when it does not name
+    a capture, the matrix's own source_title timestamps are used so a row can still be superseded."""
+    if not workspace:
+        return {}
+    rows = _matrix_rows(Path(workspace))
+    latest: dict[tuple[str, str], tuple[str, list[str]]] = {}
+    facts = {}
+    for f in _file_rows(Path(workspace) / "csa-work", "hosts/host_facts.csv"):
+        src = (f.get("source") or "").split(" line ")[0].strip()
+        for host, ts in _CAP_REF.findall(src):
+            if not ts or "/" not in src:
+                continue
+            name = src.split("/")[-1]
+            key = (host.upper(), name)
+            if ts > (facts.get(key) or ("", set()))[0]:
+                facts[key] = (ts, {name})
+            else:
+                facts.setdefault(key, ("", set()))[1].add(name)
+    for r in rows:
+        st = r.get("source_title") or ""
+        for host, ts in capture_refs(r):
+            m = re.search(r"\b(\d{2}_[a-z0-9_]+\.txt)\b", st)
+            if not (ts and m):
+                continue
+            name = m.group(1)
+            key = (host.upper(), name)
+            fact = facts.get(key)
+            if fact and ts < fact[0]:
+                continue                    # an older capture of a file the host facts say was re-captured
+            cur = latest.get(key)
+            if cur is None or ts > cur[0]:
+                latest[key] = (ts, [r["evidence_id"]])
+            elif ts == cur[0]:
+                latest[key] = (ts, cur[1] + [r["evidence_id"]])
+    return latest
+
+
+def superseded(row: dict, latest: dict[tuple[str, str], tuple[str, list[str]]]) -> list[str]:
+    """The IDs of the newer rows that supersede ``row``, or []: every capture it cites must be older than
+    the newest capture of that host for the same capture file."""
+    if not latest:
+        return []
+    refs = capture_refs(row)
+    if not refs:
+        return []
+    st = row.get("source_title") or ""
+    files = set(re.findall(r"\b\d{2}_[a-z0-9_]+\.txt\b", st))
+    newer: set[str] = set()
+    for host, ts in refs:
+        superseded_by: set[str] = set()
+        for (h, name), (lts, ids) in latest.items():
+            if h != host.upper() or name not in files or ts >= lts:
+                continue
+            superseded_by |= set(ids)
+        if not superseded_by:
+            return []                       # one capture is current: the row is not superseded
+        newer |= superseded_by
+    newer.discard(row.get("evidence_id", ""))
+    return sorted(newer)
+
+
+# Subject-area labels the matrix uses for one topic: older rows were written with another spelling of the same area.
+AREA_ALIASES = [
+    {"identity_and_authentication", "identity_authentication", "identity_and_access"},
+    {"internet_and_smtp", "internet_access_communications"},
+    {"asset_inventory", "general_asset_inventory"},
+    {"infrastructure_dependencies", "infrastructure_and_hosting"},
+    {"isolation_and_resilience", "availability_and_resilience"},
+    {"vendor_access", "operations_and_support"},
+]
+
+
+def topic_areas(title: str) -> set[str]:
+    """The matrix subject areas that belong to a subsection: the area its topic frame names, with every spelling of it. A topic whose
+    title is not spelled like its area ("Patch & Lifecycle Management" and patch_and_lifecycle) still finds its own rows."""
+    try:
+        from csa_docx import topic_frames
+        area = (topic_frames.frame_for(title) or {}).get("area") or ""
+    except Exception:
+        area = ""
+    if not area:
+        return set()
+    out = {area}
+    for group in AREA_ALIASES:
+        if area in group:
+            out |= group
+    return out
+
+
 def evidence_pack(node: dict, qs: list[dict], workspace: Path | None, extra_searches: dict | None = None,
                   exclude: tuple[str, ...] = (), skip: frozenset = frozenset(), terms: dict | None = None) -> dict:
     """{question id: {"rows", "cut", "candidates", "searched"}}, gathered before the AI starts.
@@ -360,9 +568,13 @@ def evidence_pack(node: dict, qs: list[dict], workspace: Path | None, extra_sear
     offered = {r["evidence_id"].upper() for r in rows}
     rejected = _rejected(workspace)
     cache: dict = {}
+    latest = _latest_capture(workspace)
+    newer_of = {r["evidence_id"].upper(): superseded(r, latest) for r in rows}
     topic = _norm(node["title"])
+    areas = topic_areas(node["title"])
     own = [r for r in rows if r["evidence_id"].upper() not in rejected and r["evidence_id"].upper() not in skip and (
-        topic and (topic in _norm(r.get("section", "")) or _norm(r.get("csa_area", "")) in (topic, topic.replace(" and ", " "))))]
+        topic and (topic in _norm(r.get("section", "")) or _norm(r.get("csa_area", "")) in (topic, topic.replace(" and ", " "))
+                   or (r.get("csa_area") or "") in areas))]
     for q in qs:
         if q["kind"] == "comment":
             continue
@@ -385,8 +597,13 @@ def evidence_pack(node: dict, qs: list[dict], workspace: Path | None, extra_sear
                     continue
                 scored[m["evidence_id"]] = (_STATUS_RANK.get(m.get("status", ""), 5) + 1, -int(10 * m.get("score", 0)), m)
         ranked = [v[2] for v in sorted(scored.values(), key=lambda v: (v[0], v[1]))]
+        ranked.sort(key=lambda m: bool(newer_of.get(m["evidence_id"].upper())))    # newest captures first (stable)
         kept = [_row(m) for m in ranked[:MAX_ROWS_PER_QUESTION]]
-        cut = [m["evidence_id"] for m in ranked[MAX_ROWS_PER_QUESTION:]]
+        for k_ in kept:
+            if newer_of.get(k_["id"].upper()):
+                k_["superseded_by"] = newer_of[k_["id"].upper()]
+        old_ = {m["evidence_id"]: newer_of[m["evidence_id"].upper()] for m in ranked if newer_of.get(m["evidence_id"].upper())}
+        cut =[m["evidence_id"] for m in ranked[MAX_ROWS_PER_QUESTION:]]
         cands = []
         for term in (terms or {}).get(q["id"], []):        # the frame's own words for this question's slots
             searched.append(f"index '{term}'")
@@ -402,7 +619,7 @@ def evidence_pack(node: dict, qs: list[dict], workspace: Path | None, extra_sear
                                   "excerpt": " ".join(h.get("evidence_excerpt", "").split())[:EXCERPT]})
         if skip:
             searched.append(f"{len(skip)} rows the analysis frame cites are on the card with its findings, not repeated here")
-        pack[q["id"]] = {"rows": kept, "cut": cut, "candidates": cands[:4 if (terms or {}).get(q["id"]) else 3],
+        pack[q["id"]] = {"superseded": old_, "rows": kept, "cut": cut, "candidates": cands[:4 if (terms or {}).get(q["id"]) else 3],
                          "searched": searched}
     return pack
 
@@ -433,6 +650,21 @@ _HOST = re.compile(r"\b(?=[A-Z0-9]*\d)[A-Z][A-Z0-9]{6,}\b")
 _NEGATIVE_ASSERTION = re.compile(r"\b(?:no|not|none|without|absent|missing|never|neither|nor)\b", re.I)
 
 
+def _repair_slash_names(text: str, vocab) -> str:
+    """A word like "TETRA/Reveloc" that an earlier answer misspelled ("2ETRA/Reveloc") is put back to the spelling the
+    evidence uses. Only a token with a slash that is not in the evidence but is a near match (0.85) to one that is."""
+    import difflib
+    def fix(m):
+        tok = m.group(0)
+        if tok in vocab:
+            return tok
+        near = difflib.get_close_matches(tok, list(vocab), n=3, cutoff=0.85)
+        if not near:
+            return tok
+        return max(near, key=lambda c: (vocab[c] if hasattr(vocab, "most_common") else 0))
+    return re.sub(r"[A-Za-z0-9]+/[A-Za-z0-9]+", fix, text)
+
+
 def facts_to_keep(node: dict, workspace: Path | None) -> list[dict]:
     """Capture-backed facts this subsection's applied answers have stated (from the fact store), newest wording
     per question and capture evidence: [{question, fact, evidence_ids, capture_ids}]. A re-answer keeps each, or
@@ -444,6 +676,9 @@ def facts_to_keep(node: dict, workspace: Path | None) -> list[dict]:
     work = Path(workspace) / "csa-work"
     rows = {r["evidence_id"].upper(): r for r in _matrix_rows(workspace)}
     rejected = _rejected(workspace)
+    from collections import Counter
+    slash_vocab = Counter(t for r in rows.values() for v in r.values() if isinstance(v, str)
+                          for t in re.findall(r"[A-Za-z0-9]+/[A-Za-z0-9]+", v))
     latest: dict[tuple, dict] = {}
     for f in fact_store._read(work):
         if f.get("section") != node["key"] or f.get("basis") == "background":
@@ -472,9 +707,10 @@ def facts_to_keep(node: dict, workspace: Path | None) -> list[dict]:
             continue
         k = (f.get("question", ""), tuple(caps))
         if k not in latest or f.get("added", "") >= latest[k].get("added", ""):
-            latest[k] = {"question": f.get("question", ""), "fact": f["fact"],
+            latest[k] = {"question": f.get("question", ""), "fact": _repair_slash_names(f["fact"], slash_vocab),
                          "evidence_ids": list(f["evidence_ids"]),
-                         "capture_ids": caps, "added": f.get("added", ""), "kind": f.get("kind", "fact")}
+                         "capture_ids": caps, "added": f.get("added", ""), "kind": f.get("kind", "fact"),
+                         "basis": f.get("basis", ""), "hosts": list(f.get("hosts") or [])}
     # a capture set already covered by a newer fact of the same question is not asked for twice
     out = sorted(latest.values(), key=lambda x: (x["question"], x["added"]), reverse=True)
     seen: dict[str, set] = {}
@@ -504,6 +740,10 @@ def filter_keep(keep: list[dict], fr: dict | None) -> tuple[list[dict], list[dic
         return keep, []
     from csa_docx import topic_frames
     ids = {i.upper() for i in topic_frames.all_ids(fr)}
+    # A setting finding is built from the current host settings on every card build: an old answer's wording of it is not
+    # carried forward (an earlier answer once turned "Direct, no WinHTTP proxy" into "proxy settings are configured", and
+    # keeping it locked the mistake in). The writer restates the current finding instead.
+    setting_ids = {i.upper() for s in fr.get("slots", []) for f in s["findings"] if f.get("from_setting") for i in f.get("ids", [])}
     rules = []                       # (baseline phrase, non-baseline findings of the same slot)
     for s in fr.get("slots", []):
         base = [f for f in s["findings"] if f.get("value") and not f.get("requirements")]
@@ -512,9 +752,12 @@ def filter_keep(keep: list[dict], fr: dict | None) -> tuple[list[dict], list[dic
             phrase = " ".join(f["value"].lower().split()[:3])
             if phrase and more:
                 rules.append((phrase, more))
+    framework_terms = [pat for pat, _ in _load_framework_terms()]
     kept, correct = [], []
     for k in keep:
         low = k["fact"].lower()
+        if any(pat.search(k["fact"]) for pat in framework_terms):
+            continue                      # a framework word ("flow map", "discovery captures") is not carried into new prose
         hit = [f for phrase, more in rules if phrase in low for f in more
                if any(t.lower() in low for t in (f.get("roles") or []) + (f.get("hosts") or []))
                and not _value_items_in(f.get("value") or "", low)]
@@ -522,6 +765,9 @@ def filter_keep(keep: list[dict], fr: dict | None) -> tuple[list[dict], list[dic
             correct.append({**k, "contradicts": [{"text": f["text"], "ids": f.get("ids", [])} for f in hit],
                             "phrase": next(ph for ph, more in rules if ph in low and any(f in more for f in hit))})
         elif {i.upper() for i in k["capture_ids"]} & ids:
+            cited = {i.upper() for i in k["capture_ids"]}
+            if setting_ids and len(cited & setting_ids) * 2 >= len(cited):
+                continue                  # restated from the current setting finding, not from the old wording
             kept.append(k)
     return kept, correct
 
@@ -549,6 +795,45 @@ def filter_established(established: dict, pack: dict, fr: dict | None) -> dict:
         if qid in pack:
             pack[qid]["rows"] = [r for r in rows if not r.get("established") or r["id"].upper() in need]
     return out
+
+
+def project_acronyms(workspace) -> dict[str, str]:
+    """{acronym: expansion} the project's sources give (csa-work/acronyms.json): a card may spell one out only this way."""
+    if not workspace:
+        return {}
+    try:
+        data = json.loads((Path(workspace) / "csa-work" / "acronyms.json").read_text(encoding="utf-8")).get("acronyms", {})
+    except (OSError, ValueError, AttributeError):
+        return {}
+    return {k.upper(): (v.get("expansion") if isinstance(v, dict) else str(v)) for k, v in data.items() if v}
+
+
+def acronym_lines(text: str, acronyms: dict[str, str]) -> list[str]:
+    found = {k: v for k, v in acronyms.items() if re.search(rf"\b{re.escape(k)}\b", text, re.I)}
+    if not found:
+        return []
+    return ["", "## Project acronyms", "",
+            "Spell one out only as given here, or leave it unexpanded; never offer another meaning for it "
+            "(the answer check rejects one: ACRONYM_EXPANSION):", ""] + [f"- {k} = {v}" for k, v in found.items()]
+
+
+def glossary_lines(text: str) -> list[str]:
+    """The card's plain-words glossary: standard technology terms that occur in the card, each with a short explanation for a
+    customer who has never met it (references/glossary.json). The writer explains such a term the first time it appears.
+    Project acronyms are not in it: the sources do not define them, so the writer uses the part's display name."""
+    path = Path(__file__).resolve().parents[2] / "references" / "glossary.json"
+    try:
+        terms = json.loads(path.read_text(encoding="utf-8")).get("terms", [])
+    except (OSError, ValueError):
+        return []
+    low = text.lower()
+    found = [t for t in terms if any(m in low for m in t.get("match", []))]
+    if not found:
+        return []
+    return ["", "## Plain-words glossary", "",
+            "Explain each of these terms in one short clause the first time it appears in a Story or Text (for example "
+            "\"Server Message Block, the Windows file-sharing protocol\"). These describe the technology, not this system:", ""] + \
+           [f"- {t['term']}: {t['plain']}" for t in found]
 
 
 def _foreign_absence(fact: dict, rows: dict, key: str) -> bool:
@@ -655,15 +940,19 @@ def host_register(workspace: Path | None) -> dict | None:
         g["zones"] = list(dict.fromkeys(zs.of(h).get("zone", "") or "zone not recorded" for h in g["hosts"]))
     unnamed = []
     unnamed = _file_rows(d.parent, "hosts/addresses.csv")
-    return {"groups": gl, "total": sum(len(g["hosts"]) for g in gl), "uncaptured": uncaptured, "unnamed": unnamed,
+    try:
+        from csa_docx import estate as _estate
+        app = _estate.application_name(d.parent)
+    except Exception:
+        app = ""
+    return {"application": app, "groups": gl, "total": sum(len(g["hosts"]) for g in gl), "uncaptured": uncaptured, "unnamed": unnamed,
             "zone_conflicts": topic_frames.zone_conflicts(d.parent)}
 
 
 def _register_lines(reg: dict) -> list[str]:
-    out = ["", "## Host register (captured hosts, grouped by role)", "",
-           "Any host table uses one row per role group below, never one row per host. Write about hosts by role group or "
-           "by name, never by a number or total of hosts (NO_TOTALS). The zone is the side of the OT boundary the host "
-           "is on: it wins over any OT or IT in a role name.", ""]
+    out = ["", "## Host register (hosts grouped by role)", ""]
+    if reg.get("application"):
+        out += [f"System: {reg['application']}", ""]
     for c in reg.get("zone_conflicts") or []:
         out.append(f"- ZONE CONFLICT: {c['text']}")
     for g in reg["groups"]:
@@ -679,8 +968,8 @@ def _register_lines(reg: dict) -> list[str]:
         many = [u for u in un if int(u.get("host_count") or 0) >= 2 and u.get("kind") == "private"]
         inbound = [u for u in un if u not in many and u.get("kind") == "private" and "inbound" in (u.get("directions") or "")]
         shown = (many + inbound)[:30]
-        out += ["", f"Peers seen only by address (name not captured; {len(un)} in total, not counted in the hosts above). "
-                    "Refer to one by its address and say its name was not captured:"]
+        out += ["", f"Peers seen only by address ({len(un)} in total, not counted in the hosts above). "
+                    "Refer to one by its address alone; do not say its name was not captured:"]
         for u in shown:
             ev = (u.get("evidence_ids") or "").split(";")
             out.append(f"- {u['address']} ({u['kind']}): from {u['host_count']} host(s) {u['seen_from'].replace(';', ', ')}; "
@@ -760,6 +1049,124 @@ def note_candidates(node: dict, workspace: Path | None, reg: dict | None, rows: 
         if r.get("status") == "CONFLICTING" and topic & _note_words(r.get("section", "") + " " + r.get("csa_area", "").replace("_", " ")):
             out.append({"text": f"sources disagree: {' '.join((r.get('claim') or '').split())[:200]}", "ids": [r["evidence_id"]]})
     return out[:limit]
+
+
+_PEER_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9-]*\d[A-Za-z0-9-]*$")
+_ZONE_QUESTION = re.compile(r"\bzones?\b|side of (?:the )?(?:OT|IT)\b|boundary|\bhosted\b|inside (?:the )?OT|\bsubnets?\b", re.I)
+
+
+def peer_identity(fr: dict | None, workspace: Path | None) -> dict:
+    """The identity of every host named as the value of one of the topic's host settings (the frame slots' settings:
+    a time source, a DNS resolver, a domain controller, a patch server), looked up in the host register.
+
+    Returns {"hosts": [{host, role, zone, site, how, known}], "lines": [...], "answered": [slot id], "open": [host]}.
+    ``how`` is ``confirmed by Wenzel``, ``assumed: <note>`` (the identity fact carries an assumption note) or
+    ``not recorded``. A slot that asks for the zone or side of OT is answered by the register when every named host is
+    known; a host the register does not hold stays an open question (a Discovery Required item)."""
+    empty = {"hosts": [], "lines": [], "answered": [], "open": []}
+    if not fr or not workspace:
+        return empty
+    from csa_docx import host_settings, topic_frames, zones as zones_mod
+    frame = topic_frames.frame_for(fr.get("heading", "")) or {}
+    attrs = [a for s in frame.get("slots", []) for a in (s.get("source") or {}).get("settings", [])
+             if not a.startswith("gpo.")]          # a Group Policy object's name is not a host the setting points at
+    work = Path(workspace) / "csa-work"
+    if not attrs:
+        return empty
+    reg = {r["host"].strip().upper(): r for r in _file_rows(work, "hosts/hosts.csv") if (r.get("host") or "").strip()}
+    by_ip: dict[str, str] = {}
+    for h, r in reg.items():
+        for ip in re.split(r"[;,\s]+", r.get("ips") or ""):
+            if ip:
+                by_ip.setdefault(ip, h)
+        fq = (r.get("fqdn") or "").split(".")[0].strip().upper()
+        if fq:
+            reg.setdefault(fq, r)
+    named: list[str] = []
+    for attrs_of in host_settings.load(work).values():
+        for a in attrs:
+            row = attrs_of.get(a)
+            for tok in re.split(r"[,;\s]+", (row or {}).get("value") or ""):
+                tok = tok.strip("()[]")
+                if re.fullmatch(r"\d{1,3}(?:\.\d{1,3}){3}", tok):
+                    name = by_ip.get(tok, "")
+                else:
+                    first = tok.split(".")[0]
+                    name = first.upper() if len(first) >= 4 and _PEER_NAME.match(first) else ""
+                if name and name not in named:
+                    named.append(name)
+    if not named:
+        return empty
+    facts: dict[str, dict[str, str]] = {}
+    for f in _file_rows(work, "hosts/host_facts.csv"):
+        if (f.get("listed_as") or "") == "capture":
+            continue
+        col = (f.get("attribute") or "").rsplit(":", 1)[-1].strip().lower()
+        if col in ("role", "hosted in", "note", "notes") and (f.get("value") or "").strip():
+            facts.setdefault((f.get("host") or "").upper(), {}).setdefault("note" if col == "notes" else col, f["value"].strip())
+    zs = zones_mod.for_project(work)
+    hosts = []
+    for name in sorted(named):
+        r, fact = reg.get(name) or {}, facts.get(name) or {}
+        identity = bool(fact.get("role") or fact.get("hosted in"))
+        zone = fact.get("hosted in") or ""
+        if not zone and (r or identity):
+            z = zs.of(name)
+            zone = "" if z.get("kind") == "unknown" else (z.get("zone") or "")
+        note = fact.get("note", "")
+        how = ("assumed: " + note if re.search(r"assum", note, re.I) else "confirmed by Wenzel") if identity else "not recorded"
+        hosts.append({"host": name, "role": fact.get("role") or (r.get("role") or "").strip() or "role not recorded",
+                      "zone": zone or "zone not recorded", "site": (r.get("site") or "").strip() or "site not recorded",
+                      "how": how, "known": identity})
+    unknown = [h["host"] for h in hosts if not h["known"]]
+    known = [h["host"] for h in hosts if h["known"]]
+    entity_ids: list[str] = []
+    entity_lines: list[str] = []
+    servers = [h["host"] for h in hosts if not (reg.get(h["host"]) or {}).get("capture")]      # the servers the settings name, not the captured hosts
+    if servers:
+        from csa_docx import network_facts
+        try:
+            on_card = topic_frames.all_ids(fr)
+        except (KeyError, TypeError):
+            on_card = set()
+        try:
+            erows = network_facts.server_rows(work, servers, skip=on_card)
+        except OSError:
+            erows = []
+        if erows:
+            entity_ids = [r["id"] for r in erows]
+            entity_lines = ["", "## Evidence about the servers named above (who they are and where they sit)", "",
+                            "Use these rows for what a server is, its address, its AD site and which domain controller answered. They are not "
+                            "about what other hosts do.", ""]
+            entity_lines += [f"- {r['id']} VERIFIED: {name_addresses(r['claim'])}" for r in erows]
+    # One host the register does not hold (a stray name in a setting) must not hide the zone of the servers it does hold.
+    answered = [s["id"] for s in fr.get("slots", [])
+                if known and _ZONE_QUESTION.search(s.get("question", ""))]
+    lines = ["", "## Hosts named as sources or peers (identity from the host register)", "",
+             "Each host below is the value of one of this topic's host settings:", ""]
+    for h in hosts:
+        lines.append(f"- {h['host']}: role {h['role']}; zone {h['zone']}; site {h['site']}; {h['how']}")
+    lines += entity_lines
+    net_ids: list[str] = []
+    if answered:
+        from csa_docx import network_facts
+        nf = network_facts.NetworkFacts(work)
+        shown = [h for h in known if nf.host(h)["known"] and nf.host(h)["zone"] and not (reg.get(h) or {}).get("capture")]   # the servers, not the captured hosts
+        if not shown:                 # the register places none of the servers: nothing is answered
+            answered = []
+        else:
+            net_ids = sorted({nf.host(h)["evidence"] for h in shown if nf.host(h)["evidence"] and not nf.host(h)["assumed"]})
+            lines += ["", "## Network answers (where the servers above sit, from the host register)", "",
+                      "These settle where the hosts listed here sit (slots " + ", ".join(answered) + "); any other host the slots name stays open. Write a Fact from each line that names an evidence row, with that "
+                      "row's ID and basis `stated`. Do not write a QUESTION: line for what a line answers. Where a line says the subnet "
+                      "is not recorded, write that as a QUESTION: line.", ""]
+            lines += [f"- {nf.line(h)}" for h in shown]
+            lines += ["", "Answered by the host register for the hosts above, not open: " + ", ".join(answered)
+                      + ". Do not write a QUESTION: line for the zone of these hosts."]
+    if unknown:
+        lines += ["", "Not in the host register (open question, Discovery Required): " + ", ".join(unknown)
+                  + ". Write a QUESTION: line asking for the role and zone of each."]
+    return {"hosts": hosts, "lines": lines, "answered": answered, "open": unknown, "network_ids": net_ids, "entity_ids": entity_ids}
 
 
 SHARED_HEAD = "## Shared enterprise services (other applications in the estate)"
@@ -1074,7 +1481,7 @@ def condition_lines(req_id: str, req_text: str = "") -> list[str]:
     out = ["  What decides this rating (conditions):"]
     out += [f"  - {x['id']}: {x['text']}" for x in c["conditions"]]
     if len(c["conditions"]) > 1:
-        out.append(f"  - Logic: {c['logic']}   (Met only when the logic holds; an unknown condition caps the rating at Partially Met)")
+        out.append(f"  - Logic: {c['logic']}   (Met only when the logic holds)")
     if not c["reviewed"]:
         out.append("  (conditions not reviewed yet: use them, and say nothing that depends on their wording)")
     return out
@@ -1090,16 +1497,34 @@ def must_address_by_question(qs: list[dict], fr: dict | None) -> dict[str, list[
     return {q["id"]: by_req[q["req_id"]] for q in qs if q.get("kind") == "requirement" and by_req.get(q.get("req_id"))}
 
 
-def must_address_lines(items: list[dict]) -> list[str]:
-    """The card lines under one requirement question: what it must cite, or raise as Unknown."""
+def must_address_lines(items: list[dict], groups: list[dict] | None = None) -> list[str]:
+    """The card lines under one requirement question: what it must cite, or raise as Unknown. With the frame's
+    story_groups the findings are listed group by group, in the order the Story and the Facts follow."""
     if not items:
         return []
-    out = ["  Must address (from the analysis frame): cite each finding's evidence in this block, or write an "
-           "QUESTION: line that names it (SLOT_NOT_ANSWERED):"]
-    for x in items:
+    out = ["  Evidence findings for this block (use the ones that settle a condition, grouped by role: say what most hosts do and name the "
+           "exceptions. You need not cite every finding or list hosts one by one; a finding that settles nothing may be left out):"]
+
+    def line(x: dict) -> str:
         ids = f" ({', '.join(x['ids'])})" if x["ids"] else ""
-        out.append(f"  - {x['slot']}: {'Unknown unless the evidence pack answers it: ' if x['empty'] else ''}"
-                   f"{x['text'][:260]}{ids}")
+        return (f"  - {x['slot']}: {'Unknown unless the evidence pack answers it: ' if x['empty'] else ''}"
+                f"{x['text'][:260]}{ids}")
+
+    if not groups:
+        return out + [line(x) for x in items]
+    left = list(items)
+    n = 0
+    for g in groups:
+        mine = [x for x in left if x["slot"] in g.get("slots", [])]
+        if not mine:
+            continue
+        n += 1
+        out.append(f"  Story paragraph {n}: {g['title']}")
+        out += ["  " + line(x) for x in mine]
+        left = [x for x in left if x not in mine]
+    if left:
+        out.append("  Other findings")
+        out += ["  " + line(x) for x in left]
     return out
 
 
@@ -1196,13 +1621,25 @@ def requirement_tokens(card: dict) -> dict[str, int]:
 def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool = True,
          extra_searches: dict | None = None, exclude: tuple[str, ...] = ()) -> dict:
     qs = questions(node, spec)
+    from csa_docx import topic_frames as _tf
+    from csa_docx import topic_tables as _tt
+    if (_tt.profile_for(node.get("title", "")) or {}).get("kind") in ("matrix", "sets"):
+        qs = [q for q in qs if q["kind"] != "register"]        # the framework builds that table from the captures: no model rows
+    want = (_tf.frame_for(node.get("title", "")) or {}).get("register_columns")
+    for q in qs:                       # a frame may name the register's real columns where the template holds placeholders
+        if q["kind"] == "register" and want and len(want) == len(q.get("columns") or []):
+            q["document_columns"] = list(q["columns"])
+            q["columns"] = list(want)
+            q["text"] = f"{q['text'].rsplit(', with', 1)[0]}, with {', '.join(want[1:])}."
+    if workspace:
+        load_ip_names(workspace)
     requirement_stories = (any(q["kind"] == "requirement" for q in qs)
                            and any(k.strip().lower() == "discovery information"
                                    for k in (node.get("facets") or {})))
     fr = None                    # the analysis frame: built first, so each requirement question can list what it owes
     if evidence and workspace:   # and the evidence pack does not repeat the rows the frame already cites
         from csa_docx import topic_frames
-        fr = topic_frames.build(Path(workspace), node["title"], node.get("key", ""))
+        fr = topic_frames.build(Path(workspace), node["title"], node.get("key", ""), questions=qs)
         if fr.get("status") != "OK":
             fr = None
     on_frame = frozenset(i.upper() for i in topic_frames.all_ids(fr)) if fr else frozenset()
@@ -1266,45 +1703,31 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
         lines.append(f"- {q['id']} {q['text']}")
         if q.get("columns"):
             lines.append(f"  Columns: {' | '.join(q['columns'])}")
-        lines += must_address_lines(owed.get(q["id"], []))
-        lines += db_lines.get(q["id"], [])
-        if q.get("kind") == "requirement" and q.get("req_id"):
+        if q.get("kind") == "requirement" and q.get("req_id"):       # the requirement and its conditions come first: they are the answer
             rtext = ""
             for p in node.get("parts", []):
                 if p.get("kind") == "requirement":
                     for r in p.get("requirements", []):
                         if r.get("id") == q["req_id"]:
                             rtext = r.get("text", "")
+            lines += ["  Answer the requirement first, in the system's terms: what is in place for this topic, which condition below it meets or "
+                      "misses, and what is not known. The findings that follow are the evidence for that answer, not the answer."]
             lines += condition_lines(q["req_id"], rtext)
+        lines += must_address_lines(owed.get(q["id"], []), (fr or {}).get("story_groups"))
+        lines += db_lines.get(q["id"], [])
         if q.get("req_id") and practice_view:
             from csa_docx.practice import card_lines as practice_card_lines
             lines += practice_card_lines(q["req_id"], practice_view)
         if pview:
             from csa_docx.parts import owed_lines
             lines += owed_lines(pview, q["id"])
-    if requirement_stories:
-        lines += ["", "## Requirement summaries and stories", "",
-                  'For every requirement block write both `Summary:` and `Story:`. Do not put the SEP label or a title in either field; the framework adds a bold title from the requirement ID and wording.',
-                  '- Summary is the Current State table cell. It is decision-first: state the observed control or practice, then finish with `The requirement is <Rating> because ...` and name the decisive requirement condition. Use one to three sentences and at most 80 words. Do not put discovery questions, host inventories or the detailed evidence trail in Summary.',
-                  '- Story is the paragraph under its requirement title in Discovery Information. It is evidence-first and tells how the assessment reached the rating to a reader who has not seen the evidence:',
-                  '  1. Start with how the capability or practice currently operates. Do not start with the rating.',
-                  '  2. Explain the relevant coverage, behaviour and gaps in a logical order. Name at most three parts in a sentence, by their display names.',
-                  '  3. State any material limitation as a factual unknown. Keep the corresponding `QUESTION:` line separate so the framework sends it to Discovery Required.',
-                  '  4. Finish with what the evidence leaves unknown or the gap that decided the rating, in words the Summary does not use. Do not state the rating and do not repeat a Summary sentence: the reader has just read the Summary on the same page.',
-                  "  No word limit: write as much as a good explanation needs. A longer Story is right when each sentence tells the reader something new, and wrong when it pads. Story must add the evidence path, not paraphrase Summary: every sentence says something the Summary does not. Say nothing about another requirement's conditions. Hosts, ports and inventories stay in the tables."]
     sysname = system_name(workspace)
     if sysname:
-        lines += ["", "## System name", "",
-                  f"- The document names the system \"{sysname}\". Use exactly this name, spelled and cased this way, "
-                  "whenever you refer to the system as a whole. Evidence rows and quoted sources may spell it another way; "
-                  "do not copy that spelling into your text."]
+        lines += ["", "## System name", "", f"- {sysname}"]
     from csa_docx import knowledge
     bg_lines, bg_ids = (knowledge.card_section(node["key"], node["title"], qs, (extra or {}).get("must_explain", ""), workspace)
                         if evidence else ([], []))
     lines += bg_lines
-    rl = rules(node, spec)
-    if rl:
-        lines += ["", "## Rules from the template", ""] + [f"- {r}" for r in rl]
     if extra:
         lines += ["", "## Scope", "", f"- Must explain: {extra['must_explain']}", f"- Not here: {extra['not_here']}"]
         if fr:
@@ -1317,28 +1740,23 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
     keep, correct = filter_keep(facts_to_keep(node, workspace) if evidence else [], fr)
     if correct:
         lines += ["", "## Facts to correct or drop", "",
-                  "Earlier answers stated these, but the analysis frame shows otherwise. Do not repeat them: state the "
-                  "finding instead, citing its evidence, and add `Dropped: E-<n> contradicted by <finding>` to the block.", ""]
+                  "Earlier answers stated these. The analysis frame shows otherwise.", ""]
         for c in correct:
             lines.append(f"- {c['question']}: {c['fact']} ({', '.join(c['evidence_ids'])})")
             if c.get("phrase"):
-                lines.append(f"  Only the claim \"{c['phrase']} ...\" is contradicted. If another claim in this fact "
-                             "still stands, cite the row for that claim and leave the Dropped: line out; otherwise drop the row and "
-                             "do not cite it (CITED_AND_DROPPED).")
+                lines.append(f"  Only the claim \"{c['phrase']} ...\" is contradicted.")
             lines += [f"  Contradicted by: {x['text'][:220]}" + (f" ({', '.join(x['ids'])})" if x["ids"] else "")
                       for x in c["contradicts"]]
     if keep:
         lines += ["", "## Facts to keep", "",
-                  "This subsection's applied answers stated these facts and table rows from the discovery captures. Keep "
-                  "each in the block shown (a table row as a row of that table), citing its capture evidence, or add `Dropped: E-<n> <why it no longer applies>` to that "
-                  "block. The check refuses an answer that loses one silently (CAPTURE_DROPPED). Keep the fact and its evidence, "
-                  "not its old wording: restate it in your own words, and where it counts hosts (marked below) name the role "
-                  "groups or the hosts instead of any number or total (NO_TOTALS).", ""]
+                  "This subsection's applied answers stated these facts and table rows from the discovery captures:", ""]
         lines += [f"- {k['question']}{' (table row)' if k.get('kind') == 'row' else ''}: {k['fact']} "
-                  f"({', '.join(k['evidence_ids'])}){count_hint(k['fact'])}" for k in keep]
+                  f"({', '.join(k['evidence_ids'])})"
+                  + (f" {{{k['basis']}{'; ' + ', '.join(k['hosts']) if k['hosts'] else ''}}}"
+                     if k.get("basis") in ("observed", "documented", "stated") and k.get("kind") != "row" else "")
+                  + count_hint(k['fact']) for k in keep]
     if established:
-        lines += ["", "## Facts already established", "",
-                  "Facts other sections have already validated. Reuse one where it answers a question; still cite its evidence IDs.", ""]
+        lines += ["", "## Facts already established", "", "Facts other sections have validated:", ""]
         by_fact: dict[tuple, list[str]] = {}
         for qid, facts in established.items():
             for f in facts:
@@ -1354,20 +1772,44 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
     frame = None
     if fr:
         from csa_docx import topic_frames
-        lines += topic_frames.card_lines(fr)
-        frame = {"slots": [s["id"] for s in fr["slots"]], "ids": sorted(topic_frames.all_ids(fr)),
+        frame_lines = topic_frames.card_lines(fr)
+        lines += frame_lines
+        peers = peer_identity(fr, workspace) if evidence else {"hosts": [], "lines": [], "answered": [], "open": []}
+        lines += peers["lines"]
+        if evidence and workspace:       # a peer the findings show only by address (the far end of a connection) is a server too
+            seen_hosts = {h["host"] for h in peers["hosts"]}
+            by_addr = {_IP_NAMES[ip] for ip in re.findall(r"(?<![\d.])(\d{1,3}(?:\.\d{1,3}){3})(?![\d.])", "\n".join(frame_lines)) if ip in _IP_NAMES}
+            captured = {h.upper() for h in (_file_rows(Path(workspace) / "csa-work", "hosts/hosts.csv") and
+                                            [r["host"] for r in _file_rows(Path(workspace) / "csa-work", "hosts/hosts.csv") if (r.get("capture") or "").strip()])}
+            register = {r["host"].strip().upper() for r in _file_rows(Path(workspace) / "csa-work", "hosts/hosts.csv") if (r.get("host") or "").strip()}
+            by_name = {h for h in re.findall(r"\b[A-Z]{3}PRD[A-Z]{3}\d{3}\b", "\n".join(frame_lines)) if h in register}     # named in the findings
+            extra = sorted(h for h in (by_addr | by_name) if h not in seen_hosts and h not in captured)
+            if extra:
+                from csa_docx import network_facts
+                try:
+                    on_card = set(topic_frames.all_ids(fr)) | set(peers.get("entity_ids", []))
+                    more = network_facts.server_rows(Path(workspace) / "csa-work", extra, skip=on_card)
+                except (OSError, KeyError, TypeError):
+                    more = []
+                if more:
+                    lines += ["", "## Evidence about the peers named by address (who they are)", ""] + \
+                             [f"- {r['id']} VERIFIED: {name_addresses(r['claim'])}" for r in more]
+                    peers["entity_ids"] = list(peers.get("entity_ids", [])) + [r["id"] for r in more]
+        frame = {"peer_identity": peers["hosts"], "register_answered": peers["answered"], "network_ids": peers.get("network_ids", []), "entity_ids": peers.get("entity_ids", []), "slots": [s["id"] for s in fr["slots"]], "ids": sorted(topic_frames.all_ids(fr)),
+                 "origin": fr.get("origin", "topic_profile"),
+                 "answer_blocks": {s["id"]: s["answer_block"] for s in fr["slots"] if s.get("answer_block")},
                  "coverage": topic_frames.coverage_targets(fr), "must_address": owed,
                  "context_ids": topic_frames.context_ids(fr), "zone_conflicts": fr.get("zone_conflicts", []),
-                 "strict": fr.get("strict", False)}
+                 "strict": fr.get("strict", False), "scope_terms": fr.get("scope_terms", []),
+                 "table_patterns": fr.get("table_patterns", []), "bullet_max": fr.get("bullet_max", []),
+                 "register_names": fr.get("register_names", []), "register_hosts": fr.get("register_hosts", {}),
+                 "hosts_covered": fr.get("hosts_covered", []),
+                 "max_text_sentences": fr.get("max_text_sentences", 0)}
     if pview:
         lines += pview["lines"]
     lines += shared_lines
     if pack:
-        lines += ["", "## Evidence pack", "",
-                  "These rows are worded the way the source records them (\"The system matrix records X as ...\"). "
-                  "Never copy that wording: restate each as a fact about the host or application "
-                  "(\"X is the <part> that ...\", naming the part as the System parts list does) and put the source in the basis braces. "
-                  "A fact whose subject is the matrix, capture, host map or previous assessment is rejected (SOURCE_AS_SUBJECT).", ""]
+        lines += ["", "## Evidence pack", "", "Evidence rows, worded as the source records them:", ""]
         shown: dict[str, str] = {}
         for qid, p in pack.items():
             lines.append(f"### {qid}")
@@ -1391,11 +1833,20 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
                 lines += [f"- {c['text']}" + (f" ({', '.join(c['ids'])})" if c["ids"] else "")
                           for c in p["note_candidates"]] or ["- none found: write 'None: <why>' unless a row below shows one"]
                 lines.append("")
+            old_rows = []
             for r in p["rows"]:
                 if r.get("established"):
                     continue                    # listed under Facts already established
+                if r.get("superseded_by"):
+                    old_rows.append(r)
+                    continue
                 note = f" [{r['note']}]" if r["note"] else ""
                 lines.append(f"- {r['id']} {r['status']}: {r['claim']}{note}")
+            if old_rows:
+                lines.append("superseded (an older capture; a newer row replaces each, cite the newer one):")
+                for r in old_rows:
+                    note = f" [{r['note']}]" if r["note"] else ""
+                    lines.append(f"- {r['id']} {r['status']} superseded by {', '.join(r['superseded_by'])}: {r['claim']}{note}")
             for c in p["candidates"]:
                 lines.append(f"- candidate (unverified, not in the matrix): {c['source']} {c['where']}: {c['excerpt']}")
             if not p["rows"] and not p["candidates"]:
@@ -1403,7 +1854,12 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
             if p["cut"]:
                 lines.append(f"- more rows not shown: {', '.join(p['cut'])}")
             lines.append(f"- searched: {'; '.join(p['searched'])}")
+    lines += glossary_lines("\n".join(lines))
+    acronyms = project_acronyms(workspace)
+    lines += acronym_lines("\n".join(lines), acronyms)
     for k in kinds:
+        if k == "requirement":          # the requirement example is in the prompt digest with the rules
+            continue
         ex = _example(k)
         if ex:
             lines += ["", f"## Example answer ({k}): format only, not evidence", "",
@@ -1417,7 +1873,7 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
             "keep": [{k: x[k] for k in ("question", "fact", "evidence_ids", "capture_ids")} for x in keep], "tokens": len(text) // 4,
             "correct": [{k: x[k] for k in ("question", "fact", "evidence_ids", "capture_ids", "contradicts")} for x in correct],
             "ratings": spec.get("ratings") or doc_spec.DEFAULT_RATINGS, "kinds": kinds, "host_register": reg,
-            "role_table": rtable, "role_tables": rtables or [], "frame": frame, "disagree": disagree,
+            "role_table": rtable, "role_tables": rtables or [], "frame": frame, "disagree": disagree, "acronyms": acronyms,
             "parts": {k: v for k, v in pview.items() if k != "lines"} if pview else None,
             "practice": practice_view, "requirement_stories": requirement_stories,
             "drawbridge_functions": {k: v for k, v in db_functions.items() if v}}
@@ -1458,6 +1914,10 @@ def main(argv: list[str] | None = None) -> int:
         if terms.strip():
             extra.setdefault(qid.strip(), []).append(terms.strip())
     res = card(node, spec, a.workspace, evidence=not a.no_evidence, extra_searches=extra, exclude=tuple(a.exclude))
+    roles_of = {h: g["role"] for g in ((res.get("host_register") or {}).get("groups") or []) for h in g["hosts"]}
+    res["text"] = "\n".join(role_groups(l, roles_of) if roles_of and re.match(r"\s*- S\d+:", l) else l for l in res["text"].split("\n"))
+    res["text"] = "\n".join(name_addresses(l) if (l.lstrip().startswith(("- S", "- [", "-  S")) or re.match(r"\s*- \d+\.\d+\.\d+\.\d+ ", l)) or "opens connections" in l else l
+                            for l in res["text"].split("\n"))
     if a.out:
         a.out.parent.mkdir(parents=True, exist_ok=True)
         a.out.write_text(res["text"], encoding="utf-8")

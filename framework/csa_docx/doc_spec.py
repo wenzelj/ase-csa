@@ -175,7 +175,23 @@ def _ratings_in(tbl) -> list[str]:
 
 # ---------------------------------------------------------------- classification
 
-def _table_part(rows: list[list[str]], facet: str | None, label: str | None, ratings: list[str]) -> dict:
+def _inventory_table(heading: str, columns: list[str]) -> bool:
+    """An inventory remains answerable when its rows were entered before CSA saw it.
+
+    Require both an explicit inventory/register heading and an identifying first
+    column, so ordinary descriptive and document-control tables stay references.
+    """
+    title = bare_title(heading).strip()
+    if not re.search(r"\b(?:inventory|register)(?:\s*\([^)]*\))?\s*$", title, re.I):
+        return False
+    if len(columns) < 2 or not all(c.strip() for c in columns):
+        return False
+    first = re.sub(r"[^a-z0-9]+", " ", columns[0].lower())
+    return bool(re.search(r"\b(?:name|id|identifier|host|hosts|hostname|item|asset|component|application|service|device|account|group)\b", first))
+
+
+def _table_part(rows: list[list[str]], facet: str | None, label: str | None, ratings: list[str],
+                heading: str = "") -> dict:
     header = rows[0] if rows else []
     data = rows[1:]
     low = [h.strip().lower() for h in header]
@@ -196,7 +212,10 @@ def _table_part(rows: list[list[str]], facet: str | None, label: str | None, rat
     cells = [c for r in data for c in r]
     holders = [c for c in cells if is_placeholder(c)]
     first_col_holder = bool(data) and all(is_placeholder(r[0]) for r in data if r)
-    if label and (first_col_holder or not data):
+    if _inventory_table(heading, header):
+        part["kind"] = "register"
+        part["kind_from"] = "inventory heading and identifying columns"
+    elif label and (first_col_holder or not data):
         part["kind"] = "register"                          # a labelled table: one row per host, account, ...
     elif (facet or "").lower() == "discovery information" or (low[:1] == ["aspect"] and first_col_holder):
         part["kind"] = "observation"
@@ -241,6 +260,7 @@ def read(path: Path | str) -> dict:
     pending_bullets: list[dict] = []
     topic_lines = False  # the TableNote lines right after a framework-built role table belong to it
     pending_story = None  # bold SEP title waiting for its normal body paragraph
+    story_open = None     # a requirement story whose body was just read: plain paragraphs right after it are more of its body
 
     def flush_bullets():
         nonlocal pending_bullets
@@ -253,6 +273,7 @@ def read(path: Path | str) -> dict:
         pending_bullets = []
 
     for el in _blocks(body):
+        story_cont, story_open = story_open, None      # any other element ends the story
         if el.tag == _q("tbl"):
             pending_story = None
             flush_bullets()
@@ -261,6 +282,7 @@ def read(path: Path | str) -> dict:
                 continue                                   # cover block
             cap = el.find("w:tblPr/w:tblCaption", NS)
             if cap is not None and cap.get(_q("val")) == "csa-topic-table":
+                story_open = story_cont      # the framework's table sits inside the story: its paragraphs go on after it
                 # the role table topic_tables.py builds from the captures: counted, so table ordinals still match
                 # the stable-ID manifest, but not a part anyone answers (no columns, no placeholders)
                 topic["parts"].append({"kind": "topic-table", "facet": facet, "label": None,
@@ -271,7 +293,7 @@ def read(path: Path | str) -> dict:
             topic_lines = False
             ratings = _ratings_in(el)
             all_ratings += [r for r in ratings if r not in all_ratings]
-            part = _table_part(_rows(el), facet, label, ratings)
+            part = _table_part(_rows(el), facet, label, ratings, heading=topic["title"])
             part["table"] = f"@H{hpath}-T{table_ord}"
             part["under"] = {"heading": head_text, "occurrence": head_occ, "table": table_ord}
             topic["parts"].append(part)
@@ -279,6 +301,8 @@ def read(path: Path | str) -> dict:
             continue
         style = _style(el)
         text = _text(el)
+        if story_cont is not None and style in ("Caption", "TableNote"):
+            story_open = story_cont          # the caption and notes of the framework's table do not end the story
         notes = [comments[cs.get(_q('id'))] for cs in el.iter(_q('commentRangeStart')) if cs.get(_q('id')) in comments]
         m = _HEADING.match(style)
         if m:
@@ -394,7 +418,12 @@ def read(path: Path | str) -> dict:
                 pending_story["text"] = text[:300]
                 pending_story["body_pid"] = pid
                 pending_story["body_current"] = text
+                story_open = pending_story
                 pending_story = None
+            elif story_cont is not None:
+                # a story told in several paragraphs: the rest of its body (replaced with it, never left behind)
+                story_cont.setdefault("extra_pids", []).append(pid)
+                story_open = story_cont
             else:
                 topic["parts"].append({"kind": "text", "facet": facet, "label": None, "text": text[:300], "pid": pid,
                                        "current": text})
@@ -572,10 +601,16 @@ def _align(node: dict, tparts: list[dict]) -> None:
     plain text; the template part in the same place (same columns, or same facet) says what each one is."""
     parts = node["parts"]
     used: set[int] = set()
+    try:                                  # a frame that names a register's real columns: the filled table still is that register
+        from csa_docx import topic_frames
+        renamed = (topic_frames.frame_for(node.get("title", "")) or {}).get("register_columns") or []
+    except Exception:                      # frames are optional
+        renamed = []
     for tp in tparts:
         if tp.get("columns"):
             for i, p in enumerate(parts):
-                if i not in used and p.get("columns") and _same_cols(p["columns"], tp["columns"]):
+                if i not in used and p.get("columns") and (_same_cols(p["columns"], tp["columns"])
+                                                           or (tp["kind"] == "register" and renamed and _same_cols(p["columns"], renamed))):
                     used.add(i)
                     if p["kind"] != "requirement":
                         p["kind"] = tp["kind"]

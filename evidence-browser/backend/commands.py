@@ -124,7 +124,7 @@ OPERATIONS: dict[str, Operation] = {
     ),
     "answer": Operation(
         "answer", "Answer subsection", "Draft lane: card, one agent call, written into the working DOCX as plain text.",
-        ("answer", "--headless"), "required", "section", {"cli": "identifier", "fresh": "boolean"},
+        ("answer", "--headless"), "required", "section", {"cli": "identifier", "fresh": "boolean", "blocks": "identifier"},
         timeout=14400, mutating=True, mutation_class="document_write", lock="docx", closes_word=True,
     ),
     "refresh_draft": Operation(

@@ -87,20 +87,53 @@ def set_custom_property(xml: str, name: str, value: str) -> tuple[str, bool]:
 
 
 def set_field_cache(xml: str, name: str, value: str) -> tuple[str, int]:
-    """Replace the cached result text of every DOCPROPERTY "<name>" complex field."""
-    rpr = r"(?:<w:rPr>(?:(?!</w:rPr>).)*</w:rPr>)?"
-    pat = re.compile(
-        r'(DOCPROPERTY "%s"[^<]*</w:instrText></w:r><w:r>%s<w:fldChar w:fldCharType="separate"/></w:r><w:r>%s<w:t(?: [^>]*)?>)(.*?)(</w:t>)'
-        % (re.escape(name), rpr, rpr),
-        re.S,
-    )
-    return pat.subn(lambda m: m.group(1) + escape(value) + m.group(3), xml)
+    """Refresh cached text in Word's simple and complex DOCPROPERTY fields.
+
+    Word may add run attributes such as ``w:rsidR`` or store a field as
+    ``w:fldSimple``. Keep the surrounding XML verbatim and change only the
+    cached ``w:t`` text so the template's styles and layout remain intact.
+    """
+    encoded = escape(value)
+    complex_field = re.compile(
+        r'(<w:instrText\b[^>]*>[^<]*DOCPROPERTY\s+(?:"|&quot;)?%s(?:"|&quot;)?[^<]*</w:instrText>'
+        r'(?:(?!</w:p>).)*?<w:fldChar\b[^>]*w:fldCharType="separate"[^>]*/>'
+        r'(?:(?!</w:p>).)*?<w:t(?: [^>]*)?>)(.*?)(</w:t>)' % re.escape(name), re.S)
+    xml, complex_count = complex_field.subn(lambda m: m.group(1) + encoded + m.group(3), xml)
+
+    simple_field = re.compile(
+        r'(<w:fldSimple\b(?=[^>]*w:instr="[^"]*DOCPROPERTY\s+(?:&quot;)?%s(?:&quot;)?[^"]*")[^>]*>)'
+        r'(.*?)(</w:fldSimple>)' % re.escape(name), re.S)
+    text_node = re.compile(r'(<w:t(?: [^>]*)?>)(.*?)(</w:t>)', re.S)
+
+    def refresh_simple(match: re.Match[str]) -> str:
+        inner, count = text_node.subn(lambda item: item.group(1) + encoded + item.group(3), match.group(2), count=1)
+        return match.group(1) + inner + match.group(3) if count else match.group(0)
+
+    xml, simple_count = simple_field.subn(refresh_simple, xml)
+    return xml, complex_count + simple_count
 
 
 def strip_comments(doc_xml: str) -> str:
-    doc_xml = re.sub(r'<w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr><w:commentReference w:id="\d+"/></w:r>', "", doc_xml)
-    doc_xml = re.sub(r'<w:commentRange(?:Start|End) w:id="\d+"/>', "", doc_xml)
-    return doc_xml
+    """Remove template guidance anchors when comments.xml is omitted.
+
+Word adds run properties and extra attributes to comment markers. The previous
+    narrow pattern left orphan references in the generated DOCX. Preserve any
+    run that also contains visible text or a field, removing only its marker.
+    """
+    reference = re.compile(r'<w:commentReference\b[^>]*/>')
+    run = re.compile(r'<w:r(?:\s[^>]*)?>.*?</w:r>', re.S)
+    visible = re.compile(r'<w:(?:t|instrText|fldChar|drawing|tab|br|sym|pict|object)\b')
+
+    def clean_run(match: re.Match[str]) -> str:
+        original = match.group(0)
+        if not reference.search(original):
+            return original
+        cleaned = reference.sub("", original)
+        return cleaned if visible.search(cleaned) else ""
+
+    doc_xml = run.sub(clean_run, doc_xml)
+    doc_xml = reference.sub("", doc_xml)
+    return re.sub(r'<w:commentRange(?:Start|End)\b[^>]*/>', "", doc_xml)
 
 
 def main() -> None:
@@ -177,7 +210,8 @@ def main() -> None:
     comments_removed = 0
     if not args.keep_comments:
         comments_removed = len(re.findall(r"<w:commentReference ", field_xml["word/document.xml"]))
-        field_xml["word/document.xml"] = strip_comments(field_xml["word/document.xml"])
+        for name in field_parts:
+            field_xml[name] = strip_comments(field_xml[name])
         drop = [n for n in names if re.fullmatch(r"word/comments\w*\.xml", n)]
         for n in drop:
             del parts[n]

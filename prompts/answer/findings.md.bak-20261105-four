@@ -1,0 +1,7 @@
+## Findings blocks
+
+- Findings blocks: `Bullets:` with one finding per bullet.
+- DUPLICATE_BULLET: say each finding once.
+- SHARE_ACCESS_MISMATCH: state a share's access as its "Who may open the shares" row does.
+- NAME_NOT_RECORDED, UNNAMED_PEER: name a peer by address alone; never say its zone or role is unrecorded.
+- OUT_OF_SCOPE: leave out other subsections' findings.

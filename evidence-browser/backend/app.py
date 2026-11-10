@@ -12,38 +12,41 @@ import sys
 import tempfile
 from .soffice import find_soffice
 from collections import Counter, defaultdict
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import FastAPI, HTTPException, Query, Response
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import apply_workflow, audit_workflow, author_workflow, intake_workflow, build_workflow, cleanup_workflow, commands, documents, draft_workflow, explorer, csa_figures, network, pipeline, proposals, review_workflow, sections, validation, word_review
+from . import intake_errors, apply_workflow, audit_workflow, author_workflow, intake_workflow, build_workflow, cleanup_workflow, commands, documents, draft_workflow, prompts_workflow, explorer, csa_figures, network, pipeline, project_setup, project_upload, proposals, review_workflow, sections, validation, word_review, working_document
 from .jobs import JobManager
-from .models import CommandRequest, JobCreateRequest
+from .models import CommandRequest, IntakeErrorsResponse, JobCreateRequest
 
 
 APP_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_AGENTS_DIR = Path(__file__).resolve().parents[2]
-SYSTEMS = {
+# Stable browser keys for systems registered before the project registry was the source of
+# truth; their identity (label, application, scope) now comes from project configuration.
+SYSTEM_ALIASES = {
     "iamps": {
+        "project_key": "iamps-08",
         "label": "IAMPS",
         "application": "IAMPS",
-        "project_key": "iamps-08",
         "scope": "The IAMPS application and the infrastructure, services and controls that operate it.",
     },
     "utcdtc": {
+        "project_key": "utcdtc",
         "label": "UTC DTC",
         "application": "UTC DTC",
-        "project_key": "utcdtc",
         "scope": "The UTC DTC application and the KVM-based system in which it operates.",
     },
     "tetra": {
+        "project_key": "tetra-reveloc",
         "label": "TETRA",
         "application": "Reveloc TETRA",
-        "project_key": "tetra-reveloc",
         "scope": "The Reveloc TETRA application and the hosts, dependencies and controls that provide its service.",
     },
 }
@@ -179,14 +182,46 @@ def projects() -> dict[str, dict[str, str]]:
     return {p["key"]: p for p in _parse_registry(path)}
 
 
+def system_key_aliases() -> dict[str, str]:
+    """Browser key -> project key for every known alias (existing stable keys plus new project keys)."""
+    aliases = {alias: cfg["project_key"] for alias, cfg in SYSTEM_ALIASES.items()}
+    for project in projects().values():
+        aliases.setdefault(project["key"], project["key"])
+    return aliases
+
+
 def system_project(system_key: str) -> dict[str, str]:
-    if system_key not in SYSTEMS:
+    project_key = system_key_aliases().get(system_key)
+    if not project_key:
         raise HTTPException(404, "Unknown evidence system")
-    project_key = SYSTEMS[system_key]["project_key"]
     project = projects().get(project_key)
     if not project:
         raise HTTPException(503, f"Registered project '{project_key}' is unavailable")
     return project
+
+
+def system_setup(system_key: str) -> dict[str, Any]:
+    """Setup status for one system: registered paths validated, and index/document presence."""
+    project = system_project(system_key)
+    roots = source_roots(project)
+    invalid = [str(root) for root in roots if not root.is_dir()]
+    index_ok = (work_dir(project) / "discovery-index.sqlite").is_file()
+    try:
+        resolved = documents.resolve(project)
+    except Exception:
+        resolved = {"state": "blocked", "path": None}
+    document_ok = bool(resolved.get("path")) and Path(resolved["path"]).is_file()
+    status = "READY" if (not invalid and index_ok and document_ok) else "BLOCKED"
+    reasons: list[str] = []
+    if invalid:
+        reasons.append("Registered source paths are not valid directories")
+    if not index_ok:
+        reasons.append("Discovery index is absent")
+    if not document_ok:
+        reasons.append("Working document is absent")
+    return {"system": system_key, "project_key": project["key"], "status": status,
+            "source_roots": [str(root) for root in roots], "invalid_paths": invalid,
+            "index_present": index_ok, "document_present": document_ok, "reasons": reasons}
 
 
 def work_dir(project: dict[str, str]) -> Path:
@@ -459,13 +494,205 @@ app = FastAPI(title="CSA Evidence Workspace", version="0.1.0")
 job_manager = JobManager(agents_dir())
 
 
+def _new_application_staging_root() -> Path:
+    return agents_dir() / ".state" / "new-application-uploads"
+
+
+def new_application_defaults() -> dict[str, Any]:
+    base = agents_dir().parent
+    return {"workspace_root": str(base), "discovery_name": project_setup.DISCOVERY_DEFAULT,
+            "knowledge_name": project_setup.KNOWLEDGE_DEFAULT,
+            "max_file_bytes": project_upload.MAX_FILE_BYTES,
+            "max_total_bytes": project_upload.MAX_TOTAL_BYTES,
+            "chunk_bytes": project_upload._CHUNK_SIZE,
+            "defaults": {"lane": "revise", "stage": "draft", "spec_mode": "off"},
+            "templates": [str(p) for p in sorted((base / "CSA Template").glob("CSA_Template_v*.dotx"))]}
+
+
+def new_application_preview(config: dict[str, Any]) -> dict[str, Any]:
+    registered = projects()
+    return project_setup.preview_project_setup(
+        config, agents_dir=agents_dir(), base_dir=agents_dir().parent,
+        existing_keys=list(registered),
+        existing_project_roots=[p["project_root"] for p in registered.values() if p.get("project_root")])
+
+
+def new_application_create_upload(payload: dict[str, Any]) -> dict[str, Any]:
+    return project_upload.create_session(payload.get("manifest"), staging_root=_new_application_staging_root())
+
+
+def new_application_upload_status(session_id: str) -> dict[str, Any]:
+    return project_upload.get_status(session_id, staging_root=_new_application_staging_root())
+
+
+def new_application_write_chunk(session_id: str, file_path: str, chunk_index: int, data: bytes) -> dict[str, Any]:
+    return project_upload.write_chunk(session_id, file_path, chunk_index, data,
+                                      staging_root=_new_application_staging_root())
+
+
+def new_application_finalise_upload(session_id: str) -> dict[str, Any]:
+    return project_upload.finalise(session_id, staging_root=_new_application_staging_root())
+
+
+def new_application_cancel_upload(session_id: str) -> dict[str, Any]:
+    status = new_application_upload_status(session_id)
+    if status.get("effective_status") == "committed":
+        return {"status": "BLOCKED", "errors": [{"field": "session_id", "code": "ALREADY_COMMITTED",
+                                                  "message": "A committed application cannot be cancelled."}]}
+    return project_upload.cancel_session(session_id, staging_root=_new_application_staging_root())
+
+
+def new_application_commit(payload: dict[str, Any]) -> dict[str, Any]:
+    if payload.get("confirmed") is not True:
+        return {"status": "BLOCKED", "errors": [{"field": "confirmed", "code": "CONFIRMATION_REQUIRED",
+                                                  "message": "Review and confirm the application setup first."}]}
+    session_id = payload.get("session_id")
+    config = payload.get("config")
+    if not isinstance(session_id, str) or not isinstance(config, dict):
+        return {"status": "BLOCKED", "errors": [{"field": "request", "code": "BAD_SHAPE",
+                                                  "message": "session_id and config are required."}]}
+    status = new_application_upload_status(session_id)
+    if status.get("effective_status") != "complete":
+        return {"status": "BLOCKED", "errors": [{"field": "session_id", "code": "UPLOAD_NOT_COMPLETE",
+                                                  "message": "Finish the folder upload before creating the application."}]}
+    return project_setup.commit_project_setup(
+        config, agents_dir=agents_dir(), base_dir=agents_dir().parent,
+        staging_root=_new_application_staging_root(), session_id=session_id)
+
+
+@app.get("/api/new-application/defaults")
+def get_new_application_defaults() -> dict[str, Any]:
+    return new_application_defaults()
+
+
+@app.post("/api/new-application/preview")
+def preview_new_application(config: dict[str, Any]) -> dict[str, Any]:
+    return new_application_preview(config)
+
+
+@app.post("/api/new-application/uploads")
+def create_new_application_upload(payload: dict[str, Any]) -> dict[str, Any]:
+    return new_application_create_upload(payload)
+
+
+@app.get("/api/new-application/uploads/{session_id}")
+def get_new_application_upload(session_id: str) -> dict[str, Any]:
+    return new_application_upload_status(session_id)
+
+
+@app.put("/api/new-application/uploads/{session_id}/files/{file_path:path}")
+async def upload_new_application_chunk(session_id: str, file_path: str, request: Request,
+                                       index: int = Query(ge=0)) -> dict[str, Any]:
+    limit = project_upload._CHUNK_SIZE
+    if request.headers.get("content-length") and int(request.headers["content-length"]) > limit:
+        raise HTTPException(413, "Upload chunk exceeds the size limit")
+    body = bytearray()
+    async for part in request.stream():
+        body.extend(part)
+        if len(body) > limit:
+            raise HTTPException(413, "Upload chunk exceeds the size limit")
+    return new_application_write_chunk(session_id, file_path, index, bytes(body))
+
+
+@app.post("/api/new-application/uploads/{session_id}/finalise")
+def finalise_new_application_upload(session_id: str) -> dict[str, Any]:
+    return new_application_finalise_upload(session_id)
+
+
+@app.delete("/api/new-application/uploads/{session_id}")
+def cancel_new_application_upload(session_id: str) -> dict[str, Any]:
+    return new_application_cancel_upload(session_id)
+
+
+@app.post("/api/new-application/commit")
+def commit_new_application(payload: dict[str, Any]) -> dict[str, Any]:
+    return new_application_commit(payload)
+
+
 @app.get("/api/systems")
 def get_systems() -> dict[str, Any]:
+    """Every registered project; stable browser keys keep working as aliases for their projects."""
     registered = projects()
-    return {"systems": [{"key": key, "label": cfg["label"], "project_key": cfg["project_key"],
-                         "available": cfg["project_key"] in registered,
-                         "stage": str(registered.get(cfg["project_key"], {}).get("stage") or "draft").strip().lower()}
-                        for key, cfg in SYSTEMS.items()]}
+    systems: list[dict[str, Any]] = []
+    used: set[str] = set()
+    for alias, cfg in SYSTEM_ALIASES.items():
+        project_key = cfg["project_key"]
+        if project_key not in registered:
+            continue
+        project = registered[project_key]
+        systems.append({"key": alias, "label": cfg["label"], "project_key": project_key,
+                        "available": True, "stage": str(project.get("stage") or "draft").strip().lower()})
+        used.add(project_key)
+    for project in registered.values():
+        if project["key"] in used:
+            continue
+        systems.append({"key": project["key"], "label": project.get("label", ""),
+                        "project_key": project["key"], "available": True,
+                        "stage": str(project.get("stage") or "draft").strip().lower()})
+    return {"systems": systems}
+
+
+@app.get("/api/systems/{system_key}/setup")
+def system_setup_status(system_key: str) -> dict[str, Any]:
+    return system_setup(system_key)
+
+
+@app.get("/api/systems/{system_key}/working-document")
+def working_document_options(system_key: str) -> dict[str, Any]:
+    return working_document.options(system_project(system_key))
+
+
+@app.post("/api/systems/{system_key}/working-document")
+def select_working_document(system_key: str, payload: dict[str, Any]) -> dict[str, Any]:
+    return working_document.select(system_project(system_key), agents_dir(), str(payload.get("relative_path") or ""))
+
+
+@app.post("/api/systems/{system_key}/legacy-document")
+def select_legacy_document(system_key: str, payload: dict[str, Any]) -> dict[str, Any]:
+    return working_document.select_legacy(system_project(system_key), agents_dir(), str(payload.get("relative_path") or ""))
+
+
+@app.post("/api/systems/{system_key}/working-document/from-template")
+def create_working_document_from_template(system_key: str, payload: dict[str, Any]) -> dict[str, Any]:
+    return working_document.create_from_template(system_project(system_key), agents_dir(), payload)
+
+
+@app.put("/api/systems/{system_key}/working-document/upload")
+async def upload_working_document(system_key: str, request: Request, filename: str = Query()) -> dict[str, Any]:
+    limit = working_document.MAX_UPLOAD_BYTES
+    if request.headers.get("content-length") and int(request.headers["content-length"]) > limit:
+        raise HTTPException(413, "Working DOCX exceeds the upload size limit")
+    body = bytearray()
+    async for part in request.stream():
+        body.extend(part)
+        if len(body) > limit:
+            raise HTTPException(413, "Working DOCX exceeds the upload size limit")
+    return working_document.upload(system_project(system_key), agents_dir(), filename, bytes(body))
+
+
+@app.get("/api/systems/{system_key}/prompts")
+def get_prompts(system_key: str) -> dict[str, Any]:
+    return prompts_workflow.listing(agents_dir(), system_project(system_key))
+
+
+@app.put("/api/systems/{system_key}/prompts/{name}")
+def put_prompt(system_key: str, name: str, payload: dict[str, Any]) -> dict[str, Any]:
+    return prompts_workflow.save(agents_dir(), system_project(system_key), name, payload)
+
+
+@app.delete("/api/systems/{system_key}/prompts/{name}")
+def delete_prompt(system_key: str, name: str) -> dict[str, Any]:
+    return prompts_workflow.reset(agents_dir(), system_project(system_key), name)
+
+
+@app.get("/api/systems/{system_key}/prompts/{name}/history")
+def get_prompt_history(system_key: str, name: str) -> dict[str, Any]:
+    return prompts_workflow.history(agents_dir(), system_project(system_key), name)
+
+
+@app.get("/api/systems/{system_key}/prompt-preview")
+def get_prompt_preview(system_key: str, key: str, block: str = "") -> dict[str, Any]:
+    return prompts_workflow.preview(agents_dir(), system_project(system_key), key, block)
 
 
 @app.get("/api/systems/{system_key}/draft")
@@ -476,6 +703,14 @@ def get_draft(system_key: str) -> dict[str, Any]:
 @app.get("/api/systems/{system_key}/intake")
 def get_intake(system_key: str) -> dict[str, Any]:
     return intake_workflow.snapshot(system_project(system_key))
+
+
+@app.get("/api/systems/{system_key}/intake/errors", response_model=IntakeErrorsResponse)
+def get_intake_errors(system_key: str) -> dict[str, Any]:
+    project = system_project(system_key)
+    return {"generated_at": datetime.now(timezone.utc).isoformat(),
+            "runs": intake_errors.intake_runs(project),
+            "warnings": intake_errors.intake_warnings(work_dir(project))}
 
 
 @app.post("/api/systems/{system_key}/evidence/{evidence_id}/review")
@@ -527,6 +762,12 @@ def list_jobs(system_key: str) -> dict[str, Any]:
 @app.get("/api/systems/{system_key}/jobs/{job_id}")
 def get_job(system_key: str, job_id: str) -> dict[str, Any]:
     return job_manager.get(system_project(system_key), job_id).model_dump()
+
+
+@app.get("/api/systems/{system_key}/jobs/{job_id}/log")
+def get_job_log(system_key: str, job_id: str, stream: str = "stderr", start: int = 1,
+                limit: int = 200) -> dict[str, Any]:
+    return job_manager.read_log(system_project(system_key), job_id, stream, start, limit)
 
 
 @app.delete("/api/systems/{system_key}/jobs/{job_id}")
@@ -790,7 +1031,7 @@ def get_summary(system_key: str) -> dict[str, Any]:
             evidence_count = sum(1 for _ in csv.DictReader(handle))
     con.close()
     families = [name for name, _ in FAMILY_RULES] + ["Other"]
-    return {"system": system_key, "label": SYSTEMS[system_key]["label"], "project_key": project["key"],
+    return {"system": system_key, "label": project.get("label", ""), "project_key": project["key"],
             "built_at_utc": meta.get("built_at_utc"), "index_complete": meta.get("complete") == "1",
             "captures": captures[0] or 0, "current_captures": captures[1] or 0,
             "files_by_status": statuses, "evidence_rows": evidence_count, "families": families,
@@ -889,7 +1130,7 @@ def figure_save(system_key: str, section_key: str) -> dict[str, Any]:
 def application_portrait(system_key: str) -> dict[str, Any]:
     """Translate indexed material into the questions an assessor must resolve."""
     project = system_project(system_key)
-    config = SYSTEMS[system_key]
+    config = SYSTEM_ALIASES.get(system_key, {})
     ledger_rows = matrix_rows(project)
     # Rejected rows remain in the append-only evidence ledger for provenance, but they are
     # retired decisions rather than live claims or questions.  Do not put them back into the
@@ -969,10 +1210,10 @@ def application_portrait(system_key: str) -> dict[str, Any]:
     ))
     return {
         "application": {
-            "name": config["application"],
-            "system": config["label"],
+            "name": config.get("application") or project.get("application") or project.get("label", ""),
+            "system": config.get("label") or project.get("label", ""),
             "project_key": project["key"],
-            "scope": config["scope"],
+            "scope": config.get("scope") or project.get("scope", ""),
         },
         "assessment": {
             "total": len(rows),

@@ -1,0 +1,7 @@
+## Findings blocks
+
+- Findings blocks: `Bullets:` with one finding per bullet.
+- DUPLICATE_BULLET, REPEATS_TABLE: say each finding once; omit what the frame's table lists.
+- SHARE_ACCESS_MISMATCH: give a share's access as its row records it.
+- NAME_NOT_RECORDED, UNNAMED_PEER: name a peer by address alone; never say its zone or role is unrecorded.
+- OUT_OF_SCOPE: stay on the frame's topic.

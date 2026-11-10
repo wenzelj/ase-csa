@@ -409,6 +409,8 @@ def alias_addresses(con, ips: set) -> dict:
         "SELECT a.norm, a.host, a.basis, a.file_id, a.line_no, f.rel_path FROM aliases a "
         "LEFT JOIN files f ON f.file_id=a.file_id WHERE a.kind='address' AND a.norm IN (" + marks + ") "
         "AND a.ambiguous=0 AND a.confidence IN ('high','medium') "
+        # a peer the previous register already held is not a new naming: reading it back would keep a removed peer
+        "AND NOT (a.basis='register' AND a.scope='external') "
         "ORDER BY CASE a.basis WHEN 'own-capture' THEN 0 WHEN 'register' THEN 1 "
         "WHEN 'paired-row' THEN 2 ELSE 3 END", tuple(sorted(ips))).fetchall()
     out = {}
@@ -477,6 +479,13 @@ def build(work_dir: Path) -> dict:
         pair = re.compile(r"\b([A-Z][A-Z0-9-]{4,30})\s*(?:\(|at\s+|on\s+|=\s*)(\d+\.\d+\.\d+\.\d+)\b"
                           r"|\b(\d+\.\d+\.\d+\.\d+)\s*(?:\(|\bas\s+)([A-Za-z][A-Za-z0-9-]{4,30})\b")
         from csa_docx import evidence_live
+        # a connection row names the owning process beside the peer address ("to 10.1.2.3 (snmpc32)"); a process
+        # name seen in the captures is a program, never a host
+        process_names = set()
+        for _rel, _h, table, _l, d in _rows(con, "r.table_name in ('process_connection_mapping','processes_inventory')"):
+            p = str(d.get("ProcessName") or d.get("Name") or "").strip().lower()
+            if p:
+                process_names.add(p[:-4] if p.endswith(".exe") else p)
         for r in evidence_live.read(mpath):
             if (r.get("review_state") or "") == "rejected" or r.get("status") not in ("VERIFIED",):
                 continue
@@ -484,6 +493,8 @@ def build(work_dir: Path) -> dict:
                 name, ip = (m[1], m[2]) if m[1] else (m[4], m[3])
                 if not re.search(r"\d", name) or ip.startswith(("127.", "0.", "169.254.")):
                     continue       # host names here carry a number; skips words like "SCADA (10.x)"
+                if name.lower() in process_names:
+                    continue
                 e = entry(name)
                 if not e["capture"] and not e["in_scope"]:
                     e["in_scope"] = "peer"
@@ -865,7 +876,8 @@ def build(work_dir: Path) -> dict:
             "evidence_rows": ev["rows"], "evidence_without_host": ev["without_host"],
             "addresses_named": sum(1 for e in reg.values() if any(x.startswith("address ") for x in e["sources"])),
             "addresses_ambiguous": ambiguous,
-            "host_services": len(svc_rows), "host_settings": settings.get("rows", 0), "flows": flow_res.get("flows", 0),
+            "host_services": len(svc_rows), "host_settings": settings.get("rows", 0), "capture_gaps": settings.get("capture_gaps", []),
+            "flows": flow_res.get("flows", 0),
             "isolation": iso_res.get("rows", 0),
             "endpoint_conflicts": ep_res.get("conflicts", []), "endpoint_proposed": ep_res.get("proposed", []),
             "out": str(out)}

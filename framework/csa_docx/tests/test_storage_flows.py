@@ -111,7 +111,8 @@ def test_frame_card_asks_every_slot_and_flags_likely_notes_as_background():
                        "direction": "pull_into_ot"}]},
         {"id": "S9", "question": "Retention?", "requirements": [], "cross_zone": False, "findings": []}]}
     text = "\n".join(topic_frames.card_lines(res))
-    assert "## F1 Analysis frame" in text and "### S9 Retention?" in text and "nothing in the captures" in text
+    assert "### S9 Retention?" in text and "nothing in the captures" in text
+    assert "## F1 Analysis frame" not in text      # the format rule is in the prompt digest, not the card
     assert "(E-902)" in text and "Likely:" in text and "not evidence" in text
     assert topic_frames.coverage_targets(res) == [{"text": "Backup agent: BKP1 opens connections to DB1", "tokens": ["BKP1", "DB1"],
                                                    "ids": ["E-902"], "direction": "pull_into_ot"}]
@@ -129,7 +130,7 @@ def test_frame_block_is_required_and_parsed():
     card = _card_with_frame()
     base = "## B1 SEP-STOR-01\nFacts:\n- DB1 holds the data. (E-901) {observed; DB1}\nRating: Not Met\nRating reason: r\n"
     res = A.validate(A.parse(base), card)
-    assert "FRAME_UNCOVERED" in {f["code"] for f in res["findings"] if f["level"] == "ERROR"}
+    assert "FRAME_UNCOVERED" in {f["code"] for f in res["findings"] if f["level"] == "WARN"}
     sheet = A.parse(base + "\n## F1 Analysis frame\n- S1: B1\n- S3: Unknown: whether BKP1 copies the database\n")
     assert sheet["F1"]["frame"] == {"S1": "B1", "S3": "Unknown: whether BKP1 copies the database"}
     assert sheet["F1"]["unknown"] == ["whether BKP1 copies the database"]

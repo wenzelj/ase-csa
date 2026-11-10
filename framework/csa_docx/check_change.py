@@ -319,6 +319,16 @@ def subject_findings(records) -> list[dict]:
     return out
 
 
+def story_findings(records) -> list[dict]:
+    """A `<SEP-ID> discovery story` record is a Story: the same length and repeat rules as an answer sheet Story."""
+    from csa_docx import story_shape
+    out = []
+    for r in records:
+        if (r.title or "").lower().endswith("discovery story") and (r.text or "").strip():
+            out += [finding("ERROR", code, msg, r.edit_id) for code, msg in story_shape.findings(r.text)]
+    return out
+
+
 def lint_findings(records, max_words: int | None = None) -> list[dict]:
     texts = [(r.edit_id, r.text) for r in records if (r.text or "").strip()]
     if not texts:
@@ -364,6 +374,7 @@ def check(path: Path, workspace: str | None = None, anchors: bool = True, lint: 
     findings += assessment_findings(records, finding, require=strict, node=node)
     findings += section_fit_findings(text, records)
     findings += subject_findings(records)
+    findings += story_findings(records)
     from csa_docx.fact_checks import fact_findings, load_matrix, parse_sites
     ev = Path(evidence) if evidence else (Path(workspace) / "csa-work" / "evidence-matrix.csv" if workspace else None)
     findings += fact_findings(records, load_matrix(ev), parse_sites(sites), finding)
