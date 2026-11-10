@@ -24,15 +24,29 @@ def test_new_populated_inventory_appears_without_manifest_and_empty_heading_is_h
         ('4.5', 'NEW_INVENTORY', 'not-answered')]
 
 
-def test_answer_runs_as_one_headless_job_with_the_chosen_model():
+def test_answer_runs_as_one_interactive_job_with_the_chosen_model():
     op, argv = commands.build_argv(AGENTS, "tetra-reveloc", "answer", CommandRequest(target="3.4", options={"cli": "evo", "fresh": True}))
-    assert argv[3:] == ["answer", "--headless", "3.4", "--cli", "evo", "--fresh"]
+    assert argv[3:] == ["answer", "3.4", "--cli", "evo", "--fresh"]
     assert op.lock == "docx" and op.closes_word
+
+
+def test_eagle_is_routed_to_the_configured_interactive_cli():
+    import shlex
+
+    op, argv = commands.build_argv(AGENTS, "tetra-reveloc", "answer", CommandRequest(target="3.4", options={"cli": "eagle"}))
+    assert op.lock == "docx"
+    assert argv[3:] == ["answer", "3.4", "--cli", "eagle"]
+    config = (AGENTS / "cli.yaml").read_text()
+    command = next(line.split(": ", 1)[1] for line in config.splitlines() if line.startswith("eagle_interactive: "))
+    parts = shlex.split(command)
+    assert parts[0] == "codex" and "exec" not in parts
+    assert 'model="eagle-codex:64k"' in parts
+    assert 'model_providers.eagle_ollama.base_url="http://192.168.0.120:11434/v1"' in parts
 
 
 def test_refresh_runs_as_a_visible_one_shot_job():
     _op, argv = commands.build_argv(AGENTS, "tetra-reveloc", "refresh_draft", CommandRequest(options={"cli": "evo"}))
-    assert argv[3:] == ["refresh-draft", "--headless", "--cli", "evo"]
+    assert argv[3:] == ["refresh-draft", "--cli", "evo"]
 
 
 def test_answer_refuses_an_unknown_model_and_freeze_only_takes_v1():

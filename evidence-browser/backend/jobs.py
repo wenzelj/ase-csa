@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import os
 import re
+import secrets
 import signal
 import sys
 import subprocess
@@ -17,6 +20,7 @@ from fastapi import HTTPException
 
 from . import commands
 from .models import CommandRequest, JobRecord
+from .terminal_sessions import TerminalSession
 
 FRAMEWORK = Path(__file__).resolve().parents[2] / "framework"
 if str(FRAMEWORK) not in sys.path:
@@ -30,6 +34,9 @@ LOG_LINE_MAX = 2000
 LOG_WITHHELD = "[withheld: looked like a credential]"
 _JOB_ID = re.compile(r"^[0-9a-f-]{36}$")
 TERMINAL_STATES = frozenset({"succeeded", "failed", "cancelled", "interrupted"})
+INTERACTIVE_OPERATIONS = frozenset({"intake", "resolve_gaps", "answer", "refresh_draft",
+                                    "figure_wording", "figure_design", "author", "review", "audit"})
+_ANSI = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\)|[@-_])")
 
 
 def _now() -> str:
@@ -98,6 +105,7 @@ class JobManager:
         self._jobs: dict[str, JobRecord] = {}
         self._projects: dict[str, dict[str, str]] = {}
         self._processes: dict[str, subprocess.Popen] = {}
+        self._terminals: dict[str, TerminalSession] = {}
         self._cancel_requested: set[str] = set()
         self._held: set[tuple[str, str]] = set()
         self._condition = threading.Condition()
@@ -140,6 +148,8 @@ class JobManager:
             if job.project_key != project_key:
                 continue
             if job.state in {"queued", "running"}:
+                if job.terminal and job.pid:
+                    self._stop_abandoned_terminal(job)
                 job.state = "failed" if job.started_at is None else "interrupted"
                 job.finished_at = _now()
                 if job.started_at is None:
@@ -159,10 +169,11 @@ class JobManager:
         lock_class = str(getattr(operation, "lock", "none"))
         resource = f"section:{request.target}" if lock_class == "section" and request.target else (
             "document" if lock_class == "docx" else "evidence" if lock_class == "evidence" else None)
+        terminal = operation.key in INTERACTIVE_OPERATIONS
         job = JobRecord(
             id=str(uuid.uuid4()), project_key=project["key"], operation=operation.key,
             display_args=argv[3:], classification=classification, lock=lock_class, resource=resource,
-            state="queued", created_at=_now(),
+            state="queued", created_at=_now(), terminal=terminal,
         )
         with self._condition:
             if lock_class in ("section", "evidence") and resource and any(row.project_key == project["key"] and row.resource == resource and
@@ -192,6 +203,7 @@ class JobManager:
 
         stdout = ""
         stderr = ""
+        process: subprocess.Popen | None = None
         try:
             if job.lock == "docx" and not getattr(operation, "closes_word", False):
                 lock = self._word_lock_check(project)
@@ -207,16 +219,26 @@ class JobManager:
                     raise RuntimeError(
                         f"Working DOCX is open in Word ({lock.name}). Close it before running this operation."
                     )
-            process = self._popen(
-                argv, cwd=str(self.agents_dir.parent), env=commands._minimal_environment(self.agents_dir),
-                shell=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True,
-            )
+            terminal = None
+            if job.terminal:
+                terminal = TerminalSession.start(argv, self.agents_dir.parent,
+                                                 commands._minimal_environment(self.agents_dir))
+                process = terminal.process
+            else:
+                process = self._popen(
+                    argv, cwd=str(self.agents_dir.parent), env=commands._minimal_environment(self.agents_dir),
+                    shell=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True,
+                )
             with self._condition:
                 self._processes[job_id] = process
+                if terminal is not None:
+                    self._terminals[job_id] = terminal
                 job = self._jobs[job_id]
                 job.state = "running"
                 job.started_at = _now()
+                job.pid = getattr(process, "pid", None)
                 self._persist(project, job)
+                self._condition.notify_all()
             chunks: dict[str, list[str]] = {"stdout": [], "stderr": []}
 
             def drain(name: str, stream) -> None:
@@ -231,14 +253,23 @@ class JobManager:
                         self._append_log(project, current, name, text)
                 stream.close()
 
-            readers = [threading.Thread(target=drain, args=("stdout", process.stdout), daemon=True),
-                       threading.Thread(target=drain, args=("stderr", process.stderr), daemon=True)]
-            for reader in readers:
-                reader.start()
-            process.wait()
-            for reader in readers:
-                reader.join()
-            stdout, stderr = "".join(chunks["stdout"]), "".join(chunks["stderr"])
+            if terminal is not None:
+                terminal.drain()
+                process.wait()
+                if job.operation == "review":
+                    clean = _ANSI.sub("", terminal.snapshot().decode("utf-8", errors="replace")).replace("\r", "\n")
+                    parsed, valid = commands.parse_json_output(clean)
+                    if valid and isinstance(parsed, dict):
+                        stdout = json.dumps(parsed, ensure_ascii=True)
+            else:
+                readers = [threading.Thread(target=drain, args=("stdout", process.stdout), daemon=True),
+                           threading.Thread(target=drain, args=("stderr", process.stderr), daemon=True)]
+                for reader in readers:
+                    reader.start()
+                process.wait()
+                for reader in readers:
+                    reader.join()
+                stdout, stderr = "".join(chunks["stdout"]), "".join(chunks["stderr"])
             exit_code = process.returncode
             with self._condition:
                 cancelled = job_id in self._cancel_requested
@@ -247,7 +278,16 @@ class JobManager:
                 job.stdout_tail = _tail(stdout or "")
                 job.stderr_tail = _tail(stderr or "")
                 job.state = "cancelled" if cancelled else ("succeeded" if exit_code == 0 else "failed")
+                if terminal is not None and exit_code != 0 and not cancelled:
+                    job.message = f"Command exited with code {exit_code}; inspect the in-page terminal."
         except Exception as error:
+            if process is not None and process.poll() is None:
+                self._signal_process_tree(process, signal.SIGTERM)
+                try:
+                    process.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    self._signal_process_tree(process, signal.SIGKILL)
+                    process.wait()
             with self._condition:
                 job = self._jobs[job_id]
                 job.exit_code = None
@@ -264,6 +304,11 @@ class JobManager:
                 if resource is not None:
                     self._held.discard(resource)
                 self._persist(project, job, stdout, stderr)
+                completed = sorted((self._jobs[key] for key in self._terminals
+                                    if self._jobs[key].state in TERMINAL_STATES),
+                                   key=lambda row: row.finished_at or "", reverse=True)
+                for old in completed[10:]:
+                    self._terminals.pop(old.id, None)
                 self._condition.notify_all()
 
     def list(self, project: dict[str, str]) -> list[JobRecord]:
@@ -332,12 +377,24 @@ class JobManager:
             if job.state != "running" or process is None:
                 raise HTTPException(409, "Only a running child process can be cancelled")
             self._cancel_requested.add(job_id)
-            self._signal_process_tree(process, signal.SIGTERM)
+            self._signal_process_tree(process, signal.SIGINT if job.terminal else signal.SIGTERM)
             snapshot = job.model_copy(deep=True)
-        threading.Thread(target=self._kill_after_grace, args=(job_id, process), daemon=True).start()
+        threading.Thread(target=self._kill_after_grace, args=(job_id, process, job.terminal), daemon=True).start()
         return snapshot
 
-    def _kill_after_grace(self, job_id: str, process: subprocess.Popen) -> None:
+    def _kill_after_grace(self, job_id: str, process: subprocess.Popen, interactive: bool = False) -> None:
+        if interactive:
+            for delay, value in ((3, signal.SIGTERM), (2, signal.SIGKILL)):
+                time.sleep(delay)
+                with self._condition:
+                    if self._processes.get(job_id) is not process:
+                        return
+                    try:
+                        os.killpg(process.pid, value)
+                    except (ProcessLookupError, PermissionError):
+                        if process.poll() is None:
+                            self._signal_process_tree(process, value)
+            return
         try:
             process.wait(timeout=3)
         except subprocess.TimeoutExpired:
@@ -350,7 +407,7 @@ class JobManager:
         """Signal the job's process group, falling back to the direct child for injected/fake processes.
 
         Jobs start in their own process session solely so cancellation cannot leave ordinary descendants behind.
-        The model remains a tracked child of the Evidence Browser job; no Terminal window is opened.
+        Terminal models remain tracked children of the browser job.
         """
         if process.poll() is not None:
             return
@@ -359,8 +416,84 @@ class JobManager:
         except (AttributeError, ProcessLookupError, PermissionError):
             if value == signal.SIGKILL:
                 process.kill()
+            elif value == signal.SIGINT:
+                process.send_signal(value)
             else:
                 process.terminate()
+
+    def _stop_abandoned_terminal(self, job: JobRecord) -> bool:
+        """Stop only the exact old CSA process, avoiding a reused PID after restart."""
+        pid = job.pid
+        if not pid or pid <= 1:
+            return False
+        expected = str(self.agents_dir / "bin" / "csa")
+        names = {expected, expected.removeprefix("/private") if expected.startswith("/private/") else expected}
+        matches = lambda command: any(name in command for name in names) and f"--project {job.project_key}" in command
+        try:
+            command = subprocess.run(["ps", "-ww", "-p", str(pid), "-o", "command="],
+                                     capture_output=True, text=True, timeout=2).stdout
+        except (OSError, subprocess.SubprocessError):
+            return False
+        if not matches(command):
+            return False
+        try:
+            if "terminal_exec.py" in command:
+                # Startup race: the helper has not created its process group yet.
+                os.kill(pid, signal.SIGTERM)
+            else:
+                os.killpg(pid, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError):
+            return False
+        for _ in range(20):
+            time.sleep(.1)
+            if not Path(f"/proc/{pid}").exists() and sys.platform.startswith("linux"):
+                return True
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return True
+        try:
+            current = subprocess.run(["ps", "-ww", "-p", str(pid), "-o", "command="],
+                                     capture_output=True, text=True, timeout=2).stdout
+            if matches(current):
+                os.killpg(pid, signal.SIGKILL)
+        except (OSError, subprocess.SubprocessError, ProcessLookupError, PermissionError):
+            pass
+        return True
+
+    def _terminal(self, project: dict[str, str], job_id: str) -> TerminalSession:
+        self.get(project, job_id)
+        with self._condition:
+            self._condition.wait_for(lambda: job_id in self._terminals or
+                                     self._jobs[job_id].state in TERMINAL_STATES, timeout=5)
+            terminal = self._terminals.get(job_id)
+        if terminal is None:
+            raise HTTPException(404, "Interactive terminal not found")
+        return terminal
+
+    def terminal_output(self, project: dict[str, str], job_id: str, after: int) -> dict:
+        return self._terminal(project, job_id).output(after)
+
+    def terminal_input(self, project: dict[str, str], job_id: str, data: str, capability: str) -> dict:
+        terminal = self._terminal(project, job_id)
+        if not secrets.compare_digest(terminal.capability, capability):
+            raise HTTPException(403, "Invalid terminal capability")
+        if len(data) > 4 * 4096 // 3 + 8:
+            raise HTTPException(413, "Terminal input is too large")
+        try:
+            raw = base64.b64decode(data, validate=True)
+        except (ValueError, binascii.Error) as error:
+            raise HTTPException(422, "Invalid terminal input encoding") from error
+        terminal.input(raw)
+        return {"ok": True}
+
+    def terminal_resize(self, project: dict[str, str], job_id: str, rows: int, cols: int,
+                        capability: str) -> dict:
+        terminal = self._terminal(project, job_id)
+        if not secrets.compare_digest(terminal.capability, capability):
+            raise HTTPException(403, "Invalid terminal capability")
+        terminal.resize(rows, cols)
+        return {"ok": True}
 
     def wait(self, project: dict[str, str], job_id: str, timeout: float = 5) -> JobRecord:
         deadline = time.monotonic() + timeout

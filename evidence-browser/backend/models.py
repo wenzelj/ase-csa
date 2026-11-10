@@ -63,6 +63,9 @@ class JobRecord(BaseModel):
     stdout_tail: str = ""
     stderr_tail: str = ""
     message: str | None = None
+    windowed: bool = False
+    terminal: bool = False
+    pid: int | None = None
 
 
 class PipelineIssue(BaseModel):

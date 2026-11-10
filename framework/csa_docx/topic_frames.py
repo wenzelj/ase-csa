@@ -220,7 +220,7 @@ def settings_findings(work_dir: Path, attr: str, req: str, area: str, section: s
                            "inference_reason": "",
                            "gap_or_action": f"confirm the {label.lower()} on {', '.join(ph)} with the system owner (nothing in {fname})"})
         out.append({"text": text, "hosts": hosts, "roles": roles, "evidence": ev, "hint": "", "tokens": hosts,
-                    "value": value, "from_setting": True})
+                    "value": value, "from_setting": True, "attr": attr})
     return out
 
 
@@ -440,6 +440,8 @@ def build(workspace: Path, heading: str, key: str = "", evidence: bool = True,
            "table_patterns": fr.get("table_patterns", []), "bullet_max": fr.get("bullet_max", []),
            "register_names": register_names(work, fr.get("register_lists", "")),
            "register_hosts": register_hosts(work, fr.get("register_host_columns", {})),
+           "coverage": fr.get("coverage", True), "coverage_settings": fr.get("coverage_settings", []),
+           "component_prompt": fr.get("component_prompt", ""),
            "max_text_sentences": int(fr.get("max_text_sentences") or 0),
            "hosts_covered": hosts_covered(work, fr.get("register_lists", ""))}
     if evidence:

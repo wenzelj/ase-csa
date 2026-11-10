@@ -30,6 +30,8 @@ export type ReviewJob = {
   id: string; project_key: string; operation: string; state: string;
   created_at: string; started_at?: string; finished_at?: string;
   exit_code?: number; stdout_tail?: string; stderr_tail?: string; message?: string;
+  windowed?: boolean;
+  terminal?: boolean;
   classification?: "read_only" | "workspace_write" | "document_write"; lock?: string; resource?: string | null;
 };
 

@@ -196,6 +196,13 @@ class Handler(BaseHTTPRequestHandler):
             match = re.fullmatch(r"/api/systems/([^/]+)/jobs/([^/]+)", path)
             if match:
                 return self.dispatch_result(api.get_job(match.group(1), match.group(2)))
+            match = re.fullmatch(r"/api/systems/([^/]+)/jobs/([^/]+)/terminal", path)
+            if match:
+                offset = scalar(query, "after", "0")
+                if not re.fullmatch(r"\d{1,16}", offset):
+                    raise HTTPException(422, "Invalid terminal offset")
+                return self.dispatch_result(api.get_job_terminal(
+                    match.group(1), match.group(2), int(offset)))
             match = re.fullmatch(r"/api/systems/([^/]+)/evidence", path)
             if match:
                 return self.dispatch_result(api.evidence(
@@ -229,6 +236,8 @@ class Handler(BaseHTTPRequestHandler):
         path = unquote(parsed.path)
         try:
             length = int(self.headers.get("Content-Length", "0"))
+            if "/terminal/" in path and not 0 < length <= 6000:
+                return self.send_json({"detail": "Terminal request exceeds the size limit"}, 413)
             if path.startswith("/api/new-application/") and length > 8 * 1024 * 1024:
                 return self.send_json({"detail": "Request body exceeds the size limit"}, 413)
             payload = json.loads(self.rfile.read(length) or b"{}")
@@ -294,6 +303,18 @@ class Handler(BaseHTTPRequestHandler):
             if match:
                 return self.dispatch_result(api.create_job(
                     match.group(1), api.JobCreateRequest.model_validate(payload)))
+            match = re.fullmatch(r"/api/systems/([^/]+)/jobs/([^/]+)/terminal/input", path)
+            if match:
+                api.check_write_origin(self.headers.get("Origin"), self.headers.get("Host"))
+                entry = api.TerminalInput.model_validate(payload)
+                return self.dispatch_result(api.job_manager.terminal_input(
+                    api.system_project(match.group(1)), match.group(2), entry.data, entry.capability))
+            match = re.fullmatch(r"/api/systems/([^/]+)/jobs/([^/]+)/terminal/resize", path)
+            if match:
+                api.check_write_origin(self.headers.get("Origin"), self.headers.get("Host"))
+                size = api.TerminalResize.model_validate(payload)
+                return self.dispatch_result(api.job_manager.terminal_resize(
+                    api.system_project(match.group(1)), match.group(2), size.rows, size.cols, size.capability))
             match = re.fullmatch(r"/api/systems/([^/]+)/evidence-drafts/validate", parsed.path)
             if match:
                 return self.dispatch_result(api.validate_evidence(match.group(1), api.EvidenceDraft.model_validate(payload)))

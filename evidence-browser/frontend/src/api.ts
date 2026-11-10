@@ -180,6 +180,20 @@ export async function fetchDraft(system: string): Promise<DraftSnapshot> { retur
 export async function submitJob(system: string, operation: string, target?: string, options: Record<string, string | boolean> = {}): Promise<ReviewJob> { return api(`/api/systems/${system}/jobs`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ operation, target: target || null, options }) }); }
 export async function fetchJobs(system: string): Promise<ReviewJob[]> { const data = await api<{ jobs: ReviewJob[] }>(`/api/systems/${system}/jobs`); return data.jobs; }
 export async function fetchJob(system: string, id: string): Promise<ReviewJob> { return api(`/api/systems/${system}/jobs/${id}`); }
+export type TerminalOutput = { data: string; offset: number; truncated: boolean; ended: boolean; capability: string };
+export async function fetchTerminal(system: string, id: string, after: number, signal?: AbortSignal): Promise<TerminalOutput> {
+  return api(`/api/systems/${encodeURIComponent(system)}/jobs/${encodeURIComponent(id)}/terminal?after=${after}`, { signal });
+}
+export async function sendTerminalInput(system: string, id: string, data: string, capability: string): Promise<void> {
+  await api(`/api/systems/${encodeURIComponent(system)}/jobs/${encodeURIComponent(id)}/terminal/input`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ data, capability }),
+  });
+}
+export async function resizeTerminal(system: string, id: string, rows: number, cols: number, capability: string): Promise<void> {
+  await api(`/api/systems/${encodeURIComponent(system)}/jobs/${encodeURIComponent(id)}/terminal/resize`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rows, cols, capability }),
+  });
+}
 
 export async function fetchIntake(system: string): Promise<IntakeSnapshot> { return api(`/api/systems/${system}/intake`); }
 export async function fetchIntakeErrors(system: string): Promise<IntakeErrors> { return api(`/api/systems/${system}/intake/errors`); }

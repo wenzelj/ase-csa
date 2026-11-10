@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 
 from . import assets, intake_errors, apply_workflow, audit_workflow, author_workflow, intake_workflow, build_workflow, cleanup_workflow, commands, documents, draft_workflow, prompts_workflow, explorer, csa_figures, network, pipeline, project_setup, project_upload, proposals, review_workflow, sections, validation, word_review, working_document
 from .jobs import JobManager
+from .terminal_sessions import check_write_origin
 from .models import CommandRequest, IntakeErrorsResponse, JobCreateRequest
 
 
@@ -762,6 +763,34 @@ def list_jobs(system_key: str) -> dict[str, Any]:
 @app.get("/api/systems/{system_key}/jobs/{job_id}")
 def get_job(system_key: str, job_id: str) -> dict[str, Any]:
     return job_manager.get(system_project(system_key), job_id).model_dump()
+
+
+class TerminalInput(BaseModel):
+    data: str = Field(max_length=5500)
+    capability: str = Field(min_length=1, max_length=100)
+
+
+class TerminalResize(BaseModel):
+    rows: int
+    cols: int
+    capability: str = Field(min_length=1, max_length=100)
+
+
+@app.get("/api/systems/{system_key}/jobs/{job_id}/terminal")
+def get_job_terminal(system_key: str, job_id: str, after: int = 0) -> dict[str, Any]:
+    return job_manager.terminal_output(system_project(system_key), job_id, after)
+
+
+@app.post("/api/systems/{system_key}/jobs/{job_id}/terminal/input")
+def input_job_terminal(system_key: str, job_id: str, payload: TerminalInput, request: Request) -> dict[str, Any]:
+    check_write_origin(request.headers.get("origin"), request.headers.get("host"))
+    return job_manager.terminal_input(system_project(system_key), job_id, payload.data, payload.capability)
+
+
+@app.post("/api/systems/{system_key}/jobs/{job_id}/terminal/resize")
+def resize_job_terminal(system_key: str, job_id: str, payload: TerminalResize, request: Request) -> dict[str, Any]:
+    check_write_origin(request.headers.get("origin"), request.headers.get("host"))
+    return job_manager.terminal_resize(system_project(system_key), job_id, payload.rows, payload.cols, payload.capability)
 
 
 @app.get("/api/systems/{system_key}/jobs/{job_id}/log")

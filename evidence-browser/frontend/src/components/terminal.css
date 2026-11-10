@@ -1,0 +1,7 @@
+.agent-terminal-dock{position:fixed;z-index:31;left:clamp(220px,18vw,330px);right:16px;bottom:0;background:#14242d;color:#e9edf0;box-shadow:0 -8px 28px #14242d55;border:1px solid #698087;border-radius:8px 8px 0 0}
+.agent-terminal-dock header{display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid #52666d}
+.agent-terminal-dock button,.agent-terminal-dock select{color:#e9edf0;background:#29444d;border:1px solid #698087;border-radius:4px;padding:5px 9px}
+.agent-terminal-dock .agent-terminal-toggle{flex:1;text-align:left;background:transparent;border:0}
+.agent-terminal-screen{height:min(55vh,510px);padding:10px;overflow:hidden}
+.agent-terminal-error{margin:0;padding:8px 12px;color:#ffcbc5;background:#662d2b}
+@media(max-width:760px){.agent-terminal-dock{left:0;right:0;bottom:64px}.agent-terminal-dock header{flex-wrap:wrap}.agent-terminal-screen{height:45vh}}
