@@ -87,6 +87,16 @@ class Handler(BaseHTTPRequestHandler):
             match = re.fullmatch(r"/api/systems/([^/]+)/network", path)
             if match:
                 return self.dispatch_result(api.host_network(match.group(1)))
+            match = re.fullmatch(r"/api/systems/([^/]+)/assets", path)
+            if match:
+                return self.dispatch_result(api.system_assets(
+                    match.group(1), scalar(query, "q"), scalar(query, "kind"), scalar(query, "type"),
+                    scalar(query, "state"), int(scalar(query, "page", "1")), int(scalar(query, "per_page", "50")),
+                    boolean(query, "include_retired")))
+            match = re.fullmatch(r"/api/systems/([^/]+)/assets/([^/]+)", path)
+            if match:
+                return self.dispatch_result(api.system_asset_detail(
+                    match.group(1), match.group(2), scalar(query, "kind")))
             match = re.fullmatch(r"/api/systems/([^/]+)/explorer", path)
             if match:
                 return self.dispatch_result(api.system_explorer(match.group(1)))
@@ -186,6 +196,13 @@ class Handler(BaseHTTPRequestHandler):
             match = re.fullmatch(r"/api/systems/([^/]+)/jobs/([^/]+)", path)
             if match:
                 return self.dispatch_result(api.get_job(match.group(1), match.group(2)))
+            match = re.fullmatch(r"/api/systems/([^/]+)/jobs/([^/]+)/terminal", path)
+            if match:
+                offset = scalar(query, "after", "0")
+                if not re.fullmatch(r"\d{1,16}", offset):
+                    raise HTTPException(422, "Invalid terminal offset")
+                return self.dispatch_result(api.get_job_terminal(
+                    match.group(1), match.group(2), int(offset)))
             match = re.fullmatch(r"/api/systems/([^/]+)/evidence", path)
             if match:
                 return self.dispatch_result(api.evidence(
@@ -219,6 +236,8 @@ class Handler(BaseHTTPRequestHandler):
         path = unquote(parsed.path)
         try:
             length = int(self.headers.get("Content-Length", "0"))
+            if "/terminal/" in path and not 0 < length <= 6000:
+                return self.send_json({"detail": "Terminal request exceeds the size limit"}, 413)
             if path.startswith("/api/new-application/") and length > 8 * 1024 * 1024:
                 return self.send_json({"detail": "Request body exceeds the size limit"}, 413)
             payload = json.loads(self.rfile.read(length) or b"{}")
@@ -231,6 +250,30 @@ class Handler(BaseHTTPRequestHandler):
                 return self.dispatch_result(api.new_application_finalise_upload(match.group(1)))
             if path == "/api/new-application/commit":
                 return self.dispatch_result(api.new_application_commit(payload))
+            match = re.fullmatch(r"/api/systems/([^/]+)/devices", path)
+            if match:
+                return self.dispatch_result(api.create_connected_device(match.group(1), payload))
+            match = re.fullmatch(r"/api/systems/([^/]+)/devices/reconcile-preview", path)
+            if match:
+                return self.dispatch_result(api.preview_device_aliases(match.group(1), payload))
+            match = re.fullmatch(r"/api/systems/([^/]+)/devices/([^/]+)/aliases", path)
+            if match:
+                return self.dispatch_result(api.add_device_alias(match.group(1), match.group(2), payload))
+            match = re.fullmatch(r"/api/systems/([^/]+)/devices/([^/]+)/host-conversion/preview", path)
+            if match:
+                return self.dispatch_result(api.preview_host_conversion(match.group(1), match.group(2), payload))
+            match = re.fullmatch(r"/api/systems/([^/]+)/devices/([^/]+)/host-conversion", path)
+            if match:
+                return self.dispatch_result(api.convert_device_to_host(match.group(1), match.group(2), payload))
+            match = re.fullmatch(r"/api/systems/([^/]+)/devices/([^/]+)/host-conversion/reverse", path)
+            if match:
+                return self.dispatch_result(api.reverse_host_conversion(match.group(1), match.group(2), payload))
+            match = re.fullmatch(r"/api/systems/([^/]+)/devices/([^/]+)/retire", path)
+            if match:
+                return self.dispatch_result(api.retire_connected_device(match.group(1), match.group(2), payload))
+            match = re.fullmatch(r"/api/systems/([^/]+)/devices/([^/]+)/restore", path)
+            if match:
+                return self.dispatch_result(api.restore_connected_device(match.group(1), match.group(2), payload))
             match = re.fullmatch(r"/api/systems/([^/]+)/working-document", path)
             if match:
                 return self.dispatch_result(api.select_working_document(match.group(1), payload))
@@ -260,6 +303,18 @@ class Handler(BaseHTTPRequestHandler):
             if match:
                 return self.dispatch_result(api.create_job(
                     match.group(1), api.JobCreateRequest.model_validate(payload)))
+            match = re.fullmatch(r"/api/systems/([^/]+)/jobs/([^/]+)/terminal/input", path)
+            if match:
+                api.check_write_origin(self.headers.get("Origin"), self.headers.get("Host"))
+                entry = api.TerminalInput.model_validate(payload)
+                return self.dispatch_result(api.job_manager.terminal_input(
+                    api.system_project(match.group(1)), match.group(2), entry.data, entry.capability))
+            match = re.fullmatch(r"/api/systems/([^/]+)/jobs/([^/]+)/terminal/resize", path)
+            if match:
+                api.check_write_origin(self.headers.get("Origin"), self.headers.get("Host"))
+                size = api.TerminalResize.model_validate(payload)
+                return self.dispatch_result(api.job_manager.terminal_resize(
+                    api.system_project(match.group(1)), match.group(2), size.rows, size.cols, size.capability))
             match = re.fullmatch(r"/api/systems/([^/]+)/evidence-drafts/validate", parsed.path)
             if match:
                 return self.dispatch_result(api.validate_evidence(match.group(1), api.EvidenceDraft.model_validate(payload)))
@@ -343,12 +398,29 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as error:
             self.fail(error)
 
+    def do_PATCH(self) -> None:
+        try:
+            path = unquote(urlparse(self.path).path)
+            length = int(self.headers.get("Content-Length", "0"))
+            payload = json.loads(self.rfile.read(length) or b"{}")
+            match = re.fullmatch(r"/api/systems/([^/]+)/devices/([^/]+)", path)
+            if match:
+                return self.dispatch_result(api.patch_connected_device(match.group(1), match.group(2), payload))
+            self.send_json({"detail": "Route not found"}, 404)
+        except Exception as error:
+            self.fail(error)
+
     def do_DELETE(self) -> None:
         try:
             path = unquote(urlparse(self.path).path)
             match = re.fullmatch(r"/api/new-application/uploads/([^/]+)", path)
             if match:
                 return self.dispatch_result(api.new_application_cancel_upload(match.group(1)))
+            match = re.fullmatch(r"/api/systems/([^/]+)/devices/([^/]+)/aliases/([^/]+)", path)
+            if match:
+                return self.dispatch_result(api.remove_device_alias(
+                    match.group(1), match.group(2), match.group(3),
+                    scalar(parse_qs(urlparse(self.path).query), "expected_revision")))
             match = re.fullmatch(r"/api/systems/([^/]+)/jobs/([^/]+)", path)
             if match:
                 return self.dispatch_result(api.cancel_job(match.group(1), match.group(2)))

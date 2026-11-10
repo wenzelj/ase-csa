@@ -41,6 +41,7 @@ def load_rules(path: Path | str) -> list[dict]:
                 "row": n,
                 "pattern": re.compile(pattern, re.IGNORECASE),
                 "target": (row.get("target") or "").strip(),
+                "also": [x.strip() for x in (row.get("also") or "").split("|") if x.strip()],
                 "job": (row.get("job") or "").strip(),
                 "note": (row.get("note") or "").strip(),
             })
@@ -86,10 +87,14 @@ def map_blocks(blocks: list[dict], *, project_rules=(), default_rules=None,
             out.append(row("convert", moved[b["id"]], "moved", "high"))
             continue
 
-        ordered = [(f"project:{r['row']}", r) for r in project_rules] + [(f"default:{r['row']}", r) for r in default_rules]
+        # Specific exceptions must beat a broad project section rule. Preserve project precedence
+        # for equally specific rules, while allowing shared rules to split a mixed legacy section.
+        ordered = [(f"project:{r['row']}", r, 0) for r in project_rules] + [
+            (f"default:{r['row']}", r, 1) for r in default_rules]
+        ordered.sort(key=lambda item: (-len(item[1]["pattern"].pattern), item[2], item[1]["row"]))
         mined = False
         rule, label = None, ""
-        for lab, r in ordered:
+        for lab, r, _priority in ordered:
             if not r["pattern"].search(path):
                 continue
             if r["job"] == "mine":          # keep the job, but route by the rules that follow
@@ -98,10 +103,15 @@ def map_blocks(blocks: list[dict], *, project_rules=(), default_rules=None,
             rule, label = r, lab
             break
 
-        def final(job, target, rule_name, conf):
+        def final(job, target, rule_name, conf, also=()):
             if mined:
                 job, rule_name = "mine", f"mine+{rule_name}"
             out.append(row(job, target, rule_name, conf))
+            for extra in also:
+                extra_target = extra
+                if extra_target and targets.spec_mode() == "on":
+                    extra_target = targets.canonical(extra_target)
+                out.append(row(job, extra_target, f"{rule_name}+also", conf))
 
         if rule:
             job = rule["job"] or "convert"
@@ -114,7 +124,7 @@ def map_blocks(blocks: list[dict], *, project_rules=(), default_rules=None,
                     target, conf = "", "low"
                 else:
                     target, conf = key, "low" if tie else "medium"
-            final(job, target, label, conf)
+            final(job, target, label, conf, rule.get("also", ()))
             continue
 
         keys = scope_map.legacy_hosts(b["path"][0], domains) if b["path"] else []
@@ -140,6 +150,26 @@ def _lines(title: str, rows: list[dict]) -> list[str]:
     if not rows:
         return out + ["None.", ""]
     return out + [f"- `{r['id']}` {r['path'] or '(front matter)'}" for r in rows] + [""]
+
+
+def migration_targets() -> list[str]:
+    """Visible template destinations that a legacy migration may need to populate."""
+    spec = targets.template_spec()
+    if not spec:
+        return []
+    wanted = []
+    for node in spec.get("nodes", []):
+        number = str(node.get("number") or "")
+        if re.fullmatch(r"(?:2\.1|3\.\d+|4\.\d+|7|8)", number):
+            wanted.append(number)
+    return sorted(set(wanted), key=_target_key)
+
+
+def missing_targets(rows: list[dict], required: list[str] | None = None) -> list[str]:
+    """Return current migration destinations with no live legacy blocks."""
+    required = migration_targets() if required is None else list(required)
+    mapped = {r.get("target") for r in rows if r.get("job") in ("convert", "context", "mine") and r.get("target")}
+    return [t for t in required if t not in mapped]
 
 
 def write_map(rows: list[dict], out_dir: Path) -> dict:
@@ -170,12 +200,16 @@ def write_map(rows: list[dict], out_dir: Path) -> dict:
     md += _lines("Evidence only", [r for r in rows if r["job"] == "evidence-only"])
     md += _lines("Figures", [r for r in rows if r["job"] == "figure"])
     md += _lines("Controlled", [r for r in rows if r["job"] == "controlled"])
+    missing = missing_targets(rows)
+    md += ["## Required template destinations with no mapped blocks", ""]
+    md += ([f"- `{t}`" for t in missing] if missing else ["None."]) + [""]
     (out_dir / "map-report.md").write_text("\n".join(md) + "\n", encoding="utf-8")
 
     return {"status": "OK", "blocks": len(rows),
             "mapped": sum(len(v) for v in by_target.values()),
             "unmapped": len(unmapped), "low_confidence": len(low),
-            "by_target": {t: len(by_target[t]) for t in sorted(by_target, key=_target_key)}}
+            "by_target": {t: len(by_target[t]) for t in sorted(by_target, key=_target_key)},
+            "missing_targets": missing}
 
 
 def main(argv: list[str] | None = None) -> int:

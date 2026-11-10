@@ -16,8 +16,8 @@ parallel lines never overlap and nothing crosses a box.
 """
 from collections import defaultdict
 
-NODE_W, NODE_H = 290, 74
-CARD_GAP = 64          # between cards in a tier
+NODE_W, NODE_H = 290, 100
+CARD_GAP = 16          # compact host spacing; same-role cards can sit almost together
 LANE = 11               # spacing between parallel lines in a track
 BAND_HEAD = 48         # zone title height
 GROUP_HEAD = 32

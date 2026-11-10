@@ -41,7 +41,8 @@ def listing(project: dict[str, str], agents: Path, docx: Path | None) -> dict[st
         r = {k: r.get(k) for k in ("key", "number", "title", "level", "status", "reason", "profile", "archetype", "question",
                                    "must_show", "caption", "requirements", "hosts_in_text", "slot")}
         r["saved"] = {"at": s.get("drawn"), "hash": s.get("hash"), "fit": s.get("fit"), "gaps": s.get("gaps"),
-                      "placed": s.get("placed")} if s else None
+                      "placed": s.get("placed"),
+                      "screen_landscape": bool((s.get("files") or {}).get("screen_landscape_svg"))} if s else None
         counts[r["status"]] = counts.get(r["status"], 0) + 1
         out.append(r)
     gaps = WK.all_gaps(work)
@@ -53,6 +54,7 @@ def _shape(res: dict) -> dict[str, Any]:
     m = res.get("model") or {}
     return {"state": "ready", "row": res["row"], "brief": res["brief"], "problems": res.get("problems", []),
             "fit": res["fit"], "relations": res["relations"], "svg": res["svg"], "hash": res["hash"],
+        "screen_landscape_svg": res.get("screen_landscape_svg"), "screen_landscape": res.get("screen_landscape"),
             "print_svg": res.get("print_svg"), "print": res.get("print"),
             "notes": m.get("notes", []), "nodes": len(m.get("nodes", [])), "lines": len(m.get("edges", [])),
             "saved": res.get("saved"), "freshness": res.get("freshness"), "placement": res.get("placement", "not-placed"),

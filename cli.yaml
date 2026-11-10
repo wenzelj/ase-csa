@@ -1,7 +1,7 @@
 # Settings for the `csa` command. Per-machine overrides: environment variables
 # CSA_CLI, CSA_PYTHON, CSA_PROJECT.
 
-# Default agent CLI for `csa <verb>`: codex | claude | evo | qwen8b | hermes. Override per call with --cli (claude, codex, evo or qwen8b).
+# Default agent CLI for `csa <verb>`: codex | claude | evo | qwen8b | eagle | hermes. Override per call with --cli.
 default_cli: evo
 
 # Interpreter for the csa_docx framework and skill scripts (needs Python >= 3.11).
@@ -29,6 +29,9 @@ evo_headless: codex exec --profile evo-x3-qwen --ignore-rules --skip-git-repo-ch
 # a named profile).
 qwen8b_interactive: codex -c 'model_provider="ollama-local"' -c 'model="qwen3:8b"' -c 'model_providers.ollama-local.name="Ollama"' -c 'model_providers.ollama-local.base_url="http://localhost:11434/v1"' {prompt}
 qwen8b_headless: codex exec -c 'model_provider="ollama-local"' -c 'model="qwen3:8b"' -c 'model_providers.ollama-local.name="Ollama"' -c 'model_providers.ollama-local.base_url="http://localhost:11434/v1"' --skip-git-repo-check --output-last-message {last} {prompt}
+# Eagle: Codex against the 64k-context Qwen3.5 9B variant on the Windows Ollama host.
+eagle_interactive: codex -c 'model_provider="eagle_ollama"' -c 'model="eagle-codex:64k"' -c 'model_reasoning_effort="none"' -c 'model_context_window=65536' -c 'model_auto_compact_token_limit=60000' -c 'model_catalog_json="/Users/wenzel/.codex/model-catalogs/qwen3.5-eagle.json"' -c 'model_providers.eagle_ollama.name="Eagle Ollama"' -c 'model_providers.eagle_ollama.base_url="http://192.168.0.120:11434/v1"' -c 'model_providers.eagle_ollama.wire_api="responses"' {prompt}
+eagle_headless: codex exec -c 'model_provider="eagle_ollama"' -c 'model="eagle-codex:64k"' -c 'model_reasoning_effort="none"' -c 'model_context_window=65536' -c 'model_auto_compact_token_limit=60000' -c 'model_catalog_json="/Users/wenzel/.codex/model-catalogs/qwen3.5-eagle.json"' -c 'model_providers.eagle_ollama.name="Eagle Ollama"' -c 'model_providers.eagle_ollama.base_url="http://192.168.0.120:11434/v1"' -c 'model_providers.eagle_ollama.wire_api="responses"' --skip-git-repo-check --output-last-message {last} {prompt}
 # Ollama: a local model (pick it per run with --cli ollama). --hidethinking keeps a thinking model's reasoning out of the reply.
 ollama_interactive: ollama run qwen3.5:9b {prompt}
 ollama_headless: ollama run --hidethinking qwen3.5:9b {prompt}

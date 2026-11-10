@@ -456,6 +456,22 @@ def build(work_dir: Path) -> dict:
             scope = d.get("In Scope") or d.get("In Scope of CSA") or d.get("In Scope (CSA)") or ""
             e["in_scope"] = e["in_scope"] or scope
             e["sources"].add(Path(rel).name)
+    # 1b. hosts an operator converted from a connected device (hosts/host_scope.csv, written only by
+    #     connected_devices.convert_to_host after a preview). A host the inventory already lists keeps the
+    #     inventory's values; a conflicting scope is recorded, not overwritten.
+    from csa_docx import connected_devices
+    for dec in connected_devices.scope_decisions(work_dir):
+        e = entry(dec["host"])
+        note = f"scope decision {dec['decision_id']} ({dec['operator']}, {dec['decided'][:10]}): {dec['source']}"
+        if e["in_scope"] and e["in_scope"].strip().lower() not in ("yes", "y"):
+            e["conflicts"].append(f"scope: {note} says in scope; the register says {e['in_scope']}")
+        e["in_scope"] = e["in_scope"] or "Yes"
+        e["ips"].update(x for x in (dec.get("ips") or "").split(";") if x)
+        if dec.get("role") and not e["role"]:
+            e["role"], e["role_source"] = dec["role"], note
+        if dec.get("site") and not e["site"]:
+            e["site"], e["site_source"] = dec["site"], note
+        e["sources"].add(f"scope decision {dec['decision_id']}")
     # 2. captures
     for host, cap in con.execute("select host, folder from captures where superseded_by is null and archived = 0"):
         if host:
@@ -864,8 +880,10 @@ def build(work_dir: Path) -> dict:
         flows_mod.write_peers(work_dir)          # the peer hints the endpoint register reads, from these flows
     from csa_docx import isolation              # the isolation dependency matrix (3.12), from settings and flows
     iso_res = isolation.build(work_dir)
-    addrs = build_addresses(work_dir, reg)
-    ev = link_evidence(work_dir, set(reg), set(addrs))
+    device_summary: dict = {}
+    addrs = build_addresses(work_dir, reg, device_summary)
+    # an address a confirmed device owns is no longer unnamed, but evidence that mentions it still links to it
+    ev = link_evidence(work_dir, set(reg), set(addrs) | set(device_summary.get("resolved", [])))
     from csa_docx import endpoints                # the endpoint register (hosts/endpoints.csv)
     ep_res = endpoints.build(work_dir)
     return {"status": "OK", "hosts": len(reg), "unnamed_addresses": len(addrs), "with_capture": sum(1 for e in reg.values() if e["capture"]),
@@ -876,6 +894,8 @@ def build(work_dir: Path) -> dict:
             "evidence_rows": ev["rows"], "evidence_without_host": ev["without_host"],
             "addresses_named": sum(1 for e in reg.values() if any(x.startswith("address ") for x in e["sources"])),
             "addresses_ambiguous": ambiguous,
+            "devices_resolved": len(device_summary.get("resolved", [])),
+            "device_ambiguous": device_summary.get("ambiguous", {}), "device_conflicts": device_summary.get("conflicts", []),
             "host_services": len(svc_rows), "host_settings": settings.get("rows", 0), "capture_gaps": settings.get("capture_gaps", []),
             "flows": flow_res.get("flows", 0),
             "isolation": iso_res.get("rows", 0),
@@ -883,14 +903,23 @@ def build(work_dir: Path) -> dict:
             "out": str(out)}
 
 
-def build_addresses(work_dir: Path, reg: dict) -> dict:
+def build_addresses(work_dir: Path, reg: dict, summary: dict | None = None) -> dict:
     """Peers seen only by address: hosts/addresses.csv, one row per address no register host owns.
 
     Built from the matrix's connection rows (inbound and outbound, every captured host) and, for
     sessions not yet in the matrix, the indexed established-connection captures. Nothing is guessed:
     no role or site; `kind` says only whether the address is private or public. When a later build
     names the address (a register host lists it), it drops out of this file and its evidence moves to
-    the host."""
+    the host.
+
+    A confirmed connected device (``connected_devices.resolution_map``) that owns an observed address
+    takes it out of this file: the address is then in ``hosts/device_peers.csv``, one row per resolved
+    address with the device ID, identification, revision and provenance. That file is the peer
+    projection for consumers; the device is never added to the host register and so never becomes an
+    application host. Proposed, disputed, ambiguous and retired claims leave the address here, and an
+    address a register host owns stays with the host (the clash goes in ``summary["conflicts"]``).
+    The register files are only read. ``summary`` (optional) is filled with ``resolved``, ``ambiguous``
+    and ``conflicts``."""
     import ipaddress
     owned = {ip for e in reg.values() for ip in e["ips"]}
     names = set(reg)
@@ -933,6 +962,39 @@ def build_addresses(work_dir: Path, reg: dict) -> dict:
                 add(a, host, "outbound", d.get("RemotePort"), "")
     except Exception:
         pass
+    from csa_docx import connected_devices
+    identity = connected_devices.resolution_map(work_dir)
+    resolved: dict[str, dict] = {}
+    for addr in list(rows):
+        try:
+            key = str(ipaddress.ip_address(addr))
+        except ValueError:
+            continue
+        if key in identity["confirmed"]:
+            resolved[addr] = {**rows.pop(addr), "device": identity["confirmed"][key]}
+    if summary is not None:
+        owners = {ip: h for h, e in reg.items() for ip in e["ips"]}
+        summary["resolved"] = sorted(resolved)
+        summary["ambiguous"] = dict(identity["ambiguous"])
+        summary["conflicts"] = [{"address": a, "device_id": d["device_id"], "host": owners[a]}
+                                for a, d in sorted(identity["confirmed"].items()) if a in owners]
+    peers = work_dir / "hosts" / "device_peers.csv"
+    if identity["present"]:
+        (work_dir / "hosts").mkdir(exist_ok=True)
+        with peers.open("w", encoding="utf-8", newline="") as fh:
+            w = csv.writer(fh)
+            w.writerow(["address", "device_id", "device_name", "device_type", "classification", "identification_state",
+                        "revision", "provenance", "alias_source", "basis", "kind", "seen_from", "directions", "ports",
+                        "processes", "sessions", "evidence_ids"])
+            for addr, r in sorted(resolved.items(), key=lambda kv: (kv[1]["device"]["device_id"], kv[0])):
+                d = r["device"]
+                w.writerow([addr, d["device_id"], d["name"], d["device_type"], d["classification"],
+                            d["identification_state"], d["revision"], d["provenance"], d["alias_source"],
+                            "observed connection", r["kind"], ";".join(sorted(r["hosts"])), ";".join(sorted(r["directions"])),
+                            ";".join(sorted(r["ports"], key=lambda x: int(x) if x.isdigit() else 0)[:10]),
+                            ";".join(sorted(r["processes"])), r["sessions"], ";".join(sorted(r["evidence_ids"]))])
+    elif peers.is_file():
+        peers.unlink()                         # no register any more: a stale projection would claim identities
     out = sorted(rows.values(), key=lambda r: (-len(r["hosts"]), -r["sessions"], r["address"]))
     (work_dir / "hosts").mkdir(exist_ok=True)
     with (work_dir / "hosts" / "addresses.csv").open("w", encoding="utf-8", newline="") as fh:

@@ -160,6 +160,20 @@ def refresh_derived_questions(workspace: Path, project_key: str, docx: Path) -> 
     return {"topic_tables": tables, "figures": figures, "questions": questions}
 
 
+def card_listed(work: Path, key: str, qid: str, cache: dict) -> set[str] | None:
+    """The evidence IDs the section's card listed for one answer-sheet block (cards/<KEY>.json, evidence[<block>].rows): what the
+    answerer was shown. None when there is no card or the card has no such block (a figure or role-table question). Read only."""
+    if key not in cache:
+        try:
+            cache[key] = json.loads((Path(work) / "cards" / f"{key}.json").read_text(encoding="utf-8")).get("evidence") or {}
+        except (OSError, ValueError):
+            cache[key] = None
+    evidence = cache[key]
+    if not evidence or qid not in evidence:
+        return None
+    return {str(r.get("id", "")).upper() for r in evidence[qid].get("rows", [])}
+
+
 def sweep(workspace: Path, section_key: str | None = None, *, refresh_derived: bool = False,
           project_key: str = "", docx: Path | None = None) -> dict:
     """Look up every open question (or one section's); write intake/gap-check-<ts>.json and gap-check-latest.json."""
@@ -173,16 +187,19 @@ def sweep(workspace: Path, section_key: str | None = None, *, refresh_derived: b
     source_text = source.read_text(encoding="utf-8") if source.is_file() else ""
     all_questions = parse_open_questions(source_text)
     safe_retirement = _safe_for_retirement(source_text, all_questions)
-    qs = list(all_questions)
+    from csa_docx import question_exclusions
+    removed = question_exclusions.load(work)           # questions the owner removed from the list
+    qs = [q for q in all_questions if q["dr_id"] not in removed]
     if section_key:
         qs = [q for q in qs if q["key"] == section_key]
     results = []
+    cards: dict = {}
     for q in qs:
         duplicate_id = sum(1 for candidate in all_questions if candidate["dr_id"] == q["dr_id"]) > 1
         if duplicate_id or not safe_retirement:
             reason = "duplicate DR id" if duplicate_id else "question file contains unparsed or malformed question lines"
             res = {"verdict": "INCOMPLETE", "answer_evidence_ids": [], "related_evidence_ids": [],
-                   "lead_ids": [], "kind": "system", "owners": [], "queries": [],
+                   "lead_ids": [], "kind": "system", "owners": [], "ask": False, "queries": [],
                    "searched": f"not searched: {reason}",
                    "coverage": {"incomplete_reasons": [reason]}}
         else:
@@ -192,10 +209,14 @@ def sweep(workspace: Path, section_key: str | None = None, *, refresh_derived: b
         lead_ids = list(dict.fromkeys(res.get("lead_ids", res.get("index", []))))[:gap_lookup._MAX_CANDIDATES]
         results.append({**q, "verdict": res["verdict"], "answer_evidence_ids": answers,
                         "related_evidence_ids": related, "lead_ids": lead_ids, "evidence_ids": answers,
-                        "kind": res.get("kind", ""), "owners": res.get("owners", []), "related": related,
+                        "kind": res.get("kind", ""), "owners": res.get("owners", []), "ask": bool(res.get("ask")), "related": related,
                         "queries": res.get("queries", []), "searched": res.get("searched", ""),
                         "searches": len(res.get("queries", [])),
                         "coverage": res.get("coverage", {}), "incomplete": res.get("verdict") == "INCOMPLETE"})
+        listed = card_listed(work, q["key"], q["qid"], cards)
+        # related rows the answerer was never shown: the card's row selection did not surface them. Information only; no verdict uses it
+        results[-1].update({"card_block": listed is not None,
+                            "unseen_related": [] if listed is None else [e for e in related if str(e).upper() not in listed]})
     retired = _retire_absent(workspace, qs, section_key) if safe_retirement else []
     drained = _drain_closed_leads(workspace, results) if safe_retirement else []
     affected: dict[str, dict] = {}
@@ -210,14 +231,34 @@ def sweep(workspace: Path, section_key: str | None = None, *, refresh_derived: b
     record = {"schema_version": 4, "input_complete": safe_retirement, "input_warnings": input_warnings,
               "checked_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", stamp), "section": section_key or "",
               "questions": results, "affected": list(affected.values()), "retired_lead_ids": retired,
-              "drained_lead_ids": drained,
+              "drained_lead_ids": drained, "removed_by_owner": sorted(q["dr_id"] for q in all_questions if q["dr_id"] in removed),
               "summary": summarise(results)}
     folder = work / "intake"
     folder.mkdir(parents=True, exist_ok=True)
     text = json.dumps(record, indent=1, ensure_ascii=False)
     (folder / f"gap-check-{time.strftime('%Y%m%dT%H%M%SZ', stamp)}.json").write_text(text, encoding="utf-8")
     (folder / "gap-check-latest.json").write_text(text, encoding="utf-8")
+    write_to_ask(folder / "to-ask-latest.md", results, record["checked_at"])
     return record
+
+
+def write_to_ask(path: Path, results: list[dict], stamp: str) -> None:
+    """The questions a person has to answer, grouped by who the question names (or "to be assigned") and then by section."""
+    groups: dict[str, dict[str, list[dict]]] = {}
+    for r in results:
+        if (r.get("ask") or r.get("owners")) and r["verdict"] != "ANSWERED":
+            for who in r.get("owners") or ["to be assigned"]:
+                groups.setdefault(who, {}).setdefault(f"{r['number']} {r['title']}", []).append(r)
+    lines = [f"# Questions for people ({stamp})", "",
+             "Questions the captures cannot answer: who owns or decides something, or a policy, plan, procedure, fallback or test. "
+             "Possible answers found in documents are marked for reading."]
+    for who in sorted(groups):
+        lines += ["", f"## {who}"]
+        for section, items in groups[who].items():
+            lines += ["", f"### {section}"]
+            lines += [f"- [{q['qid']}] {q['text']}" + (f" (leads to read: {len(q['lead_ids'])})" if q.get("lead_ids") else "")
+                      for q in items]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def summarise(results: list[dict]) -> dict:
@@ -225,12 +266,16 @@ def summarise(results: list[dict]) -> dict:
     per gap), gaps with related matrix rows to read, and who has to be asked for the ones nothing answers."""
     import collections
     verdicts = collections.Counter(r["verdict"] for r in results)
-    ask = collections.Counter(o for r in results if r["verdict"] == "NOT_FOUND" for o in r.get("owners", []))
+    # who has to be asked: every open question a person must answer, under the owner its wording names or "to be assigned"
+    ask = collections.Counter(o for r in results if (r.get("ask") or r.get("owners")) and r["verdict"] != "ANSWERED"
+                              for o in (r.get("owners") or ["to be assigned"]))
     return {"gaps": len(results), "by_kind": dict(collections.Counter(r.get("kind") or "system" for r in results)),
             "by_verdict": dict(verdicts), "searches": sum(r.get("searches", 0) for r in results),
             "incomplete": verdicts.get("INCOMPLETE", 0),
             "candidates_to_read": sum(len(r.get("lead_ids", [])) for r in results if r["verdict"] == "CANDIDATES"),
             "gaps_with_related_rows": sum(1 for r in results if r.get("related")),
+            "card_blocks": sum(1 for r in results if r.get("card_block")),
+            "gaps_with_unseen_related": sum(1 for r in results if r.get("unseen_related")),
             "to_ask": dict(ask.most_common(6))}
 
 
@@ -241,6 +286,9 @@ def report_lines(summary: dict) -> list[str]:
     lines = [f"{s['gaps']} open question(s): {k}.", f"Result: {v}.",
              f"{s['searches']} search(es) run; {s['candidates_to_read']} candidate(s) to read (at most {gap_lookup._MAX_CANDIDATES} per question); "
              f"{s['gaps_with_related_rows']} question(s) with related matrix rows to read."]
+    if s.get("card_blocks"):
+        lines.append(f"{s['gaps_with_unseen_related']} of {s['card_blocks']} question(s) with a card block have related rows "
+                     f"the card never listed for it.")
     if s.get("incomplete"):
         lines.append(f"{s['incomplete']} question(s) have incomplete checks and remain open; see coverage.incomplete_reasons.")
     if s["to_ask"]:

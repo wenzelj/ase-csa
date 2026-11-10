@@ -113,3 +113,94 @@ def test_site_zone_conflict_is_kept_and_listed(tmp_path):
     rows = _rows(wd)
     assert rows["ROTPRDREV102"]["zone"] == "Enterprise IT"
     assert any("Enterprise IT" in c and "OT Rockhampton" in c for c in res["conflicts"])
+
+
+# --- confirmed connected devices label observed peers (S546) --------------------------------------
+
+_DEVICES = ("device_id,name,device_type,role,owner,site_zone,relationship,classification,identification_state,"
+            "provenance,reviewer,recorded,active,revision\n")
+_ALIASES = "device_id,address,normalized,address_type,first_seen,last_seen,source,active\n"
+_PEERS = ("address,device_id,device_name,device_type,classification,identification_state,revision,provenance,"
+          "alias_source,basis,kind,seen_from,directions,ports,processes,sessions,evidence_ids\n")
+
+
+def _with_devices(wd: Path, devices: str, aliases: str, peers: str) -> Path:
+    (wd / "hosts" / "connected_devices.csv").write_text(_DEVICES + devices, encoding="utf-8")
+    (wd / "hosts" / "device_addresses.csv").write_text(_ALIASES + aliases, encoding="utf-8")
+    (wd / "hosts" / "device_peers.csv").write_text(_PEERS + peers, encoding="utf-8")
+    return wd
+
+
+def _peer_line(address: str, device: str, name: str, revision: str = "2", prov: str = "asset register row 9") -> str:
+    return f"{address},{device},{name},printer,supporting IT,confirmed,{revision},{prov},reg,observed connection,private,APP1,outbound,445,svchost.exe,2,E-7;E-8\n"
+
+
+def test_confirmed_device_names_an_observed_peer_with_its_provenance(tmp_path):
+    wd = _with_devices(
+        _work(tmp_path),
+        "CD-000001,Print server,printer,,,,,supporting IT,confirmed,asset register row 9,WM,x,true,2\n",
+        "CD-000001,10.40.254.9,10.40.254.9,ipv4,,,s,true\n",
+        _peer_line("10.40.254.9", "CD-000001", "Print server"))
+    res = ep.build(wd)
+    r = _rows(wd)["10.40.254.9"]                              # the raw address stays the end
+    assert r["name"] == "Print server" and r["confidence"] == "confirmed" and r["reviewed"] == "no"
+    assert "connected device CD-000001 (revision 2): asset register row 9" in r["basis"]
+    assert r["evidence"] == "E-7;E-8"
+    assert ep.label(r) == "Print server"                      # not "likely ... (to confirm)"
+    assert res["devices"] == ["10.40.254.9"] and res["conflicts"] == []
+
+
+def test_device_name_outranks_a_hint_and_the_clash_is_listed(tmp_path):
+    wd = _with_devices(
+        _work(tmp_path),
+        "CD-000002,Backup appliance,backup,,,,,supporting IT,confirmed,site walk,WM,x,true,1\n",
+        "CD-000002,10.40.254.6,10.40.254.6,ipv4,,,s,true\n",
+        _peer_line("10.40.254.6", "CD-000002", "Backup appliance", "1", "site walk"))
+    res = ep.build(wd)
+    r = _rows(wd)["10.40.254.6"]
+    assert r["name"] == "Backup appliance" and r["confidence"] == "confirmed"
+    assert any("unrecorded-peer hint" in c and "Dell PowerProtect Data Manager server" in c and "CD-000002" in c
+               for c in res["conflicts"])
+    assert "10.40.254.6" not in res["proposed"] or r["confidence"] == "confirmed"
+
+
+def test_reviewed_label_is_kept_and_the_disagreement_is_surfaced(tmp_path):
+    wd = _with_devices(
+        _work(tmp_path),
+        "CD-000001,Print server,printer,,,,,supporting IT,confirmed,src,WM,x,true,2\n",
+        "CD-000001,10.40.254.9,10.40.254.9,ipv4,,,s,true\n",
+        _peer_line("10.40.254.9", "CD-000001", "Print server"))
+    with (wd / "hosts" / "endpoints.csv").open("w", encoding="utf-8", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=ep.FIELDS, lineterminator="\n")
+        w.writeheader()
+        w.writerow({"end": "10.40.254.9", "name": "Plotter", "zone": "", "confidence": "observed",
+                    "basis": "reviewed by hand", "evidence": "", "reviewed": "yes"})
+    res = ep.build(wd)
+    r = _rows(wd)["10.40.254.9"]
+    assert r["name"] == "Plotter" and r["reviewed"] == "yes" and r["basis"] == "reviewed by hand"
+    assert any("reviewed label 'Plotter'" in c and "CD-000001" in c for c in res["conflicts"])
+
+
+def test_retired_disputed_or_moved_devices_do_not_appear_confirmed(tmp_path):
+    peers = (_peer_line("10.40.254.9", "CD-000001", "Retired one") + _peer_line("10.40.254.10", "CD-000002", "Disputed one")
+             + _peer_line("10.40.254.11", "CD-000003", "Moved one"))
+    wd = _with_devices(
+        _work(tmp_path),
+        "CD-000001,Retired one,t,,,,,unknown,confirmed,s,WM,x,false,3\n"
+        "CD-000002,Disputed one,t,,,,,unknown,disputed,s,WM,x,true,2\n"
+        "CD-000003,Moved one,t,,,,,unknown,confirmed,s,WM,x,true,2\n",
+        "CD-000001,10.40.254.9,10.40.254.9,ipv4,,,s,false\n"
+        "CD-000002,10.40.254.10,10.40.254.10,ipv4,,,s,true\n"
+        "CD-000003,10.40.254.99,10.40.254.99,ipv4,,,s,true\n",   # no longer holds .11: the projection row is stale
+        peers)
+    res = ep.build(wd)
+    rows = _rows(wd)
+    assert res["devices"] == []
+    for address in ("10.40.254.9", "10.40.254.10", "10.40.254.11"):
+        assert address not in rows or rows[address]["confidence"] != "confirmed"
+
+
+def test_no_device_files_leaves_the_register_as_before(tmp_path):
+    wd = _work(tmp_path)
+    res = ep.build(wd)
+    assert res["devices"] == [] and all(r["confidence"] != "confirmed" for r in _rows(wd).values())

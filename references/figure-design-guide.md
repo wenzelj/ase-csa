@@ -58,6 +58,27 @@ A profile in `csa-context/figure-profiles.json`:
 brief; `ot_gap` names the absence that is itself the finding; `built` stays false until the kind draws. Profiles
 are generic for every project: no host names, no project facts.
 
+## 3.1 Placement and integration standard
+
+Figures follow the general technical-document convention: place them as close as practical to the first
+paragraph that refers to them, normally immediately after that paragraph. The text introduces the question or
+finding first, names the figure (`Figure N`), and tells the reader what to look for. Keep the complete figure and
+its caption together; readability and page integrity take precedence over forcing it onto the same page.
+
+The normal narrative sequence is:
+
+`context and evidence` -> `figure reference` -> `figure` -> `caption and source` -> `interpretation or action`.
+
+Do not put a figure at the start of a section without framing, or defer it to the end merely because it is large.
+Use a landscape page or a separate appendix when the figure cannot remain legible in the normal portrait layout.
+Refer to figures by number rather than by location (for example, "Figure 4", not "the figure below"). Captions
+go directly below figures and source or adaptation notes follow the caption.
+
+The framework applies this rule to the document structure it owns: a section's first figure is inserted after the
+Discovery Information table when there is no earlier figure slot, and later figures follow the figure they support.
+That insertion point is the template implementation of the general rule, not a reason to omit a preceding textual
+reference where the section has one.
+
 ## 4. Design rules for the printed figure (band design)
 
 ### Research basis

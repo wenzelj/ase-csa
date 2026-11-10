@@ -34,6 +34,16 @@ from pathlib import Path
 from . import tools
 from .run_state import read_completed_ids, remove_edit_ids, state_path
 
+
+def _working_final_version(workspace: Path) -> Path:
+    """Resolve the working document folder, including non-standard template paths."""
+    pinned = os.environ.get("_CSA_WORKING_DOCX")
+    if pinned:
+        docx = Path(pinned)
+        if docx.is_file():
+            return docx.parent
+    return workspace / "01 Current State AS Built" / "01 Final Version"
+
 #: Comment markup the build's apply step removes for a preview (S60), copied
 #: from the new_csa.py script so this module stays importable without it.
 # Any run holding a comment reference, whatever its run properties or attribute spacing
@@ -92,7 +102,7 @@ def write_build_records(workspace, records: dict, app: str, build_id: str) -> li
         # A "(+1)" stand-in means the scaffold step did not make room for the statement.
         # The apply engine would read "@H..-P1(+1)" as "@H..-P1" and overwrite it.
         raise RuntimeError(f"records still point at a placeholder that does not exist yet: {', '.join(unresolved)}")
-    reviews = workspace / "01 Current State AS Built" / "01 Final Version" / "reviews"
+    reviews = _working_final_version(workspace) / "reviews"
     reviews.mkdir(parents=True, exist_ok=True)
     paths: list[Path] = []
     for section in sorted(records, key=int):
@@ -147,7 +157,7 @@ def append_place_records(workspace, records: dict, app: str, source: str) -> dic
     call created]}``.
     """
     workspace = Path(workspace).resolve()
-    reviews = workspace / "01 Current State AS Built" / "01 Final Version" / "reviews"
+    reviews = _working_final_version(workspace) / "reviews"
     reviews.mkdir(parents=True, exist_ok=True)
     files: dict[str, str] = {}
     new_edits: dict[str, list[str]] = {}
@@ -343,7 +353,7 @@ def apply_build_records(workspace, sections, *, app: str, track_changes: bool, b
     placement) is deleted when no edits are left in it.
     """
     workspace = Path(workspace).resolve()
-    fv = workspace / "01 Current State AS Built" / "01 Final Version"
+    fv = _working_final_version(workspace)
     # The DOCX always sits in the workspace's own "01 Final Version". A preview
     # runs in its own throw-away workspace (build.prepare), so this never
     # touches the project's real folders. A project whose working document lives

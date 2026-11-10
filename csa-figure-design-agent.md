@@ -107,6 +107,10 @@ the file and function. Run the read-only commands above when the answer depends 
 - Profiles stay generic for every project. Project facts live in the project's context and evidence.
 - Keep the band design: IT, boundary, OT top to bottom; one tile per role; one line per function, colour by
   function, style by evidence status; no words on lines; no alarm red; 8.2 pt and one page.
+- Apply the technical-document placement standard: introduce and number the figure in the text before it appears,
+  place it close to that first reference, keep the complete figure with its caption, put the caption and source
+  below it, and use a landscape page or appendix when portrait placement would make it unreadable. The framework's
+  insertion after the Discovery Information table is the template implementation of this rule.
 - Words in profiles, briefs and captions follow `csa-writing-style`: Australian English, plain, no semicolons.
 - Never edit the working DOCX, `csa-work/figures/<KEY>/` files other than your `OUTPUT` (in MODE=build `csa figure KEY
   --save` may save the figure), or another project's files.

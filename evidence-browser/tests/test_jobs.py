@@ -1,18 +1,24 @@
 from __future__ import annotations
 
 import json
+import io
+import base64
 import os
+import signal
+import subprocess
 import sys
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
 
 from backend import commands
 from backend.jobs import JobManager
-from backend.models import CommandRequest
+from backend.models import CommandRequest, JobRecord
+from backend.terminal_sessions import TerminalSession
 
 
 def project(tmp_path: Path, key: str = "iamps-08") -> dict[str, str]:
@@ -42,6 +48,137 @@ def test_success_persists_metadata_and_complete_logs(tmp_path: Path, monkeypatch
     assert (folder / "stdout.log").read_text() == "done\n"
     assert (folder / "stderr.log").read_text() == "warning\n"
     assert json.loads((folder / "metadata.json").read_text())["state"] == "succeeded"
+
+
+def test_browser_agent_intake_uses_an_embedded_interactive_terminal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    intake = commands.OPERATIONS["intake"]
+    script = ("import sys; print('TTY', sys.stdin.isatty(), sys.stdout.isatty(), flush=True); "
+              "print('REPLY', sys.stdin.readline().strip(), flush=True)")
+    monkeypatch.setattr(commands, "build_argv", lambda _agents, key, _operation, request: (
+        intake, [sys.executable, "-c", script]))
+    manager = JobManager(tmp_path / ".agents")
+    for cli in ("claude", "evo"):
+        item = project(tmp_path, cli)
+        created = manager.submit(item, "intake", CommandRequest(options={"cli": cli}))
+        assert created.terminal and not created.windowed
+        deadline = time.monotonic() + 3
+        page = {"data": "", "offset": 0, "capability": ""}
+        while "TTY True True" not in base64.b64decode(page["data"]).decode(errors="replace") and time.monotonic() < deadline:
+            page = manager.terminal_output(item, created.id, 0)
+        assert "TTY True True" in base64.b64decode(page["data"]).decode(errors="replace")
+        manager.terminal_input(item, created.id, base64.b64encode(b"hello\n").decode(), page["capability"])
+        result = manager.wait(item, created.id, timeout=3)
+        assert result.state == "succeeded" and result.exit_code == 0
+        # Simulate leaving the page, then reconnecting at the last seen offset.
+        final = manager.terminal_output(item, created.id, page["offset"])
+        assert "REPLY hello" in base64.b64decode(final["data"]).decode(errors="replace")
+
+
+def test_failed_interactive_csa_job_keeps_failure_and_releases_evidence_lock(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    intake = commands.OPERATIONS["intake"]
+    monkeypatch.setattr(commands, "build_argv", lambda *_: (
+        intake, [sys.executable, "-c", "import sys; print('INCOMPLETE', flush=True); sys.exit(7)"]))
+    item = project(tmp_path)
+    manager = JobManager(tmp_path / ".agents")
+    first = manager.submit(item, "intake", CommandRequest(options={"cli": "claude"}))
+    failed = manager.wait(item, first.id, 3)
+    assert failed.state == "failed" and failed.exit_code == 7
+    assert "code 7" in (failed.message or "")
+    second = manager.submit(item, "intake", CommandRequest(options={"cli": "evo"}))
+    assert manager.wait(item, second.id, 3).state == "failed"
+
+
+def test_embedded_terminal_job_can_be_stopped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    intake = commands.OPERATIONS["intake"]
+    monkeypatch.setattr(commands, "build_argv", lambda *_: (
+        intake, [sys.executable, "-c", "import time; print('READY', flush=True); time.sleep(30)"]))
+    item = project(tmp_path)
+    manager = JobManager(tmp_path / ".agents")
+    created = manager.submit(item, "intake", CommandRequest(options={"cli": "claude"}))
+    deadline = time.monotonic() + 3
+    while manager.get(item, created.id).state != "running" and time.monotonic() < deadline:
+        time.sleep(.01)
+    manager.cancel(item, created.id)
+    result = manager.wait(item, created.id, 3)
+    assert result.state == "cancelled"
+
+
+def test_stop_reaches_a_terminal_descendant_after_the_leader_exits(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    intake = commands.OPERATIONS["intake"]
+    child = "import signal,time; signal.signal(signal.SIGINT, signal.SIG_IGN); print('CHILD_READY', flush=True); time.sleep(30)"
+    script = ("import subprocess,sys; p=subprocess.Popen([sys.executable, '-c', " + repr(child) + "], stdout=subprocess.PIPE); "
+              "p.stdout.readline(); print('READY', flush=True); p.wait()")
+    monkeypatch.setattr(commands, "build_argv", lambda *_: (intake, [sys.executable, "-c", script]))
+    item = project(tmp_path)
+    manager = JobManager(tmp_path / ".agents")
+    created = manager.submit(item, "intake", CommandRequest(options={"cli": "claude"}))
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline:
+        if b"READY" in base64.b64decode(manager.terminal_output(item, created.id, 0)["data"]):
+            break
+    else:
+        pytest.fail("terminal child did not start")
+    manager.cancel(item, created.id)
+    assert manager.wait(item, created.id, 7).state == "cancelled"
+
+
+def test_interactive_review_keeps_only_structured_result_in_job_log(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    review = commands.OPERATIONS["review"]
+    script = "print('\\x1b[31mprivate screen\\x1b[0m'); print('{\"verdict\": \"READY\"}')"
+    monkeypatch.setattr(commands, "build_argv", lambda *_: (review, [sys.executable, "-c", script]))
+    item = project(tmp_path)
+    manager = JobManager(tmp_path / ".agents")
+    created = manager.submit(item, "review", CommandRequest(target="3.4"))
+    result = manager.wait(item, created.id, 3)
+    assert result.state == "succeeded" and '"verdict": "READY"' in result.stdout_tail
+    saved = (Path(item["work_dir"]) / "ui-jobs" / created.id / "stdout.log").read_text()
+    assert "private screen" not in saved and "\\x1b" not in saved
+
+
+def test_restart_stops_an_abandoned_interactive_csa_process(tmp_path: Path) -> None:
+    agents = tmp_path / ".agents"
+    binary = agents / "bin" / "csa"
+    binary.parent.mkdir(parents=True)
+    binary.write_text("#!/usr/bin/env python3\nimport time\ntime.sleep(30)\n")
+    binary.chmod(0o700)
+    item = project(tmp_path)
+    session = TerminalSession.start([str(binary), "--project", item["key"], "intake"],
+                                    tmp_path, dict(os.environ))
+    reader = threading.Thread(target=session.drain, daemon=True)
+    reader.start()
+    job_id = "67f8a560-4865-4eb8-8b69-97b5c66e4bcc"
+    folder = Path(item["work_dir"]) / "ui-jobs" / job_id
+    folder.mkdir(parents=True)
+    record = JobRecord(id=job_id, project_key=item["key"], operation="intake", display_args=["intake"],
+                       classification="workspace_write", lock="evidence", resource="evidence", state="running",
+                       created_at="2026-11-10T00:00:00+00:00", started_at="2026-11-10T00:00:01+00:00",
+                       terminal=True, pid=session.process.pid)
+    (folder / "metadata.json").write_text(record.model_dump_json())
+    try:
+        # Wait until the helper has exec'd CSA, so process identity can be checked.
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            command = subprocess.run(["ps", "-ww", "-p", str(session.process.pid), "-o", "command="],
+                                                    capture_output=True, text=True).stdout
+            if str(binary).removeprefix("/private") in command and "terminal_exec.py" not in command:
+                break
+            time.sleep(.02)
+        assert str(binary).removeprefix("/private") in command, repr(command)
+        assert f"--project {item['key']}" in command, repr(command)
+        assert "terminal_exec.py" not in command, repr(command)
+        loaded = JobRecord.model_validate_json((folder / "metadata.json").read_text())
+        assert loaded.terminal and loaded.pid == session.process.pid
+        manager = JobManager(agents)
+        recovered = manager.get(item, job_id)
+        assert recovered.state == "interrupted"
+        assert session.process.wait(timeout=3) != 0
+    finally:
+        if session.process.poll() is None:
+            try:
+                os.killpg(session.process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                session.process.kill()
+        reader.join(timeout=3)
 
 
 def test_running_job_streams_output_before_process_finishes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

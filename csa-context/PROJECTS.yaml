@@ -69,6 +69,7 @@ projects:
     default_source_set: "/Users/wenzel/Work/ASE/CurrentStateAssessments/RMS/Discovery"
     stage: "draft"
     assessment_lane: "revise"
+    spec_mode: "on"
     knowledge_dir: "00 Knowlege"
     working_docx: "/Users/wenzel/Work/ASE/CurrentStateAssessments/RMS/02 Current State Assessment/02 New Template/Current State Assessment - RMS.docx"
     legacy_docx: "/Users/wenzel/Work/ASE/CurrentStateAssessments/RMS/02 Current State Assessment/01 Final Version/NetSeg_Current_State_Assessment_RMS_SCADA_v3.docx"

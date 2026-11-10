@@ -1,4 +1,4 @@
-import type { PromptList, PromptPreview, JobLogPage, IntakeSnapshot, IntakeErrors, DraftSnapshot, WordReview, ReviewSubmit, ReviewJob, ReviewJobResponse, ReviewLatest, AuthorSetup, AuthorSubmit, AuthorJobResponse, AuthorOptions, CleanupSubmit, CleanupJobResponse, CleanupLatest, CleanupPreflight, BuildSetup, BuildOutcome, AuditSnapshot } from "./types";
+import type { AliasPreview, DeviceEditResult, DevicePayload, PromptList, PromptPreview, JobLogPage, IntakeSnapshot, IntakeErrors, DraftSnapshot, WordReview, ReviewSubmit, ReviewJob, ReviewJobResponse, ReviewLatest, AuthorSetup, AuthorSubmit, AuthorJobResponse, AuthorOptions, CleanupSubmit, CleanupJobResponse, CleanupLatest, CleanupPreflight, BuildSetup, BuildOutcome, AuditSnapshot } from "./types";
 
 export async function api<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
@@ -180,6 +180,20 @@ export async function fetchDraft(system: string): Promise<DraftSnapshot> { retur
 export async function submitJob(system: string, operation: string, target?: string, options: Record<string, string | boolean> = {}): Promise<ReviewJob> { return api(`/api/systems/${system}/jobs`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ operation, target: target || null, options }) }); }
 export async function fetchJobs(system: string): Promise<ReviewJob[]> { const data = await api<{ jobs: ReviewJob[] }>(`/api/systems/${system}/jobs`); return data.jobs; }
 export async function fetchJob(system: string, id: string): Promise<ReviewJob> { return api(`/api/systems/${system}/jobs/${id}`); }
+export type TerminalOutput = { data: string; offset: number; truncated: boolean; ended: boolean; capability: string };
+export async function fetchTerminal(system: string, id: string, after: number, signal?: AbortSignal): Promise<TerminalOutput> {
+  return api(`/api/systems/${encodeURIComponent(system)}/jobs/${encodeURIComponent(id)}/terminal?after=${after}`, { signal });
+}
+export async function sendTerminalInput(system: string, id: string, data: string, capability: string): Promise<void> {
+  await api(`/api/systems/${encodeURIComponent(system)}/jobs/${encodeURIComponent(id)}/terminal/input`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ data, capability }),
+  });
+}
+export async function resizeTerminal(system: string, id: string, rows: number, cols: number, capability: string): Promise<void> {
+  await api(`/api/systems/${encodeURIComponent(system)}/jobs/${encodeURIComponent(id)}/terminal/resize`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rows, cols, capability }),
+  });
+}
 
 export async function fetchIntake(system: string): Promise<IntakeSnapshot> { return api(`/api/systems/${system}/intake`); }
 export async function fetchIntakeErrors(system: string): Promise<IntakeErrors> { return api(`/api/systems/${system}/intake/errors`); }
@@ -197,3 +211,36 @@ export async function savePrompt(system: string, name: string, text: string, eta
 export async function resetPrompt(system: string, name: string): Promise<{ reset: boolean }> { return api(`/api/systems/${system}/prompts/${name}`, { method: "DELETE" }); }
 export async function fetchPromptHistory(system: string, name: string): Promise<{ versions: { file: string; text: string }[] }> { return api(`/api/systems/${system}/prompts/${name}/history`); }
 export async function fetchPromptPreview(system: string, key: string, block: string): Promise<PromptPreview> { return api(`/api/systems/${system}/prompt-preview?key=${encodeURIComponent(key)}&block=${encodeURIComponent(block)}`); }
+
+export class DeviceEditError extends Error {
+  code: string; status: number;
+  constructor(message: string, code: string, status: number) { super(message); this.code = code; this.status = status; }
+  get stale() { return this.code === "conflict" && this.message.startsWith("stale revision"); }
+}
+
+async function deviceCall<T>(system: string, method: string, path: string, body?: unknown): Promise<T> {
+  const response = await fetch(`/api/systems/${encodeURIComponent(system)}/devices${path}`, {
+    method, headers: body === undefined ? undefined : { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const detail = data.detail;
+    const message = typeof detail === "string" ? detail : detail?.message || `Request failed (${response.status})`;
+    throw new DeviceEditError(message, typeof detail === "object" && detail?.code ? detail.code : "error", response.status);
+  }
+  return data as T;
+}
+
+export const createDevice = (system: string, payload: DevicePayload) => deviceCall<DeviceEditResult>(system, "POST", "", payload);
+export const patchDevice = (system: string, id: string, expected_revision: string, changes: DevicePayload, extra: { source?: string; owner_confirmed_on?: string; reviewer?: string }) =>
+  deviceCall<DeviceEditResult>(system, "PATCH", `/${encodeURIComponent(id)}`, { expected_revision, changes, ...extra });
+export const addDeviceAlias = (system: string, id: string, expected_revision: string, address: string, source: string) =>
+  deviceCall<DeviceEditResult>(system, "POST", `/${encodeURIComponent(id)}/aliases`, { expected_revision, address, source });
+export const removeDeviceAlias = (system: string, id: string, expected_revision: string, address: string) =>
+  deviceCall<DeviceEditResult>(system, "DELETE", `/${encodeURIComponent(id)}/aliases/${encodeURIComponent(address)}?expected_revision=${encodeURIComponent(expected_revision)}`);
+export const retireDevice = (system: string, id: string, expected_revision: string) =>
+  deviceCall<DeviceEditResult>(system, "POST", `/${encodeURIComponent(id)}/retire`, { expected_revision });
+export const restoreDevice = (system: string, id: string, expected_revision: string) =>
+  deviceCall<DeviceEditResult>(system, "POST", `/${encodeURIComponent(id)}/restore`, { expected_revision });
+export const previewDeviceAliases = (system: string, deviceId: string, add: string[], remove: string[]) =>
+  deviceCall<AliasPreview>(system, "POST", "/reconcile-preview", { device_id: deviceId, add, remove });

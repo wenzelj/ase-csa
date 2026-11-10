@@ -1,6 +1,7 @@
 export const AGENT_CLIS = [
   { id: "evo", label: "Evo (local)" },
   { id: "qwen8b", label: "Qwen3 8B (local)" },
+  { id: "eagle", label: "Eagle (192.168.0.120)" },
   { id: "codex", label: "Codex" },
   { id: "claude", label: "Claude" },
 ] as const;

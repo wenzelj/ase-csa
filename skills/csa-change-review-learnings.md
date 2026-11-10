@@ -270,3 +270,17 @@ After writing the re-review report, confirm: (1) the sign-off line lists only th
 - **Evidence used:** The host register expected twelve captured hosts; eleven primary service inventories contained the same stopped/manual Sense service entry, and only one captured inventory did not list it. Corrected rows E-690 and E-691 preserved the positive group and scoped absence separately.
 - **Improved review approach:** For any grouped count or full-capture coverage claim, enumerate the expected host set, compare it with every host named or cited by the evidence row, and open any omitted host capture before accepting the claim.
 - **Validation next time:** Record expected, positive, negative and unexamined host sets and confirm that their union equals the stated review scope before signing off the edit.
+
+## 2026-11-09 - Whole-workspace preflight can be blocked by a labelled change file outside a DOCX folder
+
+- **Context:** A subsection review had an unambiguous target change file and working DOCX, but `prepareDocument()` scans the registered workspace manifest before allowing document inspection.
+- **Issue or risk observed:** A labelled change file under a work folder's `reviews` directory caused that folder to be treated as a section working folder. Because it contained no DOCX, the whole-workspace manifest failed before the target subsection could be reviewed.
+- **Improved review approach:** Do not bypass `prepareDocument()` or inspect the target DOCX manually. Record the exact manifest error, the triggering change-file path, the intended review batch and the next edit ID, then return `BLOCKED` with no cleanup sign-off.
+- **Validation next time:** After the manifest/layout conflict is corrected, rerun `prepareDocument()` and require `READY` with the expected project identity before any DOCX inspection.
+
+## 2026-11-10 - A prior PASS does not survive a draft-lane re-author; verify the live text, not the report
+
+- **Context:** Subsection 3.4 (REVELOC TETRA) held a 2026-10-16 PASS with cleanup sign-off for S3-E142..S3-E146 and S3-E757. A draft-lane answer pass re-authored the subsection on 2026-11-09/10, replacing the signed-off Discovery Information rows and story with new content from its own block, while the change file still claimed SECTION_COMPLETE.
+- **Issue or risk observed:** Trusting the earlier sign-off or the `## Changes Report` would have missed that none of the approved rows exist in the live table and that the live narrative and rating rest on unrecorded draft-lane text.
+- **Improved review approach:** Before any DOCX comparison, check `csa status <sub>` and the file timestamps of the DOCX against the last apply in the change report. If the DOCX is newer than the last recorded apply and the lane is draft/card, treat every previously signed-off edit as re-verifiable: resolve each stable anchor with `lookupStableId` and compare live text to the record's Text, then fail the batch if the text is absent, even though the manifest still anchors it.
+- **Validation next time:** In the report, record the DOCX mtime, the draft-lane run state (INTERRUPTED/OK) and the manifest `possibly_stale` flag alongside the edit verification table, and supersede any earlier sign-off line explicitly.

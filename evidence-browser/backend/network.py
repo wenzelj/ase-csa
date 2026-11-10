@@ -25,9 +25,26 @@ def _listed(r: dict) -> bool:
     return scope not in ("peer", "no") and not scope.startswith("system:")
 
 
+def device_identities(work_dir: Path, agents: Path) -> dict[str, dict[str, str]]:
+    """{address: identity} for the observed addresses an active, confirmed connected device owns.
+
+    Read live from the register, so a device retired or disputed after the last rebuild is not shown
+    as confirmed. Only confirmed identities appear; proposed, disputed and ambiguous claims leave the
+    address unidentified."""
+    _framework(agents)
+    from csa_docx import connected_devices
+    out: dict[str, dict[str, str]] = {}
+    for address, d in connected_devices.resolution_map(work_dir)["confirmed"].items():
+        out[address] = {"device_id": d["device_id"], "name": d["name"], "type": d["device_type"],
+                        "classification": d["classification"], "site": d["site_zone"],
+                        "revision": d["revision"], "provenance": d["provenance"], "state": d["identification_state"]}
+    return out
+
+
 def build(work_dir: Path, agents: Path) -> dict[str, Any]:
     _framework(agents)
     from csa_docx import evidence_digest, section_card
+    identities = device_identities(work_dir, agents)
 
     matrix = work_dir / "evidence-matrix.csv"
     from csa_docx import evidence_live          # the latest review applied: rejected rows draw no link
@@ -65,6 +82,10 @@ def build(work_dir: Path, agents: Path) -> dict[str, Any]:
         except ValueError:
             public = False
         nodes[name] = {"id": name, "kind": "public" if public else "unnamed", "role": "", "site": "", "ips": name}
+        device = identities.get(name)
+        if device:                                  # the raw address stays the node id; the identity is added beside it
+            nodes[name].update({"role": device["name"] + (f" ({device['type']})" if device["type"] else ""),
+                                "site": device["site"], "device": device})
 
     edges: dict[tuple, dict] = {}
     for l in evidence_digest.links(rows, reg):

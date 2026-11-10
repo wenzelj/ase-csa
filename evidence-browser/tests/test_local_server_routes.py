@@ -107,3 +107,146 @@ def test_intake_errors_route_returns_runs_and_warnings(tmp_path, monkeypatch) ->
     with pytest.raises(HTTPException) as exc:
         workspace.get_intake_errors("nope")
     assert exc.value.status_code == 404
+
+
+def test_assets_routes_match_between_both_servers(tmp_path, monkeypatch) -> None:
+    import http.client
+    import json
+    import threading
+    from http.server import ThreadingHTTPServer
+
+    from backend import app as api
+    from backend.local_server import Handler
+    from tests.test_assets import _register_two
+
+    _register_two(tmp_path, monkeypatch)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    def get(path):
+        connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+        connection.request("GET", path)
+        response = connection.getresponse()
+        data = json.loads(response.read())
+        status = response.status
+        connection.close()
+        return status, data
+
+    try:
+        status, listing = get("/api/systems/alpha-app/assets?kind=devices&type=printer&state=confirmed")
+        assert status == 200
+        assert listing == json.loads(json.dumps(api.system_assets("alpha-app", "", "devices", "printer", "confirmed", 1, 50)))
+        status, detail = get("/api/systems/alpha-app/assets/CD-000001")
+        assert status == 200 and detail == json.loads(json.dumps(api.system_asset_detail("alpha-app", "CD-000001", "")))
+        status, withheld = get("/api/systems/alpha-app/assets?kind=devices&include_retired=true")
+        assert status == 200 and withheld == json.loads(json.dumps(
+            api.system_assets("alpha-app", "", "devices", "", "", 1, 50, True))) and withheld["retired_devices"] == 0
+        assert get("/api/systems/beta-app/assets/CD-000001")[0] == 404
+        assert get("/api/systems/unknown/assets")[0] == 404
+        assert get("/api/systems/alpha-app/assets?kind=bogus")[0] == 422
+        assert get("/api/systems/alpha-app/network")[0] == 200
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_device_edit_routes_work_in_the_dependency_free_server(tmp_path, monkeypatch) -> None:
+    import http.client
+    import json
+    import threading
+    from http.server import ThreadingHTTPServer
+
+    from backend.local_server import Handler
+    from tests.test_assets import _register_two
+
+    _register_two(tmp_path, monkeypatch)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    def call(method, path, payload=None):
+        connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+        connection.request(method, path, body=json.dumps(payload or {}).encode() if method != "DELETE" else None,
+                           headers={"Content-Type": "application/json"})
+        response = connection.getresponse()
+        data = json.loads(response.read())
+        status = response.status
+        connection.close()
+        return status, data
+
+    base = "/api/systems/alpha-app/devices"
+    try:
+        status, made = call("POST", base, {"name": "UPS", "addresses": ["10.124.32.230"]})
+        assert status == 200 and made["device"]["device_id"] == "CD-000003"
+        status, err = call("POST", base, {"name": "Clash", "addresses": ["10.124.32.10"]})
+        assert status == 409 and err["detail"]["code"] == "host_owned"
+        status, err = call("PATCH", f"{base}/CD-000003", {"changes": {"role": "power"}})
+        assert status == 422 and err["detail"]["code"] == "revision_required"
+        status, patched = call("PATCH", f"{base}/CD-000003", {"expected_revision": "1", "changes": {"role": "power"}})
+        assert status == 200 and patched["device"]["revision"] == "2"
+        status, err = call("PATCH", f"{base}/CD-000003", {"expected_revision": "1", "changes": {"role": "late"}})
+        assert status == 409 and err["detail"]["code"] == "conflict"
+        status, preview = call("POST", f"{base}/reconcile-preview", {"device_id": "CD-000003", "add": ["10.124.32.231"]})
+        assert status == 200 and preview["changes"][0]["status"] == "ready" and preview["writes"] == []
+        status, added = call("POST", f"{base}/CD-000003/aliases", {"address": "10.124.32.231", "expected_revision": "2"})
+        assert status == 200 and len(added["device"]["aliases"]) == 2
+        status, removed = call("DELETE", f"{base}/CD-000003/aliases/10.124.32.231?expected_revision=2")
+        assert status == 200
+        status, retired = call("POST", f"{base}/CD-000003/retire", {"expected_revision": "2"})
+        assert status == 200 and retired["device"]["active"] == "false"
+        status, restored = call("POST", f"{base}/CD-000003/restore", {"expected_revision": "3"})
+        assert status == 200 and restored["device"]["active"] == "true"
+        assert call("PATCH", "/api/systems/beta-app/devices/CD-000003", {"expected_revision": "1", "changes": {"role": "x"}})[0] == 404
+        assert call("PATCH", "/api/systems/nope/devices/CD-000003", {"expected_revision": "1", "changes": {"role": "x"}})[0] == 404
+        assert call("GET", "/api/systems/alpha-app/assets?kind=devices")[1]["counts"]["devices"] == 3
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_host_conversion_routes_work_in_the_dependency_free_server(tmp_path, monkeypatch) -> None:
+    import http.client
+    import json
+    import threading
+    from http.server import ThreadingHTTPServer
+
+    from backend.local_server import Handler
+    from tests.test_assets import _register_two
+
+    _register_two(tmp_path, monkeypatch)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    def post(path, payload):
+        connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+        connection.request("POST", path, body=json.dumps(payload).encode(), headers={"Content-Type": "application/json"})
+        response = connection.getresponse()
+        data = json.loads(response.read())
+        status = response.status
+        connection.close()
+        return status, data
+
+    base = "/api/systems/alpha-app/devices"
+    try:
+        status, made = post(base, {"name": "UPS monitor", "addresses": ["10.124.32.230"]})
+        dev = made["device"]["device_id"]
+        body = {"host_name": "POWERMON1", "source": "Asset register v3", "operator": "WM"}
+        status, plan = post(f"{base}/{dev}/host-conversion/preview", body)
+        assert status == 200 and plan["status"] == "READY"
+        status, err = post(f"{base}/{dev}/host-conversion", {**body, "expected_revision": "1", "preview_id": plan["preview_id"]})
+        assert status == 422 and err["detail"]["code"] == "confirmation_required"
+        status, err = post(f"{base}/{dev}/host-conversion", {**body, "expected_revision": "1", "preview_id": "stale", "confirm": True})
+        assert status == 409 and err["detail"]["code"] == "stale_preview"
+        status, done = post(f"{base}/{dev}/host-conversion", {**body, "expected_revision": "1", "preview_id": plan["preview_id"], "confirm": True})
+        assert status == 200 and done["decision"]["decision_id"] == "HS-000001" and done["rebuild_required"] is True
+        status, undone = post(f"{base}/{dev}/host-conversion/reverse", {"operator": "WM", "reason": "wrong"})
+        assert status == 200 and undone["decision"]["active"] == "false"
+        assert post("/api/systems/beta-app/devices/CD-000001/host-conversion/reverse", {"operator": "WM", "reason": "x"})[0] == 404
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)

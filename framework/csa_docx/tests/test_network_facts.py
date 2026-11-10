@@ -116,3 +116,10 @@ def test_a_host_rule_keyed_by_address_and_a_host_named_only_by_an_evidence_row_f
     z = Z.for_project(work)
     assert z.of_ip("10.40.228.98")["zone"] == "Patch service"
     assert z.of("ROTPRDCCM111")["zone"] == "Patch service"
+
+
+def test_a_question_about_a_named_server_the_register_does_not_place_is_allowed():
+    ok = {"B1": _blk(unknown=["In which zone is the time server MOTPRDSRV122 at 10.45.228.97 hosted?"])}
+    assert A.register_answer_checks(ok, _card()) == []
+    bad = {"B1": _blk(unknown=["In which zone is the time server ROTPRDSRV122 at 10.40.228.97 hosted?"])}
+    assert [f["code"] for f in A.register_answer_checks(bad, _card())] == ["QUESTION_ANSWERED_BY_REGISTER"]

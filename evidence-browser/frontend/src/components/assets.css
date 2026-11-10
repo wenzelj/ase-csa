@@ -1,0 +1,47 @@
+.assets-page .page-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}
+.assets-note{border-left:4px solid var(--amber);background:var(--paper);padding:10px 14px;margin:0 0 16px;max-width:80ch}
+.assets-tabs{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
+.assets-tabs button{border:1px solid var(--line);background:var(--paper);color:var(--ink);padding:8px 12px;border-radius:4px;display:inline-flex;gap:8px;align-items:center}
+.assets-tabs button.active{background:var(--ink);color:#fff;border-color:var(--ink)}
+.assets-tabs button span{font-weight:400;opacity:.8}
+.assets-what{margin:0 0 12px;color:var(--muted)}
+.assets-filters{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-bottom:14px}
+.assets-filters label{display:grid;gap:4px;font-weight:700;font-size:.85rem}
+.assets-filters input,.assets-filters select{min-width:200px;padding:7px 9px;border:1px solid var(--line);background:#fff;border-radius:4px}
+.assets-layout{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:18px;align-items:start}
+@media(max-width:900px){.assets-layout{grid-template-columns:1fr}}
+.assets-list ul{list-style:none;margin:0;padding:0;display:grid;gap:6px}
+.assets-list li button{width:100%;text-align:left;display:grid;gap:2px;padding:10px 12px;background:var(--paper);border:1px solid var(--line);border-radius:4px;color:var(--ink)}
+.assets-list li button.active{border-color:var(--teal);box-shadow:inset 4px 0 0 var(--teal)}
+.assets-list li span{font-weight:400;color:var(--muted);font-size:.9rem}
+.assets-list li em{font-style:normal;font-size:.8rem;color:var(--slate)}
+.assets-pager{display:flex;gap:12px;align-items:center;margin-top:12px}
+.assets-detail{background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:14px 16px;min-height:140px;position:sticky;top:12px}
+.assets-detail:focus-visible{outline:3px solid #efb34c}
+.assets-detail header{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
+.assets-detail header span{font-size:.8rem;color:var(--muted)}
+.assets-detail dl{display:grid;gap:6px;margin:8px 0}
+.assets-detail dl>div{display:grid;grid-template-columns:11rem 1fr;gap:8px}
+.assets-detail dt{font-weight:700;color:var(--slate)}.assets-detail dd{margin:0;overflow-wrap:anywhere}
+.assets-detail h3{font-size:1rem;margin:14px 0 4px}
+.assets-plain{margin:0;padding-left:18px}.assets-plain small{color:var(--muted)}
+.assets-hint,.assets-sources{color:var(--muted);font-size:.9rem}
+.assets-detail button.link{background:none;border:0;padding:0;color:var(--teal);text-decoration:underline}
+.assets-heading-actions{display:flex;gap:8px;flex-wrap:wrap}
+.assets-check{display:flex!important;grid-template-columns:none;align-items:center;gap:6px;font-weight:400!important}
+.assets-saved{background:#e3f0ec;border-left:4px solid var(--teal);padding:8px 12px;margin:0 0 10px;color:var(--ink)}
+.assets-actions{margin:10px 0}.assets-actions>div:first-child{display:flex;flex-wrap:wrap;gap:6px}
+.assets-actions button,.assets-form button,.assets-confirm button{padding:7px 12px;border-radius:4px}
+button.danger{background:var(--red);color:#fff;border:1px solid var(--red)}
+button.danger:disabled{opacity:.5}
+.assets-confirm{border:1px solid var(--red);background:#fff;padding:10px 12px;margin:8px 0;border-radius:4px;display:grid;gap:8px;justify-items:start}
+.assets-inline{display:inline-block;margin-left:8px}
+.assets-inline .assets-confirm{display:block}
+.assets-form{display:grid;gap:10px}
+.assets-form header{display:flex;justify-content:space-between;align-items:baseline}
+.assets-form label{display:grid;gap:4px;font-weight:700;font-size:.85rem}
+.assets-form input,.assets-form select,.assets-form textarea{padding:7px 9px;border:1px solid var(--line);background:#fff;border-radius:4px;font-weight:400}
+.assets-form-actions{display:flex;gap:8px}
+.assets-preview table{width:100%;border-collapse:collapse;font-size:.88rem}
+.assets-preview th,.assets-preview td{border-bottom:1px solid var(--line);padding:5px 6px;text-align:left;vertical-align:top}
+.assets-preview tr.blocked td{background:#f8e6e4}

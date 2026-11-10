@@ -405,10 +405,27 @@ def build(model: dict, band_of: dict | None = None, conduits: bool = False) -> d
 
 # ------------------------------------------------------------------ render
 def render_band_svg(model: dict, band_of: dict | None = None, conduits: bool = False,
-                    per_target: bool | None = None) -> tuple[str, dict]:
+                    per_target: bool | None = None, width_mm: float = TEXT_W_MM,
+                    page_height_mm: float | None = None, screen_reflow: bool = False) -> tuple[str, dict]:
     if per_target is None:
         per_target = bool((model.get("print") or {}).get("per_target"))
+    # Screen view is deliberately denser than the paper renderer: the landscape page gives us
+    # width to keep role names large, while the tighter gutters stop hosts drifting apart.  Keep
+    # these values local so the established As-printed layout is byte-for-byte unaffected.
+    F_BAND, F_ZONE, F_NAME, F_TEXT = globals()["F_BAND"], globals()["F_ZONE"], globals()["F_NAME"], globals()["F_TEXT"]
+    NCOL = globals()["NCOL"]
+    CW, G = globals()["CW"], globals()["G"]
+    ICON, LINE_H, BUS_GAP = globals()["ICON"], globals()["LINE_H"], globals()["BUS_GAP"]
+    if screen_reflow:
+        F_BAND, F_ZONE, F_NAME, F_TEXT = 21, 19, 20, 19
+        # Six compact columns let same-role tiles sit together while keeping the complete
+        # overview on one landscape page; the 18-unit gutter is still enough for bus taps.
+        NCOL = 6
+        CW = 145.0
+        G = (W - NCOL * CW) / (NCOL + 1)
+        ICON, LINE_H, BUS_GAP = 44.0, 21.0, 5.0
     B = build(model, band_of, conduits)
+    mm = width_mm / W
     tiles, subs, lines = B["tiles"], B["subs"], B["lines"]
     stem = model["id"] + "-band"
     colx = lambda c: G + c * (CW + G)
@@ -702,7 +719,7 @@ def render_band_svg(model: dict, band_of: dict | None = None, conduits: bool = F
     _lines = [max(1, len(_wrap(lab, W - 160, F_TEXT, False, lines=len(lab.split()) + 1))) for lab in _cells]
     H = (body_h + 14 + 10 + 18 + sum(_lines) * LINE_H + max(0, len(_lines) - 1) * 4 + 8
          + max(0, len(note_lines) - 1) * 22 + 10)
-    o = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W:.0f} {H:.0f}" width="{W * MM:.1f}mm" height="{H * MM:.1f}mm" '
+    o = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W:.0f} {H:.0f}" width="{W * mm:.1f}mm" height="{H * mm:.1f}mm" '
          f'font-family="Segoe UI, Helvetica Neue, Helvetica, Arial, sans-serif" class="tdiag print band" data-diagram="{esc(stem)}">', "<defs>"]
     for k, (col, _) in FUNCTIONS.items():
         o.append(f'<marker id="b-{esc(stem)}-{k}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="4.5" markerHeight="4.5" '
@@ -848,6 +865,8 @@ def render_band_svg(model: dict, band_of: dict | None = None, conduits: bool = F
     for j, ln in enumerate(note_lines):
         o.append(f'<text x="8" y="{yy + j * 22:.1f}" font-size="{F_TEXT}" fill="{MUTED}">{esc(ln)}</text>')
     o.append("</svg>")
-    info = {"width_mm": TEXT_W_MM, "height_mm": round(H * MM, 1), "fits_page": H <= PAGE_H_MAX, "min_text_pt": round(F_TEXT * MM / 0.3528, 1),
+    info = {"width_mm": width_mm, "height_mm": round(H * mm, 1),
+            "fits_page": page_height_mm is None or H * mm <= page_height_mm + 0.5,
+            "min_text_pt": round(F_TEXT * mm / 0.3528, 1),
             "tiles": len(tiles), "lines": len(bl), "inside_not_drawn": B["inside"], "functions": used_fn}
     return "\n".join(o), info

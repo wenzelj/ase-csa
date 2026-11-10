@@ -124,12 +124,12 @@ OPERATIONS: dict[str, Operation] = {
     ),
     "answer": Operation(
         "answer", "Answer subsection", "Draft lane: card, one agent call, written into the working DOCX as plain text.",
-        ("answer", "--headless"), "required", "section", {"cli": "identifier", "fresh": "boolean", "blocks": "identifier"},
+        ("answer",), "required", "section", {"cli": "identifier", "fresh": "boolean", "blocks": "identifier"},
         timeout=14400, mutating=True, mutation_class="document_write", lock="docx", closes_word=True,
     ),
     "refresh_draft": Operation(
         "refresh_draft", "Refresh stale answers", "Draft lane: answer again every subsection whose evidence changed.",
-        ("refresh-draft", "--headless"), options={"cli": "identifier"},
+        ("refresh-draft",), options={"cli": "identifier"},
         timeout=14400, mutating=True, mutation_class="document_write", lock="docx", closes_word=True,
     ),
     # CSA figures: the agent rewords one figure's purpose and caption; placing puts a saved figure in the document.
@@ -154,7 +154,7 @@ OPERATIONS: dict[str, Operation] = {
     ),
 }
 
-DRAFT_CLIS = frozenset({"claude", "codex", "evo", "qwen8b"})
+DRAFT_CLIS = frozenset({"claude", "codex", "evo", "qwen8b", "eagle"})
 
 
 def catalogue() -> list[dict[str, Any]]:
@@ -220,7 +220,7 @@ def build_argv(agents_dir: Path, project_key: str, operation_key: str, request: 
         raise HTTPException(422, "mode must be design, build or review")
     if operation.key in ("answer", "refresh_draft", "figure_wording", "figure_design", "intake", "resolve_gaps"):
         if request.options.get("cli") not in (None, *DRAFT_CLIS):
-            raise HTTPException(422, "cli must be claude, codex, evo or qwen8b")
+            raise HTTPException(422, "cli must be claude, codex, evo, qwen8b or eagle")
     if operation.key == "freeze" and request.target != "v1":
         raise HTTPException(422, "freeze takes the target v1")
     if operation.key not in {"author", "review", "cleanup", "build_preview", "build", "audit",

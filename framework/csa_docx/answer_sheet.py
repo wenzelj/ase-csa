@@ -271,7 +271,7 @@ CONTENT_CODES = {"PART_MISATTRIBUTED", "PART_NOT_NAMED", "SLOT_NOT_ANSWERED", "S
                  "CAPTURE_LEFT_OUT", "EVIDENCE_DROPPED", "SUBJECT_NOT_THIS_SYSTEM", "FLOW_NOT_COVERED",
                  "FRAME_UNCOVERED", "CITATION_OFF_TOPIC", "GAP_AS_FACT", "UNKNOWN_BUNDLED", "DIGEST_UNUSED", "BASIS_NOT_OBSERVED", "ZONE_CONTRADICTED", "QUESTION_ANSWERED_BY_REGISTER",
                  "ATTEMPT_AS_ESTABLISHED", "ISOLATION_WRONG_SIDE",
-                 "PRACTICE_NOT_ADDRESSED", "PRACTICE_ATTRIBUTION_DROPPED", "APPLICATION_ZONE_CLAIM", "QUESTION_BUNDLED",
+                 "PRACTICE_NOT_ADDRESSED", "PRACTICE_ATTRIBUTION_DROPPED", "APPLICATION_ZONE_CLAIM", "QUESTION_BUNDLED", "APPLICATION_COVERAGE",
                  "CROSS_PROJECT_ONLY", "BACKGROUND_AS_EVIDENCE", "FACT_OFF_TOPIC", "DRAWBRIDGE_FUNCTION_MISSING",
                  "REASON_REPEATS_SUMMARY", "STORY_ENDS_BY_REPEATING", "REASON_DIFFERS_FROM_SUMMARY", "ABSENCE_WITHOUT_FACT", "DIRECTION_ASSUMED", "REPEATED_UNKNOWN", "UNIVERSAL_CLAIM", "PROSE_NAME_UNSUPPORTED", "ADDRESS_NOT_IN_EVIDENCE", "FACTS_DISAGREE",
                  "HOST_IN_PROSE", "JARGON_SHORTHAND", "NETWORK_ANSWER_UNUSED", "ZONE_FACT_NOT_BACKED"}
@@ -418,6 +418,41 @@ from csa_docx.topic_fit import topic_checks  # noqa: E402
 from csa_docx.drawbridge_fit import function_checks  # noqa: E402
 
 
+def application_coverage_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
+    """APPLICATION_COVERAGE (warning): a requirement block leaves out a system part the frame has no finding for, on a
+    setting that decides that requirement. The part is neither named in the block's prose nor asked about in a QUESTION:
+    line. The card's "Coverage by part" block lists them. A part with no finding is not evidenced, never absent: the
+    fix is to say it is not known, or to ask, not to leave the part out and let another part's findings stand for it."""
+    pc = card.get("parts") or {}
+    cov = pc.get("coverage") or {}
+    if not cov:
+        return []
+    from csa_docx.parts import named
+    req_of = {q["id"]: q.get("req_id", "") for q in card.get("questions", []) if q.get("kind") == "requirement"}
+    out = []
+    for qid, b in sheet.items():
+        req = req_of.get(qid)
+        if not req or not b:
+            continue
+        units = {k for k, rq in (cov.get("units_req") or {}).items() if req in rq}
+        if not units:
+            continue
+        prose = " ".join(x for x in (b.get("summary"), b.get("story"), b.get("text"), b.get("rating_reason")) if x)
+        prose += " " + " ".join(b.get("unknown") or [])
+        loose = []
+        for pid, c in (cov.get("parts") or {}).items():
+            gaps = [k for k in c.get("gaps", []) if k in units]
+            if c.get("captured") and gaps and not named(prose, (pc.get("names") or {}).get(pid) or [c["name"]]):
+                loose.append(f"{c['name']} ({', '.join(cov['units'][k] for k in gaps[:3])})")
+        if loose:
+            out.append(_f("WARN", "APPLICATION_COVERAGE", qid,
+                          f"{len(loose)} part(s) have no finding for a setting that decides this requirement, and the block "
+                          f"neither covers them nor asks about them: {'; '.join(loose[:6])}. A part with no finding is not "
+                          "evidenced, never absent: say it is not known, or ask one QUESTION: naming the part (see Coverage by "
+                          "part on the card)"))
+    return out
+
+
 def part_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
     """The system-part checks (card "parts", from csa-work/parts.json):
     PART_NOT_NAMED (an error when the frame is strict, else a warning): a requirement's Facts name every part the card
@@ -445,6 +480,7 @@ def part_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
             out.append(_f("ERROR" if strict else "WARN", "PART_NOT_NAMED", qid,
                           f"the Facts do not name these parts, which this requirement's findings are about: "
                           f"{', '.join(missing)}. Name each (see System parts on the card)"))
+    out += application_coverage_checks(sheet, card)
     hosts = pc.get("hosts") or {}
     for qid, b in sheet.items():
         if kinds.get(qid) in ("requirement", "narrative") and b.get("text"):
@@ -482,7 +518,7 @@ def part_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
             continue
         # one clause at a time: "X does A, while Y does B" says A of X and B of Y
         for s in re.split(r"(?<=[.!?])\s+|\n+|,?\s+(?:while|whereas|but|although)\s+|;\s*",
-                          (b.get("text") or "") + "\n" + (b.get("rating_reason") or "")):
+                          (b.get("summary") or "") + "\n" + (b.get("text") or "") + "\n" + (b.get("rating_reason") or "")):
             said = [k for k, (rx, _, _) in FEATURES.items() if k in feats and re.search(rx, s, re.I)]
             if not said:
                 continue
@@ -1507,7 +1543,9 @@ def register_answer_checks(sheet: dict[str, dict], card: dict, matrix: dict[str,
         if k.startswith("F"):
             continue
         for u in b.get("unknown", []):
-            if _ASKS_WHERE.search(u) and (_SERVER_WORDS.search(u) or any(n in u.upper() for n in confirmed)):
+            named = {h.upper() for h in _HOST.findall(u)}      # a question that names hosts is about those hosts: only a register-placed one is answered
+            about_register = bool(named & confirmed) if named else bool(_SERVER_WORDS.search(u))
+            if _ASKS_WHERE.search(u) and about_register:
                 out.append(_f("ERROR", "QUESTION_ANSWERED_BY_REGISTER", k,
                               "the host register already says where the servers sit (see Network answers on the card): state it from the "
                               f"register row with its ID, and ask only for what is not recorded, such as the subnet: \"{u[:140]}\""))

@@ -21,8 +21,9 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import intake_errors, apply_workflow, audit_workflow, author_workflow, intake_workflow, build_workflow, cleanup_workflow, commands, documents, draft_workflow, prompts_workflow, explorer, csa_figures, network, pipeline, project_setup, project_upload, proposals, review_workflow, sections, validation, word_review, working_document
+from . import assets, intake_errors, apply_workflow, audit_workflow, author_workflow, intake_workflow, build_workflow, cleanup_workflow, commands, documents, draft_workflow, prompts_workflow, explorer, csa_figures, network, pipeline, project_setup, project_upload, proposals, review_workflow, sections, validation, word_review, working_document
 from .jobs import JobManager
+from .terminal_sessions import check_write_origin
 from .models import CommandRequest, IntakeErrorsResponse, JobCreateRequest
 
 
@@ -764,6 +765,34 @@ def get_job(system_key: str, job_id: str) -> dict[str, Any]:
     return job_manager.get(system_project(system_key), job_id).model_dump()
 
 
+class TerminalInput(BaseModel):
+    data: str = Field(max_length=5500)
+    capability: str = Field(min_length=1, max_length=100)
+
+
+class TerminalResize(BaseModel):
+    rows: int
+    cols: int
+    capability: str = Field(min_length=1, max_length=100)
+
+
+@app.get("/api/systems/{system_key}/jobs/{job_id}/terminal")
+def get_job_terminal(system_key: str, job_id: str, after: int = 0) -> dict[str, Any]:
+    return job_manager.terminal_output(system_project(system_key), job_id, after)
+
+
+@app.post("/api/systems/{system_key}/jobs/{job_id}/terminal/input")
+def input_job_terminal(system_key: str, job_id: str, payload: TerminalInput, request: Request) -> dict[str, Any]:
+    check_write_origin(request.headers.get("origin"), request.headers.get("host"))
+    return job_manager.terminal_input(system_project(system_key), job_id, payload.data, payload.capability)
+
+
+@app.post("/api/systems/{system_key}/jobs/{job_id}/terminal/resize")
+def resize_job_terminal(system_key: str, job_id: str, payload: TerminalResize, request: Request) -> dict[str, Any]:
+    check_write_origin(request.headers.get("origin"), request.headers.get("host"))
+    return job_manager.terminal_resize(system_project(system_key), job_id, payload.rows, payload.cols, payload.capability)
+
+
 @app.get("/api/systems/{system_key}/jobs/{job_id}/log")
 def get_job_log(system_key: str, job_id: str, stream: str = "stderr", start: int = 1,
                 limit: int = 200) -> dict[str, Any]:
@@ -1045,6 +1074,135 @@ def host_network(system_key: str) -> dict[str, Any]:
     return network.build(work_dir(project), agents_dir())
 
 
+ASSET_KINDS = ("application_hosts", "devices", "unidentified", "conflicts")
+
+
+def _asset_groups(system_key: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    """The project-scoped inventory for the selected system key, resolved through the registry."""
+    project = system_project(system_key)
+    return project, assets.build(work_dir(project), agents_dir(), page=1, per_page=10**9, include_retired=True)
+
+
+@app.get("/api/systems/{system_key}/assets")
+def system_assets(system_key: str, q: str = Query(""), kind: str = Query(""), type: str = Query(""),
+                  state: str = Query(""), page: int = Query(1, ge=1),
+                  per_page: int = Query(50, ge=1, le=500), include_retired: bool = Query(False)) -> dict[str, Any]:
+    """Hosts, connected devices, unidentified addresses and conflicts for one system, filtered and paginated.
+
+    ``kind`` picks one group; ``type`` and ``state`` match an item's type and state exactly (ignoring case)."""
+    if kind and kind not in ASSET_KINDS:
+        raise HTTPException(422, f"Unknown asset kind '{kind}'; expected one of {', '.join(ASSET_KINDS)}")
+    project = system_project(system_key)
+    page, per_page = max(1, page), min(500, max(1, per_page))
+    include_retired = include_retired is True          # a direct call that omits it gets the default, not the Query marker
+    built = assets.build(work_dir(project), agents_dir(), page=1, per_page=10**9, query=q, kind=kind,
+                         include_retired=include_retired)
+    wanted_type, wanted_state = type.strip().lower(), state.strip().lower()
+    groups: dict[str, Any] = {}
+    for name in ASSET_KINDS:
+        if name not in built["groups"]:
+            continue
+        items = built["groups"][name]["items"]
+        if wanted_type:
+            items = [i for i in items if str(i.get("type") or "").lower() == wanted_type]
+        if wanted_state:
+            items = [i for i in items if str(i.get("state") or i.get("identification_state") or "").lower() == wanted_state]
+        start = (page - 1) * per_page
+        groups[name] = {"items": items[start:start + per_page], "total": len(items), "page": page, "per_page": per_page}
+    return {"system": system_key, "project_key": project["key"], "groups": groups,
+            "counts": built["counts"], "sources": built["sources"], "matrix_rows": built["matrix_rows"],
+            "note": built["note"], **({"retired_devices": built["retired_devices"]} if include_retired else {})}
+
+
+@app.get("/api/systems/{system_key}/assets/{asset_id}")
+def system_asset_detail(system_key: str, asset_id: str, kind: str = Query("")) -> dict[str, Any]:
+    """One asset with its source files and evidence links. ``kind`` disambiguates an id shared by two groups."""
+    if kind and kind not in ASSET_KINDS:
+        raise HTTPException(422, f"Unknown asset kind '{kind}'; expected one of {', '.join(ASSET_KINDS)}")
+    project, built = _asset_groups(system_key)
+    found = [(name, item) for name in ASSET_KINDS if not kind or name == kind
+             for item in built["groups"][name]["items"] if str(item.get("id")) == asset_id]
+    if not found:
+        raise HTTPException(404, f"Asset '{asset_id}' not found in this system")
+    name, item = found[0]
+    source = item.get("source")
+    files = [source] if source else [s for s in built["sources"] if s == "hosts/hosts.csv"]
+    return {"system": system_key, "project_key": project["key"], "id": asset_id, "kind": name,
+            "asset": item, "other_kinds": [n for n, _ in found[1:]],
+            "source_links": {"files": files, "evidence": item.get("evidence", [])}}
+
+
+def _device_edit(system_key: str, action) -> dict[str, Any]:
+    """Run one register edit for the selected system; a rejected edit becomes a clear HTTP error."""
+    project = system_project(system_key)
+    try:
+        return action(Path(project["project_root"]).expanduser(), work_dir(project), agents_dir())
+    except assets.AssetError as error:
+        raise HTTPException(error.status, {"message": error.message, "code": error.code}) from error
+
+
+@app.post("/api/systems/{system_key}/devices")
+def create_connected_device(system_key: str, payload: dict[str, Any]) -> dict[str, Any]:
+    return _device_edit(system_key, lambda root, work, agents: assets.create_device(root, work, agents, payload))
+
+
+@app.post("/api/systems/{system_key}/devices/reconcile-preview")
+def preview_device_aliases(system_key: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Read-only before/after for proposed alias changes; nothing is written."""
+    def run(root: Path, work: Path, agents: Path) -> dict[str, Any]:
+        def texts(name: str) -> list[str]:
+            value = payload.get(name) or []
+            if not isinstance(value, list):
+                raise assets.AssetError(422, f"{name} must be a list of addresses")
+            return [str(v) for v in value]
+        return assets.reconcile_preview(work, agents, device_id=str(payload.get("device_id") or ""),
+                                        add=texts("add"), remove=texts("remove"))
+    return _device_edit(system_key, run)
+
+
+@app.patch("/api/systems/{system_key}/devices/{device_id}")
+def patch_connected_device(system_key: str, device_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    return _device_edit(system_key, lambda root, work, agents: assets.patch_device(root, work, agents, device_id, payload))
+
+
+@app.post("/api/systems/{system_key}/devices/{device_id}/aliases")
+def add_device_alias(system_key: str, device_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    return _device_edit(system_key, lambda root, work, agents: assets.add_alias(root, work, agents, device_id, payload))
+
+
+@app.delete("/api/systems/{system_key}/devices/{device_id}/aliases/{address}")
+def remove_device_alias(system_key: str, device_id: str, address: str,
+                        expected_revision: str = Query("")) -> dict[str, Any]:
+    return _device_edit(system_key, lambda root, work, agents: assets.remove_alias(
+        root, work, agents, device_id, address, expected_revision))
+
+
+@app.post("/api/systems/{system_key}/devices/{device_id}/host-conversion/preview")
+def preview_host_conversion(system_key: str, device_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Read-only plan for making a connected device an application host; nothing is written."""
+    return _device_edit(system_key, lambda root, work, agents: assets.convert_preview(root, work, agents, device_id, payload))
+
+
+@app.post("/api/systems/{system_key}/devices/{device_id}/host-conversion")
+def convert_device_to_host(system_key: str, device_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    return _device_edit(system_key, lambda root, work, agents: assets.convert_apply(root, work, agents, device_id, payload))
+
+
+@app.post("/api/systems/{system_key}/devices/{device_id}/host-conversion/reverse")
+def reverse_host_conversion(system_key: str, device_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    return _device_edit(system_key, lambda root, work, agents: assets.convert_reverse(root, work, agents, device_id, payload))
+
+
+@app.post("/api/systems/{system_key}/devices/{device_id}/retire")
+def retire_connected_device(system_key: str, device_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    return _device_edit(system_key, lambda root, work, agents: assets.set_active(root, work, agents, device_id, payload, retire=True))
+
+
+@app.post("/api/systems/{system_key}/devices/{device_id}/restore")
+def restore_connected_device(system_key: str, device_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    return _device_edit(system_key, lambda root, work, agents: assets.set_active(root, work, agents, device_id, payload, retire=False))
+
+
 @app.get("/api/systems/{system_key}/explorer")
 def system_explorer(system_key: str) -> dict[str, Any]:
     """Hosts, captured links, per-host facts, CSA mentions and evidence-backed journeys for the System explorer."""
@@ -1084,7 +1242,8 @@ def figure_detail(system_key: str, section_key: str) -> dict[str, Any]:
 
 FIGURE_FILES = {"figure.docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 "figure-print.svg": "image/svg+xml", "figure.png": "image/png",
-                "figure-screen.png": "image/png"}
+                "figure-screen.png": "image/png", "figure-screen-landscape.svg": "image/svg+xml",
+                "figure-screen-landscape.png": "image/png"}
 
 
 @app.get("/api/systems/{system_key}/figures/{section_key}/file/{name}")

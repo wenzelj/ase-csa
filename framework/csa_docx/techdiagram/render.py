@@ -62,7 +62,7 @@ def _wrap(text, width):
     return lines + [line.strip()] if line.strip() else lines
 
 
-def render_svg(model: dict) -> str:
+def render_svg(model: dict, document: bool = False) -> str:
     stem = model["id"]
     T = layout(model)
     zones = {z["id"]: z for z in model["zones"]}
@@ -89,7 +89,7 @@ def render_svg(model: dict) -> str:
         dash_attr = ' stroke-dasharray="6 4"' if dashed else ""
         o.append(f'<g class="zone" data-id="{esc(zid)}"><rect x="{fx(x1):.1f}" y="{fy(y1):.1f}" width="{x2 - x1:.1f}" height="{y2 - y1:.1f}" '
                  f'rx="14" fill="{ {"it": "#f2f7fc", "shared": "#fff8f0", "nosite": "#f5f7f9", "outside": "#f5f7f9"}.get(zid, "#f1f9f7") }" stroke="#b9c8d3"{dash_attr}/>'
-                 f'<text x="{fx(x1) + 18:.1f}" y="{fy(y1) + 30:.1f}" font-size="18" font-weight="700" fill="#203a55" letter-spacing="0.2">'
+                 f'<text x="{fx(x1) + 18:.1f}" y="{fy(y1) + 32:.1f}" font-size="20" font-weight="700" fill="#203a55" letter-spacing="0.2">'
                  f'{esc(z["label"] if dashed else z["label"].upper())}</text></g>')
     for lab_, y1_, y2_ in T["tiers"]:
         Y1, Y2 = fy(y1_) - 4, fy(y2_) + 2
@@ -114,7 +114,9 @@ def render_svg(model: dict) -> str:
                  f'<path d="{d}" fill="none" stroke="{st["stroke"]}" stroke-width="{st["w"]}" stroke-dasharray="{st["dash"]}" {mk}/></g>')
     o.append("</g>")
 
-    # boxes
+    # boxes.  The A4 Screen document layout uses role-aggregated cards, so its page-sized
+    # labels can be materially larger without widening the diagram again.
+    kind_fs, name_fs, role_fs = (16, 26, 22) if document else (13, 20, 15)
     for n in model["nodes"]:
         cx, cy = pos[n["id"]]
         icon, kind_label, col = KINDS.get(n["kind"], KINDS["unknown"])
@@ -123,14 +125,24 @@ def render_svg(model: dict) -> str:
         role = n.get("role", "")
         unk_attr = ' stroke-dasharray="4 3"' if unk else ""
         name = n["label"] if len(n["label"]) <= NAME_CH else n["label"][:NAME_CH - 1] + "…"
+        name_lines = _wrap(n["label"], 16)[:2] if document else [name]
+        role_lines = _wrap(role, 22)[:2] if document else [role[:ROLE_CH] + ("…" if len(role) > ROLE_CH else "")]
+        name_svg = "".join(
+            f'<text x="{x + 72:.1f}" y="{y + 52 + j * 25:.1f}" font-size="{name_fs}" font-weight="700" fill="#203a55">{esc(line)}</text>'
+            for j, line in enumerate(name_lines)
+        )
+        role_y = y + (105 if document and len(name_lines) > 1 else 80)
+        role_svg = "".join(
+            f'<text x="{x + 72:.1f}" y="{role_y + j * 23:.1f}" font-size="{role_fs}" fill="#55677a">{esc(line)}</text>'
+            for j, line in enumerate(role_lines)
+        )
         o.append(f'<g class="node" data-id="{esc(n["id"])}" tabindex="0" role="button" aria-label="{esc(n["label"])}"><title>{esc(n["label"])}{" — " + esc(role) if role else ""}</title>'
                  f'<rect x="{x:.1f}" y="{y:.1f}" width="{NODE_W}" height="{NODE_H}" rx="8" fill="#ffffff" stroke="{"#8c959f" if unk else "#c9d6df"}"'
                  f'{unk_attr} stroke-width="1.1"/>'
                  f'<g transform="translate({x + 18:.1f},{y + 17:.1f}) scale(1.65)" fill="none" stroke="{col}" stroke-width="1.9" stroke-linecap="round" '
                  f'stroke-linejoin="round" color="{col}">{ICONS[icon]}</g>'
-                 f'<text x="{x + 72:.1f}" y="{y + 23:.1f}" font-size="11" font-weight="700" fill="{"#167d8d" if not unk else col}" letter-spacing="0.6">{esc(kind_label.upper())}</text>'
-                 f'<text x="{x + 72:.1f}" y="{y + 43:.1f}" font-size="16" font-weight="700" fill="#203a55">{esc(name)}</text>'
-                 f'<text x="{x + 72:.1f}" y="{y + 61:.1f}" font-size="12.5" fill="#55677a">{esc(role[:ROLE_CH] + ("…" if len(role) > ROLE_CH else ""))}</text></g>')
+                 f'<text x="{x + 72:.1f}" y="{y + 27:.1f}" font-size="{kind_fs}" font-weight="700" fill="{"#167d8d" if not unk else col}" letter-spacing="0.6">{esc(kind_label.upper())}</text>'
+                 f'{name_svg}{role_svg}</g>')
 
     # labels last, along each line where they cover no box, zone title or other label
     cards = [(x - NODE_W / 2 - 4, y - NODE_H / 2 - 4, x + NODE_W / 2 + 4, y + NODE_H / 2 + 4) for x, y in pos.values()]
@@ -139,7 +151,7 @@ def render_svg(model: dict) -> str:
     o.append('<g class="labels">')
     for e in model["edges"]:
         st = STATUS[e["status"]]; pts = paths[e["id"]]
-        lines = e["label"].split("\n"); lh = 14
+        lines = e["label"].split("\n"); lh = 23 if document else 17
         wmax = max(len(l) for l in lines) * 6.4 + 14; hh = lh * len(lines) + 7
         extra = 30 if e.get("step") else 0
         cands = []
@@ -167,7 +179,7 @@ def render_svg(model: dict) -> str:
                  f'stroke="{st["stroke"] if e["status"] in ("configured", "unknown", "unenforced", "direct", "via-jump") else "#d0d7de"}" stroke-width="0.8"/>')
         tc = {"configured": "#167d8d", "unknown": "#c4432b", "unenforced": "#c4432b", "direct": "#c4432b", "via-jump": "#1a7f37"}.get(e["status"], "#203a55")
         for i, l in enumerate(lines):
-            o.append(f'<text x="{lx:.1f}" y="{ly - hh / 2 + 3 + lh * (i + 1) - 3:.1f}" font-size="11.5" text-anchor="middle" fill="{tc}">{esc(l)}</text>')
+            o.append(f'<text x="{lx:.1f}" y="{ly - hh / 2 + 3 + lh * (i + 1) - 3:.1f}" font-size="{22 if document else 13}" text-anchor="middle" fill="{tc}">{esc(l)}</text>')
         if e["status"] == "unknown":
             o.append(f'<circle cx="{lx + wmax / 2 + 12:.1f}" cy="{ly:.1f}" r="10" fill="#c4432b"/><text x="{lx + wmax / 2 + 12:.1f}" '
                      f'y="{ly + 5:.1f}" font-size="13" font-weight="700" text-anchor="middle" fill="#fff">?</text>')

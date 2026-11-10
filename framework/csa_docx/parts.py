@@ -281,6 +281,36 @@ def _keep_applications(old: dict, now: dict[str, list[str]], was: dict[str, list
     return keep
 
 
+def application_drift(work_dir: Path) -> list[dict]:
+    """The applications the card cannot use because they are not reviewed, with why: [{id, name, was_reviewed, reasons}].
+    An application loses its review when a part it lists is renamed, goes, or gains or loses a member since the last
+    build (_keep_applications), so a host register change can silently take an application off the card.
+    Reasons name the part and, where the id is close to a current one, the likely rename."""
+    import difflib
+    work = Path(work_dir)
+    disk, live = load(work), assemble(work)
+    now = {p["id"]: sorted(p["members"]) for p in live.get("parts", [])}
+    was = {p["id"]: sorted(p.get("members", [])) for p in disk.get("parts", [])}
+    on_disk = {a["id"]: a for a in disk.get("applications") or []}
+    out = []
+    for a in live.get("applications") or []:
+        if a.get("reviewed"):
+            continue
+        reasons = []
+        for pid in a.get("parts") or []:
+            if pid not in now:
+                near = difflib.get_close_matches(pid, list(now), n=1, cutoff=0.7)
+                reasons.append(f"part '{pid}' is no longer a part" + (f" (now '{near[0]}'?)" if near else ""))
+            elif was.get(pid) is not None and now[pid] != was[pid]:
+                gone, new = sorted(set(was[pid]) - set(now[pid])), sorted(set(now[pid]) - set(was[pid]))
+                reasons.append(f"members of '{pid}' changed" + (f" (left: {', '.join(gone)})" if gone else "")
+                               + (f" (joined: {', '.join(new)})" if new else ""))
+        was_reviewed = bool((on_disk.get(a["id"]) or {}).get("reviewed"))
+        out.append({"id": a["id"], "name": a["name"], "was_reviewed": was_reviewed,
+                    "reasons": reasons or ["not reviewed yet"]})
+    return out
+
+
 def index(doc: dict) -> dict[str, dict]:
     """{member (upper case): part} for every part."""
     return {m.upper(): p for p in doc.get("parts", []) for m in p["members"]}
@@ -422,7 +452,7 @@ def grid(doc: dict, fr: dict | None) -> dict:
             pids = list(dict.fromkeys(idx[e.upper()]["id"] for h in f.get("hosts", [])
                                       for e in (end_name(x) for x in h.split(",")) if e.upper() in idx))
             for pid in pids:
-                by_part.setdefault(pid, []).append({"slot": s["id"], "text": f["text"], "ids": list(f.get("ids", [])),
+                by_part.setdefault(pid, []).append({"slot": s["id"], "attr": f.get("attr", ""), "text": f["text"], "ids": list(f.get("ids", [])),
                                                     "requirements": list(f.get("requirements", [])),
                                                     "basis": finding_basis(f), "direction": f.get("direction", "")})
                 for r in f.get("requirements", []):
@@ -490,7 +520,9 @@ def card_view(work_dir: Path, fr: dict | None, qs: list[dict]) -> dict | None:
     appview = application_view(work_dir, doc, byq)
     if appview:
         lines += appview["lines"]
-    return {"reviewed": bool(doc.get("reviewed")),
+    cov = coverage(Path(work_dir), doc, fr, g, appview) if any(q.get("kind") == "requirement" for q in qs) else None
+    lines += coverage_lines(cov)
+    return {"reviewed": bool(doc.get("reviewed")), "coverage": cov,
             "applications": appview["apps"] if appview else [], "owed_applications": appview["owed"] if appview else {},
             "links": appview["links"] if appview else [],
             "names": {p["id"]: names(p) for p in doc["parts"]},
@@ -507,6 +539,87 @@ def card_view(work_dir: Path, fr: dict | None, qs: list[dict]) -> dict | None:
 
 
 APPLICATION_BLOCK_CHARS = 2400      # about 600 tokens: the Applications block never grows the card by more than this
+COVERAGE_BLOCK_CHARS = 3600         # about 900 tokens: the coverage block never grows the card by more than this
+
+
+def coverage(work_dir: Path, doc: dict, fr: dict | None, g: dict, appview: dict | None) -> dict | None:
+    """What the analysis frame has a finding about for each part, and what it has none for.
+
+    The unit is the host setting a finding is about (backup agent, database service, backup account ...), or the frame
+    slot when the finding is a connection. A part with no finding for a unit is NOT shown to lack it: a capture is a
+    point in time and can miss a setting or a connection. It is unknown, so the card says "not evidenced" and the answer
+    asks. Result: {"units": {key: label}, "parts": {part id: {"name", "captured", "found": [keys], "gaps": [keys]}},
+    "groups": [{"title", "parts": [ids], "shared": [ids]}]}, or None when the frame has no findings (or opts out)."""
+    if (fr or {}).get("coverage") is False or not (fr or {}).get("coverage_settings"):
+        return None                  # opt-in: a frame names the settings that decide its requirement (coverage_settings)
+    from csa_docx.topic_frames import LABELS as LABELS_FOR
+    decide = set((fr or {}).get("coverage_settings") or [])      # the settings that decide the requirement
+    units: dict[str, str] = {}
+    units_req: dict[str, set] = {}
+    for s in (fr or {}).get("slots", []):
+        for f in s.get("findings", []):
+            attr = f.get("attr", "")
+            if decide and attr and attr not in decide:
+                continue
+            key = attr or f"slot:{s['id']}"
+            units.setdefault(key, LABELS_FOR.get(attr, "") or f"connections seen ({s['id']})")
+            units_req.setdefault(key, set()).update(f.get("requirements") or [])
+    if not units:
+        return None
+    from csa_docx import host_settings
+    try:
+        seen = set(host_settings.load(work_dir))
+    except Exception:
+        seen = set()
+    out: dict[str, dict] = {}
+    for p in doc.get("parts", []):
+        if p["kind"] != "system":
+            continue
+        have = {f.get("attr") or f"slot:{f['slot']}" for f in g["by_part"].get(p["id"], [])}
+        out[p["id"]] = {"name": display_name(p), "captured": any(m.upper() in seen for m in p["members"]),
+                        "found": [k for k in units if k in have], "gaps": [k for k in units if k not in have]}
+    groups, placed = [], set()
+    for a in (appview or {}).get("apps", []):
+        mine = [pid for pid in a["parts"] if pid in out]
+        if mine:
+            groups.append({"title": a["name"], "parts": mine, "shared": [pid for pid in mine if pid in a["shared"]]})
+            placed.update(mine)
+    rest = [pid for pid in out if pid not in placed]
+    if rest:
+        groups.append({"title": "Parts in no reviewed application" if groups else "System parts", "parts": rest, "shared": []})
+    return {"units": units, "parts": out, "groups": groups, "prompt": (fr or {}).get("component_prompt", ""),
+            "units_req": {k: sorted(v) for k, v in units_req.items()}}
+
+
+def coverage_lines(cov: dict | None) -> list[str]:
+    if not cov:
+        return []
+    lines = ["", "## Coverage by part (what the findings cover, and what they leave unknown)", "",
+             "One line per system part, by application. A finding exists for a setting when the analysis frame has one about the "
+             "part (it may say a service is stopped: read it). `Not evidenced` means the frame has none for that setting. That is NOT evidence that the part lacks the thing: a capture is one moment "
+             "and can miss a setting or a connection. Never write that a part has none, does not run it, or is not covered. Write "
+             "`not evidenced` and say it is not known, and raise one QUESTION: line naming the part and what to confirm. One part's "
+             "finding never stands for another part. A part marked shared serves more than one application. Cover every part "
+             "below that the requirement's findings are about, in the Story or in a QUESTION:."]
+    if cov.get("prompt"):
+        lines.append(cov["prompt"])
+    lines.append("")
+    for gr in cov["groups"]:
+        lines.append(f"### {gr['title']}")
+        for pid in gr["parts"]:
+            c = cov["parts"][pid]
+            tag = " (shared)" if pid in gr["shared"] else ""
+            if not c["captured"]:
+                lines.append(f"- {c['name']}{tag}: no host of this part was captured, so nothing is evidenced for it")
+                continue
+            have = ", ".join(cov["units"][k] for k in c["found"]) or "nothing"
+            lack = ", ".join(cov["units"][k] for k in c["gaps"])
+            lines.append(f"- {c['name']}{tag}: findings for {have}" + (f". Not evidenced: {lack}" if lack else ""))
+        lines.append("")
+    text = "\n".join(lines)
+    if len(text) > COVERAGE_BLOCK_CHARS:
+        text = text[:COVERAGE_BLOCK_CHARS].rsplit("\n", 1)[0] + "\n- more parts are listed under System parts"
+    return text.split("\n")
 
 
 def part_links(work_dir: Path, doc: dict) -> list[list[str]]:
@@ -529,6 +642,7 @@ def application_view(work_dir: Path, doc: dict, byq: dict[str, list[str]]) -> di
     apps = [a for a in doc.get("applications") or [] if a.get("reviewed")]
     if not apps or model_problems(doc):
         return None
+    left_out = [a for a in doc.get("applications") or [] if not a.get("reviewed")]
     pname = {p["id"]: p for p in doc.get("parts", [])}
     chains = [c for c in doc.get("chains") or [] if c.get("reviewed")]
     lines = ["", "## Applications (reviewed in csa-work/parts.json)", "",
@@ -557,19 +671,27 @@ def application_view(work_dir: Path, doc: dict, byq: dict[str, list[str]]) -> di
         lines.append("")
     owed = {qid: [v["id"] for v in view if (set(v["parts"]) - set(v["shared"])) & set(pids)] for qid, pids in byq.items()}
     owed = {qid: ids for qid, ids in owed.items() if ids}
+    tail: list[str] = []            # what the answer must see: never cut by the size cap, only the chain steps are
     if owed:
-        lines += ["Applications behind each requirement: " + "; ".join(f"{qid}: {', '.join(ids)}" for qid, ids in owed.items()), ""]
-    text = "\n".join(lines)
+        tail += ["Applications behind each requirement: " + "; ".join(f"{qid}: {', '.join(ids)}" for qid, ids in owed.items()), ""]
+    if left_out:
+        tail += ["Applications defined for this system but not reviewed, so not described here: "
+                 + ", ".join(a["name"] for a in left_out) + ". What they hold and what protects it is not on this card: "
+                 "say it is not known and ask a QUESTION: line, and do not let another application's evidence stand for them.", ""]
+    text = "\n".join(lines + tail)
     if len(text) > APPLICATION_BLOCK_CHARS:
+        room = APPLICATION_BLOCK_CHARS - 40 - sum(len(x) + 1 for x in tail)
         keep, size = [], 0
         for ln in lines:
             size += len(ln) + 1
-            if size > APPLICATION_BLOCK_CHARS - 40:
+            if size > room:
                 keep.append("- more steps are listed in csa-work/parts.json")
                 break
             keep.append(ln)
         lines = keep
-    return {"apps": view, "owed": owed, "lines": lines, "links": part_links(work_dir, doc)}
+    lines = lines + tail
+    return {"apps": view, "owed": owed, "lines": lines, "links": part_links(work_dir, doc),
+            "left_out": [a["name"] for a in left_out]}
 
 
 # What a sentence says about a part must come from a finding about that part's machines: a share, a setting or a
@@ -582,6 +704,10 @@ FEATURES = {
     "proxy": (r"\bWinHTTP\b|\bproxy\b", ("Proxy setting on",), ()),
     "SMB": (r"\bSMB\b|\bfile[- ]share connections?\b", (), ("file share",)),
     "backup agent": (r"\bbackup agent\b", (), ("backup agent",)),
+    # a database backup is said only of a part whose machines have a database service (the 3.11 fault: backups credited to
+    # the Reveloc application / TGOIP servers, which hold no database)
+    "database backups": (r"\bdatabase backups?\b|\bSQL Server backups?\b|\bfull and log (?:database )?backups?\b",
+                         ("Database service on",), ()),
 }
 
 
@@ -910,7 +1036,7 @@ def show_chains(work_dir: Path, doc: dict) -> str:
     return "\n".join(out + ([] if doc.get("chains") else ["- none"]))
 
 
-def show_applications(doc: dict) -> str:
+def show_applications(doc: dict, drift: list[dict] | None = None) -> str:
     apps = doc.get("applications") or []
     names = {p["id"]: p["name"] for p in doc.get("parts", [])}
     out = ["# Applications", ""]
@@ -918,6 +1044,11 @@ def show_applications(doc: dict) -> str:
         out.append(f"- **{a['name']}** ({'reviewed' if a.get('reviewed') else 'not reviewed'}): {a.get('purpose') or 'no purpose yet'}")
         out += [f"  - {names.get(pid, pid)}{' (shared)' if (a.get('role_in') or {}).get(pid) == 'shared' else ''}"
                 for pid in a.get("parts", [])]
+    if drift:
+        out += ["", "Not on the section cards until reviewed again (the parts they list changed since the last review):"]
+        for d in drift:
+            out += [f"- {d['name']}: {'; '.join(d['reasons'])}"]
+        out += ["Run `csa parts build`, correct the applications in csa-work/parts.json, then `csa parts approve`."]
     return "\n".join(out + ([] if apps else ["- none"]) + ["", "Edit csa-work/parts.json to correct the name, write the purpose "
             "(one plain sentence) and the parts, then approve."])
 
@@ -960,7 +1091,7 @@ def show(doc: dict, proposed: list[dict] | None = None) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("action", choices=["build", "show", "approve", "check-doc", "applications", "chains"])
+    ap.add_argument("action", choices=["build", "show", "approve", "check-doc", "applications", "chains", "drift"])
     ap.add_argument("--work-dir", type=Path, required=True)
     ap.add_argument("--docx", type=Path, help="check-doc: the working DOCX")
     a = ap.parse_args(argv)
@@ -983,6 +1114,11 @@ def main(argv: list[str] | None = None) -> int:
         out.write_text("\n".join(lines) + "\n", encoding="utf-8")
         print("\n".join(lines))
         return 0
+    if a.action == "drift":
+        drift = application_drift(a.work_dir)
+        for d in drift:
+            print(f"{d['name']}: {'; '.join(d['reasons'])}")
+        return 0
     if a.action == "applications":
         doc = load(a.work_dir)
         if not doc.get("parts"):
@@ -991,7 +1127,7 @@ def main(argv: list[str] | None = None) -> int:
         if not doc.get("applications"):
             doc["applications"] = propose_applications(a.work_dir, doc)
             path(a.work_dir).write_text(json.dumps(doc, indent=1, ensure_ascii=False), encoding="utf-8")
-        print(show_applications(doc))
+        print(show_applications(doc, application_drift(a.work_dir)))
         return 0
     if a.action == "chains":
         doc = load(a.work_dir)

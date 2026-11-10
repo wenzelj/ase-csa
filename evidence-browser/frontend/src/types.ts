@@ -30,6 +30,8 @@ export type ReviewJob = {
   id: string; project_key: string; operation: string; state: string;
   created_at: string; started_at?: string; finished_at?: string;
   exit_code?: number; stdout_tail?: string; stderr_tail?: string; message?: string;
+  windowed?: boolean;
+  terminal?: boolean;
   classification?: "read_only" | "workspace_write" | "document_write"; lock?: string; resource?: string | null;
 };
 
@@ -189,3 +191,45 @@ export type PromptInfo = { name: string; title: string; use: string; kinds: stri
 export type PromptSection = { key: string; number: string; title: string; blocks: { id: string; kind: string; label: string }[] };
 export type PromptList = { prompts: PromptInfo[]; max_bytes: number; sections: PromptSection[] };
 export type PromptPreview = { text: string; words: number; sources: { name: string; source: string }[]; kinds: string[] };
+
+export type AssetKind = "application_hosts" | "devices" | "unidentified" | "conflicts";
+export type AssetEvidence = { evidence_id: string; claim: string };
+export type AssetService = { service: string; server_host: string; server_ip: string; preference: string; source: string };
+export type AssetConnection = { src: string; dst: string; dst_port: string; connections: string; basis: string; source: string };
+export type AssetItem = {
+  id: string; kind: string; name?: string; address?: string; type?: string; role?: string; site?: string; owner?: string;
+  state?: string; classification?: string; relationship?: string; in_scope?: string;
+  aliases?: string[]; services?: AssetService[]; observed_connections?: AssetConnection[]; documented_dependencies?: string[];
+  connected_application_hosts?: string[]; direction?: string[]; directions?: string[]; ports?: string[]; processes?: string[];
+  observation_type?: string[]; seen_from?: string[]; sessions?: string; claimed_by_device?: string; claimed_by?: string[]; host?: string;
+  source?: string; evidence?: AssetEvidence[];
+  revision?: string; active?: boolean; provenance?: string; reviewer?: string; recorded?: string;
+};
+export type AssetGroup = { items: AssetItem[]; total: number; page: number; per_page: number };
+export type AssetList = {
+  system: string; project_key: string; groups: Partial<Record<AssetKind, AssetGroup>>;
+  counts: Record<AssetKind, number>; sources: string[]; matrix_rows: number; note: string; retired_devices?: number;
+};
+export type AssetDetail = {
+  system: string; project_key: string; id: string; kind: AssetKind; asset: AssetItem; other_kinds: AssetKind[];
+  source_links: { files: string[]; evidence: AssetEvidence[] };
+};
+
+export type DeviceAlias = { address: string; normalized: string; active: string; source: string };
+export type DeviceRecord = {
+  device_id: string; name: string; device_type: string; role: string; owner: string; site_zone: string; relationship: string;
+  classification: string; identification_state: string; provenance: string; reviewer: string; recorded: string;
+  active: string; revision: string; aliases: DeviceAlias[];
+};
+export type DeviceEditResult = { status: string; device: DeviceRecord; writes: string[] };
+export type AliasState = { resolves_to: string; id: string; name: string };
+export type AliasPreviewRow = {
+  action: "add" | "remove"; address: string; normalized: string; status: "ready" | "blocked"; reasons: string[];
+  before: AliasState | null; after: AliasState | null;
+};
+export type AliasPreview = { device_id: string; changes: AliasPreviewRow[]; blocked: boolean; writes: string[]; note: string };
+export type DevicePayload = {
+  name?: string; device_type?: string; role?: string; owner?: string; site_zone?: string; relationship?: string;
+  classification?: string; identification_state?: string; reviewer?: string; source?: string; owner_confirmed_on?: string;
+  addresses?: string[];
+};
