@@ -286,7 +286,7 @@ def owners_in(text: str) -> list[str]:
     return out
 
 
-_WHO = re.compile(r"\bwho\b|\baccounts?\b[^.]{0,40}\badminister|\bresponsible\b|\bowns\b|\badministers?\b", re.I)
+_WHO = re.compile(r"\bwho\b(?!\s+(?:connect|reach|use|log|access|talk|send|receive|run)\w*)|\baccounts?\b[^.]{0,40}\badminister|\bresponsible\b|\bowns\b|\badministers?\b", re.I)
 
 
 def classify_gap(text: str) -> str:
@@ -297,6 +297,17 @@ def classify_gap(text: str) -> str:
     retention policy."""
     q = strip_confirmers(text)
     return "owner" if _WHO.search(q) else "document" if _POLICY.search(q) else "system"
+
+
+# A plan or procedure nobody could read from a capture: how something is escalated, a fallback or contingency, "how would X be done".
+# An event ("during an isolation event") is not one: the zones and flows can say what it cuts off.
+_PROCEDURAL = re.compile(r"\b(?:escalat\w*|fall-?back|contingency|work-?around|how (?:would|will|should))\b", re.I)
+
+
+def needs_person(text: str, kind: str = "") -> bool:
+    """True when the answer has to come from a person: who owns or decides something, or a policy, plan, procedure, fallback or
+    test. The search still runs, because a document may hold part of it."""
+    return (kind or classify_gap(text)) in ("owner", "document") or bool(_PROCEDURAL.search(strip_confirmers(text)))
 
 
 _SPELL = (("isation", "ization"), ("ising", "izing"), ("ised", "ized"), ("ises", "izes"), ("ise", "ize"), ("yse", "yze"))
@@ -400,6 +411,34 @@ def _matrix_stage(workspace: Path, dr_id: str, text: str) -> tuple[str, list[str
     answers = resolved_answer_ids(workspace, dr_id, text)
     related = [m["evidence_id"] for m in ranked if m["evidence_id"].upper() not in answers][:_MAX_CANDIDATES]
     return ("ANSWERED" if answers else "MATRIX_TRUNCATED" if matrix_truncated else "NONE"), answers, related
+
+
+# Of the _MAX_CANDIDATES related rows, at most this many are held for rows that name a host the question names.
+_HOST_RELATED_SLOTS = 4
+
+
+def host_related(workspace: Path, text: str, area: str = "", skip: set[str] | None = None) -> list[str]:
+    """Evidence IDs of source-checked VERIFIED rows that name a host the question names, best first: more of its hosts,
+    then the topic's area, then more words shared with the question, then the newest row. A question that names no
+    host gets none, and word matching (`_matrix_stage`, `matrix_candidates`) decides alone."""
+    hosts = [h.lower() for h in hosts_in(text)]
+    path = Path(workspace) / "csa-work" / "evidence-matrix.csv"
+    if not hosts or not path.is_file():
+        return []
+    from csa_docx import evidence_live, matrix_candidates
+    qwords, skip = matrix_candidates.words(text), {s.upper() for s in (skip or set())}
+    scored = []
+    for r in evidence_live.read(path, drop_rejected=True):
+        if not (evidence_live.is_verified(r) and matrix_candidates.eligible(r)) or str(r["evidence_id"]).upper() in skip:
+            continue
+        low = (r.get("claim") or "").lower()
+        named = sum(1 for h in hosts if h in low)
+        if named:
+            number = int(re.sub(r"\D", "", str(r["evidence_id"])) or 0)
+            scored.append(((named, bool(area) and r.get("csa_area") == area, len(qwords & matrix_candidates.words(low)), number),
+                           r["evidence_id"]))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [i for _, i in scored][:_HOST_RELATED_SLOTS]
 
 
 def _qid_from_dr_id(dr_id: str) -> str:
@@ -578,6 +617,8 @@ def lookup_gap(workspace: Path, dr_id: str, text: str, *, exclude: tuple[str, ..
         near = (matrix_candidates.candidates(checked, text, vocab, area, limit=6)
                 if csv_path.is_file() else [])
         related = list(dict.fromkeys([*related, *[c["id"] for c in near if c["id"] not in answer_ids]]))[:_MAX_CANDIDATES]
+    held = host_related(workspace, text, area, set(answer_ids))      # rows that name the question's host come first
+    related = list(dict.fromkeys([*held, *related]))[:_MAX_CANDIDATES]
     if matrix_state == "ANSWERED" and not answer_ids:
         matrix_state = "NONE"
     hits, ran, index_status = (([], [], IndexStatus(True, [])) if matrix_state == "ANSWERED"
@@ -616,7 +657,7 @@ def lookup_gap(workspace: Path, dr_id: str, text: str, *, exclude: tuple[str, ..
         scope += "; incomplete coverage (" + "; ".join(incomplete_reasons) + ")"
     return {"verdict": verdict, "answer_evidence_ids": answer_ids, "related_evidence_ids": related,
             "lead_ids": lead_ids, "evidence_ids": answer_ids, "matrix": answer_ids, "index": lead_ids,
-            "related": related, "kind": kind, "owners": owners, "queries": ran, "searched": scope,
+            "related": related, "kind": kind, "owners": owners, "ask": needs_person(original_text, kind), "queries": ran, "searched": scope,
             "notes": index_notes,
             "coverage": {"matrix": matrix_state, "index_complete": index_complete,
                          "index_failures": index_failures, "incomplete_reasons": incomplete_reasons,

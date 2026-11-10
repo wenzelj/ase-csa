@@ -186,23 +186,29 @@ def open_questions(work: Path) -> dict:
     for sheet in sorted(cards.glob("*.answer.md")):
         card_json = sheet.with_name(sheet.name[: -len(".answer.md")] + ".json")
         title, order = sheet.name[: -len(".answer.md")], _section_order("", sheet.name)
+        key = title
         if card_json.is_file():
             c = json.loads(card_json.read_text(encoding="utf-8"))
+            key = c.get("key", title)
             title = f"{c.get('number', '')} {c.get('title', '')} ({c.get('key', title)})".strip()
             order = _section_order(c.get("number", ""), c.get("title", ""))
         items = [(qid, u) for qid, b in parse(sheet.read_text(encoding="utf-8")).items() for u in b["unknown"]]
         if items:
-            groups.append({"label": title, "order": order, "items": _group_unknowns(items)})
+            groups.append({"label": title, "key": key, "order": order, "items": _group_unknowns(items)})
     groups.sort(key=lambda g: g["order"])
     merged = merge_across_sections(groups)
     lines, total = [f"# Open questions (draft lane, {datetime.now():%Y-%m-%d %H:%M})", "",
                     "Built from the `QUESTION:` lines of every answered card. A question another section also asks is listed once, "
                     "under the first section, with where else it is raised. These feed Discovery Required.", ""], 0
+    from . import question_exclusions
+    from .gap_sweep import _generated_dr_id
+    removed = question_exclusions.load(work)             # questions the owner removed (csa-work/draft/question-exclusions.json)
     for g in groups:
-        if not g["kept"]:
+        kept = [it for it in g["kept"] if _generated_dr_id(f"DR-{g['key']}-{it['qid']}", it["text"]) not in removed]
+        if not kept:
             continue
         lines += [f"## {g['label']}", ""]
-        for it in g["kept"]:
+        for it in kept:
             lines.append(f"- [{it['qid']}] {it['text']}")
             if it["also"]:
                 lines.append(f"  also raised in: {'; '.join(it['also'])}")
@@ -210,11 +216,13 @@ def open_questions(work: Path) -> dict:
         lines.append("")
     from csa_docx.figures.work import load_gaps
     for key, gaps in load_gaps(Path(work)).items():           # what the CSA figures need but the evidence lacks
+        gaps = [g for g in gaps if g["dr_id"] not in removed]
         if gaps:
             lines += [f"## Figure for {gaps[0].get('section') or key}", ""] + [f"- [{g['dr_id']}] {g['text']}" for g in gaps] + [""]
             total += len(gaps)
     from csa_docx.topic_tables import load_gaps as topic_gaps
     for key, gaps in topic_gaps(Path(work)).items():         # hosts the role tables could not show from a capture
+        gaps = [g for g in gaps if g["dr_id"] not in removed]
         if gaps:
             lines += [f"## Role table for {gaps[0].get('section') or key}", ""] + [f"- [{g['dr_id']}] {g['text']}" for g in gaps] + [""]
             total += len(gaps)

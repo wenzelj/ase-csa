@@ -463,3 +463,117 @@ def test_hard_failed_entity_search_without_a_lead_stays_incomplete(tmp_path, mon
     res = gl.lookup_gap(ws, "DR-TIME-F03", _TETRA)
     assert res["verdict"] == "INCOMPLETE"
     assert any("ROTPRDLOG101" in reason for reason in res["coverage"]["incomplete_reasons"])
+
+
+_MATRIX_HEADER = ["evidence_id", "csa_area", "question", "claim", "status", "source_title", "source_version", "section",
+                  "page_or_location", "evidence_excerpt", "inference_reason", "confidence", "gap_or_action", "review_state"]
+
+
+def _matrix(workspace, rows, reviews=None):
+    """rows: (evidence_id, area, claim, status, gap_or_action). Every row is reviewed unless `reviews` says otherwise."""
+    import csv
+    work = workspace / "csa-work"
+    work.mkdir(parents=True, exist_ok=True)
+    with (work / "evidence-matrix.csv").open("w", encoding="utf-8", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(_MATRIX_HEADER)
+        for eid, area, claim, status, gap in rows:
+            w.writerow([eid, area, "q", claim, status, "source", "", "", "", "quote", "", "high", gap, "pending"])
+    states = {eid: "reviewed" for eid, *_ in rows} | (reviews or {})
+    (work / "evidence-reviews.jsonl").write_text(
+        "".join(json.dumps({"evidence_id": e, "state": s}) + "\n" for e, s in states.items()), encoding="utf-8")
+
+
+def test_host_related_is_empty_when_the_question_names_no_host(tmp_path):
+    ws = _workspace(tmp_path)
+    _matrix(ws, [("E-001", "patch", "ROTPRDREV101 is patched six-monthly", "VERIFIED", "")])
+    assert gl.host_related(ws, "Which patch cadence applies to the jump hosts?", "patch") == []
+
+
+def test_host_related_ranks_more_hosts_then_area_then_shared_words_then_newest(tmp_path):
+    ws = _workspace(tmp_path)
+    _matrix(ws, [
+        ("E-010", "other", "IPTPRDMON121 is a SCOM server", "VERIFIED", ""),
+        ("E-011", "zone", "IPTPRDMON121 sits in the IT zone", "VERIFIED", ""),
+        ("E-012", "zone", "IPTPRDMON121 and ROTPRDCCM111 are both listed", "VERIFIED", ""),
+        ("E-013", "zone", "IPTPRDMON121 zone is IT", "VERIFIED", ""),
+        ("E-014", "zone", "ROTPRDSRV122 is a domain controller", "VERIFIED", ""),         # names no host of the question
+    ])
+    got = gl.host_related(ws, "What is the zone of IPTPRDMON121 and ROTPRDCCM111?", "zone")
+    assert got[0] == "E-012"                      # names both hosts
+    assert got.index("E-013") < got.index("E-011")  # same area and words: the newer row first
+    assert got[-1] == "E-010"                     # other area last
+    assert "E-014" not in got
+
+
+def test_host_related_skips_rows_that_cannot_support_an_answer(tmp_path):
+    ws = _workspace(tmp_path)
+    _matrix(ws, [
+        ("E-020", "zone", "IPTPRDMON121 is hosted in IT", "VERIFIED", ""),
+        ("E-021", "zone", "IPTPRDMON121 rejected reading", "VERIFIED", ""),
+        ("E-022", "zone", "IPTPRDMON121 not yet reviewed", "VERIFIED", ""),
+        ("E-023", "zone", "IPTPRDMON121 searched and not found", "NOT_FOUND", ""),
+        ("E-024", "zone", "IPTPRDMON121 from the previous assessment", "VERIFIED", "legacy L-0001"),
+        ("E-025", "zone", "IPTPRDMON121 answer already recorded", "VERIFIED", ""),
+    ], reviews={"E-021": "rejected", "E-022": "pending"})
+    assert gl.host_related(ws, "Where does IPTPRDMON121 sit?", "zone", skip={"e-025"}) == ["E-020"]
+
+
+def test_host_related_holds_at_most_four_rows(tmp_path):
+    ws = _workspace(tmp_path)
+    _matrix(ws, [(f"E-{n:03d}", "zone", f"IPTPRDMON121 row {n}", "VERIFIED", "") for n in range(30, 40)])
+    got = gl.host_related(ws, "Where does IPTPRDMON121 sit?", "zone")
+    assert len(got) == gl._HOST_RELATED_SLOTS == 4
+    assert got == ["E-039", "E-038", "E-037", "E-036"]
+
+
+def test_lookup_puts_rows_naming_the_host_first_and_keeps_the_word_matched_rows(tmp_path, monkeypatch):
+    ws = _workspace(tmp_path)
+    _matrix(ws, [("E-040", "zone", "IPTPRDMON121 is the SCOM Management Server hosted in IT", "VERIFIED", ""),
+                 ("E-900", "ops", "A zone boundary row without the host", "VERIFIED", "")])
+    word_match = {"evidence_id": "E-900", "status": "VERIFIED", "csa_area": "ops", "score": 0.9, "review_state": "reviewed"}
+    run, _ = _fake_run([word_match], [], [])
+    monkeypatch.setattr(gl, "_run", run)
+    res = gl.lookup_gap(ws, "DR-X-B1", "What is the zone of IPTPRDMON121?")
+    assert res["related_evidence_ids"][:2] == ["E-040", "E-900"]
+    assert len(res["related_evidence_ids"]) <= gl._MAX_CANDIDATES
+    assert res["verdict"] == "NOT_FOUND" and res["answer_evidence_ids"] == []      # related rows never answer
+
+
+def test_needs_person_is_true_for_ownership_policy_plan_procedure_and_fallback_questions():
+    for text in (
+            "Who is the authority contact for urgent or emergent patches on the TETRA/Reveloc hosts?",
+            "Who reviews the findings produced by the Tenable Nessus Agent on the OT TETRA Log Server?",
+            "Has a fallback for patching the Reveloc application servers during an isolation event been tested or documented?",
+            "Is the six-monthly TETRA/Revloc/OT Radio patch cycle written down in a procedure?",
+            "What is the plan for the servers running Windows Server 2016?",
+            "How is an urgent patch escalated outside the six-monthly cycle?",
+            "How would the OT TETRA/Reveloc hosts be patched during an isolation event, without the IT patch servers?"):
+        assert gl.needs_person(text), text
+
+
+def test_needs_person_is_false_for_facts_a_capture_or_inventory_can_show():
+    for text in (
+            "Who connects to the jump hosts (the inbound side of the access path) is not captured",
+            "What is the zone of the Monitoring (SCOM) endpoint IPTPR" "DMON121?",
+            "Do the DNS servers that the OT TETRA Log Server asks for names stay reachable during an isolation event?",
+            "Does any host take its time from a source in another site, so that isolating a site would cut it off?",
+            "Which update source does the Reveloc application server in Rockhampton use for Windows updates?"):
+        assert not gl.needs_person(text), text
+
+
+def test_who_connects_is_a_system_fact_and_who_keeps_is_an_ownership_question():
+    assert gl.classify_gap("Who connects to the jump hosts (the inbound side of the access path) is not captured") == "system"
+    assert gl.classify_gap("Which accounts reach the jump hosts, and who uses them?") == "system"
+    assert gl.classify_gap("Who keeps the inventory of the TETRA/Reveloc assets current?") == "owner"
+    assert gl.classify_gap("Who is the authority contact for urgent patches?") == "owner"
+
+
+def test_lookup_flags_a_question_for_a_person_but_still_searches_and_keeps_the_verdict(tmp_path, monkeypatch):
+    ws = _workspace(tmp_path)
+    run, calls = _fake_run([], [], [])
+    monkeypatch.setattr(gl, "_run", run)
+    asked = gl.lookup_gap(ws, "DR-PATCH-B2-Q1", "How is an urgent patch escalated outside the six-monthly cycle?")
+    fact = gl.lookup_gap(ws, "DR-PATCH-B2-Q2", "Which update source does the Reveloc server use for Windows updates?")
+    assert asked["ask"] is True and fact["ask"] is False
+    assert asked["verdict"] == "NOT_FOUND" and any("search" in c for c in calls)     # the search ran; the verdict is unchanged

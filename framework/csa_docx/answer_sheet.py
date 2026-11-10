@@ -1543,7 +1543,9 @@ def register_answer_checks(sheet: dict[str, dict], card: dict, matrix: dict[str,
         if k.startswith("F"):
             continue
         for u in b.get("unknown", []):
-            if _ASKS_WHERE.search(u) and (_SERVER_WORDS.search(u) or any(n in u.upper() for n in confirmed)):
+            named = {h.upper() for h in _HOST.findall(u)}      # a question that names hosts is about those hosts: only a register-placed one is answered
+            about_register = bool(named & confirmed) if named else bool(_SERVER_WORDS.search(u))
+            if _ASKS_WHERE.search(u) and about_register:
                 out.append(_f("ERROR", "QUESTION_ANSWERED_BY_REGISTER", k,
                               "the host register already says where the servers sit (see Network answers on the card): state it from the "
                               f"register row with its ID, and ask only for what is not recorded, such as the subnet: \"{u[:140]}\""))

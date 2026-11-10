@@ -428,17 +428,18 @@ def place(docx: Path, title: str, level: int, key: str, png: Path, caption: str,
     bpos = lambda i: len(xml[:kids[i][0]].decode("utf-8"))
     epos = lambda i: len(xml[:kids[i][1]].decode("utf-8"))
     block = ""
+    # The figure's number within its section: one more than the figures already drawn before it. Every mode needs it for the pointer.
+    current_child = where["after"] + 1 if where["mode"] == "insert" else where["block"][0]
+    section_start = max([i for i in range(current_child + 1)
+                         if kids[i][2] == b"w:p" and _style(xml[kids[i][0]:kids[i][1]]) == "Heading1"] or [0])
+    sequence = 1 + sum(
+        1 for i in range(section_start + 1, current_child)
+        if kids[i][2] == b"w:p" and _style(xml[kids[i][0]:kids[i][1]]) == "Figure"
+        and b"<w:drawing" in xml[kids[i][0]:kids[i][1]]
+        and b"<w:del " not in xml[kids[i][0]:kids[i][1]]
+    )
     if where["mode"] in ("insert", "replace"):
         at = epos(where["after"]) if where["mode"] == "insert" else bpos(where["block"][0])
-        current_child = where["after"] + 1 if where["mode"] == "insert" else where["block"][0]
-        section_start = max([i for i in range(current_child + 1)
-                             if kids[i][2] == b"w:p" and _style(xml[kids[i][0]:kids[i][1]]) == "Heading1"] or [0])
-        sequence = 1 + sum(
-            1 for i in range(section_start + 1, current_child)
-            if kids[i][2] == b"w:p" and _style(xml[kids[i][0]:kids[i][1]]) == "Figure"
-            and b"<w:drawing" in xml[kids[i][0]:kids[i][1]]
-            and b"<w:del " not in xml[kids[i][0]:kids[i][1]]
-        )
         block = _new_block(drawing, caption, source, section_number, sequence, ids, author, date, key)
         if landscape:
             # Word stores the previous section's properties on the paragraph before a new section,

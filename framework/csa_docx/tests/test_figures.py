@@ -204,9 +204,12 @@ def test_place_inserts_after_discovery_information_then_replaces(tmp_path):
     r2 = PL.place(d, "Time", 2, "TIME", png, "New caption", "Source: test", "Tester", close_word=False, backup=False)
     assert r2["mode"] == "replace"
     x = _xml(d)
-    assert "<w:delText" in x and "New caption" in x and x.count('w:name="_CSAFig_TIME"') == 2     # old (deleted) and new
+    # The first figure was still a pending insertion, so the second placement supersedes it physically: no tracked deletion,
+    # one bookmark, and only the new caption in the text.
+    assert "<w:delText" not in x and "New caption" in x and "Hosts take time from IT" not in x
+    assert x.count('w:name="_CSAFig_TIME"') == 1
     with zipfile.ZipFile(d) as z:
-        assert sum(n.startswith("word/media/csa-figure-time") for n in z.namelist()) == 2      # the old image stays for Reject
+        assert sum(n.startswith("word/media/csa-figure-time") for n in z.namelist()) == 2      # the old image file stays in the package
 
 
 def test_place_fills_the_template_slot(tmp_path):

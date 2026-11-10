@@ -277,3 +277,98 @@ def test_sweep_drains_open_leads_of_questions_it_closes(tmp_path, monkeypatch):
     # the swept question left no evidence-matrix rows behind (append-only confirm path untouched)
     with matrix.open(encoding="utf-8") as fh:
         assert [r for r in csv.reader(fh)] == [["evidence_id", "status", "gap_or_action"], ["E-001", "VERIFIED", "Answers DR-BAK-A1"]]
+
+
+def _q(verdict, *, ask=False, owners=(), leads=(), key="PATCH", number="3.10", title="Patch & Lifecycle Management", qid="B1", text="a question"):
+    return {"verdict": verdict, "ask": ask, "owners": list(owners), "lead_ids": list(leads), "kind": "document" if ask else "system",
+            "related": [], "searches": 1, "key": key, "number": number, "title": title, "qid": qid, "text": text}
+
+
+def test_to_ask_counts_every_open_question_a_person_must_answer_under_its_owner_or_to_be_assigned():
+    results = [_q("NOT_FOUND", ask=True), _q("CANDIDATES", ask=True, leads=["L-1"]), _q("ANSWERED", ask=True),
+               _q("NOT_FOUND", ask=True, owners=["backup service owner", "application owner"]),
+               _q("NOT_FOUND"),                                           # a system fact nobody has to be asked
+               _q("NOT_FOUND", owners=["network owner"])]                 # names an owner, so it is still asked as before
+    assert gs.summarise(results)["to_ask"] == {"to be assigned": 2, "backup service owner": 1, "application owner": 1, "network owner": 1}
+
+
+def test_to_ask_file_groups_by_owner_and_section_and_marks_possible_answers(tmp_path):
+    path = tmp_path / "to-ask-latest.md"
+    gs.write_to_ask(path, [
+        _q("NOT_FOUND", ask=True, text="Who is the authority contact for urgent patches?", qid="B2"),
+        _q("CANDIDATES", ask=True, leads=["L-1", "L-2"], text="Is the cycle written down in a procedure?", qid="B2"),
+        _q("ANSWERED", ask=True, text="answered already"),
+        _q("NOT_FOUND", text="a system fact"),
+        _q("NOT_FOUND", ask=True, owners=["backup service owner"], key="BAK", number="3.11", title="Backup & Recovery",
+           text="Who owns the restore test?")], "2026-11-10T00:00:00Z")
+    text = path.read_text(encoding="utf-8")
+    assert text.startswith("# Questions for people (2026-11-10T00:00:00Z)")
+    assert "## backup service owner" in text and "## to be assigned" in text
+    assert text.index("## backup service owner") < text.index("## to be assigned")
+    assert "### 3.10 Patch & Lifecycle Management" in text and "### 3.11 Backup & Recovery" in text
+    assert "- [B2] Is the cycle written down in a procedure? (leads to read: 2)" in text
+    assert "answered already" not in text and "a system fact" not in text
+
+
+def test_sweep_records_ask_and_writes_the_to_ask_file(tmp_path, monkeypatch):
+    ws = _workspace(tmp_path)
+
+    def lookup(workspace, dr_id, text, exclude=()):
+        return {"verdict": "NOT_FOUND", "answer_evidence_ids": [], "related_evidence_ids": [], "lead_ids": [], "searched": "x",
+                "ask": text.startswith("the exact backup product"), "owners": []}
+    monkeypatch.setattr(gs.gap_lookup, "lookup_gap", lookup)
+    res = gs.sweep(ws)
+    flagged = [q["text"] for q in res["questions"] if q["ask"]]
+    assert flagged == ["the exact backup product and service could be confirmed by the backup owner."]
+    assert res["summary"]["to_ask"] == {"to be assigned": 1}
+    listed = (ws / "csa-work" / "intake" / "to-ask-latest.md").read_text(encoding="utf-8")
+    assert "the exact backup product" in listed and "which hosts actually send SMTP alerts" not in listed
+
+
+def _card(work, key, blocks):
+    (work / "cards").mkdir(parents=True, exist_ok=True)
+    (work / "cards" / f"{key}.json").write_text(json.dumps({"evidence": {
+        qid: {"rows": [{"id": i} for i in ids]} for qid, ids in blocks.items()}}), encoding="utf-8")
+
+
+def test_card_listed_reads_the_rows_the_card_showed_for_one_block(tmp_path):
+    work = tmp_path / "csa-work"
+    _card(work, "PATCH", {"B1": ["E-3289", "e-3290"], "B2": []})
+    cache = {}
+    assert gs.card_listed(work, "PATCH", "B1", cache) == {"E-3289", "E-3290"}      # ids are compared in upper case
+    assert gs.card_listed(work, "PATCH", "B2", cache) == set()                     # a block that listed nothing
+    assert gs.card_listed(work, "PATCH", "B9", cache) is None                      # no such block
+    assert gs.card_listed(work, "NOCARD", "B1", cache) is None                     # no card file
+    assert "PATCH" in cache and "NOCARD" in cache                                  # each card is read once
+
+
+def test_card_listed_tolerates_a_malformed_card(tmp_path):
+    work = tmp_path / "csa-work"
+    (work / "cards").mkdir(parents=True)
+    (work / "cards" / "BAK.json").write_text("{not json", encoding="utf-8")
+    assert gs.card_listed(work, "BAK", "B1", {}) is None
+
+
+def test_sweep_records_the_related_rows_the_card_never_listed_and_changes_nothing_else(tmp_path, monkeypatch):
+    ws = _workspace(tmp_path)
+    _card(ws / "csa-work", "BAK", {"B1": ["E-10", "E-11"]})
+
+    def lookup(workspace, dr_id, text, exclude=()):
+        return {"verdict": "NOT_FOUND", "answer_evidence_ids": [], "related_evidence_ids": ["E-10", "E-12", "E-13"],
+                "lead_ids": [], "searched": "x"}
+    monkeypatch.setattr(gs.gap_lookup, "lookup_gap", lookup)
+    res = gs.sweep(ws)
+    bak_b1 = [q for q in res["questions"] if q["key"] == "BAK" and q["qid"] == "B1"]
+    assert bak_b1 and all(q["card_block"] and q["unseen_related"] == ["E-12", "E-13"] for q in bak_b1)
+    assert all(q["related_evidence_ids"] == ["E-10", "E-12", "E-13"] and q["verdict"] == "NOT_FOUND" for q in res["questions"])
+    other = next(q for q in res["questions"] if q["key"] == "INET")                    # no card for this section
+    assert other["card_block"] is False and other["unseen_related"] == []
+    s = res["summary"]
+    assert s["card_blocks"] == len(bak_b1) and s["gaps_with_unseen_related"] == len(bak_b1)
+    assert f"{len(bak_b1)} of {len(bak_b1)} question(s) with a card block have related rows the card never listed" in " ".join(gs.report_lines(s))
+
+
+def test_the_summary_leaves_out_the_card_line_when_no_question_has_a_card_block():
+    s = gs.summarise([{"verdict": "NOT_FOUND", "lead_ids": [], "kind": "system", "owners": [], "related": [], "searches": 1}])
+    assert s["card_blocks"] == 0 and s["gaps_with_unseen_related"] == 0
+    assert "card" not in " ".join(gs.report_lines(s))

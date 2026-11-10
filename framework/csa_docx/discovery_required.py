@@ -61,16 +61,18 @@ def _collect(work: Path) -> list[dict]:
             if g["req_id"] and g["req_id"] not in it["reqs"]:
                 it["reqs"].append(g["req_id"])
     # gaps the CSA figures need (csa-work/figures/gaps.json, written when a figure is saved)
+    from csa_docx import question_exclusions
+    removed = question_exclusions.load(work)           # questions the owner removed from the list
     from csa_docx.figures.work import all_gaps
-    for g in all_gaps(work):
+    for g in [g for g in all_gaps(work) if g["dr_id"] not in removed]:
         items.setdefault(g["dr_id"], {"dr_id": g["dr_id"], "text": g["text"], "reqs": list(g.get("reqs") or []),
                                       "fact": g.get("fact", ""), "scope": f"figure in {g.get('section', '')}".strip()})
     # hosts a role table could not show from a capture (csa-work/topic-tables/gaps.json, written when it is placed)
     from csa_docx.topic_tables import all_gaps as topic_gaps, merge_gaps
-    for g in merge_gaps(topic_gaps(work)):
+    for g in merge_gaps([g for g in topic_gaps(work) if g["dr_id"] not in removed]):      # removed before the merge, so a group leads with a kept gap
         items.setdefault(g["dr_id"], {"dr_id": g["dr_id"], "text": g["text"], "reqs": list(g.get("reqs") or []),
                                       "fact": g.get("fact", ""), "scope": f"role table in {g.get('section', '')}".strip()})
-    return list(items.values())
+    return [it for it in items.values() if it["dr_id"] not in removed]
 
 
 def _evidence_id(workspace: Path, work: Path, item: dict, searched: str) -> str:
