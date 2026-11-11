@@ -4107,12 +4107,36 @@ def intake_pending(p: dict) -> list[str]:
     return missing
 
 
+def _ingest_v2(p: dict, work: Path, a) -> int:
+    """`csa ingest` for a project whose work_dir is csa-work-v2: the six steps against csa.sqlite (v2_ingest)."""
+    sys.path.insert(0, str(FRAMEWORK))
+    from csa_docx import v2_ingest
+    sources = [local_path(p["default_source_set"])] if p.get("default_source_set") else None
+    if sources:
+        sources += [local_path(x.strip()) for x in str(p.get("index_extra_sources") or "").split(";") if x.strip()]
+
+    def say(n, name, line):
+        print(f"{C['b']}{n}/6 {name}{C['0']}")
+        print(line, flush=True)
+
+    try:
+        s = v2_ingest.run_ingest(local_path(p["project_root"]), work, rebuild=a.rebuild, sources=sources, log=say)
+    except FileNotFoundError as e:
+        die(str(e))
+    if s["pending_intake_files"]:
+        print(f"{C['y']}{s['pending_intake_files']} new or changed document(s) are indexed but not yet recorded as evidence. "
+              f"Run `csa -p {p['key']} intake` before relying on the stale-section result.{C['0']}")
+    return 0
+
+
 def cmd_ingest(a):
     """New data in: discovery index (only new or changed files), graph sync (captures -> matrix rows, nodes,
     edges, host register), evidence refresh (rows on removed files or older captures retired, rows on changed
     files listed for re-check), estate register, system model, then the answered subsections whose evidence changed."""
     p = project(a.project); banner(p)
     work = local_path(p["work_dir"])
+    if work.name == "csa-work-v2":
+        return _ingest_v2(p, work, a)
     gs = SKILLS / "csa-evidence-matrix" / "scripts" / "graph_sync.py"
     print(f"{C['b']}1/6 discovery index{C['0']}")
     if run_script("index", ["--project", p["key"], "build", *(["--rebuild"] if a.rebuild else [])]) != 0:
