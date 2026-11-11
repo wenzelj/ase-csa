@@ -19,6 +19,8 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
+from .exports import _Export
+
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 DB_NAME = "csa.sqlite"
 BACKUPS_DIR = "backups"
@@ -126,6 +128,11 @@ class Repo:
         read-only mirror and is rebuilt by the ingest rewrite (S584+)."""
         con = self.con
         con.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+        # provider_host is a v2 addition (DNS/time providers): CREATE TABLE IF NOT EXISTS
+        # does not add a column to a pre-existing table, so add it if missing.
+        svc_cols = {r[1] for r in con.execute("PRAGMA table_info(service)")}
+        if "provider_host" not in svc_cols:
+            con.execute("ALTER TABLE service ADD COLUMN provider_host TEXT")
         fts5 = self._has_fts5(con)
         current = con.execute(
             "SELECT sql FROM sqlite_master WHERE type IN ('table', 'view') AND name = 'fts'"
@@ -482,19 +489,6 @@ class _Evidence:
         cols = ("id", "area", "question", "claim", "status", "source_title", "page_or_location",
                 "excerpt", "confidence", "gap_or_action", "review_state", "created_at", "updated_at")
         return [dict(zip(cols, row)) for row in r.con.execute(sql, params).fetchall()]
-
-
-class _Export:
-    """On-demand CSV/MD exports (real work in S587). Not auto-refreshed."""
-
-    def __init__(self, repo: Repo):
-        self._repo = repo
-
-    def csv(self, table, out_path):
-        raise NotImplementedError("added in S587")
-
-    def md(self, table, key, out_path):
-        raise NotImplementedError("added in S587")
 
 
 class _ReviewEvent:
