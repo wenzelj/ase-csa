@@ -13,7 +13,7 @@ The agent definition is authoritative. Read it in full and follow it; do not wor
 /Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-evidence-investigator-agent.md
 ```
 
-Inputs: `INTAKE=latest`, `MODE=INTAKE` (`*` = required, `NAME=value` = default).
+Inputs: `INTAKE=latest`, `MODE=INTAKE`, `FILE`, `FILE_REPORT` (`*` = required, `NAME=value` = default).
 
 ## Project
 

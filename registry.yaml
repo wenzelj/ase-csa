@@ -142,9 +142,9 @@ agents:
     group: analysis
     tier: local
     arg: INTAKE
-    inputs: INTAKE=latest, MODE=INTAKE
+    inputs: INTAKE=latest, MODE=INTAKE, FILE, FILE_REPORT
     locks: none
-    instruction: Intake mode - read the new and changed files in WORK_DIR/intake/latest.json (written by csa ingest) and record what they state as evidence matrix rows and graph items, following Intake mode (MODE=INTAKE) in the agent file.
+    instruction: Intake mode - read WORK_DIR/intake/latest.json, then process only FILE from the named intake record. Save its checked evidence rows and graph changes, then write FILE_REPORT. The framework starts a fresh model session for each file and resumes from successful file reports.
     skill: csa-evidence-investigator-agent
     summary: Turn newly ingested documents into evidence rows and graph items (Evidence intake step 2).
 

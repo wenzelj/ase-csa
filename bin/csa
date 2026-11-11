@@ -4077,10 +4077,20 @@ def intake_pending(p: dict) -> list[str]:
     if not latest.is_file():
         return []
     report_path = None
+    batched = False
+    completed_paths: set[str] = set()
     try:
         rec = json.loads(latest.read_text(encoding="utf-8"))
         report_path = folder / f"{rec['id']}.evidence.md"
         report = report_path.read_text(encoding="utf-8")
+        # File-by-file reports list pending paths for the person, but only the
+        # completed section proves that a source has been processed.
+        batched = "## Completed files" in report and "## Pending files" in report
+        if batched:
+            completed_text = report.split("## Unreadable files", 1)[0]
+            completed_paths = set(re.findall(r"^### (.+)$", completed_text, re.M))
+            unreadable_text = report.split("## Unreadable files", 1)[1].split("## Pending files", 1)[0]
+            completed_paths.update(re.findall(r"^- (.+)$", unreadable_text, re.M))
     except (OSError, ValueError, KeyError):
         report = ""
         try:
@@ -4091,7 +4101,7 @@ def intake_pending(p: dict) -> list[str]:
                 if isinstance(f, dict) and f.get("source_class") != "capture" and f.get("rel_path")}
     required.update(f.get("rel_path") for f in rec.get("unreadable", [])
                     if isinstance(f, dict) and f.get("rel_path"))
-    missing = sorted(path for path in required if path not in report)
+    missing = sorted(path for path in required if (path not in completed_paths if batched else path not in report))
     if not report.strip() and report_path:
         missing.append(str(report_path))
     return missing
@@ -4196,6 +4206,8 @@ SECTION_VERBS = ("author", "write", "review", "cleanup", "answer", "draft")
 
 def cmd_agent(a):
     p = project(a.project); banner(p)
+    if a.verb == "intake":
+        return cmd_intake_files(p, a)
     if a.verb in SECTION_VERBS and a.args and "=" not in a.args[0] and not re.fullmatch(r"\d+(\.\d+)*", a.args[0]):
         a.args = [section_arg(p, a.args[0])] + a.args[1:]
     if (((a.verb in ("author", "answer") and project_stage(p) == "draft") or a.verb == "draft")
@@ -4224,6 +4236,116 @@ def cmd_agent(a):
     if a.verb == "author":
         _record_author_counts(p, a.args)
     return _after_agent(p, a.verb, a.args, started, a)
+
+
+def _intake_file_jobs(p: dict, record: dict) -> list[dict]:
+    """One current, indexed source per fresh intake agent session."""
+    folder = local_path(p["work_dir"]) / "intake"
+    records = [record]
+    for record_id in record.get("carried_from", []):
+        path = folder / f"{record_id}.json"
+        if path.is_file():
+            records.append(json.loads(path.read_text(encoding="utf-8")))
+    jobs = {}
+    # A newer record wins when a path occurs in several intakes.
+    for item in reversed(records):
+        for entry in item.get("added", []) + item.get("changed", []):
+            if isinstance(entry, dict) and entry.get("status") == "indexed" and entry.get("rel_path"):
+                jobs[entry["rel_path"]] = entry
+    root = local_path(p["project_root"]).resolve()
+    selected = []
+    for entry in jobs.values():
+        path = (root / entry["rel_path"]).resolve()
+        if path.is_relative_to(root) and path.is_file():
+            selected.append(dict(entry, path=path))
+    return selected
+
+
+def _intake_source_hash(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        for block in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _intake_report(folder: Path, record: dict, jobs: list[dict]) -> None:
+    """Publish a report after each completed file, without claiming unfinished files."""
+    lines = [f"# Evidence intake {record['id']}", "", "## Completed files", ""]
+    for job in jobs:
+        if job.get("completed"):
+            lines.extend([f"### {job['rel_path']}", "", job["report"].read_text(encoding="utf-8"), ""])
+    pending = [job["rel_path"] for job in jobs if not job.get("completed")]
+    unreadable = [entry.get("rel_path") for entry in record.get("unreadable", []) if isinstance(entry, dict)]
+    lines.extend(["## Unreadable files", "", *[f"- {path}" for path in unreadable if path], ""])
+    lines.extend(["## Pending files", "", *[f"- {path}" for path in pending], ""])
+    target = folder / f"{record['id']}.evidence.md"
+    previous = folder / f"{record['id']}.evidence.before-file-batches.md"
+    if target.is_file() and not previous.exists() and "## Completed files" not in target.read_text(encoding="utf-8"):
+        shutil.copy2(target, previous)
+    temp = target.with_name(target.name + f".{os.getpid()}.tmp")
+    temp.write_text("\n".join(lines), encoding="utf-8")
+    temp.replace(target)
+
+
+def cmd_intake_files(p: dict, a) -> int:
+    """Run each indexed file in a new model process and checkpoint successful files."""
+    folder = local_path(p["work_dir"]) / "intake"
+    latest = folder / "latest.json"
+    if not latest.is_file():
+        if getattr(a, "print", False):
+            return launch(p, agent("intake"), a.args, a)
+        die("no intake/latest.json; run csa ingest first")
+    record = json.loads(latest.read_text(encoding="utf-8"))
+    jobs = _intake_file_jobs(p, record)
+    batch_dir = folder / f"{record['id']}.files"
+    if not getattr(a, "print", False):
+        batch_dir.mkdir(parents=True, exist_ok=True)
+    for n, job in enumerate(jobs, 1):
+        key = hashlib.sha256(job["rel_path"].encode("utf-8")).hexdigest()[:16]
+        checkpoint = batch_dir / f"{key}.json"
+        report = batch_dir / f"{key}.md"
+        source_hash = _intake_source_hash(job["path"])
+        job["report"] = report
+        try:
+            saved = json.loads(checkpoint.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            saved = {}
+        if (saved.get("record_id") == record["id"] and saved.get("rel_path") == job["rel_path"]
+                and saved.get("source_sha256") == source_hash and report.is_file()
+                and job["rel_path"] in report.read_text(encoding="utf-8")):
+            job["completed"] = True
+            print(f"intake {n}/{len(jobs)}: already complete: {job['rel_path']}", flush=True)
+            continue
+        print(f"intake {n}/{len(jobs)}: {job['rel_path']}", flush=True)
+        if not getattr(a, "print", False):
+            report.unlink(missing_ok=True)  # a failed retry cannot inherit a stale success marker
+        worker = copy.copy(a)
+        worker.headless = True  # each file starts with an empty model context
+        args = [f"INTAKE={record['id']}", "MODE=INTAKE", f"FILE={job['rel_path']}", f"FILE_REPORT={report}"]
+        rc = launch(p, agent("intake"), args, worker)
+        if getattr(a, "print", False):
+            continue
+        if rc or not report.is_file() or job["rel_path"] not in report.read_text(encoding="utf-8"):
+            print(f"intake stopped at file {n}; completed file checkpoints remain in {batch_dir}", file=sys.stderr)
+            return rc or 1
+        if _intake_source_hash(job["path"]) != source_hash:
+            print(f"intake source changed while processing: {job['rel_path']}; run csa ingest again", file=sys.stderr)
+            return 1
+        temp = checkpoint.with_name(checkpoint.name + f".{os.getpid()}.tmp")
+        temp.write_text(json.dumps({"record_id": record["id"], "rel_path": job["rel_path"],
+                                    "source_sha256": source_hash}, indent=2) + "\n", encoding="utf-8")
+        temp.replace(checkpoint)
+        job["completed"] = True
+        _intake_report(folder, record, jobs)
+        print(f"intake {n}/{len(jobs)} saved", flush=True)
+    if not getattr(a, "print", False):
+        _intake_report(folder, record, jobs)
+        pending = intake_pending(p)
+        if pending:
+            print(f"intake report is incomplete: {len(pending)} source(s) still pending", file=sys.stderr)
+            return 1
+    return 0
 
 
 
