@@ -4289,63 +4289,64 @@ def _intake_report(folder: Path, record: dict, jobs: list[dict]) -> None:
 
 
 def cmd_intake_files(p: dict, a) -> int:
-    """Run each indexed file in a new model process and checkpoint successful files."""
+    """Run pending intake files in batches (v2_intake.MAX_FILES per model session); checkpoints live in intake_file."""
     folder = local_path(p["work_dir"]) / "intake"
     latest = folder / "latest.json"
     if not latest.is_file():
         if getattr(a, "print", False):
             return launch(p, agent("intake"), a.args, a)
         die("no intake/latest.json; run csa ingest first")
-    record = json.loads(latest.read_text(encoding="utf-8"))
-    jobs = _intake_file_jobs(p, record)
-    batch_dir = folder / f"{record['id']}.files"
-    if not getattr(a, "print", False):
-        batch_dir.mkdir(parents=True, exist_ok=True)
-    for n, job in enumerate(jobs, 1):
-        key = hashlib.sha256(job["rel_path"].encode("utf-8")).hexdigest()[:16]
-        checkpoint = batch_dir / f"{key}.json"
-        report = batch_dir / f"{key}.md"
-        source_hash = _intake_source_hash(job["path"])
-        job["report"] = report
-        try:
-            saved = json.loads(checkpoint.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            saved = {}
-        if (saved.get("record_id") == record["id"] and saved.get("rel_path") == job["rel_path"]
-                and saved.get("source_sha256") == source_hash and report.is_file()
-                and job["rel_path"] in report.read_text(encoding="utf-8")):
-            job["completed"] = True
-            print(f"intake {n}/{len(jobs)}: already complete: {job['rel_path']}", flush=True)
-            continue
-        print(f"intake {n}/{len(jobs)}: {job['rel_path']}", flush=True)
-        if not getattr(a, "print", False):
-            report.unlink(missing_ok=True)  # a failed retry cannot inherit a stale success marker
-        worker = copy.copy(a)
-        worker.headless = True  # each file starts with an empty model context
-        args = [f"INTAKE={record['id']}", "MODE=INTAKE", f"FILE={job['rel_path']}", f"FILE_REPORT={report}"]
-        rc = launch(p, agent("intake"), args, worker)
+    sys.path.insert(0, str(FRAMEWORK))
+    from csa_docx import v2_intake
+    from csa_docx.v2repo import Repo
+    v2_dir = local_path(p["work_dir"]).parent / "csa-work-v2"
+    if not (v2_dir / "csa.sqlite").is_file():
+        die(f"no {v2_dir / 'csa.sqlite'}; migrate the project to csa-work-v2 first")
+    r = Repo(v2_dir)
+    try:
+        todo: dict[str, list[str]] = {}
+        for f in r.intake.pending():
+            todo.setdefault(f["record_id"], []).append(f["rel_path"])
+        total = sum(len(v) for v in todo.values())
+        done = 0
+        tmp = STATE_DIR / "tmp"
+        tmp.mkdir(parents=True, exist_ok=True)
+        for record_id, paths in todo.items():
+            for group in v2_intake.batches(paths):
+                payload = v2_intake.build_batch(record_id, group, len(group), repo=r)
+                stamp = f"{os.getpid()}-{time.time_ns()}"
+                batch_file, out_file = tmp / f"intake-batch-{stamp}.json", tmp / f"intake-batch-{stamp}.out.json"
+                batch_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+                print(f"intake {done + 1}-{done + len(group)}/{total}: {len(group)} file(s)", flush=True)
+                worker = copy.copy(a)
+                worker.headless = True  # each batch starts with an empty model context
+                args = [f"INTAKE={record_id}", "MODE=INTAKE", f"BATCH={batch_file}", f"BATCH_OUTPUT={out_file}"]
+                rc = launch(p, agent("intake"), args, worker)
+                if getattr(a, "print", False):
+                    return rc
+                if rc or not out_file.is_file():
+                    print(f"intake stopped at a batch of {len(group)} file(s); they stay pending", file=sys.stderr)
+                    return rc or 1
+                summary = v2_intake.apply_batch(record_id, out_file.read_text(encoding="utf-8"), repo=r,
+                                       rel_paths=group)
+                print(f"intake batch: {summary['files_ok']} ok, {summary['files_failed']} failed, "
+                      f"{summary['rows_added']} row(s) added, {summary['rows_rejected']} rejected", flush=True)
+                for item in summary["rejected"]:
+                    print(f"  rejected: {item['rel_path']}: {item['reason']}", file=sys.stderr)
+                for rel, err in summary["errors"].items():
+                    print(f"  failed: {rel}: {err}", file=sys.stderr)
+                batch_file.unlink(missing_ok=True)
+                out_file.unlink(missing_ok=True)
+                done += len(group)
         if getattr(a, "print", False):
-            continue
-        if rc or not report.is_file() or job["rel_path"] not in report.read_text(encoding="utf-8"):
-            print(f"intake stopped at file {n}; completed file checkpoints remain in {batch_dir}", file=sys.stderr)
-            return rc or 1
-        if _intake_source_hash(job["path"]) != source_hash:
-            print(f"intake source changed while processing: {job['rel_path']}; run csa ingest again", file=sys.stderr)
+            return 0
+        left = r.intake.pending()
+        if left:
+            print(f"intake is incomplete: {len(left)} source(s) still pending", file=sys.stderr)
             return 1
-        temp = checkpoint.with_name(checkpoint.name + f".{os.getpid()}.tmp")
-        temp.write_text(json.dumps({"record_id": record["id"], "rel_path": job["rel_path"],
-                                    "source_sha256": source_hash}, indent=2) + "\n", encoding="utf-8")
-        temp.replace(checkpoint)
-        job["completed"] = True
-        _intake_report(folder, record, jobs)
-        print(f"intake {n}/{len(jobs)} saved", flush=True)
-    if not getattr(a, "print", False):
-        _intake_report(folder, record, jobs)
-        pending = intake_pending(p)
-        if pending:
-            print(f"intake report is incomplete: {len(pending)} source(s) still pending", file=sys.stderr)
-            return 1
-    return 0
+        return 0
+    finally:
+        r.close()
 
 
 
