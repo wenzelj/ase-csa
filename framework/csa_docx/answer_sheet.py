@@ -284,15 +284,26 @@ def tier_of(finding: dict) -> str:
 
 # counts and totals of hosts ("9 of 12", "all 12 captured hosts", "nine hosts", "two RevViewer Jump Hosts"): CSA text
 # names the role groups instead. "stratum 5 hosts" and port numbers are not counts.
-_NUMWORD = r"(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|twenty)"
+_NUMWORD = r"(?:(?!(?:19|20)\d\d\b)\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|twenty)"
 _TOTALS = re.compile(r"\b\d+\s+of\s+(?:the\s+)?\d+\b|(?<!stratum )(?<!port )(?<!ports )\b" + _NUMWORD +
                      r"\s+(?:[A-Za-z/-]+\s+){0,3}?(?:hosts?|servers?|nodes?|machines?)\b(?!-)", re.I)
 
 
-def totals_in(text: str) -> str | None:
-    """The first host count or total in ``text`` (None when there is none)."""
-    m = _TOTALS.search(text or "")
-    return m.group(0) if m else None
+_NUMWORDS = {w: i for i, w in enumerate(("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+                                          "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen"))}
+_NUMWORDS["twenty"] = 20
+
+
+def totals_in(text: str, allowed: frozenset = frozenset()) -> str | None:
+    """The first host count or total in ``text`` (None when there is none). ``allowed`` holds the host counts the card itself
+    gives ("Hosts covered ... (19). State this number and no other"): "19 hosts" passes then, "18 hosts" and "9 of 12" never do."""
+    for m in _TOTALS.finditer(text or ""):
+        word = m.group(0).split()[0].lower()
+        n = int(word) if word.isdigit() else _NUMWORDS.get(word)
+        if n is not None and n in allowed and not re.match(r"\d+\s+of\b", m.group(0), re.I):
+            continue
+        return m.group(0)
+    return None
 
 
 def frame_checks(sheet: dict[str, dict], card: dict) -> list[dict]:
@@ -2561,8 +2572,12 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
                                        "Story with what the evidence leaves unknown or the gap that decided it, in new words"))
         rendered = [("Summary", b.get("summary") or ""), ("Text", b.get("text") or "")] + [("fact", f["text"]) for f in b["facts"]] + \
                    [("bullet", x) for x in b["bullets"]] + [("row", " | ".join(c)) for c in b["rows"][1:]]
+        # the host count the card gives: the hosts the analysis frame or a role table covers ("State this number and no other")
+        covered = [(card.get("frame") or {}).get("hosts_covered"), (card.get("role_table") or {}).get("hosts_covered")]
+        covered += [x.get("hosts_covered") for x in (card.get("role_tables") or []) if isinstance(x, dict)]
+        card_counts = frozenset(len(c) for c in covered if c)
         for where, s_ in rendered:
-            hit = totals_in(s_)
+            hit = totals_in(s_, card_counts)
             if hit:
                 findings.append(_f("ERROR", "NO_TOTALS", qid, f"a {where} counts hosts (\"{hit}\"): name the role groups "
                                    f"or the hosts instead of giving a number or total: {s_[:80]}"))

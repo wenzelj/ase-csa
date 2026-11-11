@@ -168,6 +168,7 @@ export type GapCheck = { schema_version: number; checked_at: string; section: st
 export type IntakeSnapshot = {
   project_key: string;
   index: { built_at_utc: string | null; files_by_status: Record<string, number>; complete: boolean };
+  model: { status: "current" | "out_of_date" | "missing" | "unreadable"; changed_sources: string[] };
   intake: IntakeRecord | null; nothing_new_since: string | null;
   matrix: { rows: number; evidence_rows: number; raw_rows: number; not_found: number; legacy_candidate_tombstones: number; rejected?: number; by_status: Record<string, number>; pending_review: number; added_since_intake: IntakeEvidenceRow[] };
   graph: { nodes: number; edges: number };

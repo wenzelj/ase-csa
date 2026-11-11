@@ -104,6 +104,10 @@ OPERATIONS: dict[str, Operation] = {
         "ingest", "Ingest new data", "Index new or changed files, sync the evidence matrix, host register and graph, then list stale subsections.",
         ("ingest",), options={"rebuild": "boolean"}, timeout=3600, mutation_class="workspace_write", lock="evidence",
     ),
+    "model_build": Operation(
+        "model_build", "Rebuild system model", "Copy the current host and evidence files into model.sqlite.",
+        ("model", "build"), timeout=900, mutation_class="workspace_write", lock="evidence",
+    ),
     # Evidence intake: new documents -> evidence (agent), open questions -> candidates (no model).
     "intake": Operation(
         "intake", "Turn new documents into evidence", "The evidence agent reads the new and changed files from the last ingest and records what they state in the evidence matrix and graph.",
@@ -224,7 +228,7 @@ def build_argv(agents_dir: Path, project_key: str, operation_key: str, request: 
     if operation.key == "freeze" and request.target != "v1":
         raise HTTPException(422, "freeze takes the target v1")
     if operation.key not in {"author", "review", "cleanup", "build_preview", "build", "audit",
-                             "ingest", "stale", "answer", "refresh_draft", "freeze", "intake", "gap_check", "resolve_gaps"}:
+                             "ingest", "model_build", "stale", "answer", "refresh_draft", "freeze", "intake", "gap_check", "resolve_gaps"}:
         argv.append("--json")
     return operation, argv
 

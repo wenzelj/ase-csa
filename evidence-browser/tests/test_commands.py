@@ -16,10 +16,10 @@ def test_catalogue_exposes_read_only_operations_and_one_docx_locked_apply() -> N
     assert {row["key"] for row in rows} == {
         "status", "next", "report", "sections", "spec_status", "comments",
         "check_change", "check_section", "apply", "review", "cleanup", "author",
-        "build_preview", "build", "audit", "ingest", "stale", "answer", "refresh_draft", "freeze",
+        "build_preview", "build", "audit", "ingest", "model_build", "stale", "answer", "refresh_draft", "freeze",
         "figure_wording", "figure_place", "figure_design", "intake", "gap_check", "resolve_gaps",
     }
-    for key in ("intake", "gap_check"):
+    for key in ("model_build", "intake", "gap_check"):
         op = next(row for row in rows if row["key"] == key)
         assert op["mutation_class"] == "workspace_write" and op["lock"] == "evidence"
     design = next(row for row in rows if row["key"] == "figure_design")
@@ -36,7 +36,7 @@ def test_catalogue_exposes_read_only_operations_and_one_docx_locked_apply() -> N
     assert author["mutating"] is True and author["mutation_class"] == "workspace_write" and author["lock"] == "section"
     assert {"legacy", "fresh", "check_answers", "writer", "no_writer"} <= set(author["options"])
     assert all(row["mutating"] is False and row["lock"] == "none" for row in rows if row["key"] not in ("apply", "review", "cleanup", "build", "author",
-                                                                                  "ingest", "stale", "answer", "refresh_draft", "freeze",
+                                                                                  "ingest", "model_build", "stale", "answer", "refresh_draft", "freeze",
                                                                                   "figure_wording", "figure_place", "figure_design", "intake", "gap_check", "resolve_gaps"))
 
 

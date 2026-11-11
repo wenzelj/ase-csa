@@ -29,7 +29,8 @@
       "requirements": [],
       "source": {
         "settings": [
-          "gpo.not_applied"
+          "gpo.not_applied",
+          "gpo.not_applied_reason"
         ]
       },
       "search": [

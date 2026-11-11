@@ -288,6 +288,7 @@ def gpo_settings(caps: dict[str, dict[str, dict]]) -> list[dict]:
         lines = cap["text"].splitlines()
         applied: list[tuple[int, str]] = []
         skipped: list[tuple[int, str]] = []
+        reasons: dict[str, str] = {}              # skipped name -> why (the capture's own "Filtering:" line, or the XML flags)
         if cap["fname"].lower().endswith(".xml"):
             # the discovery index keeps the XML as one "Element value" line per element, a GPO opening at a "GPO" line
             start = next((i for i, l in enumerate(lines) if l.strip() == "ComputerResults"), 0)
@@ -309,6 +310,9 @@ def gpo_settings(caps: dict[str, dict[str, dict]]) -> list[dict]:
                     ok = seen.get("IsValid", "").lower() == "true" and seen.get("FilterAllowed", "").lower() == "true" \
                         and seen.get("AccessDenied", "").lower() == "false"
                     (applied if ok else skipped).append((at, name))
+                    if not ok:
+                        reasons[name] = ("Denied (Security)" if seen.get("AccessDenied", "").lower() == "true"
+                                         else "Filter not allowed" if seen.get("FilterAllowed", "").lower() != "true" else "Not valid")
         else:
             at = next((i for i, l in enumerate(lines) if re.search(r"Applied Group Policy Objects", l)), None)
             if at is not None:
@@ -316,12 +320,29 @@ def gpo_settings(caps: dict[str, dict[str, dict]]) -> list[dict]:
                     if not lines[i].strip():
                         break
                     applied.append((i, lines[i].strip()))
+                # the same text lists, right after the computer's applied objects, the ones filtered out (access denied, empty,
+                # ...): a name indented under the heading, each followed by a "Filtering:" reason line
+                j = next((i for i in range(at, len(lines)) if "not applied because they were filtered out" in lines[i]), None)
+                if j is not None:
+                    for i in range(j + 1, len(lines)):
+                        raw, s = lines[i], lines[i].strip()
+                        if s.startswith("Filtering:") and skipped:
+                            reasons.setdefault(skipped[-1][1], s.split(":", 1)[1].strip())
+                            continue
+                        if not s or re.fullmatch(r"-+", s):
+                            continue
+                        if len(raw) - len(raw.lstrip()) < 8:
+                            break
+                        skipped.append((i, s))
         if at_missing(cap):
             continue
         names = list(dict.fromkeys(n for _, n in applied))
         out.append(_row(h, "gpo.applied", ", ".join(names) or "None found", cap, [i for i, _ in applied] if names else [], lines, "group_policy"))
         snames = list(dict.fromkeys(n for _, n in skipped))
         out.append(_row(h, "gpo.not_applied", ", ".join(snames) or "None found", cap, [i for i, _ in skipped] if snames else [], lines, "group_policy"))
+        why = [f"{n}: {reasons[n]}" for n in sorted(snames) if reasons.get(n)]
+        if why:
+            out.append(_row(h, "gpo.not_applied_reason", "; ".join(why), cap, [i for i, _ in skipped], lines, "group_policy"))
     return out
 
 

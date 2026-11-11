@@ -116,7 +116,7 @@ def classify_log(text: str) -> list[dict[str, Any]]:
     return ordered[:MAX_GROUPS]
 
 
-RUN_OPERATIONS = {"ingest": "ingest", "intake": "documents", "gap_check": "gaps", "resolve_gaps": "settle"}
+RUN_OPERATIONS = {"ingest": "ingest", "model_build": "ingest", "intake": "documents", "gap_check": "gaps", "resolve_gaps": "settle"}
 MAX_LOG_BYTES = 8 * 1024 * 1024
 _FAILED_STATES = {"failed", "interrupted"}  # a run the user cancelled is not an error
 _cache: dict[str, tuple[tuple, tuple[list[dict[str, Any]], bool]]] = {}
@@ -179,7 +179,7 @@ def _seconds(started: str | None, finished: str | None) -> float | None:
 
 
 def intake_runs(project: dict[str, str], limit: int = 10) -> list[dict[str, Any]]:
-    """Recent runs of the four intake steps, newest first, each with the problems found in its logs."""
+    """Recent Evidence Intake jobs, newest first, with the problems found in their logs."""
     root = Path(project["work_dir"]).expanduser() / "ui-jobs"
     if not root.is_dir() or limit <= 0:
         return []

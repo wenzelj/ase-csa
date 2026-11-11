@@ -4130,7 +4130,7 @@ def cmd_ingest(a):
     print(f"{C['b']}5/6 system model{C['0']}")
     if subprocess.call([framework_python(), "-m", "csa_docx.modelstore", "build", "--work-dir", str(work),
                         "--project", str(p.get("key") or "")], cwd=str(FRAMEWORK), env=_fw_env(p), stdout=subprocess.DEVNULL) != 0:
-        print(f"{C['y']}system model not rebuilt (csa model build shows why){C['0']}")
+        die("system model not rebuilt; run `csa model build` to see why")
     print(f"{C['b']}6/6 stale subsections{C['0']}")
     pending = intake_pending(p)
     if pending:

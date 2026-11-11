@@ -5,7 +5,7 @@ export type StepKey = "ingest" | "documents" | "gaps" | "settle" | "use";
 export type IntakeStep = { key: StepKey; title: string; status: "done" | "current" | "waiting" | "blocked" | "failed"; detail: string };
 
 const TERMINAL = ["succeeded", "failed", "cancelled", "interrupted"];
-const STEP_FOR_JOB: Record<string, StepKey> = { ingest: "ingest", intake: "documents", gap_check: "gaps", resolve_gaps: "settle" };
+const STEP_FOR_JOB: Record<string, StepKey> = { ingest: "ingest", model_build: "ingest", intake: "documents", gap_check: "gaps", resolve_gaps: "settle" };
 const TITLES: Record<StepKey, string> = {
   ingest: "Bring in new data", documents: "Turn new documents into evidence", gaps: "Check open questions",
   settle: "Settle what was found", use: "Use it in the document",

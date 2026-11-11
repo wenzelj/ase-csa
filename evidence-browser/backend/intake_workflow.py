@@ -17,6 +17,7 @@ FRAMEWORK = Path(__file__).resolve().parents[2] / "framework"
 if str(FRAMEWORK) not in sys.path:
     sys.path.insert(0, str(FRAMEWORK))
 from csa_docx import leads as lead_store
+from csa_docx import modelstore
 
 _CANDIDATE = re.compile(r"^Possible answer to (DR-[A-Za-z0-9_.-]+):")
 _EID = re.compile(r"^E-(\d+)$")
@@ -223,6 +224,7 @@ def snapshot(project: dict[str, str]) -> dict[str, Any]:
     recheck = [x for x in refresh.get("recheck", []) if str(x.get("evidence_id", "")).upper() not in rejected]
     unnamed = _count_rows(work / "hosts" / "addresses.csv")
     return {"project_key": project.get("key"), "index": index, "intake": record, "nothing_new_since": nothing_new_since,
+            "model": modelstore.freshness(work),
             "sync": _sync_health(work), "refresh": {"at": refresh.get("at", ""), "retired": refresh.get("rejected", []),
                                                    "recheck": recheck},
             "hosts": {"to_classify": _hosts_to_classify(work, rejected), "unnamed_addresses": unnamed},

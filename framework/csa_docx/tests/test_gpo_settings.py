@@ -37,7 +37,8 @@ def _caps(fname, text):
 
 def test_xml_gpresult_gives_applied_and_not_applied():
     rows = {r["attribute"]: r["value"] for r in H.gpo_settings(_caps("64_gpresult.xml", XML))}
-    assert rows == {"gpo.applied": "2019 Prod - Baseline GPO", "gpo.not_applied": "Filtered Out GPO"}
+    assert rows == {"gpo.applied": "2019 Prod - Baseline GPO", "gpo.not_applied": "Filtered Out GPO",
+                    "gpo.not_applied_reason": "Filtered Out GPO: Filter not allowed"}
 
 
 def test_verbose_gpresult_lists_applied_objects():

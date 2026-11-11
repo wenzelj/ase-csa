@@ -6,7 +6,7 @@ import { IntakeErrors as IntakeErrorsPanel } from "./IntakeErrors";
 import { deriveIntakeSteps, gapFindings, resumableJob, type StepKey } from "./intakeSteps";
 
 const TERMINAL = ["succeeded", "failed", "cancelled", "interrupted"];
-const OP_LABEL: Record<string, string> = { ingest: "Ingest new data", intake: "Evidence agent", gap_check: "Check open questions", resolve_gaps: "Resolve evidence and update answers" };
+const OP_LABEL: Record<string, string> = { ingest: "Ingest new data", model_build: "Rebuild system model", intake: "Evidence agent", gap_check: "Check open questions", resolve_gaps: "Resolve evidence and update answers" };
 const VERDICT: Record<string, string> = { ANSWERED: "Answered", CANDIDATES: "Possible answer found", NOT_FOUND: "Not found" };
 
 export const ERROR_REFRESH_MS = 10000;
@@ -105,6 +105,8 @@ export function EvidenceIntake({ system, draftStage, refreshKey, openEvidence, w
     </li>)}</ol>
 
     <IntakeErrorsPanel runs={errors?.runs || []} warnings={errors?.warnings || []} />
+
+    {snap.model.status !== "current" && <div className="intake-warn" role="alert"><b>{snap.model.status === "missing" ? "The system model has not been built" : snap.model.status === "unreadable" ? "The system model cannot be read" : "The system model is out of date"}</b><p>{snap.model.status === "out_of_date" ? `Changed source files: ${snap.model.changed_sources.join(", ")}. ` : ""}The database may not reflect the current host and evidence files.{snap.sync && !snap.sync.ok ? " Run Ingest new data first to update the host files." : ""}</p><button onClick={() => void run("model_build")} disabled={busy || !!snap.sync && !snap.sync.ok}>Rebuild model</button></div>}
 
     <div className="draft-counts">
       <div className="draft-count"><strong>{snap.matrix.evidence_rows}</strong><span>Evidence rows</span></div>
