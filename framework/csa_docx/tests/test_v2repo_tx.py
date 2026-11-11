@@ -107,9 +107,16 @@ def test_backup_and_export_stubs_exist(tmp_path):
 
 
 def test_backup_stub_raises_not_implemented(tmp_path):
+    # backup() is still a stub (added in S587's later work); export.csv is implemented (S587).
     r = Repo(tmp_path / DB_NAME)
     with pytest.raises(NotImplementedError):
         r.backup()
-    with pytest.raises(NotImplementedError):
-        r.export.csv("hosts", tmp_path / "hosts.csv")
+    r.close()
+
+
+def test_export_csv_is_implemented(tmp_path):
+    r = Repo(tmp_path / DB_NAME)
+    out = tmp_path / "hosts.csv"
+    r.export.csv("hosts", out)
+    assert out.exists() and out.read_text(encoding="utf-8").strip(), "hosts.csv has no header"
     r.close()

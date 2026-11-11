@@ -163,6 +163,16 @@ class Graph:
             out.append((f"host/{ep}", ep, ""))
         return out
 
+    def _provider_nodes(self, con, host_names: set[str]) -> list[tuple[str, str, str]]:
+        """One node per DNS/time provider recorded on a service row, that is not already a host node."""
+        out = []
+        for (prov,) in con.execute("SELECT DISTINCT provider_host FROM service "
+                                   "WHERE provider_host IS NOT NULL AND provider_host != '' ORDER BY provider_host"):
+            if prov in host_names:
+                continue
+            out.append((f"host/{prov}", prov, ""))
+        return out
+
     def _build_nodes(self, con):
         hosts = self._host_nodes(con)
         host_names = {h[0].split("/", 1)[1] for h in hosts}
@@ -170,6 +180,8 @@ class Graph:
         for (sname,) in con.execute(
                 "SELECT DISTINCT name FROM service WHERE name IS NOT NULL AND name != '' ORDER BY name"):
             rows.append((f"service/{sname}", sname, "service", ""))
+        for node_id, label, evid in self._provider_nodes(con, host_names):
+            rows.append((node_id, label, "provider", evid))
         for node_id, label, evid in self._flow_endpoint_nodes(con, host_names):
             rows.append((node_id, label, "endpoint", evid))
         return rows
@@ -198,6 +210,15 @@ class Graph:
                 "SELECT DISTINCT host, name FROM service WHERE name IS NOT NULL AND name != '' "
                 "ORDER BY host, name"):
             _add(f"host/{host}", f"service/{name}", "runs")
+
+        # DNS/time provider: client -> provider, kind = the service name (dns / time)
+        for client, provider, svc in con.execute(
+                "SELECT DISTINCT host, provider_host, name FROM service "
+                "WHERE provider_host IS NOT NULL AND provider_host != '' AND name IS NOT NULL "
+                "ORDER BY host, provider_host, name"):
+            if client == provider:
+                continue
+            _add(f"host/{client}", f"host/{provider}", svc or "service")
 
         # evidence link rows: reuse graph_sync.py's grammar (IN / OUT patterns)
         host_names = {h[0].split("/", 1)[1] for h in self._host_nodes(con)}
@@ -237,6 +258,21 @@ class Graph:
                     rows.append((kind, norm, path))
         return rows
 
+    @staticmethod
+    def _dedup(rows, key):
+        """Keep the first row per ``key(row)`` — the derived tables' primary keys
+        forbid re-inserting the same key (S586 migration surfaces duplicate
+        extractions per file)."""
+        seen = set()
+        out = []
+        for row in rows:
+            k = key(row)
+            if k in seen:
+                continue
+            seen.add(k)
+            out.append(row)
+        return out
+
     def refresh(self, actor=None):
         """Drop and rebuild `graph_node`, `graph_edge`, `alias` and `entity` from the core
         tables, then append one `review_event` row. Call inside `with r.tx():`."""
@@ -245,10 +281,10 @@ class Graph:
         con = r.raw_con
         self._guard._active = True
         try:
-            nodes = self._build_nodes(con)
-            edges = self._build_edges(con)
-            alias = self._build_alias(con)
-            entity = self._build_entity(con)
+            nodes = self._dedup(self._build_nodes(con), key=lambda r: r[0])
+            edges = self._dedup(self._build_edges(con), key=lambda r: r[0])
+            alias = self._dedup(self._build_alias(con), key=lambda r: tuple(r))
+            entity = self._dedup(self._build_entity(con), key=lambda r: tuple(r[:3]))
             con.execute("DELETE FROM graph_node")
             con.executemany("INSERT INTO graph_node (node_id, label, kind, evidence_ids) VALUES (?, ?, ?, ?)", nodes)
             con.execute("DELETE FROM graph_edge")

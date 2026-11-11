@@ -24,12 +24,14 @@ CREATE TABLE IF NOT EXISTS address (
 CREATE TABLE IF NOT EXISTS service (
   id INTEGER PRIMARY KEY,
   host TEXT NOT NULL REFERENCES host(name),
+  provider_host TEXT,
   port INTEGER,
   protocol TEXT,
   name TEXT,
   configured INTEGER DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS service_host ON service(host);
+CREATE INDEX IF NOT EXISTS service_provider ON service(provider_host);
 
 CREATE TABLE IF NOT EXISTS flow (
   id INTEGER PRIMARY KEY,
