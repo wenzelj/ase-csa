@@ -1,8 +1,68 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sqlite3
 
-from backend import network
+from backend import explorer, network
+
+
+def test_v2_explorer_uses_store_and_ignores_stale_v1_files(tmp_path: Path) -> None:
+    work = tmp_path / "csa-work-v2"
+    work.mkdir()
+    schema = Path(__file__).resolve().parents[2] / "framework" / "csa_docx" / "v2repo" / "schema.sql"
+    with sqlite3.connect(work / "csa.sqlite") as con:
+        con.executescript(schema.read_text())
+        con.execute("INSERT INTO host (name,role,site) VALUES ('APP1','Application server','')")
+        con.execute("INSERT INTO host (name,role,site) VALUES ('DB1','Database server','')")
+        con.execute("INSERT INTO address (ip,owner_host) VALUES ('10.0.0.1','APP1')")
+        con.execute("INSERT INTO flow (src_host,dst_host,port) VALUES ('APP1','DB1',1433)")
+        con.execute("INSERT INTO evidence (id,claim) VALUES ('E-1','Recorded flow')")
+        con.execute("INSERT INTO graph_edge (edge_id,src,dst,kind,evidence_ids) "
+                    "VALUES ('flow/1','host/APP1','host/DB1','flow','E-1')")
+    (work / "hosts").mkdir()
+    (work / "hosts" / "hosts.csv").write_text("host,role\nSTALE,Old host\n")
+    (work / "evidence-matrix.csv").write_text("evidence_id,claim\nE-OLD,Old claim\n")
+    agents = Path(__file__).resolve().parents[2]
+    project = {"work_dir": str(work), "label": "Test", "key": "test"}
+    net = network.build(work, agents)
+    assert {node["id"] for node in net["nodes"]} == {"APP1", "DB1"}
+    assert net["nodes"][0]["ips"] == "10.0.0.1"
+    assert [(edge["s"], edge["t"], edge["port"]) for edge in net["edges"]] == [("APP1", "DB1", "1433")]
+    view = explorer.build(project, agents, None)
+    assert {host["id"] for host in view["hosts"]} == {"APP1", "DB1"}
+    assert view["evidence"]["E-1"]["claim"] == "Recorded flow"
+    assert next(host for host in view["hosts"] if host["id"] == "APP1")["evidence_ids"] == ["E-1"]
+    assert "csa.sqlite" in view["sources"]["evidence"]
+    assert explorer.diagrams(project, agents)["diagrams"]
+
+
+def test_v2_explorer_without_hosts_has_no_diagram(tmp_path: Path) -> None:
+    work = tmp_path / "csa-work-v2"
+    work.mkdir()
+    schema = Path(__file__).resolve().parents[2] / "framework" / "csa_docx" / "v2repo" / "schema.sql"
+    with sqlite3.connect(work / "csa.sqlite") as con:
+        con.executescript(schema.read_text())
+    project = {"work_dir": str(work), "label": "Test", "key": "test"}
+    agents = Path(__file__).resolve().parents[2]
+    assert explorer.build(project, agents, None)["hosts"] == []
+    assert explorer.diagrams(project, agents) == {"application": "Test", "diagrams": []}
+
+
+def test_v2_explorer_draws_verified_connection_evidence_without_host_rows(tmp_path: Path) -> None:
+    work = tmp_path / "csa-work-v2"
+    work.mkdir()
+    schema = Path(__file__).resolve().parents[2] / "framework" / "csa_docx" / "v2repo" / "schema.sql"
+    with sqlite3.connect(work / "csa.sqlite") as con:
+        con.executescript(schema.read_text())
+        con.execute("INSERT INTO evidence (id,area,status,claim,review_state) VALUES (?,?,?,?,?)", (
+            "E-1", "network_and_connectivity", "VERIFIED",
+            "APP1 has an established connection to DB1 on port 1433, served by SQL on DB1.", "accepted"))
+    project = {"work_dir": str(work), "label": "Test", "key": "test"}
+    agents = Path(__file__).resolve().parents[2]
+    net = network.build(work, agents)
+    assert {node["id"] for node in net["nodes"]} == {"APP1", "DB1"}
+    assert net["edges"][0]["ids"] == ["E-1"]
+    assert explorer.diagrams(project, agents)["diagrams"]
 
 
 def test_uncaptured_inventory_host_keeps_recorded_role(tmp_path: Path) -> None:

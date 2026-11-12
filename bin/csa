@@ -1672,6 +1672,13 @@ def _after_agent(p: dict, verb: str, args: list[str], started: float, a) -> int:
 # ---------------------------------------------------------------- commands: script pass-through
 def cmd_ev(a):
     p = project(a.project); banner(p)
+    if local_path(p["work_dir"]).name == "csa-work-v2":
+        sys.path.insert(0, str(FRAMEWORK))
+        from csa_docx import v2_access
+        result = v2_access.matrix_command(v2_access.active_db(local_path(p["project_root"])), a.rest,
+                                          local_path(p["project_root"]))
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        return 0 if result.get("status") == "OK" else 2
     return run_script("ev", ["--workspace", _ws(p), *a.rest])
 
 
@@ -1682,6 +1689,29 @@ def cmd_appendix(a):
 
 def cmd_index(a):
     p = project(a.project); banner(p)
+    if local_path(p["work_dir"]).name == "csa-work-v2":
+        sys.path.insert(0, str(FRAMEWORK))
+        from csa_docx import v2_access
+        db = v2_access.active_db(local_path(p["project_root"]))
+        rest = a.rest
+        if rest == ["status"]:
+            result = v2_access.index_status(db)
+        elif rest and rest[0] == "search" and len(rest) >= 2:
+            parser = argparse.ArgumentParser(prog="csa index search")
+            parser.add_argument("terms")
+            parser.add_argument("--limit", type=int, default=50)
+            parser.add_argument("--per-file", type=int, default=1)
+            parser.add_argument("--path-like", default="")
+            parser.add_argument("--host", default="")
+            parser.add_argument("--any", action="store_true")
+            opts = parser.parse_args(rest[1:])
+            result = v2_access.index_search(db, opts.terms, limit=opts.limit, per_file=opts.per_file,
+                                             path_like=opts.path_like, host=opts.host, any_terms=opts.any)
+        else:
+            result = {"status": "ERROR", "code": "V2_COMMAND_UNAVAILABLE",
+                      "message": "this index command has no v2 implementation; old csa-work was not used"}
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        return 0 if result.get("status") == "OK" else 2
     return run_script("index", ["--project", p["key"], *a.rest])
 
 
@@ -3941,6 +3971,8 @@ def stale_sections(p: dict) -> list[dict]:
 
 def cmd_stale(a):
     p = project(a.project); banner(p)
+    if local_path(p["work_dir"]).name == "csa-work-v2":
+        die("csa stale has no v2 repository path yet; old csa-work was not used")
     rows = stale_sections(p)
     stale = [r for r in rows if r["status"] != "REUSE"]
     out = local_path(p["work_dir"]) / "draft" / "stale.json"
@@ -3960,6 +3992,8 @@ def cmd_gap_check(a):
     """Check every open question (draft/open-questions.md) against the evidence matrix and the discovery index.
     What the index finds is stored as append-only leads to settle (no model)."""
     p = project(a.project); banner(p)
+    if local_path(p["work_dir"]).name == "csa-work-v2":
+        die("csa gap-check needs a v2 lead writer before it can run; old csa-work was not used")
     docx = working_docx(p)
     if not docx:
         die("no working DOCX")
@@ -4067,6 +4101,8 @@ def no_answer_block_message(questions: list[dict]) -> str:
 def cmd_resolve_gaps(a):
     """Search open questions, have the evidence agent settle source hits, then answer affected subsections again."""
     p = project(a.project); banner(p)
+    if local_path(p["work_dir"]).name == "csa-work-v2":
+        die("csa resolve-gaps needs v2 lead and evidence writes before it can run; old csa-work was not used")
     if getattr(a, "latest", False):
         print(f"{C['b']}Using the gap check already displayed in Evidence Intake.{C['0']}", flush=True)
         first = _latest_gap_check(p, a.section)

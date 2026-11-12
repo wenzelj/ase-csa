@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import csv
 import ipaddress
+import sqlite3
 import sys
 from pathlib import Path
 from typing import Any
@@ -42,6 +43,8 @@ def device_identities(work_dir: Path, agents: Path) -> dict[str, dict[str, str]]
 
 
 def build(work_dir: Path, agents: Path) -> dict[str, Any]:
+    if work_dir.name == "csa-work-v2":
+        return _build_v2(work_dir, agents)
     _framework(agents)
     from csa_docx import evidence_digest, section_card
     identities = device_identities(work_dir, agents)
@@ -103,3 +106,75 @@ def build(work_dir: Path, agents: Path) -> dict[str, Any]:
     return {"nodes": list(nodes.values()), "edges": out_edges,
             "source": "evidence-matrix.csv connection rows and hosts/hosts.csv",
             "matrix_rows": len(rows)}
+
+
+def _build_v2(work_dir: Path, agents: Path) -> dict[str, Any]:
+    """Read the active V2 host and flow records, never leftover V1 exports."""
+    db = work_dir / "csa.sqlite"
+    with sqlite3.connect(f"file:{db}?mode=ro", uri=True) as con:
+        con.row_factory = sqlite3.Row
+        hosts = [dict(row) for row in con.execute(
+            "SELECT name,role,site FROM host WHERE status='active' ORDER BY name")]
+        addresses = [dict(row) for row in con.execute(
+            "SELECT ip,owner_host FROM address ORDER BY ip")]
+        flows = [dict(row) for row in con.execute(
+            "SELECT src_host,dst_host,port,protocol,purpose FROM flow ORDER BY id")]
+        graph_edges = [dict(row) for row in con.execute(
+            "SELECT src,dst,evidence_ids FROM graph_edge WHERE kind='flow' ORDER BY edge_id")]
+        evidence = [dict(row) for row in con.execute(
+            "SELECT id AS evidence_id,area AS csa_area,status,claim,review_state FROM evidence ORDER BY id")]
+    ips: dict[str, list[str]] = {}
+    for row in addresses:
+        if row["owner_host"]:
+            ips.setdefault(row["owner_host"], []).append(row["ip"])
+    nodes = {row["name"]: {"id": row["name"], "kind": "captured", "role": row["role"] or "",
+                           "site": row["site"] or "", "ips": ";".join(ips.get(row["name"], [])), "listed": True}
+             for row in hosts}
+    edges = []
+    _framework(agents)
+    from csa_docx import evidence_digest
+    register = {row["name"]: {"ips": ";".join(ips.get(row["name"], [])), "in_scope": "yes"}
+                for row in hosts}
+    for link in evidence_digest.links(evidence, register):
+        for endpoint in (link["host"], link["peer"]):
+            if endpoint not in nodes:
+                try:
+                    kind = "public" if not ipaddress.ip_address(endpoint.split("%")[0]).is_private else "unnamed"
+                except ValueError:
+                    kind = "named"
+                nodes[endpoint] = {"id": endpoint, "kind": kind, "role": "", "site": "",
+                                   "ips": endpoint if kind in ("public", "unnamed") else "", "listed": False}
+        source, target = ((link["peer"], link["host"]) if link["dir"] == "inbound"
+                          else (link["host"], link["peer"]))
+        edge = next((item for item in edges if (item["s"], item["t"], item["port"]) ==
+                     (source, target, str(link["port"]))), None)
+        if edge is None:
+            edge = {"s": source, "t": target, "port": str(link["port"]), "procs": [], "ids": [], "est": False}
+            edges.append(edge)
+        if link["proc"] and link["proc"] not in edge["procs"]:
+            edge["procs"].append(link["proc"])
+        edge["ids"].append(link["id"])
+        edge["est"] = edge["est"] or link["state"].startswith("established")
+    for row in flows:
+        for endpoint in (row["src_host"], row["dst_host"]):
+            if endpoint not in nodes:
+                nodes[endpoint] = {"id": endpoint, "kind": "named", "role": "", "site": "",
+                                   "ips": endpoint, "listed": False}
+        if not any(edge["s"] == row["src_host"] and edge["t"] == row["dst_host"]
+                   and edge["port"] == str(row["port"] or "") for edge in edges):
+            edges.append({"s": row["src_host"], "t": row["dst_host"], "port": str(row["port"] or ""),
+                          "procs": [], "ids": [], "est": False})
+    for row in graph_edges:
+        source = row["src"].removeprefix("host/")
+        target = row["dst"].removeprefix("host/")
+        if source not in nodes or target not in nodes:
+            continue
+        ids = [value for value in (row["evidence_ids"] or "").split(";") if value]
+        matched = [edge for edge in edges if edge["s"] == source and edge["t"] == target]
+        if matched:
+            for edge in matched:
+                edge["ids"] = sorted(set(edge["ids"] + ids))
+        elif ids:
+            edges.append({"s": source, "t": target, "port": "", "procs": [], "ids": ids, "est": False})
+    return {"nodes": list(nodes.values()), "edges": edges,
+            "source": "csa.sqlite host, address, flow, evidence and graph_edge", "matrix_rows": len(evidence)}

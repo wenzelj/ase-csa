@@ -14,6 +14,7 @@ from __future__ import annotations
 import csv
 import json
 import re
+import sqlite3
 import zipfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -159,20 +160,38 @@ def connected_devices(work: Path, net: dict[str, Any]) -> list[dict[str, Any]]:
 def build(project: dict[str, str], agents: Path, document: Path | None) -> dict[str, Any]:
     work = Path(project["work_dir"]).expanduser()
     net = network.build(work, agents)
-    register = {r["host"]: r for r in _csv(work / "hosts" / "hosts.csv")}
-    matrix = {r["evidence_id"]: r for r in _csv(work / "evidence-matrix.csv")}
+    v2 = work.name == "csa-work-v2"
+    if v2:
+        with sqlite3.connect(f"file:{work / 'csa.sqlite'}?mode=ro", uri=True) as con:
+            con.row_factory = sqlite3.Row
+            matrix = {row["id"]: {"evidence_id": row["id"], "csa_area": row["area"],
+                                  "status": row["status"], "claim": row["claim"],
+                                  "source_title": row["source_title"], "page_or_location": row["page_or_location"],
+                                  "evidence_excerpt": row["excerpt"], "confidence": row["confidence"],
+                                  "gap_or_action": row["gap_or_action"], "review_state": row["review_state"]}
+                      for row in con.execute("SELECT * FROM evidence")}
+        register = {node["id"]: {"host": node["id"], "role": node["role"], "site": node["site"],
+                                  "ips": node["ips"], "in_scope": "yes"}
+                    for node in net["nodes"] if node.get("listed")}
+    else:
+        register = {r["host"]: r for r in _csv(work / "hosts" / "hosts.csv")}
+        matrix = {r["evidence_id"]: r for r in _csv(work / "evidence-matrix.csv")}
 
     facts: dict[str, list[dict]] = {}
-    for r in _csv(work / "hosts" / "host_facts.csv"):
+    for r in ([] if v2 else _csv(work / "hosts" / "host_facts.csv")):
         facts.setdefault(r["host"], []).append({"attribute": r.get("attribute", ""), "value": r.get("value", ""),
                                                 "source": r.get("source", ""), "line": r.get("line", "")})
     ev_by_host: dict[str, list[str]] = {}
-    for r in _csv(work / "hosts" / "evidence_hosts.csv"):
+    for r in ([] if v2 else _csv(work / "hosts" / "evidence_hosts.csv")):
         if (r.get("review_state") or "").lower() == "rejected":      # rejected rows are not a host's evidence
             continue
         for h in (r.get("hosts") or "").split(";"):
             if h.strip():
                 ev_by_host.setdefault(h.strip(), []).append(r["evidence_id"])
+    if v2:
+        for edge in net["edges"]:
+            for host in (edge["s"], edge["t"]):
+                ev_by_host.setdefault(host, []).extend(edge["ids"])
 
     blocks: list[dict] = []
     doc_state = {"state": "missing", "name": ""}
@@ -223,13 +242,14 @@ def build(project: dict[str, str], agents: Path, document: Path | None) -> dict[
         cited.update(h["evidence_ids"])
     evidence = {i: _evidence_view(matrix[i]) for i in sorted(cited) if i in matrix}
 
-    devices = connected_devices(work, net)
+    devices = [] if v2 else connected_devices(work, net)
     return {"application": spec.get("application") or project.get("label", ""), "hosts": hosts, "edges": net["edges"],
             "devices": devices,
             "components": spec.get("components", []), "dependencies": spec.get("dependencies", []),
             "journeys": spec.get("journeys", []), "issues": issues, "evidence": evidence, "document": doc_state,
             "sources": {"links": net["source"], "journeys": str(spec_path.name) if spec else "",
-                        "facts": "hosts/host_facts.csv", "evidence": "evidence-matrix.csv, hosts/evidence_hosts.csv"}}
+                        "facts": "csa.sqlite host" if v2 else "hosts/host_facts.csv",
+                        "evidence": "csa.sqlite evidence" if v2 else "evidence-matrix.csv, hosts/evidence_hosts.csv"}}
 
 
 def diagrams(project: dict[str, str], agents: Path) -> dict[str, Any]:
@@ -237,6 +257,8 @@ def diagrams(project: dict[str, str], agents: Path) -> dict[str, Any]:
     models, from csa_docx.techdiagram: the same drawings `csa system-diagram` writes for the CSA figures."""
     work = Path(project["work_dir"]).expanduser()
     net = network.build(work, agents)                     # also puts the framework on sys.path
+    if not net["nodes"]:
+        return {"application": project.get("label", ""), "diagrams": []}
     from csa_docx.techdiagram import diagrams as build_diagrams
     spec_path = work / "explorer" / "journeys.json"
     try:

@@ -233,6 +233,7 @@ export default function SystemExplorer({ system, openEvidenceId }: { system: str
   };
 
   if (error) return <section className="sx"><div className="sx-msg">The system explorer could not load: {error}</div></section>;
+  if (data && dg && !dg.diagrams.length) return <section className="sx"><div className="sx-msg">No hosts or connections are recorded for this system yet. The diagram will appear when host data is available.</div></section>;
   if (!data || !dg || !cur || !model) return <section className="sx"><div className="loading"><span /><strong>Drawing the system…</strong></div></section>;
 
   const activeSvg = layout === "portrait" ? (cur.print_svg || cur.svg) : cur.svg;

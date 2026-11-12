@@ -390,6 +390,10 @@ def _matrix_rows(workspace: Path) -> list[dict]:
 
 
 def _rejected(workspace: Path) -> set[str]:
+    from csa_docx import v2_access
+    if v2_access.active_db() is not None:
+        from csa_docx import evidence_live
+        return evidence_live.rejected(Path(workspace) / "csa-work" / "evidence-matrix.csv")
     path = Path(workspace) / "csa-work" / "evidence-reviews.jsonl"
     latest: dict[str, str] = {}
     if path.is_file():
@@ -430,9 +434,14 @@ def _index_hits(workspace: Path, term: str, exclude: tuple[str, ...], cache: dic
     """Discovery index hits for one frame search term (cached per card): the term is chosen for its topic, so no
     word-overlap filter is applied. Each hit is a candidate only, never evidence."""
     if term not in cache:
-        script = _skills() / "csa-discovery-index" / "scripts" / "discovery_index.py"
-        res = _run([sys.executable, str(script), "--workspace", str(workspace), "search", term,
-                    "--limit", str(FRAME_HITS_PER_TERM), "--per-file", "1"])
+        from csa_docx import v2_access
+        db = v2_access.active_db()
+        if db is not None:
+            res = v2_access.index_search(db, term, limit=FRAME_HITS_PER_TERM)
+        else:
+            script = _skills() / "csa-discovery-index" / "scripts" / "discovery_index.py"
+            res = _run([sys.executable, str(script), "--workspace", str(workspace), "search", term,
+                        "--limit", str(FRAME_HITS_PER_TERM), "--per-file", "1"])
         hits = (res or {}).get("results", []) if (res or {}).get("status") == "OK" else []
         cache[term] = [h for h in hits if not any(e and e in h.get("rel_path", "") for e in exclude)]
     return cache[term]

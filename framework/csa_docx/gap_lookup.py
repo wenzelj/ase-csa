@@ -134,6 +134,9 @@ def resolved_answer_ids(workspace: Path, dr_id: str, text: str) -> list[str]:
 
 def resolve_gap(workspace: Path, dr_id: str, text: str, evidence_ids: list[str], *, by: str) -> dict:
     """Record the semantic decision that VERIFIED rows collectively answer every part of one exact question."""
+    from csa_docx import v2_access
+    if v2_access.active_db() is not None:
+        raise RuntimeError("v2 gap resolution is unavailable; old csa-work was not used")
     workspace = Path(workspace)
     ids = list(dict.fromkeys(str(i).upper() for i in evidence_ids if str(i).strip()))
     if not ids:
@@ -394,7 +397,10 @@ def queries(text: str, kind: str = "system", vocab: list[str] | None = None, *, 
 
 
 def _matrix_stage(workspace: Path, dr_id: str, text: str) -> tuple[str, list[str], list[str]]:
-    res = _run([sys.executable, str(MATRIX_SCRIPT), "--workspace", str(workspace), "lookup", text, "--limit", "40"])
+    from csa_docx import v2_access
+    db = v2_access.active_db()
+    res = (v2_access.matrix_command(db, ["lookup", text, "--limit", "40"], workspace) if db is not None
+           else _run([sys.executable, str(MATRIX_SCRIPT), "--workspace", str(workspace), "lookup", text, "--limit", "40"]))
     if not res or res.get("status") != "OK":
         return "NO_MATRIX", [], []
     matrix_truncated = len(res.get("matches", [])) >= 40
@@ -423,7 +429,8 @@ def host_related(workspace: Path, text: str, area: str = "", skip: set[str] | No
     host gets none, and word matching (`_matrix_stage`, `matrix_candidates`) decides alone."""
     hosts = [h.lower() for h in hosts_in(text)]
     path = Path(workspace) / "csa-work" / "evidence-matrix.csv"
-    if not hosts or not path.is_file():
+    from csa_docx import v2_access
+    if not hosts or (not path.is_file() and v2_access.active_db() is None):
         return []
     from csa_docx import evidence_live, matrix_candidates
     qwords, skip = matrix_candidates.words(text), {s.upper() for s in (skip or set())}
@@ -475,6 +482,14 @@ def rank_hits(hits: list[dict], text: str, vocab: list[str] | None = None, limit
 def _indexed_rel_path(workspace: Path, source: str) -> str:
     """Resolve a host-setting capture citation to the exact discovery-index relative path."""
     suffix = re.sub(r"\s+line\s+\d+\s*$", "", source or "").replace("\\", "/")
+    from csa_docx import v2_access
+    v2db = v2_access.active_db()
+    if v2db is not None:
+        from contextlib import closing
+        with closing(v2_access.connection(v2db)) as con:
+            row = con.execute("SELECT rel_path FROM indexed_file WHERE rel_path LIKE ? ORDER BY length(rel_path) LIMIT 1",
+                              (f"%{suffix}",)).fetchone()
+            return row[0] if row else suffix
     db = Path(workspace) / "csa-work" / "discovery-index.sqlite"
     if not suffix or not db.is_file():
         return suffix
@@ -555,10 +570,15 @@ def _index_stage(workspace: Path, text: str, exclude: tuple[str, ...], kind: str
     for terms, path_like in query_list:
         ent = next((e for e in entities if terms == e or terms.startswith(e + " ")), None)
         limit = ENTITY_SEARCH_LIMIT if ent else SEARCH_LIMIT
-        cmd = [sys.executable, str(INDEX_SCRIPT), "--workspace", str(workspace), "search", terms, "--limit", str(limit), "--per-file", "1"]
-        if path_like:
-            cmd += ["--path-like", path_like]
-        res = _run(cmd)
+        from csa_docx import v2_access
+        db = v2_access.active_db()
+        if db is not None:
+            res = v2_access.index_search(db, terms, limit=limit, path_like=path_like)
+        else:
+            cmd = [sys.executable, str(INDEX_SCRIPT), "--workspace", str(workspace), "search", terms, "--limit", str(limit), "--per-file", "1"]
+            if path_like:
+                cmd += ["--path-like", path_like]
+            res = _run(cmd)
         if not res or res.get("status") != "OK":
             if ent is None:
                 notes.append(f"search failed: {terms}")
@@ -604,6 +624,9 @@ def _index_stage(workspace: Path, text: str, exclude: tuple[str, ...], kind: str
 
 def lookup_gap(workspace: Path, dr_id: str, text: str, *, exclude: tuple[str, ...] = ()) -> dict:
     """Search the matrix, then the index; index hits become leads, never evidence."""
+    from csa_docx import v2_access
+    if v2_access.active_db() is not None:
+        raise RuntimeError("v2 gap lead storage is unavailable; old csa-work was not used")
     workspace = Path(workspace)
     original_text = text
     kind, owners = classify_gap(original_text), owners_in(original_text)
@@ -615,7 +638,7 @@ def lookup_gap(workspace: Path, dr_id: str, text: str, *, exclude: tuple[str, ..
         csv_path = workspace / "csa-work" / "evidence-matrix.csv"
         checked = [r for r in evidence_live.read(csv_path, drop_rejected=True) if evidence_live.is_verified(r)]
         near = (matrix_candidates.candidates(checked, text, vocab, area, limit=6)
-                if csv_path.is_file() else [])
+                if csv_path.is_file() or v2_access.active_db() is not None else [])
         related = list(dict.fromkeys([*related, *[c["id"] for c in near if c["id"] not in answer_ids]]))[:_MAX_CANDIDATES]
     held = host_related(workspace, text, area, set(answer_ids))      # rows that name the question's host come first
     related = list(dict.fromkeys([*held, *related]))[:_MAX_CANDIDATES]
@@ -680,6 +703,9 @@ def confirm_gap(workspace: Path, dr_id: str, text: str, lead_ids: list[str], *, 
     This deliberately does not call :func:`lookup_gap`; the saved search scope and lead IDs are the
     auditable unit being confirmed.
     """
+    from csa_docx import v2_access
+    if v2_access.active_db() is not None:
+        raise RuntimeError("v2 gap confirmation is unavailable; old csa-work was not used")
     workspace = Path(workspace)
     from csa_docx import leads
     saved = {r["lead_id"]: r for r in leads._list(workspace, None, None)["leads"]}

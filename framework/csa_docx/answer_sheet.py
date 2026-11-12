@@ -154,7 +154,8 @@ def parse(text: str) -> dict[str, dict]:
 def load_matrix(path: Path | None) -> dict[str, dict]:
     """This project's rows (E-nnn), plus the rows of the projects it may cite as <PROJECT>:E-nnn (estate members
     and system siblings, csa_docx.estate.citable_projects). Keys are upper case."""
-    if not path or not Path(path).is_file():
+    from csa_docx import v2_access
+    if not path or (not Path(path).is_file() and v2_access.active_db() is None):
         return {}
     from csa_docx import evidence_live
     out = {r["evidence_id"].upper(): r for r in evidence_live.get_verified_evidence(Path(path))}

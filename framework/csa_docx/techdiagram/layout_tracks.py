@@ -163,7 +163,13 @@ def layout(model):
     if pageL:
         for z in zone_rect: zone_rect[z][0] += pageL; zone_rect[z][2] += pageL
         dc_inner = {z: (a + pageL, b + pageL) for z, (a, b) in dc_inner.items()}
-    PAGE_W = max(zone_rect[z][2] for z in dcs)
+    # An evidence store can have recorded hosts without any data-centre site yet.
+    # Keep the top band usable until a site is assigned.
+    PAGE_W = max((zone_rect[z][2] for z in dcs), default=max(
+        NODE_W + 48,
+        sum(max(NODE_W + 48,
+                len([n for n in model["nodes"] if n["zone"] == z]) * (NODE_W + CARD_GAP) + 48)
+            for z in L["top"]) + 30 * max(0, len(L["top"]) - 1)))
     mid_x = (zone_rect[dcs[0]][2] + zone_rect[dcs[-1]][0]) / 2 if len(dcs) > 1 else PAGE_W / 2
 
     # top / bottom bands: first zone takes the free width

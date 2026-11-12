@@ -13,6 +13,22 @@ from backend import word_review
 from backend.models import PipelineDocument, PipelineIssue, PipelineSection, PipelineSnapshot
 
 
+def test_browser_routes_are_registered() -> None:
+    paths = {route.path for route in workspace.app.routes}
+    assert {
+        "/api/systems/{system_key}/files/{file_id}/preview",
+        "/api/systems/{system_key}/evidence/{evidence_id}/sources",
+        "/api/systems/{system_key}/leads/{lead_id}/sources",
+        "/api/systems/{system_key}/tables",
+        "/api/systems/{system_key}/evidence-drafts/validate",
+        "/api/systems/{system_key}/evidence-drafts/commit",
+    } <= paths
+    if workspace.DIST.is_dir():
+        response = TestClient(workspace.app).get("/")
+        assert response.status_code == 200
+        assert "<html" in response.text
+
+
 def test_new_application_api_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     agents = tmp_path / ".agents"
     (agents / "csa-context").mkdir(parents=True)
