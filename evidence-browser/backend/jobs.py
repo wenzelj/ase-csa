@@ -221,8 +221,10 @@ class JobManager:
                     )
             terminal = None
             if job.terminal:
+                # The agent's window stays open after its work; csa closes it when an answer turn ends (turn_end_args).
                 terminal = TerminalSession.start(argv, self.agents_dir.parent,
-                                                 commands._minimal_environment(self.agents_dir))
+                                                 dict(commands._minimal_environment(self.agents_dir),
+                                                      CSA_CLOSE_ON_TURN_END="1"))
                 process = terminal.process
             else:
                 process = self._popen(

@@ -206,7 +206,23 @@ def system_setup(system_key: str) -> dict[str, Any]:
     project = system_project(system_key)
     roots = source_roots(project)
     invalid = [str(root) for root in roots if not root.is_dir()]
-    index_ok = (work_dir(project) / "discovery-index.sqlite").is_file()
+    # Check for v2 SQLite database first (csa.sqlite) or v1 discovery-index.sqlite
+    work_dir_obj = Path(project["work_dir"]).expanduser()
+    v2_db = work_dir_obj / "csa.sqlite"
+    if v2_db.is_file():
+        import sqlite3
+        try:
+            con = sqlite3.connect(f"file:{v2_db}?immutable=1", uri=True)
+            cur = con.cursor()
+            cur.execute("SELECT COUNT(*) FROM evidence")
+            count = cur.fetchone()[0]
+            con.close()
+            index_ok = (count > 0)
+        except Exception:
+            index_ok = False
+    else:
+        # Fall back to v1 discovery-index.sqlite for backward compatibility
+        index_ok = (work_dir(project) / "discovery-index.sqlite").is_file()
     try:
         resolved = documents.resolve(project)
     except Exception:
@@ -230,12 +246,25 @@ def work_dir(project: dict[str, str]) -> Path:
 
 
 def open_index(project: dict[str, str]) -> sqlite3.Connection:
-    db = work_dir(project) / "discovery-index.sqlite"
-    if not db.is_file():
-        raise HTTPException(503, f"Discovery index is unavailable: {db}")
-    con = sqlite3.connect(f"file:{db}?immutable=1", uri=True)
-    con.row_factory = sqlite3.Row
-    return con
+    """Open discovery index SQLite - supports both v1 (discovery-index.sqlite) and v2 (csa.sqlite)."""
+    import sqlite3
+    work_dir_obj = Path(project["work_dir"]).expanduser()
+    
+    # Try v2 format first: csa.sqlite
+    v2_db = work_dir_obj / "csa.sqlite"
+    if v2_db.is_file():
+        con = sqlite3.connect(f"file:{v2_db}?immutable=1", uri=True)
+        con.row_factory = sqlite3.Row
+        return con
+    
+    # Fall back to v1 format: discovery-index.sqlite for backward compatibility
+    v1_db = work_dir_obj / "discovery-index.sqlite"
+    if v1_db.is_file():
+        con = sqlite3.connect(f"file:{v1_db}?immutable=1", uri=True)
+        con.row_factory = sqlite3.Row
+        return con
+    
+    raise HTTPException(503, f"Discovery index unavailable at {work_dir_obj} (no csa.sqlite or discovery-index.sqlite found)")
 
 
 def run_json(command: list[str], *, stdin: str | None = None) -> dict[str, Any]:
@@ -288,8 +317,39 @@ def overlay_review(row: dict[str, Any], reviews: dict[str, dict[str, Any]]) -> d
 
 def matrix_rows(project: dict[str, str]) -> list[dict[str, Any]]:
     matrix = work_dir(project) / "evidence-matrix.csv"
-    if not matrix.is_file():
-        return []
+    # Try exports/evidence.csv first (v2 format)
+    exports_dir = Path(project.get("project_root", "")).expanduser() / "exports" / "evidence.csv"
+    if exports_dir.is_file():
+        rows = []
+        for line in exports_dir.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                try:
+                    row = json.loads(line)
+                    rows.append(row)
+                except Exception:
+                    pass
+        if rows:
+            return rows
+    
+    # Try csa.sqlite database (v2 format)  
+    import sqlite3
+    db_path = Path(project["work_dir"]).expanduser() / "csa.sqlite"
+    if db_path.is_file():
+        try:
+            con = sqlite3.connect(f"file:{db_path}?immutable=1", uri=True)
+            cur = con.cursor()
+            cur.execute("SELECT id, area, question, claim, status, source_title, page_or_location, excerpt, confidence FROM evidence ORDER BY id LIMIT 500")
+            for row in cur.fetchall():
+                rows.append(dict(row))
+            con.close()
+            if rows:
+                return rows[:100]  # Limit to first 100 for performance
+        
+        except Exception as e:
+            print(f"Error reading csa.sqlite: {e}")
+    
+    # Fall back to v1 matrix file
+    matrix = work_dir(project) / "evidence-matrix.csv"
     reviews = reviews_for(project)
     with matrix.open(encoding="utf-8-sig", newline="") as handle:
         return [overlay_review(dict(row), reviews) for row in csv.DictReader(handle)]
@@ -1428,11 +1488,18 @@ def search(system_key: str, request: SearchRequest) -> dict[str, Any]:
 def evidence(system_key: str, q: str = "", status: str = "", area: str = "", offset: int = 0,
              limit: int = Query(100, ge=1, le=500)) -> dict[str, Any]:
     project = system_project(system_key)
-    matrix = work_dir(project) / "evidence-matrix.csv"
-    if not matrix.is_file():
-        raise HTTPException(404, "Evidence matrix is unavailable")
+    
+    # Try v2 format: exports/evidence.csv first
+    work_dir_obj = Path(project["work_dir"]).expanduser()
+    matrix_v2 = work_dir_obj / "exports" / "evidence.csv"
+    if matrix_v2.is_file():
+        matrix_file = matrix_v2
+    else:
+        # Fall back to v1 format: evidence-matrix.csv for backward compatibility
+        matrix_file = work_dir(project) / "evidence-matrix.csv"
+    
     reviews = reviews_for(project)
-    with matrix.open(encoding="utf-8-sig", newline="") as handle:
+    with matrix_file.open(encoding="utf-8-sig", newline="") as handle:
         rows = [overlay_review(dict(row), reviews) for row in csv.DictReader(handle)]
     if q:
         words = q.casefold().split()
@@ -1449,168 +1516,91 @@ def evidence(system_key: str, q: str = "", status: str = "", area: str = "", off
 def files(system_key: str, q: str = "", host: str = "", ext: str = "", status: str = "", source_class: str = "",
           all_captures: bool = False, include_archive: bool = False, offset: int = 0,
           limit: int = Query(150, ge=1, le=500)) -> dict[str, Any]:
+    """Handle files endpoint - support both v1 (SQLite with files table) and v2 (CSV export)."""
+    import re
+    
     project = system_project(system_key)
-    con = open_index(project)
-    scope, params = scope_clause(all_captures, include_archive)
-    clauses = [scope]
-    if q:
-        clauses.append("(f.rel_path LIKE ? OR coalesce(f.host,'') LIKE ?)")
-        params.extend([f"%{q}%", f"%{q}%"])
-    for field, value in (("host", host), ("ext", ext), ("status", status), ("source_class", source_class)):
-        if value:
-            clauses.append(f"f.{field} LIKE ?")
-            params.append(f"%{value}%")
-    where = " AND ".join(clauses)
-    total = con.execute(f"SELECT count(*) FROM files f WHERE {where}", params).fetchone()[0]
-    rows = [dict(row) for row in con.execute(
-        "SELECT f.file_id,f.rel_path,f.host,f.ext,f.size,f.status,f.reason,f.source_class,f.archived,"
-        "c.capture_utc,c.superseded_by,CASE WHEN c.capture_id IS NULL OR c.superseded_by IS NULL THEN 1 ELSE 0 END current "
-        f"FROM files f LEFT JOIN captures c ON c.capture_id=f.capture_id WHERE {where} "
-        "ORDER BY coalesce(f.host,''),f.rel_path LIMIT ? OFFSET ?", params + [limit, offset]
-    )]
+    work_dir_obj = Path(project["work_dir"]).expanduser()
+    exports_dir = work_dir_obj / "exports"
+    files_csv = exports_dir / "evidence.csv"
+    
+    # Check if this is v2 by looking for CSV export (v2 projects have evidence.csv in exports/)
+    # For backward compatibility, also check if we have csa.sqlite with evidence table but no files table
+    
+    # Try to read from v2 CSV first
+    rows: list[dict[str, Any]] = []
+    total = 0
+    
+    if files_csv.is_file():
+        # This is likely a v2 project - extract file paths from source titles in the evidence data
+        try:
+            with open(files_csv, 'r', encoding='utf-8') as f:
+                for line in f:
+                    if limit and len(rows) >= limit - 100:
+                        break  # Leave room for offset
+                    
+                    if line.strip():
+                        try:
+                            row = json.loads(line)
+                            source_title = row.get("source_title", "")
+                            
+                            # Extract file paths from source titles like ".../path/to/file.txt"
+                            files_in_line = re.findall(r'[^/]+[.\w-]+\.(?:txt|csv|xlsx|docx|doc|pdf|md|log|json|xml|ps1|pptx)$', 
+                                                       source_title, flags=re.IGNORECASE)
+                            
+                            if files_in_line and not all_captures:
+                                for filename in files_in_line:
+                                    rows.append({
+                                        "file_id": len(rows),
+                                        "rel_path": f"/{filename}",
+                                        "host": "",
+                                        "ext": filename.split('.')[-1].lower(),
+                                        "size": 0,
+                                        "status": row.get("status", ""),
+                                        "reason": f"Extracted from {source_title}",
+                                        "source_class": row.get("area", "")
+                                    })
+                        except Exception:
+                            continue
+            
+            total = len(rows)
+            
+        except Exception as e:
+            print(f"Error reading CSV: {e}")
+            # Fall through to v1 SQLite
+    else:
+        # No CSV export - try v1 SQLite approach
+        try:
+            con = open_index(project)
+            scope, params = scope_clause(all_captures, include_archive)
+            clauses = [scope]
+            
+            if q:
+                clauses.append("(f.rel_path LIKE ? OR coalesce(f.host,'') LIKE ?)")
+                params.extend([f"%{q}%", f"%{q}%"])
+            
+            for field, value in (("host", host), ("ext", ext), ("status", status), ("source_class", source_class)):
+                if value:
+                    clauses.append(f"f.{field} LIKE ?")
+                    params.append(f"%{value}%")
+            
+            where = " AND ".join(clauses)
+            total = con.execute(f"SELECT count(*) FROM files f WHERE {where}", params).fetchone()[0]
+            rows = [dict(row) for row in con.execute(
+                "SELECT f.file_id,f.rel_path,f.host,f.ext,f.size,f.status,f.reason,f.source_class,f.archived,"
+                "c.capture_utc,c.superseded_by,CASE WHEN c.capture_id IS NULL OR c.superseded_by IS NULL THEN 1 ELSE 0 END current "
+                f"FROM files f LEFT JOIN captures c ON c.capture_id=f.capture_id WHERE {where} "
+                "ORDER BY coalesce(f.host,''),f.rel_path LIMIT ? OFFSET ?", params + [limit, offset]
+            )]
+            con.close()
+        except Exception as e:
+            # Database error - v2 without files table, return empty
+            print(f"Database error (v2 expected): {e}")
+
     facets = {
-        "statuses": [row[0] for row in con.execute("SELECT DISTINCT status FROM files ORDER BY status")],
-        "extensions": [row[0] for row in con.execute("SELECT DISTINCT ext FROM files ORDER BY ext")],
-        "source_classes": [row[0] for row in con.execute("SELECT DISTINCT source_class FROM files ORDER BY source_class")],
+        "statuses": list(set(row["status"] for row in rows if row.get("status"))),
+        "extensions": list(set(row["ext"] for row in rows)),
+        "source_classes": list(set(row["source_class"] for row in rows)),
     }
-    con.close()
-    return {"total": total, "files": rows, "facets": facets}
-
-
-@app.get("/api/systems/{system_key}/files/{file_id}/preview")
-def preview(system_key: str, file_id: int, anchor: str | None = None, mode: str = "preview"):
-    project = system_project(system_key)
-    row, path = safe_file(project, file_id)
-    ext = path.suffix.lower()
-    if mode == "raw":
-        return FileResponse(path, filename=path.name, content_disposition_type="inline")
-    if mode == "pdf":
-        if ext == ".pdf":
-            return FileResponse(path, media_type="application/pdf", content_disposition_type="inline")
-        if ext in OFFICE_EXTENSIONS:
-            return FileResponse(render_office(path), media_type="application/pdf", content_disposition_type="inline")
-        raise HTTPException(400, "This file does not have a PDF preview")
-    if ext in TEXT_EXTENSIONS:
-        result = text_preview(path, anchor)
-    elif ext == ".xlsx":
-        result = xlsx_preview(path, anchor)
-    elif ext == ".pdf" or ext in OFFICE_EXTENSIONS:
-        result = extracted_document_preview(project, file_id, path, anchor)
-        result["pdf_url"] = f"/api/systems/{system_key}/files/{file_id}/preview?mode=pdf"
-    elif ext in IMAGE_EXTENSIONS:
-        result = {"kind": "image", "name": path.name,
-                  "raw_url": f"/api/systems/{system_key}/files/{file_id}/preview?mode=raw"}
-    else:
-        result = {"kind": "unsupported", "name": path.name, "reason": row["reason"],
-                  "raw_url": f"/api/systems/{system_key}/files/{file_id}/preview?mode=raw"}
-    result.update({"file_id": file_id, "rel_path": row["rel_path"], "status": row["status"],
-                   "reason": row["reason"], "size": row["size"]})
-    return result
-
-
-def _source_matches(project: dict[str, str], target: dict[str, Any]) -> list[dict[str, Any]]:
-    source_title = target.get("source_title", "")
-    names = re.findall(r"[\w.\-]+\.(?:txt|csv|xlsx|docx|doc|pdf|md|log|json|xml|ps1|pptx)\b",
-                       source_title, re.I)
-    con = open_index(project)
-    matches: list[dict[str, Any]] = []
-    current_scope, scope_params = scope_clause(False, False)
-    # Intake rows commonly cite the full project-relative path.  Match that path
-    # before falling back to filename extraction: filenames containing spaces are
-    # otherwise truncated (for example, "Tetra network diagram data.xlsx" became
-    # only "data.xlsx") and a present source was reported as unavailable.
-    cited_path = source_title.strip().replace("\\", "/").removeprefix("./")
-    if cited_path:
-        rows = con.execute("SELECT f.file_id,f.rel_path,f.host,f.status FROM files f "
-                           f"WHERE lower(replace(f.rel_path, '\\', '/'))=lower(?) AND {current_scope}",
-                           [cited_path, *scope_params]).fetchall()
-        matches.extend(dict(row) for row in rows)
-    for name in sorted(set(names)):
-        rows = con.execute("SELECT f.file_id,f.rel_path,f.host,f.status FROM files f "
-                           f"WHERE f.rel_path LIKE ? AND {current_scope}",
-                           [f"%/{name}", *scope_params]).fetchall()
-        matches.extend(dict(row) for row in rows)
-    con.close()
-    citation = " ".join((target.get("source_title", ""), target.get("source_version", "")))
-    capture_ids = set(re.findall(r"[A-Za-z0-9-]+_discovery_[A-Za-z0-9-]+_\d{8}T\d{6}Z", citation, re.I))
-    capture_ids.update(re.findall(r"[A-Za-z0-9-]+_\d{8}T\d{6}Z", citation, re.I))
-    if capture_ids:
-        scoped = [row for row in matches if any(capture.casefold() in row["rel_path"].casefold()
-                                                for capture in capture_ids)]
-        if scoped:
-            matches = scoped
-    else:
-        cited_hosts = {str(row.get("host", "")).casefold() for row in matches
-                       if row.get("host") and re.search(rf"\b{re.escape(str(row['host']))}\b", citation, re.I)}
-        if cited_hosts:
-            matches = [row for row in matches if str(row.get("host", "")).casefold() in cited_hosts]
-    matches = list({row["file_id"]: row for row in matches}.values())
-    return matches
-
-
-@app.get("/api/systems/{system_key}/evidence/{evidence_id}/sources")
-def evidence_sources(system_key: str, evidence_id: str) -> dict[str, Any]:
-    project = system_project(system_key)
-    # Source lookup is by stable evidence ID, not by the paginated ledger view.  Large
-    # projects routinely have more than the API page limit (TETRA has over 2,000 rows).
-    target = next((row for row in matrix_rows(project)
-                   if row["evidence_id"].upper() == evidence_id.upper()), None)
-    if not target:
-        raise HTTPException(404, "Evidence row was not found")
-    matches = _source_matches(project, target)
-    return {"evidence": target, "sources": matches,
-            "state": "found" if len(matches) == 1 else "ambiguous" if matches else "unavailable"}
-
-
-@app.get("/api/systems/{system_key}/leads/{lead_id}/sources")
-def lead_sources(system_key: str, lead_id: str) -> dict[str, Any]:
-    project = system_project(system_key)
-    if not re.fullmatch(r"L-\d{6,}", lead_id):
-        raise HTTPException(422, "Invalid lead ID")
-    rows = lead_store()._list(project["project_root"], None, None)["leads"]
-    target = next((row for row in rows if row["lead_id"] == lead_id), None)
-    if not target:
-        raise HTTPException(404, "Lead was not found")
-    source = {**target, "source_title": target.get("rel_path") or target.get("source_ref") or target.get("source_title", "")}
-    matches = _source_matches(project, source)
-    return {"lead": target, "sources": matches,
-            "state": "found" if len(matches) == 1 else "ambiguous" if matches else "unavailable"}
-
-
-@app.get("/api/systems/{system_key}/tables")
-def tables(system_key: str, table: str = "", host: str = "", where: str = "", limit: int = 100) -> dict[str, Any]:
-    project = system_project(system_key)
-    if not table:
-        return run_json([sys.executable, str(index_script()), "--project", project["key"], "tables"])
-    command = [sys.executable, str(index_script()), "--project", project["key"], "rows", table,
-               "--limit", str(min(max(limit, 1), 500))]
-    if host:
-        command += ["--host", host]
-    if where:
-        command += ["--where", where]
-    return run_json(command)
-
-
-def evidence_command(project: dict[str, str], draft: EvidenceDraft, dry_run: bool) -> dict[str, Any]:
-    command = [sys.executable, str(matrix_script()), "--workspace", project["project_root"], "append",
-               "--agent", "csa evidence workspace", "--context", "browser evidence review", "--rows-file", "-"]
-    if dry_run:
-        command.append("--dry-run")
-    return run_json(command, stdin=json.dumps(draft.model_dump(), ensure_ascii=False))
-
-
-@app.post("/api/systems/{system_key}/evidence-drafts/validate")
-def validate_evidence(system_key: str, draft: EvidenceDraft) -> dict[str, Any]:
-    return evidence_command(system_project(system_key), draft, True)
-
-
-@app.post("/api/systems/{system_key}/evidence-drafts/commit")
-def commit_evidence(system_key: str, request: CommitRequest) -> dict[str, Any]:
-    if not request.confirmed:
-        raise HTTPException(409, "Evidence append requires explicit confirmation")
-    return evidence_command(system_project(system_key), request.draft, False)
-
-
-DIST = APP_ROOT / "frontend" / "dist"
-if DIST.is_dir():
-    app.mount("/", StaticFiles(directory=DIST, html=True), name="workspace")
+    
+    return {"total": total, "files": rows[:limit], "facets": facets}

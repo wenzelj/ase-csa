@@ -77,6 +77,10 @@ answer_heartbeat_minutes: 10
 # minutes. Reading files and running commands is not work. 0 turns the idle limit off.
 answer_call_timeout_minutes: 0
 answer_idle_minutes: 25
+# What the agent does in its own session (a model reply, a command) also restarts the idle clock, when its CLI keeps a session
+# log (Codex), so reading a large card does not use the limit up. A session that stays busy but has written no sheet or patch
+# for this many minutes is stopped all the same. 0 turns this cap off.
+answer_no_work_minutes: 60
 # If a focused repair returns the same blocking signature, use this already-configured CLI for subsequent repairs.
 answer_repair_cli: evo
 answer_resolve_leads: false
@@ -89,6 +93,9 @@ answer_stall_minutes: 3
 answer_stall_restarts: 1
 # csa answer: one focused model call per block (its own evidence only) instead of one call for the whole card.
 # Calls run one after another; answer_by_block_workers > 1 runs that many at once if the model server allows it.
+# Used when each call exits by itself: a --headless run, or the Evidence Browser's Codex window (evo, codex, eagle, qwen8b),
+# which csa closes at the end of each turn; there the blocks are answered one after another in the same window.
+# An interactive window that stays open (your own terminal, or Claude) still gets the whole card in one call.
 answer_by_block: true
 answer_by_block_workers: 1
 

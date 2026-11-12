@@ -16,7 +16,7 @@ from fastapi import HTTPException
 from .models import CommandDescriptor, CommandRequest, CommandResult
 
 
-ALLOWED_PROJECTS = frozenset({"iamps-08", "utcdtc", "tetra-reveloc"})
+ALLOWED_PROJECTS = frozenset({"iamps-08", "utcdtc", "tetra-reveloc", "rms"})
 SAFE_SECTION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$")
 SAFE_FILE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_. -]{0,139}\.md$")
 SAFE_HEADING = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 &()_.,/+-]{0,119}$")

@@ -452,6 +452,64 @@ def idle_expired(last_work: float, now: float, idle_min: float) -> bool:
     return bool(idle_min) and now - last_work >= idle_min * 60
 
 
+def turn_end_args(argv: list[str], mode: str, marker: Path, env=None) -> list[str]:
+    """Codex arguments that make it record the end of each turn in ``marker`` (its notify hook), or [] when not wanted.
+    Only for an interactive Codex window whose starter asked for it with CSA_CLOSE_ON_TURN_END=1 (the Evidence Browser):
+    that window stays open after the answer is written, so nothing else tells csa the answer is done. In your own
+    terminal the session stays open as before."""
+    env = os.environ if env is None else env
+    if mode != "interactive" or env.get("CSA_CLOSE_ON_TURN_END") != "1":
+        return []
+    if not (argv and Path(argv[0]).name == "codex" and "exec" not in argv):
+        return []
+    program = [framework_python(), str(FRAMEWORK / "csa_docx" / "turn_done.py"), str(marker)]
+    return ["-c", "notify=" + json.dumps(program)]
+
+
+def turn_ended_with_work(marker: Path | None, start_mark: tuple, now_mark: tuple) -> bool:
+    """True when the agent's turn has ended and this run wrote or changed a sheet or patch. A turn that ended with no
+    work (the agent asked something, or failed) leaves the window open; its marker is cleared so a later turn counts."""
+    if marker is None or not marker.is_file():
+        return False
+    if now_mark != start_mark:
+        return True
+    marker.unlink(missing_ok=True)
+    return False
+
+
+def by_block_run(headless: bool, interactive_template: str, env=None) -> bool:
+    """May this run answer one block per model call (cli.yaml answer_by_block)? Yes when each call exits by itself:
+    a headless run, or an interactive window that csa closes at the end of its turn (turn_end_args: the Evidence
+    Browser's Codex window). An interactive window that stays open would have to be closed by hand after every block."""
+    if headless:
+        return True
+    return bool(turn_end_args(shlex.split(interactive_template or ""), "interactive", Path("turn.json"), env))
+
+
+def by_block_workers(configured: int, headless: bool) -> int:
+    """Calls at once for a block-by-block answer: answer_by_block_workers when headless, one when the calls are
+    interactive windows (two sessions cannot share one terminal)."""
+    return max(1, int(configured or 1)) if headless else 1
+
+
+def idle_stop(last_work: float, last_active: float | None, now: float, idle_min: float, no_work_min: float) -> bool:
+    """Stop an answer call? ``last_work`` is when it last wrote a sheet or patch, ``last_active`` when its agent session
+    last did anything (session_activity; None when the CLI keeps no session log). The call is stopped when it has done
+    neither for ``idle_min`` minutes, so reading a large card does not use the limit up. A session that stays busy but
+    writes nothing is stopped after ``no_work_min`` minutes (0 = no such cap). ``idle_min`` 0 turns both off."""
+    if not idle_min:
+        return False
+    if idle_expired(max(last_work, last_active or 0), now, idle_min):
+        return True
+    return bool(no_work_min) and last_active is not None and now - last_work >= no_work_min * 60
+
+
+def stall_check_wanted(stall_min: float, turn_marker) -> bool:
+    """The stall check restarts a call that uses no CPU and holds no connection. A window that csa closes at the end of
+    its turn is quiet in just that way while it waits for the person watching it, so it is left to the idle limit."""
+    return bool(stall_min) and turn_marker is None
+
+
 def python_read_roots(exe: str) -> list[str]:
     """The folders a sandbox must be able to read to start the interpreter ``exe`` (it and where its links lead)."""
     roots: list[str] = []
@@ -2592,6 +2650,14 @@ def _launch(p: dict, r: dict, args: list[str], a) -> int:
     print(f"{C['d']}launching {cli} ({mode}) as {r['title']} in {run_cwd}{C['0']}", file=sys.stderr)
     if r.get("verb") not in ("answer", "draft"):
         return subprocess.call(argv, cwd=str(run_cwd))
+    turn_marker = None
+    if not closed:
+        candidate = STATE_DIR / "tmp" / f"turn-{os.getpid()}-{threading.get_ident()}-{time.time_ns()}.json"
+        hook = turn_end_args(argv, mode, candidate)
+        if hook:                                    # the interactive window never exits by itself: see turn_end_args
+            candidate.parent.mkdir(parents=True, exist_ok=True)
+            argv[1:1] = hook
+            turn_marker = candidate
 
     # Answer runs can involve several model passes. Keep each pass bounded and make a quiet/stalled call visible.
     # The caller still validates any sheet written before a timeout or non-zero exit.
@@ -2601,9 +2667,11 @@ def _launch(p: dict, r: dict, args: list[str], a) -> int:
     idle_min = float(settings().get("answer_idle_minutes", 25) or 0)                   # no work produced for this long: stop
     heartbeat_min = float(settings().get("answer_heartbeat_minutes", 10) or 0)
     stall_min = float(settings().get("answer_stall_minutes", 3) or 0)
+    no_work_min = float(settings().get("answer_no_work_minutes", 60) or 0)             # busy but nothing written: stop
     restarts = int(float(settings().get("answer_stall_restarts", 1) or 0))
     sys.path.insert(0, str(FRAMEWORK))
     from csa_docx.proc_watch import Watch
+    from csa_docx.session_activity import Activity
 
     def stop(proc) -> None:
         proc.terminate()
@@ -2616,21 +2684,38 @@ def _launch(p: dict, r: dict, args: list[str], a) -> int:
         proc = subprocess.Popen(argv, cwd=str(run_cwd), stdin=subprocess.DEVNULL if mode == "headless" else None,
                                 env=worker_env)
         began, next_beat = time.time(), time.time() + heartbeat_min * 60 if heartbeat_min else float("inf")
-        watch = Watch(proc.pid, stall_min * 60) if stall_min else None
+        watch = Watch(proc.pid, stall_min * 60) if stall_check_wanted(stall_min, turn_marker) else None
+        seen = Activity(run_cwd, began - 2)                             # this call's own agent session, when it keeps a log
         stalled = False
         mark, last_work = work_signature(run_cwd), time.time()         # the idle clock restarts whenever work is produced
+        start_mark = mark
+        if turn_marker is not None:
+            turn_marker.unlink(missing_ok=True)
         try:
             while True:
                 try:
-                    return proc.wait(timeout=30)
+                    return proc.wait(timeout=5 if turn_marker is not None else 30)
                 except subprocess.TimeoutExpired:
                     elapsed = time.time() - began
                     now_mark = work_signature(run_cwd)
+                    if turn_ended_with_work(turn_marker, start_mark, now_mark):
+                        print(f"{C['d']}the agent's turn ended with its answer written; closing its window "
+                              f"and checking the sheet.{C['0']}", file=sys.stderr, flush=True)
+                        stop(proc)
+                        turn_marker.unlink(missing_ok=True)
+                        return 0
                     if now_mark != mark:
                         mark, last_work = now_mark, time.time()
-                    if idle_expired(last_work, time.time(), idle_min):
-                        print(f"{C['r']}CSA {r.get('verb')} model call produced no work for {idle_min:g} min (no answer sheet or patch "
-                              f"written or changed); stopped it. Any sheet it wrote will still be validated.{C['0']}",
+                    last_active = seen.last() if idle_min else None
+                    if idle_stop(last_work, last_active, time.time(), idle_min, no_work_min):
+                        if idle_expired(max(last_work, last_active or 0), time.time(), idle_min):
+                            why = (f"produced no work for {idle_min:g} min (no answer sheet or patch written or changed"
+                                   + ("" if last_active is None else ", and nothing done in its session") + ")")
+                        else:
+                            why = (f"wrote no answer sheet or patch for {no_work_min:g} min although its session was busy "
+                                   f"(answer_no_work_minutes)")
+                        print(f"{C['r']}CSA {r.get('verb')} model call {why}; stopped it. Any sheet it wrote will still "
+                              f"be validated.{C['0']}",
                               file=sys.stderr, flush=True)
                         stop(proc)
                         return 124
@@ -2773,8 +2858,8 @@ def _reader_pass(work: Path, cards: Path, key: str, sheet: Path) -> None:
     if not tmpl or not shutil.which(shlex.split(tmpl)[0]):
         return
     print(f"{C['b']}Reader pass ({cli}): reading the whole subsection as the customer...{C['0']}", flush=True)
-    res = _fw_json("csa_docx.reader_pass", "review", "--work-dir", work, "--sheet", sheet, "--key", key, "--cwd", cards,
-                   "--template", tmpl)
+    res = _fw_json_shown("csa_docx.reader_pass", "review", "--work-dir", work, "--sheet", sheet, "--key", key, "--cwd", cards,
+                         "--template", tmpl, "--show")
     if res.get("status") == "OK":
         print(f"{C['b']}Reader review: {res.get('words', 0)} words in {Path(res['file']).name} (also in {key}.RESULT.md){C['0']}")
     else:
@@ -2792,8 +2877,8 @@ def _rating_pass(work: Path, cards: Path, key: str, sheet: Path, card_json: Path
     if not tmpl or not shutil.which(shlex.split(tmpl)[0]):
         return
     print(f"{C['b']}Rating pass ({cli}): scoring each block 1 to 10...{C['0']}", flush=True)
-    res = _fw_json("csa_docx.rating_pass", "rate", "--work-dir", work, "--sheet", sheet, "--card", card_json, "--key", key,
-                   "--cwd", cards, "--template", tmpl)
+    res = _fw_json_shown("csa_docx.rating_pass", "rate", "--work-dir", work, "--sheet", sheet, "--card", card_json, "--key", key,
+                         "--cwd", cards, "--template", tmpl, "--show")
     if res.get("status") == "OK":
         print(f"{C['b']}Answer rating: average {res.get('average')} (kept in ratings/{key}.json){C['0']}")
     else:
@@ -2903,6 +2988,17 @@ def _fw_json(module: str, *args) -> dict:
         return json.loads(r.stdout)
     except ValueError:
         return {"status": "ERROR", "message": (r.stderr or r.stdout or "no output")[-800:]}
+
+
+def _fw_json_shown(module: str, *args) -> dict:
+    """_fw_json for a step whose progress belongs on the terminal: its stderr is not captured, so what the module shows
+    there (a model call's output while it runs) reaches the window the run is in."""
+    r = subprocess.run([framework_python(), "-m", module, *[str(x) for x in args]], cwd=str(FRAMEWORK),
+                       stdout=subprocess.PIPE, text=True, env=_fw_env(None))
+    try:
+        return json.loads(r.stdout)
+    except ValueError:
+        return {"status": "ERROR", "message": (r.stdout or "no output")[-800:]}
 
 
 def _matrix_ids(work: Path) -> set[str]:
@@ -3195,6 +3291,13 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
             return []
         return ids if len(ids) >= 3 else []
 
+    def by_block() -> bool:
+        """Answer this run block by block? The card has enough blocks, and each call exits by itself (by_block_run)."""
+        cli = (getattr(a, "cli", None) or os.environ.get("CSA_CLI") or task_cli("draft" if draft else "answer")
+               or settings().get("default_cli", "codex"))
+        return bool(parallel_blocks()) and by_block_run(getattr(a, "headless", False),
+                                                        settings().get(f"{cli}_interactive") or "")
+
     def parallel_answer(ids: list[str], resume: bool = False) -> int:
         """First answer, one focused call per block (its own evidence only), then the analysis frame from the merged
         blocks. Calls run one at a time unless cli.yaml answer_by_block_workers > 1. Each returned block is merged and
@@ -3206,7 +3309,7 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
         content_ids = [b for b in ids if not b.startswith("F")]
         want_frame = bool(json.loads(card_json.read_text(encoding="utf-8")).get("frame"))
         base = cards / f"{key}.answer-base.md"
-        workers = max(1, int(settings().get("answer_by_block_workers", 1) or 1))
+        workers = by_block_workers(int(settings().get("answer_by_block_workers", 1) or 1), getattr(a, "headless", False))
 
         if not resume:
             if sheet.is_file():
@@ -3379,7 +3482,7 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
         if "*" in redo:
             pass                        # an error that belongs to no block: the fix loop below handles the whole sheet
         elif redo:
-            if parallel_blocks() and getattr(a, "headless", False):
+            if by_block():
                 if parallel_answer(sorted(redo), resume=True) != 0:
                     return 2
             else:
@@ -3393,14 +3496,14 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
         timing["reused"] = "partial"
         shutil.copyfile(sheet, sheet.with_suffix(".prev.md"))      # the applied sheet is the answer this run replaces
         lines = [f"- CHANGED {b}: the evidence for this question changed: answer it again from the card" for b in sorted(ids)]
-        if parallel_blocks() and getattr(a, "headless", False):
+        if by_block():
             if parallel_answer(sorted(ids), resume=True) != 0:
                 return 2
         elif block_round(ids, lines, "changed", "The evidence changed for these questions:") != 0:
             return 2
     else:
         timing["reused"] = False
-        if parallel_blocks() and getattr(a, "headless", False):
+        if by_block():
             if parallel_answer(parallel_blocks()) != 0:
                 return 2
         elif answer([]) != 0:
