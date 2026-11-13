@@ -144,7 +144,7 @@ agents:
     arg: INTAKE
     inputs: INTAKE=latest, MODE=INTAKE, FILE, FILE_REPORT
     locks: none
-    instruction: Intake mode - read WORK_DIR/intake/latest.json, then process only FILE from the named intake record. Save its checked evidence rows and graph changes, then write FILE_REPORT. The framework starts a fresh model session for each file and resumes from successful file reports.
+    instruction: Intake mode has two explicit contracts. When BATCH and BATCH_OUTPUT are supplied, read only the JSON file named by BATCH, process only its listed files, and write exactly one JSON list to BATCH_OUTPUT; do not read WORK_DIR/intake/latest.json, do not use FILE or FILE_REPORT, do not call evidence_matrix.py append or graph_store.py, and do not write the matrix or graph directly. The validator applies the batch atomically and the framework starts a fresh model session for the next batch of up to five files. When only FILE and FILE_REPORT are supplied, use the legacy single-file contract and write the requested FILE_REPORT.
     skill: csa-evidence-investigator-agent
     summary: Turn newly ingested documents into evidence rows and graph items (Evidence intake step 2).
 

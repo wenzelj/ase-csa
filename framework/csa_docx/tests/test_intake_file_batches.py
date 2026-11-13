@@ -11,6 +11,16 @@ from pathlib import Path
 CSA = runpy.run_path(str(Path(__file__).parents[3] / "bin" / "csa"))
 
 
+def test_intake_registry_instruction_is_batch_only():
+    instruction = next(row["instruction"] for row in CSA["registry"]() if row["verb"] == "intake")
+    lower = instruction.casefold()
+    assert "BATCH" in instruction and "BATCH_OUTPUT" in instruction
+    assert "up to five files" in instruction
+    assert "latest.json" in instruction and "do not read" in lower
+    assert "legacy single-file contract" in lower
+    assert "process only FILE" not in instruction
+
+
 def _fixture(tmp_path: Path):
     work = tmp_path / "csa-work"
     intake = work / "intake"

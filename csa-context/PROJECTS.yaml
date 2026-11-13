@@ -49,7 +49,7 @@ projects:
     label: "REVELOC TETRA (template v1.5)"
     project_root: "/Users/wenzel/Work/ASE/CurrentStateAssessments/TETRA/06 REVELOC TETRA"
     project_context: "/Users/wenzel/Work/ASE/CurrentStateAssessments/.agents/csa-context/TETRA_REVELOC_PROJECT_CONTEXT.yaml"
-    work_dir: "/Users/wenzel/Work/ASE/CurrentStateAssessments/TETRA/06 REVELOC TETRA/csa-work"
+    work_dir: "/Users/wenzel/Work/ASE/CurrentStateAssessments/TETRA/06 REVELOC TETRA/csa-work-v2"
     # Evidence cleanup 2026-10-22: one canonical evidence folder (revloc-tetra). The previous CSA is no longer
     # indexed as evidence (owner decision). The extra source only adds the Radlink Scope of Work.
     default_source_set: "/Users/wenzel/Work/ASE/CurrentStateAssessments/TETRA/06 REVELOC TETRA/01 Current State AS Built/revloc-tetra"

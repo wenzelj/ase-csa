@@ -3908,6 +3908,28 @@ def cmd_model(a):
                             str(local_path(p["work_dir"])), "--project", str(p.get("key") or p.get("name") or ""), *extra], cwd=str(FRAMEWORK))
 
 
+def cmd_v2(a):
+    """On-demand exports from the active project's csa-work-v2 repository."""
+    p = project(a.project)
+    work = local_path(p["work_dir"])
+    if work.name != "csa-work-v2":
+        die("csa v2 commands require the active project work_dir to end in csa-work-v2")
+    sys.path.insert(0, str(FRAMEWORK))
+    from csa_docx import v2_export_cli
+    argv = ["--v2-dir", str(work), a.v2_action]
+    if a.v2_action == "export":
+        argv += ["--table", a.table, "--out", a.out]
+        for flag, value in (("--status", a.status), ("--area", a.area),
+                            ("--review-state", a.review_state), ("--state", a.state)):
+            if value is not None:
+                argv += [flag, value]
+    elif a.v2_action == "host":
+        argv += [a.host, "--out", a.out]
+    else:
+        argv += ["--out", a.out]
+    return v2_export_cli.main(argv)
+
+
 def cmd_topic_table(a):
     """csa topic-table <section>: build the role table for a subsection from the captures (no model); --place puts it
     into the working document under Discovery Information, above the Aspect table; --settings re-reads the captures."""
@@ -3972,7 +3994,30 @@ def stale_sections(p: dict) -> list[dict]:
 def cmd_stale(a):
     p = project(a.project); banner(p)
     if local_path(p["work_dir"]).name == "csa-work-v2":
-        die("csa stale has no v2 repository path yet; old csa-work was not used")
+        sys.path.insert(0, str(FRAMEWORK))
+        from csa_docx import v2_ingest
+        from csa_docx.v2repo import Repo
+        work = local_path(p["work_dir"])
+        repo = Repo(work)
+        try:
+            stale = v2_ingest.stale_subsections(repo, work)
+        finally:
+            repo.close()
+        rows = []
+        for key, evidence_ids in sorted(stale.items()):
+            rows.append({"key": key, "number": "?", "title": key,
+                         "status": "STALE", "changed": evidence_ids})
+        out = work / "draft" / "stale.json"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps({"checked_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                                   "sections": rows}, indent=1), encoding="utf-8")
+        for row in rows:
+            print(f"  {row['key']:<8} {C['y']}stale{C['0']} ({', '.join(row['changed'])})")
+        print(f"{len(rows)} answered subsection(s) need a new answer" if rows else
+              "No answered subsections need a new answer.")
+        if getattr(a, "json", False):
+            print(json.dumps(rows))
+        return 0
     rows = stale_sections(p)
     stale = [r for r in rows if r["status"] != "REUSE"]
     out = local_path(p["work_dir"]) / "draft" / "stale.json"
@@ -3993,7 +4038,22 @@ def cmd_gap_check(a):
     What the index finds is stored as append-only leads to settle (no model)."""
     p = project(a.project); banner(p)
     if local_path(p["work_dir"]).name == "csa-work-v2":
-        die("csa gap-check needs a v2 lead writer before it can run; old csa-work was not used")
+        sys.path.insert(0, str(FRAMEWORK))
+        from csa_docx import v2_gap
+        section_key = ""
+        if a.section:
+            section_key = a.section if re.fullmatch(r"[A-Z][A-Z0-9_]*", a.section) else None
+            if not section_key:
+                resolved = resolve_target(p, a.section)
+                if resolved.get("status") != "OK":
+                    die(resolved.get("message", f"cannot resolve '{a.section}'"))
+                section_key = resolved["key"]
+        record = v2_gap.run(local_path(p["work_dir"]), section_key)
+        if a.json:
+            print(json.dumps(record, indent=1, ensure_ascii=False))
+        else:
+            print(json.dumps(record["summary"], indent=1, ensure_ascii=False))
+        return 0
     docx = working_docx(p)
     if not docx:
         die("no working DOCX")
@@ -4102,7 +4162,7 @@ def cmd_resolve_gaps(a):
     """Search open questions, have the evidence agent settle source hits, then answer affected subsections again."""
     p = project(a.project); banner(p)
     if local_path(p["work_dir"]).name == "csa-work-v2":
-        die("csa resolve-gaps needs v2 lead and evidence writes before it can run; old csa-work was not used")
+        die("csa resolve-gaps needs the v2 lead-settlement adapter; old csa-work was not used")
     if getattr(a, "latest", False):
         print(f"{C['b']}Using the gap check already displayed in Evidence Intake.{C['0']}", flush=True)
         first = _latest_gap_check(p, a.section)
@@ -4455,27 +4515,75 @@ def cmd_intake_files(p: dict, a) -> int:
     """Run pending intake files in batches (v2_intake.MAX_FILES per model session); checkpoints live in intake_file."""
     folder = local_path(p["work_dir"]) / "intake"
     latest = folder / "latest.json"
-    if not latest.is_file():
+    v2_project = local_path(p["work_dir"]).name == "csa-work-v2"
+    if not v2_project and not latest.is_file():
         if getattr(a, "print", False):
             return launch(p, agent("intake"), a.args, a)
         die("no intake/latest.json; run csa ingest first")
+    if not v2_project:
+        record = json.loads(latest.read_text(encoding="utf-8"))
+        jobs = _intake_file_jobs(p, record)
+        checkpoint_dir = folder / f"{record['id']}.files"
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        for job in jobs:
+            source = Path(job["path"])
+            digest = _intake_source_hash(source)
+            checkpoint = checkpoint_dir / f"{digest}.json"
+            if checkpoint.is_file():
+                try:
+                    saved = json.loads(checkpoint.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    saved = {}
+                if saved.get("sha256") == digest:
+                    job["completed"] = True
+                    job["report"] = Path(saved.get("report", ""))
+                    continue
+            report = checkpoint_dir / f"{digest}.md"
+            args = [f"INTAKE={record['id']}", "MODE=INTAKE", f"FILE={job['rel_path']}",
+                    f"FILE_REPORT={report}", f"FILE_SHA256={digest}"]
+            worker = copy.copy(a)
+            worker.headless = True
+            rc = launch(p, agent("intake"), args, worker)
+            if rc != 0 or not report.is_file():
+                print(f"intake stopped at {job['rel_path']}; it stays pending", file=sys.stderr)
+                return rc or 1
+            checkpoint.write_text(json.dumps({"rel_path": job["rel_path"], "sha256": digest,
+                                               "report": str(report)}, indent=1), encoding="utf-8")
+            job["completed"] = True
+            job["report"] = report
+            _intake_report(folder, record, jobs)
+        return 0
     sys.path.insert(0, str(FRAMEWORK))
     from csa_docx import v2_intake
     from csa_docx.v2repo import Repo
-    v2_dir = local_path(p["work_dir"]).parent / "csa-work-v2"
+    v2_dir = local_path(p["work_dir"]) if v2_project else local_path(p["work_dir"]).parent / "csa-work-v2"
     if not (v2_dir / "csa.sqlite").is_file():
         die(f"no {v2_dir / 'csa.sqlite'}; migrate the project to csa-work-v2 first")
     r = Repo(v2_dir)
     try:
         todo: dict[str, list[str]] = {}
-        for f in r.intake.pending():
+        retry_failed = "RETRY_FAILED=1" in getattr(a, "args", [])
+        intake_jobs = r.intake.pending()
+        if retry_failed:
+            intake_jobs.extend({"record_id": row[0], "rel_path": row[1]}
+                               for row in r.con.execute(
+                                   "SELECT record_id, rel_path FROM intake_file "
+                                   "WHERE status='failed' ORDER BY rel_path"
+                               ).fetchall())
+        for f in intake_jobs:
             todo.setdefault(f["record_id"], []).append(f["rel_path"])
         total = sum(len(v) for v in todo.values())
         done = 0
         tmp = STATE_DIR / "tmp"
         tmp.mkdir(parents=True, exist_ok=True)
+        batch_override = next((x.split("=", 1)[1] for x in getattr(a, "args", [])
+                               if x.startswith("BATCH_FILES=")), "")
+        try:
+            batch_files = max(1, int(batch_override)) if batch_override else None
+        except ValueError:
+            die("BATCH_FILES must be a positive integer")
         for record_id, paths in todo.items():
-            for group in v2_intake.batches(paths):
+            for group in v2_intake.batches(paths, max_files=batch_files or v2_intake.MAX_FILES):
                 payload = v2_intake.build_batch(record_id, group, len(group), repo=r)
                 stamp = f"{os.getpid()}-{time.time_ns()}"
                 batch_file, out_file = tmp / f"intake-batch-{stamp}.json", tmp / f"intake-batch-{stamp}.out.json"
@@ -6107,6 +6215,15 @@ def main(argv=None) -> int:
     s = sp("model", cmd_model, help="system model store csa-work/model.sqlite (build | counts | export)")
     s.add_argument("action", nargs="?", default="counts", choices=["build", "counts", "export"])
     s.add_argument("--out", help="export: folder to write into (default csa-work/model-export); never over the sources")
+    s = sp("v2", cmd_v2, help="csa-work-v2 repository operations (export | host | report)")
+    v2 = s.add_subparsers(dest="v2_action", required=True)
+    e = v2.add_parser("export", help="write a v2 table as CSV")
+    e.add_argument("--table", required=True); e.add_argument("--out", required=True)
+    e.add_argument("--status"); e.add_argument("--area"); e.add_argument("--review-state", dest="review_state"); e.add_argument("--state")
+    h = v2.add_parser("host", help="write a v2 per-host Markdown card")
+    h.add_argument("host"); h.add_argument("--out", required=True)
+    r = v2.add_parser("report", help="write the v2 repository summary")
+    r.add_argument("--out", required=True)
     s = sp("topic-table", cmd_topic_table, help="role table for a subsection from the captures, rows = role groups (no model); --place writes it into the document")
     s.add_argument("section", help="number, heading or key (3.4, 'Time Synchronisation', TIME)")
     s.add_argument("--place", action="store_true", help="put it under Discovery Information, above the Aspect table")
