@@ -1,4 +1,5 @@
 import csv
+from pathlib import Path
 
 from csa_docx.v2repo import Repo
 from csa_docx.v2scope import rebuild
@@ -21,7 +22,12 @@ def test_scope_rebuild_dry_run_and_apply(tmp_path):
         repo.con.execute("INSERT INTO flow (src_host,dst_host,port) VALUES ('APP01','PEER01',443)")
     repo.close()
     assert rebuild(root, v2, "tetra-reveloc", dry_run=True)["active_peers"] == 1
-    rebuild(root, v2, "tetra-reveloc")
+    result = rebuild(root, v2, "tetra-reveloc")
     repo = Repo(v2)
     assert repo.application_scope.active_count() == 2
+    assert Path(result["report_path"]).is_file()
+    assert repo.con.execute("SELECT COUNT(*) FROM review_event WHERE action='scope-rebuild'").fetchone()[0] == 2
+    assert not (root / "csa-work" / "evidence-matrix.csv").exists()
+    assert not (root / "csa-work" / "evidence-reviews.jsonl").exists()
+    assert list((v2 / "backups").glob("csa.sqlite.*")), "Repo transaction should create a V2 backup"
     repo.close()

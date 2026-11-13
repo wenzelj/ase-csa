@@ -129,3 +129,72 @@ def run(work_dir: str | Path, section_key: str | None = None) -> dict:
 
 def words_for_report(text: str) -> list[str]:
     return _words(text)
+
+
+def settle(work_dir: str | Path, record: dict, settlements: list[dict] | None = None,
+           actor: str = "csa resolve-gaps") -> dict:
+    """Apply only question-scoped settlement decisions from a saved V2 gap record.
+
+    A settlement is ``{"lead_id": ..., "state": "resolved", "evidence_ids": [...]}``
+    or has state ``not_an_answer`` / ``retired``.  The saved question's ``lead_ids``
+    are the authority: a lead from another question, application or an older sweep
+    is rejected before any transaction is opened.
+    """
+    work = Path(work_dir)
+    if work.name != "csa-work-v2":
+        raise ValueError("v2 lead settlement requires a csa-work-v2 directory")
+    decisions = settlements if settlements is not None else record.get("settlements", [])
+    if not isinstance(decisions, list):
+        raise ValueError("settlements must be a list")
+    question_by_lead = {}
+    for question in record.get("questions", []):
+        for lead_id in question.get("lead_ids", []):
+            if lead_id in question_by_lead:
+                raise ValueError(f"lead {lead_id} is recorded for more than one question")
+            question_by_lead[lead_id] = question
+    repo = Repo(work)
+    result = {"status": "OK", "resolved": [], "not_an_answer": [], "retired": [], "rejected": []}
+    try:
+        with repo.tx():
+            for decision in decisions:
+                lead_id = str(decision.get("lead_id") or "")
+                question = question_by_lead.get(lead_id)
+                if not question:
+                    raise ValueError(f"stale or cross-question lead ID: {lead_id}")
+                lead = repo.leads.get(lead_id)
+                if lead.get("state") != "open":
+                    raise ValueError(f"stale lead ID: {lead_id} is already {lead.get('state')}")
+                if lead.get("question") != question.get("text"):
+                    raise ValueError(f"cross-question lead ID: {lead_id}")
+                state = str(decision.get("state") or "").strip().lower()
+                if state == "resolved":
+                    ids = [str(eid).upper() for eid in decision.get("evidence_ids", [])]
+                    if not ids:
+                        raise ValueError(f"resolved lead {lead_id} requires evidence_ids")
+                    placeholders = ",".join("?" for _ in ids)
+                    rows = repo.con.execute(
+                        f"SELECT id,status,review_state,question FROM evidence WHERE id IN ({placeholders})", ids).fetchall()
+                    by_id = {row[0]: row for row in rows}
+                    if set(by_id) != set(ids):
+                        raise ValueError(f"unknown or cross-application evidence for lead {lead_id}")
+                    for evidence_id in ids:
+                        row = by_id[evidence_id]
+                        if row[2] == "rejected" or row[1] != "VERIFIED":
+                            raise ValueError(f"evidence {evidence_id} is not accepted VERIFIED evidence")
+                    repo.leads.resolve(lead_id, ids, by=actor, note=f"settled for {question.get('dr_id')}")
+                    result["resolved"].append({"lead_id": lead_id, "evidence_ids": ids})
+                elif state == "not_an_answer":
+                    repo.leads.mark_not_an_answer(lead_id, by=actor, note=f"settled for {question.get('dr_id')}")
+                    result["not_an_answer"].append(lead_id)
+                elif state == "retired":
+                    repo.leads.retire(lead_id, "retired by gap settlement", by=actor,
+                                      note=f"settled for {question.get('dr_id')}")
+                    result["retired"].append(lead_id)
+                else:
+                    raise ValueError(f"unsupported settlement state for {lead_id}: {state}")
+    except (KeyError, ValueError) as exc:
+        result = {"status": "ERROR", "error": str(exc), "resolved": [],
+                  "not_an_answer": [], "retired": [], "rejected": [str(exc)]}
+    finally:
+        repo.close()
+    return result

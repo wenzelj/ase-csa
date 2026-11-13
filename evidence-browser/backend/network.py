@@ -42,9 +42,45 @@ def device_identities(work_dir: Path, agents: Path) -> dict[str, dict[str, str]]
     return out
 
 
+VIEWS = ("application", "owned", "global")
+
+
+def _check_view(view: str, application_key: str | None) -> None:
+    """A scoped view needs a registered application key; an unknown view is rejected outright."""
+    if view not in VIEWS:
+        raise ValueError("view must be 'application', 'owned' or 'global'")
+    if view != "global":
+        if not application_key or not str(application_key).strip():
+            raise ValueError(f"application_key is required for the {view} view")
+
+
+def _scoped_application_keys() -> set[str]:
+    """Every registered application key across the project stores, without a framework import."""
+    import os
+    try:
+        path = Path(os.environ.get("CSA_PROJECTS_FILE", "")).expanduser() if os.environ.get("CSA_PROJECTS_FILE") else Path(os.environ.get("CSA_AGENTS_DIR", "")) / "csa-context" / "PROJECTS.yaml"
+        path = path if path.is_file() else Path(__file__).resolve().parents[3] / "csa-context" / "PROJECTS.yaml"
+    except Exception:
+        path = Path(__file__).resolve().parents[3] / "csa-context" / "PROJECTS.yaml"
+    keys: set[str] = set()
+    if path.is_file():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line.startswith("- key:"):
+                keys.add(line.split(":", 1)[1].strip().strip("\"'"))
+    return keys
+
+
 def build(work_dir: Path, agents: Path, view: str = "global", application_key: str | None = None) -> dict[str, Any]:
+    """One graph, every browser page: Host network, System Explorer, technical diagrams and CSA
+    figures all call this, so the same view can never disagree across the workspace."""
     if work_dir.name == "csa-work-v2":
+        _check_view(view, application_key)
         return _build_v2(work_dir, agents, view=view, application_key=application_key)
+    if view != "global":
+        # V1 stores have no application scope: the selected application's own view is the only
+        # scoped one, and it is the same as the global graph for that one store.
+        view = "global"
     _framework(agents)
     from csa_docx import evidence_digest, section_card
     identities = device_identities(work_dir, agents)
@@ -123,6 +159,18 @@ def _build_v2(work_dir: Path, agents: Path, view: str = "global", application_ke
             "SELECT src,dst,evidence_ids FROM graph_edge WHERE kind='flow' ORDER BY edge_id")]
         evidence = [dict(row) for row in con.execute(
             "SELECT id AS evidence_id,area AS csa_area,status,claim,review_state FROM evidence ORDER BY id")]
+        if view != "global":
+            # Browser routes historically pass the project key (for Tetra: ``tetra``),
+            # while V2 scope is keyed by the application identity (``tetra-reveloc``).
+            # Resolve that compatibility alias only when it maps to one V2 application;
+            # keep genuinely unknown or ambiguous keys as errors.
+            registered = [row[0] for row in con.execute(
+                "SELECT DISTINCT application_key FROM application_scope ORDER BY application_key")]
+            if application_key not in registered:
+                aliases = [candidate for candidate in registered
+                           if candidate.startswith(f"{application_key}-")]
+                if len(aliases) == 1:
+                    application_key = aliases[0]
     ips: dict[str, list[str]] = {}
     for row in addresses:
         if row["owner_host"]:
@@ -185,24 +233,33 @@ def _build_v2(work_dir: Path, agents: Path, view: str = "global", application_ke
                 edge["ids"] = sorted(set(edge["ids"] + ids))
         elif ids:
             edges.append({"s": source, "t": target, "port": "", "procs": [], "ids": ids, "est": False})
-    if view not in {"global", "application"}:
-        raise ValueError("view must be 'application' or 'global'")
-    if view == "application":
-        if not application_key:
-            raise ValueError("application_key is required for application view")
+    if view != "global":
         _framework(agents)
         from csa_docx.v2repo import Repo
         from csa_docx.v2repo import graph as _v2_graph  # noqa: F401 — patches Repo.graph
-        from csa_docx.v2repo.scope import projected_graph
+        from csa_docx.v2repo import scope as _v2_scope
         scoped_repo = Repo(db)
         try:
-            projection = projected_graph(scoped_repo, application_key, view="application")
+            owned, peers = _v2_scope._scoped_host_ids(scoped_repo, application_key)
         finally:
             scoped_repo.close()
-        allowed = {node["node_id"].removeprefix("host/")
-                   for node in projection["nodes"] if node["node_id"].startswith("host/")}
-        nodes = {name: node for name, node in nodes.items() if name in allowed}
-        edges = [edge for edge in edges if edge["s"] in allowed and edge["t"] in allowed]
+        if not owned and not peers:
+            raise ValueError(f"unknown application_key: {application_key}")
+        if view == "owned":
+            allowed_hosts = {name.removeprefix("host/") for name in owned}
+        else:
+            allowed_hosts = {name.removeprefix("host/") for name in owned | peers}
+        # Scope owns application hosts, not every endpoint they contact. Keep
+        # every captured named/IP/service endpoint on an edge touching an
+        # included host; otherwise the scoped view loses Internet,
+        # enterprise and other external connections that the global graph has
+        # already proved from evidence.
+        edges = [edge for edge in edges if edge["s"] in allowed_hosts or edge["t"] in allowed_hosts]
+        endpoints = {endpoint for edge in edges for endpoint in (edge["s"], edge["t"])}
+        nodes = {name: node for name, node in nodes.items() if name in allowed_hosts or name in endpoints}
+    else:
+        application_key = None
     return {"nodes": list(nodes.values()), "edges": edges,
             "source": "csa.sqlite host, address, flow, evidence and graph_edge",
-            "matrix_rows": len(evidence), "view": view, "application_key": application_key}
+            "matrix_rows": len(evidence), "view": view,
+            "application_key": application_key if view != "global" else None}

@@ -786,6 +786,20 @@ def review_evidence(system_key: str, evidence_id: str, request: EvidenceReviewRe
     project = system_project(system_key)
     if not re.fullmatch(r"E-\d{3,}", evidence_id):
         raise HTTPException(422, "Invalid evidence ID")
+    if work_dir(project).name == "csa-work-v2":
+        from csa_docx.v2repo import Repo
+        repo = Repo(work_dir(project) / "csa.sqlite")
+        try:
+            with repo.tx():
+                if request.state == "rejected":
+                    repo.evidence.reject(evidence_id, "evidence workspace", request.note or request.state)
+                else:
+                    repo.evidence.accept(evidence_id, "evidence workspace", request.note or request.state)
+            return {"status": "OK", "evidence_id": evidence_id, "review_state": "accepted" if request.state == "reviewed" else "rejected"}
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(422, str(exc)) from exc
+        finally:
+            repo.close()
     return run_json([sys.executable, str(matrix_script()), "--workspace", project["project_root"], "review", evidence_id,
                      "--by", "evidence workspace", "--state", request.state, "--note", request.note or request.state])
 
@@ -795,6 +809,24 @@ def review_lead(system_key: str, lead_id: str, request: LeadReviewRequest) -> di
     project = system_project(system_key)
     if not re.fullmatch(r"L-\d{6,}", lead_id):
         raise HTTPException(422, "Invalid lead ID")
+    if work_dir(project).name == "csa-work-v2":
+        from csa_docx.v2repo import Repo
+        repo = Repo(work_dir(project) / "csa.sqlite")
+        try:
+            with repo.tx():
+                if request.state == "resolved":
+                    repo.leads.resolve(lead_id, request.evidence_ids, by="evidence workspace", note=request.note or request.state)
+                elif request.state == "not_an_answer":
+                    repo.leads.mark_not_an_answer(lead_id, by="evidence workspace", note=request.note or request.state)
+                elif request.state == "retired":
+                    repo.leads.retire(lead_id, request.note or "retired by evidence workspace", by="evidence workspace")
+                else:
+                    raise ValueError("A V2 lead cannot be reopened through Evidence Browser")
+            return {"status": "OK", "lead_id": lead_id, "state": request.state}
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(422, str(exc)) from exc
+        finally:
+            repo.close()
     try:
         return lead_store().review(project["project_root"], [lead_id], request.state, "evidence workspace",
                                    request.note or request.state, request.evidence_ids)
@@ -1293,11 +1325,12 @@ def restore_connected_device(system_key: str, device_id: str, payload: dict[str,
 
 
 @app.get("/api/systems/{system_key}/explorer")
-def system_explorer(system_key: str) -> dict[str, Any]:
+def system_explorer(system_key: str, view: str = Query("application"), application_key: str | None = Query(None)) -> dict[str, Any]:
     """Hosts, captured links, per-host facts, CSA mentions and evidence-backed journeys for the System explorer."""
     project = system_project(system_key)
     resolved = documents.resolve(project)
-    return explorer.build(project, agents_dir(), resolved.get("path"))
+    return explorer.build(project, agents_dir(), resolved.get("path"), view=view,
+                         application_key=application_key or project.get("key"))
 
 
 @app.get("/api/systems/{system_key}/diagram")
@@ -1313,18 +1346,20 @@ def _figure_doc(project: dict[str, str]) -> Path | None:
 
 
 @app.get("/api/systems/{system_key}/figures")
-def figure_list(system_key: str) -> dict[str, Any]:
+def figure_list(system_key: str, view: str = Query("application"), application_key: str | None = Query(None)) -> dict[str, Any]:
     """CSA figures page: every section of the working document, whether it needs a figure, and why."""
     project = system_project(system_key)
-    return csa_figures.listing(project, agents_dir(), _figure_doc(project))
+    return csa_figures.listing(project, agents_dir(), _figure_doc(project), view=view,
+                               application_key=application_key or project.get("key"))
 
 
 @app.get("/api/systems/{system_key}/figures/{section_key}")
-def figure_detail(system_key: str, section_key: str) -> dict[str, Any]:
+def figure_detail(system_key: str, section_key: str, view: str = Query("application"), application_key: str | None = Query(None)) -> dict[str, Any]:
     """One section's figure, drawn now from the current evidence, with the relationships it shows."""
     project = system_project(system_key)
     try:
-        return csa_figures.detail(project, agents_dir(), _figure_doc(project), section_key)
+        return csa_figures.detail(project, agents_dir(), _figure_doc(project), section_key, view=view,
+                                   application_key=application_key or project.get("key"))
     except KeyError:
         raise HTTPException(404, f"No section '{section_key}' in the working document")
 
@@ -1348,28 +1383,31 @@ def figure_file(system_key: str, section_key: str, name: str):
 
 
 @app.post("/api/systems/{system_key}/figures/refresh")
-def figure_refresh(system_key: str) -> dict[str, Any]:
+def figure_refresh(system_key: str, view: str = Query("application"), application_key: str | None = Query(None)) -> dict[str, Any]:
     """Create and redraw every figure the document needs from the latest evidence. The document is not changed."""
     project = system_project(system_key)
-    return csa_figures.refresh(project, agents_dir(), _figure_doc(project))
+    return csa_figures.refresh(project, agents_dir(), _figure_doc(project), view=view,
+                               application_key=application_key or project.get("key"))
 
 
 @app.post("/api/systems/{system_key}/figures/{section_key}/brief")
-def figure_brief(system_key: str, section_key: str, edits: dict[str, Any]) -> dict[str, Any]:
+def figure_brief(system_key: str, section_key: str, edits: dict[str, Any], view: str = Query("application"), application_key: str | None = Query(None)) -> dict[str, Any]:
     """Your edits to a figure's brief (purpose, caption, source, items in or out), checked against the evidence."""
     project = system_project(system_key)
     try:
-        return csa_figures.edit_brief(project, agents_dir(), _figure_doc(project), section_key, edits)
+        return csa_figures.edit_brief(project, agents_dir(), _figure_doc(project), section_key, edits, view=view,
+                                      application_key=application_key or project.get("key"))
     except KeyError:
         raise HTTPException(404, f"No section '{section_key}' in the working document")
 
 
 @app.post("/api/systems/{system_key}/figures/{section_key}/save")
-def figure_save(system_key: str, section_key: str) -> dict[str, Any]:
+def figure_save(system_key: str, section_key: str, view: str = Query("application"), application_key: str | None = Query(None)) -> dict[str, Any]:
     """Save the figure (model, SVG, PNG) under csa-work/figures. The document itself is not changed."""
     project = system_project(system_key)
     try:
-        return csa_figures.save(project, agents_dir(), _figure_doc(project), section_key)
+        return csa_figures.save(project, agents_dir(), _figure_doc(project), section_key, view=view,
+                                application_key=application_key or project.get("key"))
     except KeyError:
         raise HTTPException(404, f"No section '{section_key}' in the working document")
 
@@ -1759,11 +1797,18 @@ def lead_sources(system_key: str, lead_id: str) -> dict[str, Any]:
     project = system_project(system_key)
     if not re.fullmatch(r"L-\d{6,}", lead_id):
         raise HTTPException(422, "Invalid lead ID")
-    rows = lead_store()._list(project["project_root"], None, None)["leads"]
-    target = next((row for row in rows if row["lead_id"] == lead_id), None)
+    if work_dir(project).name == "csa-work-v2":
+        with closing(sqlite3.connect(f"file:{work_dir(project) / 'csa.sqlite'}?mode=ro", uri=True)) as con:
+            con.row_factory = sqlite3.Row
+            target = con.execute("SELECT id AS lead_id, question, searched_scope, state, evidence_ids FROM lead WHERE id=?",
+                                 (lead_id,)).fetchone()
+            target = dict(target) if target else None
+    else:
+        rows = lead_store()._list(project["project_root"], None, None)["leads"]
+        target = next((row for row in rows if row["lead_id"] == lead_id), None)
     if not target:
         raise HTTPException(404, "Lead was not found")
-    source = {**target, "source_title": target.get("rel_path") or target.get("source_ref") or target.get("source_title", "")}
+    source = {**target, "source_title": target.get("rel_path") or target.get("source_ref") or target.get("searched_scope") or target.get("source_title", "")}
     matches = _source_matches(project, source)
     return {"lead": target, "sources": matches,
             "state": "found" if len(matches) == 1 else "ambiguous" if matches else "unavailable"}

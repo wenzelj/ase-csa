@@ -302,7 +302,7 @@ class Graph:
         return {**counts, "note": note}
 
     # ------------------------------------------------------------- read-only views
-    def nodes(self, host=None, kind=None):
+    def nodes(self, host=None, kind=None, view="global", application_key=None):
         r = self._repo
         sql = "SELECT node_id, label, kind, evidence_ids FROM graph_node"
         where, params = [], []
@@ -313,10 +313,11 @@ class Graph:
         if where:
             sql += " WHERE " + " AND ".join(where)
         sql += " ORDER BY node_id"
-        return [dict(zip(("node_id", "label", "kind", "evidence_ids"), row))
+        rows = [dict(zip(("node_id", "label", "kind", "evidence_ids"), row))
                 for row in r.con.execute(sql, params).fetchall()]
+        return self._project(rows, [], view, application_key)[0]
 
-    def edges(self, src=None, dst=None, kind=None):
+    def edges(self, src=None, dst=None, kind=None, view="global", application_key=None):
         r = self._repo
         sql = "SELECT edge_id, src, dst, kind, evidence_ids FROM graph_edge"
         where, params = [], []
@@ -329,8 +330,73 @@ class Graph:
         if where:
             sql += " WHERE " + " AND ".join(where)
         sql += " ORDER BY edge_id"
-        return [dict(zip(("edge_id", "src", "dst", "kind", "evidence_ids"), row))
+        rows = [dict(zip(("edge_id", "src", "dst", "kind", "evidence_ids"), row))
                 for row in r.con.execute(sql, params).fetchall()]
+        return self._project([], rows, view, application_key)[1]
+
+    def _project(self, nodes, edges, view, application_key):
+        if view == "global":
+            return nodes, edges
+        if view not in {"application", "owned"} or not application_key:
+            raise ValueError("application/owned graph views require application_key")
+        from .scope import _scoped_host_ids
+        owned, peers = _scoped_host_ids(self._repo, application_key)
+        allowed = {name if name.startswith("host/") else f"host/{name}" for name in
+                   (owned if view == "owned" else owned | peers)}
+        selected = [edge for edge in edges if edge["src"] in allowed or edge["dst"] in allowed]
+        endpoints = {x for edge in selected for x in (edge["src"], edge["dst"])}
+        return [node for node in nodes if node["node_id"] in allowed or node["node_id"] in endpoints], selected
+
+    def get(self, subject_id: str, view="global", application_key=None):
+        """Read one V2 graph node or edge; legacy graph files are never consulted."""
+        row = self._repo.con.execute(
+            "SELECT node_id AS id, node_id, label, kind, evidence_ids FROM graph_node WHERE node_id=?",
+            (subject_id,)).fetchone()
+        if row:
+            nodes, _ = self._project([dict(zip(("id", "node_id", "label", "kind", "evidence_ids"), row))], [], view, application_key)
+            return nodes[0] if nodes else None
+        row = self._repo.con.execute(
+            "SELECT edge_id AS id, edge_id, src, dst, kind, evidence_ids FROM graph_edge WHERE edge_id=?",
+            (subject_id,)).fetchone()
+        if not row:
+            return None
+        _, edges = self._project([], [dict(zip(("id", "edge_id", "src", "dst", "kind", "evidence_ids"), row))], view, application_key)
+        return edges[0] if edges else None
+
+    def verify(self, view="global", application_key=None):
+        nodes = self.nodes(view=view, application_key=application_key)
+        edges = self.edges(view=view, application_key=application_key)
+        evidence = {row[0] for row in self._repo.con.execute("SELECT id FROM evidence")}
+        node_ids = {row["node_id"] for row in nodes}
+        issues = []
+        for row in nodes + edges:
+            ids = [x for x in str(row.get("evidence_ids") or "").split(";") if x]
+            missing = sorted(set(ids) - evidence)
+            if missing:
+                issues.append({"id": row.get("node_id") or row.get("edge_id"), "missing": missing})
+        for row in edges:
+            if row["src"] not in node_ids or row["dst"] not in node_ids:
+                issues.append({"id": row["edge_id"], "error": "dangling graph endpoint"})
+        return {"status": "OK" if not issues else "ERROR", "issues": issues,
+                "nodes": len(nodes), "edges": len(edges)}
+
+    def review(self, subject_id: str, state: str, actor="graph review", note=""):
+        """Review a graph subject in a transaction; rejecting a subject rejects its cited evidence."""
+        self._repo._require_tx()
+        subject = self.get(subject_id)
+        if not subject:
+            raise KeyError(subject_id)
+        if state not in {"accepted", "rejected", "reviewed"}:
+            raise ValueError("graph review state must be accepted, reviewed or rejected")
+        ids = [x for x in str(subject.get("evidence_ids") or "").split(";") if x]
+        if state == "rejected":
+            for evidence_id in ids:
+                if self._repo.evidence.get(evidence_id).get("review_state") != "rejected":
+                    self._repo.evidence.reject(evidence_id, by=actor, note=note or f"graph subject {subject_id}")
+        self._repo.review_event().append(actor, f"graph.review.{state}",
+                                         "graph_edge" if "edge_id" in subject else "graph_node", subject_id,
+                                         note or f"evidence_ids={','.join(ids)}")
+        return {"status": "OK", "subject_id": subject_id, "state": state, "evidence_ids": ids}
 
 # ---------------------------------------------------------------------------
 # Wire the guard into Repo without modifying `__init__.py`.

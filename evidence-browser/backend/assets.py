@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import csv
 import ipaddress
+import sqlite3
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -137,6 +138,9 @@ def build(work_dir: Path, agents: Path, *, page: int = 1, per_page: int = 50,
     ``include_retired`` adds retired register devices to the ``devices`` group (``active`` false, no
     aliases, nothing derived from observations) and a ``retired_devices`` count; ``counts`` still
     counts active devices only."""
+    if work_dir.name == "csa-work-v2" and (work_dir / "csa.sqlite").is_file():
+        return _build_v2(work_dir, page=page, per_page=per_page, query=query, kind=kind,
+                         include_retired=include_retired)
     _framework(agents)
     from csa_docx import evidence_digest, evidence_live
 
@@ -338,6 +342,84 @@ def build(work_dir: Path, agents: Path, *, page: int = 1, per_page: int = 50,
             "matrix_rows": len(live),
             "note": "Observed connections, configured services and documented dependencies are recorded "
                     "distinctly; none of them implies a migration dependency."}
+
+
+def _build_v2(work_dir: Path, *, page: int, per_page: int, query: str, kind: str,
+              include_retired: bool) -> dict[str, Any]:
+    """Build the inventory from the V2 store without consulting legacy V1 folders."""
+    db = work_dir / "csa.sqlite"
+    with sqlite3.connect(f"file:{db}?mode=ro", uri=True) as con:
+        con.row_factory = sqlite3.Row
+        scope = {row["host_name"]: dict(row) for row in con.execute(
+            "SELECT host_name,membership,review_state,active FROM application_scope "
+            "WHERE active=1 AND review_state != 'rejected'")}
+        host_rows = {row["name"]: dict(row) for row in con.execute(
+            "SELECT name,role,site,os,status FROM host WHERE status='active'")}
+        addresses = [dict(row) for row in con.execute("SELECT ip,owner_host,scope FROM address ORDER BY ip")]
+        services = [dict(row) for row in con.execute("SELECT host,provider_host,port,protocol,name FROM service ORDER BY id")]
+        flows = [dict(row) for row in con.execute("SELECT src_host,dst_host,port,protocol,purpose FROM flow ORDER BY id")]
+        evidence = [dict(row) for row in con.execute(
+            "SELECT id,claim,status FROM evidence WHERE review_state != 'rejected' ORDER BY id")]
+    ips_by_host: dict[str, list[str]] = defaultdict(list)
+    for row in addresses:
+        if row.get("owner_host"):
+            ips_by_host[row["owner_host"]].append(row["ip"])
+
+    def mentions(host: str, ips: list[str]) -> list[dict]:
+        return [{"evidence_id": row["id"], "claim": row.get("claim") or ""} for row in evidence
+                if host in (row.get("claim") or "") or any(ip and ip in (row.get("claim") or "") for ip in ips)]
+
+    hosts = []
+    for name in sorted(scope):
+        if scope[name]["membership"] != "owned" or name not in host_rows:
+            continue
+        row = host_rows[name]; ips = ips_by_host.get(name, [])
+        host_services = [s for s in services if s.get("host") == name]
+        host_flows = [f for f in flows if name in (f.get("src_host"), f.get("dst_host"))]
+        hosts.append({"id": name, "name": name, "kind": "application_host", "aliases": sorted(set(ips + [name.lower()])),
+                      "role": row.get("role") or "", "site": row.get("site") or "", "state": "captured",
+                      "in_scope": scope[name]["membership"], "ips": ips,
+                      "services": [{"service": s.get("name") or "", "server_host": s.get("provider_host") or "",
+                                    "server_ip": "", "preference": "", "source": "csa.sqlite service"} for s in host_services],
+                      "observed_connections": [{"src": f.get("src_host") or "", "dst": f.get("dst_host") or "",
+                                                 "dst_port": f.get("port") or "", "connections": "",
+                                                 "basis": f.get("purpose") or "", "source": "csa.sqlite flow"} for f in host_flows],
+                      "documented_dependencies": [], "evidence": mentions(name, ips), "source": "csa.sqlite"})
+    unidentified = [{"id": row["ip"], "address": row["ip"], "kind": "unidentified_address", "aliases": [row["ip"]],
+                     "role": "", "site": "", "state": "unidentified", "source": "csa.sqlite", "evidence": []}
+                    for row in addresses if not row.get("owner_host")]
+    owned = {name for name, row in scope.items() if row["membership"] == "owned"}
+    peer_names = sorted(name for name, row in scope.items()
+                        if row["membership"] == "peer" and name in host_rows)
+    devices = []
+    for name in peer_names:
+        row = host_rows[name]
+        connected = sorted({f["src_host"] if f["dst_host"] == name else f["dst_host"]
+                             for f in flows if name in (f.get("src_host"), f.get("dst_host"))
+                             if (f.get("src_host") if f.get("dst_host") == name else f.get("dst_host")) in owned})
+        peer_flows = [f for f in flows if name in (f.get("src_host"), f.get("dst_host"))]
+        devices.append({"id": name, "name": name, "kind": "connected_device", "active": True,
+                        "type": "host", "role": row.get("role") or "", "owner": "", "site": row.get("site") or "",
+                        "state": "captured", "classification": scope[name].get("membership") or "peer",
+                        "relationship": "peer", "aliases": sorted(set(ips_by_host.get(name, []) + [name.lower()])),
+                        "connected_application_hosts": connected,
+                        "direction": sorted({"outbound" if f.get("src_host") == name else "inbound" for f in peer_flows}),
+                        "ports": sorted({str(f.get("port") or "") for f in peer_flows if f.get("port") is not None}),
+                        "processes": [], "observation_type": ["captured_connection"] if peer_flows else [],
+                        "source": "csa.sqlite host, flow, application_scope", "evidence": []})
+
+    groups = {"application_hosts": hosts, "devices": devices, "unidentified": unidentified, "conflicts": []}
+    if kind:
+        if kind not in groups:
+            raise ValueError(f"unknown kind {kind!r}; expected one of {sorted(groups)}")
+        out = {kind: {"items": _page(groups[kind], page, per_page, query), "total": len(groups[kind]),
+                      "page": max(1, page), "per_page": per_page}}
+    else:
+        out = {k: {"items": _page(v, page, per_page, query), "total": len(v),
+                   "page": max(1, page), "per_page": per_page} for k, v in groups.items()}
+    return {"groups": out, "counts": {k: len(v) for k, v in groups.items()}, "sources": ["csa.sqlite"],
+            "matrix_rows": len(evidence),
+            "note": "V2 host, address, service, flow, evidence and application-scope records are read from csa.sqlite. Peer hosts are shown as connected devices."}
 
 
 # ---------------------------------------------------------------------------------------------

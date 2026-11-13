@@ -1,3 +1,4 @@
+export type GraphView = "application" | "owned" | "global";
 export type PipelineIssue = { code: string; message: string; section?: string };
 export type PipelineSection = {
   visible_number: string; stable_key: string; stable_path?: string; heading: string;

@@ -31,6 +31,7 @@ import argparse
 import csv
 import json
 import re
+import sqlite3
 import shutil
 import sys
 import zipfile
@@ -82,6 +83,19 @@ def _site_order(work_dir: Path) -> list[str]:
 
 def register(work_dir: Path) -> list[dict]:
     """In-scope hosts from hosts.csv: [{host, role, site, capture}] (role may be empty; capture: the host has one)."""
+    if Path(work_dir).name == "csa-work-v2":
+        try:
+            data = json.loads((Path(work_dir) / "host-settings.json").read_text(encoding="utf-8"))
+            names = sorted({row["host"].upper() for row in data.get("rows", [])})
+            if not names:
+                return []
+            with sqlite3.connect(f"file:{Path(work_dir) / 'csa.sqlite'}?mode=ro", uri=True) as con:
+                con.row_factory = sqlite3.Row
+                return [{"host": row["name"], "role": row["role"] or "", "site": row["site"] or "", "capture": True}
+                        for row in con.execute("SELECT name,role,site FROM host WHERE status='active' AND name IN ({})".format(
+                            ",".join("?" for _ in names)), names)]
+        except (OSError, ValueError, sqlite3.Error):
+            return []
     f = Path(work_dir) / "hosts" / "hosts.csv"
     if not f.is_file():
         return []

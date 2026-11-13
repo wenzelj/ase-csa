@@ -71,6 +71,9 @@ def project(tmp_path):
     return tmp_path / "proj"
 
 
+APP_KEY = "tetra-reveloc"
+
+
 def _count(db, table):
     con = sqlite3.connect(db)
     try:
@@ -81,7 +84,7 @@ def _count(db, table):
 
 def test_migrate_loads_every_table(project, tmp_path):
     v2 = tmp_path / "v2"
-    res = migrate(project, v2)
+    res = migrate(project, v2, APP_KEY)
     assert res["status"] == "OK"
     db = v2 / "csa.sqlite"
     assert _count(db, "evidence") == 2
@@ -117,17 +120,17 @@ def test_migrate_loads_every_table(project, tmp_path):
 
 def test_migrate_is_idempotent(project, tmp_path):
     v2 = tmp_path / "v2"
-    migrate(project, v2)
+    migrate(project, v2, APP_KEY)
     db = v2 / "csa.sqlite"
     tables = ("evidence", "host", "address", "service", "flow", "intake_record", "intake_file",
               "lead", "gap_check", "indexed_file", "indexed_chunk", "fts", "graph_node", "graph_edge")
     before = {t: _count(db, t) for t in tables}
-    migrate(project, v2)
+    migrate(project, v2, APP_KEY)
     assert {t: _count(db, t) for t in tables} == before
 
 
 def test_migrate_never_writes_into_source(project, tmp_path):
     before = sorted(p.relative_to(project).as_posix() for p in project.rglob("*"))
-    migrate(project, tmp_path / "v2")
+    migrate(project, tmp_path / "v2", APP_KEY)
     assert sorted(p.relative_to(project).as_posix() for p in project.rglob("*")) == before
     Repo(tmp_path / "v2").close()

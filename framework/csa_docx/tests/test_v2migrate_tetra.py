@@ -21,7 +21,7 @@ def _rows(path):
 @pytest.fixture(scope="module")
 def migrated(tmp_path_factory):
     v2 = tmp_path_factory.mktemp("tetra-v2")
-    res = migrate(ROOT, v2)
+    res = migrate(ROOT, v2, "tetra-reveloc")
     assert res["status"] == "OK", res
     return v2, res
 

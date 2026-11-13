@@ -285,9 +285,12 @@ def _requirement_brief(work_dir: Path, target: str, budget_tokens: int, domain: 
 
 
 def build_brief(work_dir: Path, target: str, *, budget_tokens: int = 6000,
-                domains: dict | None = None, block_mode: bool = False) -> dict:
+                domains: dict | None = None, block_mode: bool = False,
+                application_key: str | None = None) -> dict:
     """``block_mode`` forces the block brief (the old blocks as they stand) even when facts exist; `csa move` uses it."""
     work_dir = Path(work_dir)
+    if work_dir.name == "csa-work-v2":
+        return _build_v2_brief(work_dir, target, budget_tokens, application_key)
     if domains is None:
         try:
             domains = scope_map.load()
@@ -376,13 +379,56 @@ def build_brief(work_dir: Path, target: str, *, budget_tokens: int = 6000,
             "split": len(files) > 1, "tokens": tokens, "mode": "block"}
 
 
+def _build_v2_brief(work_dir: Path, target: str, budget_tokens: int,
+                    application_key: str | None) -> dict:
+    """Build a small V2 brief from SQLite scope/evidence/index state only."""
+    if not application_key:
+        return {"status": "V2_CONVERSION_NOT_REQUIRED", "target": target, "files": [], "blocks": 0,
+                "mode": "v2", "message": "V2 projects do not use the V1 conversion brief; pass --application-key for a scoped V2 brief."}
+    from csa_docx.v2repo import Repo
+    from csa_docx.v2repo.scope import _scoped_host_ids
+    repo = Repo(work_dir)
+    try:
+        owned, peers = _scoped_host_ids(repo, application_key)
+        allowed = {name.removeprefix("host/") for name in owned | peers}
+        hosts = [dict(zip(("name", "role", "site"), row)) for row in repo.con.execute(
+            "SELECT name,role,site FROM host WHERE status='active' AND name IN ({}) ORDER BY name".format(
+                ",".join("?" for _ in allowed)), tuple(sorted(allowed)))] if allowed else []
+        evidence = [dict(zip(("id", "status", "review_state", "claim", "source_title"), row)) for row in repo.con.execute(
+            "SELECT id,status,review_state,claim,source_title FROM evidence "
+            "WHERE review_state != 'rejected' ORDER BY id")]
+        files = [row[0] for row in repo.con.execute("SELECT rel_path FROM indexed_file ORDER BY rel_path")]
+        leads = [dict(zip(("id", "question", "state"), row)) for row in repo.con.execute(
+            "SELECT id,question,state FROM lead WHERE state='open' ORDER BY id")]
+    finally:
+        repo.close()
+    lines = [f"# V2 assessment brief: {target}", "", "## Boundary", "",
+             f"- **Application:** {application_key}",
+             "- **Source:** csa-work-v2/csa.sqlite (read-only brief inputs)",
+             "- **Scope:** owned hosts and captured, active peer relationships only.", "", "## Hosts", "",
+             "| Host | Role | Site |", "| --- | --- | --- |"]
+    lines += [f"| {h['name']} | {h.get('role') or ''} | {h.get('site') or ''} |" for h in hosts] or ["No scoped hosts."]
+    lines += ["", "## Indexed source files", ""] + ([f"- `{p}`" for p in files] or ["None."])
+    lines += ["", "## Evidence available", ""] + [f"- {r['id']} ({r['status']}) {r['claim']} — {r['source_title']}" for r in evidence]
+    lines += ["" , "## Open leads", ""] + ([f"- {r['id']}: {r['question']}" for r in leads] or ["None."])
+    text = "\n".join(lines) + "\n"
+    out = work_dir / "convert" / target / "brief.md"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(text, encoding="utf-8")
+    return {"status": "OK", "target": target, "files": [str(out)], "blocks": 1,
+            "split": False, "tokens": [_tokens(text)], "mode": "v2", "application_key": application_key,
+            "hosts": len(hosts), "evidence": len(evidence), "leads": len(leads)}
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Build the conversion brief for one template subsection.")
     ap.add_argument("--work-dir", type=Path, required=True)
     ap.add_argument("--target", required=True)
     ap.add_argument("--budget", type=int, default=6000)
+    ap.add_argument("--application-key", default="")
     a = ap.parse_args(argv)
-    print(json.dumps(build_brief(a.work_dir, a.target, budget_tokens=a.budget), ensure_ascii=False))
+    print(json.dumps(build_brief(a.work_dir, a.target, budget_tokens=a.budget,
+                                 application_key=a.application_key or None), ensure_ascii=False))
     return 0
 
 

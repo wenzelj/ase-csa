@@ -174,8 +174,92 @@ def _hosts_to_classify(work: Path, rejected: set[str]) -> list[dict[str, str]]:
     return out
 
 
+def _snapshot_v2(project: dict[str, str], work: Path, db: Path) -> dict[str, Any]:
+    """Read the V2 intake store without falling back to the legacy file tree.
+
+    V2 keeps intake, evidence, leads and graph state in ``csa.sqlite``.  The
+    intake page still uses the historical snapshot shape, so this adapter
+    deliberately translates the read-only tables into that shape rather than
+    teaching the page about two storage formats.
+    """
+    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    con.row_factory = sqlite3.Row
+    try:
+        indexed = con.execute("SELECT COUNT(*) AS n, MAX(indexed_at) AS latest FROM indexed_file").fetchone()
+        statuses = {row[0]: row[1] for row in con.execute(
+            "SELECT 'indexed', COUNT(*) FROM indexed_file")}
+        records = con.execute(
+            "SELECT id, started_at, finished_at, file_count, row_count "
+            "FROM intake_record ORDER BY COALESCE(finished_at, started_at) DESC LIMIT 1").fetchone()
+
+        record = None
+        if records:
+            files = [dict(row) for row in con.execute(
+                "SELECT rel_path, status, error FROM intake_file WHERE record_id=? ORDER BY rel_path",
+                (records["id"],))]
+            added = [{"rel_path": row["rel_path"], "status": "indexed",
+                      "reason": "", "source_class": ""}
+                     for row in files if row["status"] == "processed"]
+            unreadable = [{"rel_path": row["rel_path"], """reason""": row["error"] or "not processed"}
+                          for row in files if row["status"] == "failed"]
+            record = {"id": records["id"], "built_at_utc": records["finished_at"] or records["started_at"],
+                      "added": added, "changed": [], "removed": [], "unreadable": unreadable,
+                      "file_count": records["file_count"], "row_count": records["row_count"] or 0}
+
+        evidence = [dict(row) for row in con.execute(
+            "SELECT id AS evidence_id, area AS csa_area, question, claim, status, source_title, "
+            "page_or_location, excerpt AS evidence_excerpt, confidence, gap_or_action, review_state "
+            "FROM evidence ORDER BY id")]
+        by_status: dict[str, int] = {}
+        for row in evidence:
+            by_status[row.get("status", "")] = by_status.get(row.get("status", ""), 0) + 1
+
+        # V2 does not yet persist evidence-to-intake ownership.  Do not claim
+        # rows were added by the latest run until that relation exists.
+        leads = [dict(row) for row in con.execute(
+            "SELECT id, question, searched_scope, state, evidence_ids FROM lead ORDER BY id")]
+        open_leads = [{"lead_id": row["id"], "dr_id": "", "question": row["question"],
+                       "excerpt": "", "source_ref": row["searched_scope"], "page_or_location": "",
+                       "state": row["state"]}
+                      for row in leads if row["state"] == "open"]
+        lead_counts: dict[str, int] = {}
+        for row in leads:
+            lead_counts[row["state"]] = lead_counts.get(row["state"], 0) + 1
+
+        hosts = con.execute("SELECT COUNT(*) FROM host").fetchone()[0]
+        unnamed = con.execute("SELECT COUNT(*) FROM address WHERE owner_host IS NULL OR owner_host='' ").fetchone()[0]
+        graph_nodes = con.execute("SELECT COUNT(*) FROM graph_node").fetchone()[0]
+        graph_edges = con.execute("SELECT COUNT(*) FROM graph_edge").fetchone()[0]
+        latest_gap = con.execute("SELECT id, ts, dr_id, text, leads_found FROM gap_check ORDER BY ts DESC LIMIT 1").fetchone()
+        gap = None
+        if latest_gap:
+            gap = {"schema_version": 4, "checked_at": latest_gap["ts"], "questions": [], "affected": []}
+
+        return {"project_key": project.get("key"),
+                "index": {"built_at_utc": indexed["latest"], "files_by_status": statuses,
+                          "complete": bool(indexed["n"])},
+                "intake": record, "nothing_new_since": None,
+                "model": {"status": "current", "changed_sources": []},
+                "sync": {"ok": True, "failed": False, "behind": False, "last": None},
+                "refresh": {"at": "", "retired": [], "recheck": []},
+                "hosts": {"to_classify": [], "unnamed_addresses": unnamed},
+                "matrix": {"rows": len(evidence), "evidence_rows": len(evidence), "raw_rows": len(evidence),
+                           "not_found": sum(1 for row in evidence if row.get("status") == "NOT_FOUND"),
+                           "legacy_candidate_tombstones": 0, "rejected": sum(1 for row in evidence if row.get("review_state") == "rejected"),
+                           "by_status": by_status, "pending_review": sum(1 for row in evidence if row.get("review_state") in (None, "", "pending")),
+                           "added_since_intake": []},
+                "graph": {"nodes": graph_nodes, "edges": graph_edges},
+                "leads": {"by_state": lead_counts}, "open_leads": open_leads,
+                "gap_check": gap, "stale": 0, "agent_summary": None}
+    finally:
+        con.close()
+
+
 def snapshot(project: dict[str, str]) -> dict[str, Any]:
     work = Path(project["work_dir"]).expanduser()
+    db = work / "csa.sqlite"
+    if work.name == "csa-work-v2" and db.is_file():
+        return _snapshot_v2(project, work, db)
     intake_dir = work / "intake"
     record = _json(intake_dir / "latest.json")
     index = _index(work)

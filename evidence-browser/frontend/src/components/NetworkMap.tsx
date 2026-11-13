@@ -2,10 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import "./network.css";
 import networkCss from "./network.css?raw";
+import type { GraphView } from "../types";
 
 type NetNode = { id: string; kind: "captured" | "dc" | "named" | "unnamed" | "public"; role: string; site: string; ips: string; listed?: boolean };
 type NetEdge = { s: string; t: string; port: string; procs: string[]; ids: string[]; est: boolean };
-type NetData = { nodes: NetNode[]; edges: NetEdge[]; matrix_rows: number; view?: "application" | "global" };
+type NetData = { nodes: NetNode[]; edges: NetEdge[]; matrix_rows: number; view?: GraphView; application_key?: string | null };
 type Agg = { s: string; t: string; ports: string[]; procs: string[]; ids: string[]; est: boolean; intra: boolean };
 
 const PUB = "Public internet";
@@ -14,9 +15,9 @@ const KIND_LABEL: Record<string, string> = {
   captured: "Captured system host", dc: "Domain controller", named: "Named host, not captured",
   unnamed: "Internal address, name not captured", public: "Public internet",
 };
-const W = 1180, BW = 170, BH = 34, GAP = 10;
+const W = 1180, BW = 170, BH = 48, GAP = 10;
 
-export default function NetworkMap({ system, openEvidenceId }: { system: string; openEvidenceId: (id: string) => void }) {
+export default function NetworkMap({ system, graphView, onGraphViewChange, openEvidenceId }: { system: string; graphView: GraphView; onGraphViewChange: (view: GraphView) => void; openEvidenceId: (id: string) => void }) {
   const [data, setData] = useState<NetData | null>(null);
   const [error, setError] = useState("");
   const [showPublic, setShowPublic] = useState(false);
@@ -25,12 +26,11 @@ export default function NetworkMap({ system, openEvidenceId }: { system: string;
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const [hiCaptured, setHiCaptured] = useState(false);
-  const [view, setView] = useState<"application" | "global">("application");
 
   useEffect(() => {
     setData(null); setSelected(null); setError("");
-    api<NetData>(`/api/systems/${system}/network?view=${view}`).then(setData).catch(e => setError(String(e.message || e)));
-  }, [system, view]);
+    api<NetData>(`/api/systems/${system}/network?view=${graphView}&application_key=${encodeURIComponent(system)}`).then(setData).catch(e => setError(String(e.message || e)));
+  }, [system, graphView]);
 
   const graph = useMemo(() => {
     if (!data) return null;
@@ -171,9 +171,10 @@ ${networkCss}
     </header>
     <div className="net-controls">
       <input id="net-q" type="search" placeholder="Find a host or address" aria-label="Find a host or address" value={query} onChange={e => setQuery(e.target.value)} />
-      <label>View <select value={view} onChange={e => { setView(e.target.value as "application" | "global"); setSelected(null); }}>
-        <option value="application">This application</option><option value="global">All applications</option>
+      <label>View <select value={graphView} onChange={e => { onGraphViewChange(e.target.value as GraphView); setSelected(null); }}>
+        <option value="application">This application and captured peers</option><option value="owned">Owned hosts only</option><option value="global">All applications</option>
       </select></label>
+      <span className="net-scope">Scope: {data.view || graphView} · {data.application_key || system}</span>
       <label><input id="net-pub" type="checkbox" checked={showPublic} onChange={e => { setShowPublic(e.target.checked); setSelected(null); }} /> Show each public address</label>
       <label><input id="net-att" type="checkbox" checked={attempted} onChange={e => { setAttempted(e.target.checked); setSelected(null); }} /> Include attempted-only connections</label>
       <label><input id="net-intra" type="checkbox" checked={intra} onChange={e => { setIntra(e.target.checked); setSelected(null); }} /> Links inside the system</label>
@@ -202,7 +203,8 @@ ${networkCss}
           })}</g>
           <g>{graph.nodes.map(n => {
             const p = graph.pos[n.id]; if (!p) return null;
-            const dim = (selected && !neighbours.has(n.id)) || (q && !(n.id.toLowerCase().includes(q) || n.role.toLowerCase().includes(q)));
+            const ipText = n.ips.split(";").filter(x => x && !x.endsWith(".0")).join(", ");
+            const dim = (selected && !neighbours.has(n.id)) || (q && !(n.id.toLowerCase().includes(q) || n.role.toLowerCase().includes(q) || ipText.toLowerCase().includes(q)));
             const role = n.kind === "unnamed" ? "name not captured" : n.role;
             const pick = () => setSelected(selected === n.id ? null : n.id);
             return <g key={n.id} data-id={n.id} className={`node k-${n.kind}${n.listed && n.kind !== "captured" ? " listed" : ""}${selected === n.id ? " sel" : ""}${dim ? " dim" : ""}${hiCaptured ? (n.kind === "captured" ? " cap-hi" : selected && neighbours.has(n.id) ? "" : " cap-lo") : ""}`} transform={`translate(${p.x},${p.y})`}
@@ -211,6 +213,7 @@ ${networkCss}
               {hiCaptured && n.kind === "captured" && <circle cx={BW - 10} cy={10} r={4} className="cap-dot" />}
               <text x={8} y={14}>{n.id}</text>
               <text x={8} y={27} className="role">{role.length > 30 ? role.slice(0, 29) + "…" : role}</text>
+              {ipText && <text x={8} y={42} className="ip">{ipText.length > 25 ? ipText.slice(0, 24) + "…" : ipText}</text>}
             </g>;
           })}</g>
         </svg>

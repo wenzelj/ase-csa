@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import atexit
+import csv
 import copy
 import hashlib
 import json
@@ -30,7 +31,9 @@ import shutil
 import subprocess
 import sys
 import threading
+import tempfile
 import time
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
@@ -1148,13 +1151,39 @@ def run_check_change(p: dict, cf: Path, a, strict: bool = False, section: str | 
                 nf.write_text(json.dumps(node), encoding="utf-8")
                 argv += ["--node", str(nf)]
     if p.get("work_dir"):
-        argv += ["--evidence", str(local_path(p["work_dir"]) / "evidence-matrix.csv")]
+        with _evidence_matrix_path(p) as evidence_path:
+            argv += ["--evidence", str(evidence_path)]
+            if p.get("sites"):
+                argv += ["--sites", p["sites"]]
+            for flag, name in (("--no-anchors", "no_anchors"), ("--no-lint", "no_lint"), ("--json", "json")):
+                if getattr(a, name, False):
+                    argv.append(flag)
+            return subprocess.call(argv, cwd=str(FRAMEWORK))
     if p.get("sites"):
         argv += ["--sites", p["sites"]]
     for flag, name in (("--no-anchors", "no_anchors"), ("--no-lint", "no_lint"), ("--json", "json")):
         if getattr(a, name, False):
             argv.append(flag)
     return subprocess.call(argv, cwd=str(FRAMEWORK))
+
+
+@contextmanager
+def _evidence_matrix_path(p: dict):
+    """Provide a check-compatible evidence view without creating a V1 file in a V2 project."""
+    work = local_path(p["work_dir"])
+    if work.name != "csa-work-v2":
+        yield work / "evidence-matrix.csv"
+        return
+    sys.path.insert(0, str(FRAMEWORK))
+    from csa_docx import v2_access
+    fields = ["evidence_id", "csa_area", "question", "claim", "status", "source_title", "source_version",
+              "section", "page_or_location", "evidence_excerpt", "inference_reason", "confidence", "gap_or_action", "review_state"]
+    with tempfile.TemporaryDirectory(prefix="csa-v2-evidence-") as folder:
+        path = Path(folder) / "evidence-matrix.csv"
+        with path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fields); writer.writeheader()
+            writer.writerows({**{key: "" for key in fields}, **row} for row in v2_access.evidence_rows(work / "csa.sqlite"))
+        yield path
 
 
 def _audit_dirs(p: dict) -> list[Path]:
@@ -1684,6 +1713,9 @@ def cmd_ev(a):
 
 def cmd_appendix(a):
     p = project(a.project); banner(p)
+    if local_path(p["work_dir"]).name == "csa-work-v2":
+        with _evidence_matrix_path(p) as matrix:
+            return run_script("appendix", ["--workspace", _ws(p), "--matrix", str(matrix), *a.rest])
     return run_script("appendix", ["--workspace", _ws(p), *a.rest])
 
 
@@ -1833,6 +1865,47 @@ def cmd_figure(a):
 
 def cmd_graph(a):
     p = project(a.project); banner(p)
+    if local_path(p["work_dir"]).name == "csa-work-v2":
+        db = local_path(p["work_dir"]) / "csa.sqlite"
+        action = a.rest[0] if a.rest else "stats"
+        sys.path.insert(0, str(FRAMEWORK))
+        from csa_docx.v2repo import Repo
+        import csa_docx.v2repo.graph  # noqa: F401
+        repo = Repo(db)
+        try:
+            graph = repo.graph
+            if action == "stats":
+                nodes, edges = graph.nodes(), graph.edges()
+                counts = lambda rows, key: dict(sorted({k: sum(1 for row in rows if (row.get(key) or "") == k)
+                                                         for k in {row.get(key) or "" for row in rows}}.items()))
+                result = {"status": "OK", "project": p["key"], "nodes": len(nodes), "edges": len(edges),
+                          "nodes_by_type": counts(nodes, "kind"), "edges_by_relationship_type": counts(edges, "kind"),
+                          "source": "csa.sqlite graph_node, graph_edge"}
+            elif action == "list":
+                nodes, edges = graph.nodes(), graph.edges()
+                result = {"status": "OK", "project": p["key"], "node_count": len(nodes), "edge_count": len(edges),
+                          "nodes": nodes, "edges": edges, "source": "csa.sqlite graph_node, graph_edge"}
+            elif action == "get":
+                subject = a.rest[1] if len(a.rest) > 1 else ""
+                row = graph.get(subject)
+                result = {"status": "OK", "subject": row, "source": "csa.sqlite graph_node, graph_edge"} if row else {
+                    "status": "ERROR", "code": "V2_GRAPH_NOT_FOUND", "message": f"graph subject not found: {subject}"}
+            elif action == "verify":
+                result = {**graph.verify(), "source": "csa.sqlite graph_node, graph_edge, evidence"}
+            elif action == "review":
+                subject = a.rest[1] if len(a.rest) > 1 else ""
+                state = a.rest[2] if len(a.rest) > 2 else ""
+                with repo.tx():
+                    result = graph.review(subject, state, actor="csa graph review", note=" ".join(a.rest[3:]))
+            else:
+                result = {"status": "ERROR", "code": "V2_GRAPH_COMMAND_UNAVAILABLE",
+                          "message": f"graph action '{action}' has no V2 implementation; old graph files were not used"}
+        except (KeyError, ValueError) as exc:
+            result = {"status": "ERROR", "code": "V2_GRAPH_REVIEW_ERROR", "message": str(exc)}
+        finally:
+            repo.close()
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        return 0 if result.get("status") == "OK" else 2
     return run_script("graph", ["--workspace", _ws(p), *a.rest])
 
 
@@ -2863,9 +2936,11 @@ def writer_needed_from(findings: list[dict]) -> tuple[bool, str]:
 def _writer_needed(p: dict, cf: Path, sec: str, label: str | None) -> tuple[bool, str]:
     argv = [framework_python(), "-m", "csa_docx.check_change", str(cf), "--workspace", str(local_path(p["project_root"])), "--json"]
     if p.get("work_dir"):
-        argv += ["--notes", str(author_dir(p, sec, label) / "search-notes.md"),
-                 "--evidence", str(local_path(p["work_dir"]) / "evidence-matrix.csv")]
-    r = subprocess.run(argv, cwd=str(FRAMEWORK), capture_output=True, text=True, env=_fw_env(p))
+        with _evidence_matrix_path(p) as evidence_path:
+            argv += ["--notes", str(author_dir(p, sec, label) / "search-notes.md"), "--evidence", str(evidence_path)]
+            r = subprocess.run(argv, cwd=str(FRAMEWORK), capture_output=True, text=True, env=_fw_env(p))
+    else:
+        r = subprocess.run(argv, cwd=str(FRAMEWORK), capture_output=True, text=True, env=_fw_env(p))
     try:
         return writer_needed_from(json.loads(r.stdout).get("findings", []))
     except ValueError:
@@ -3903,6 +3978,16 @@ def cmd_model(a):
     """csa model build|counts|export: the system model store csa-work/model.sqlite (derived tables rebuilt from the host, flow,
     setting and graph files; reviewed tables kept)."""
     p = project(a.project)
+    if local_path(p["work_dir"]).name == "csa-work-v2":
+        import sqlite3
+        with sqlite3.connect(f"file:{local_path(p['work_dir']) / 'csa.sqlite'}?mode=ro", uri=True) as con:
+            tables = {name: con.execute(f"SELECT COUNT(*) FROM {name}").fetchone()[0]
+                      for (name,) in con.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")}
+        result = {"status": "OK", "model": "csa.sqlite", "action": a.action,
+                  "message": "V2 uses csa.sqlite as the system model; no legacy model.sqlite rebuild was run.",
+                  "tables": tables}
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        return 0
     extra = ["--out", a.out] if getattr(a, "out", None) else []
     return subprocess.call([framework_python(), "-m", "csa_docx.modelstore", a.action, "--work-dir",
                             str(local_path(p["work_dir"])), "--project", str(p.get("key") or p.get("name") or ""), *extra], cwd=str(FRAMEWORK))
@@ -3916,6 +4001,28 @@ def cmd_v2(a):
         die("csa v2 commands require the active project work_dir to end in csa-work-v2")
     sys.path.insert(0, str(FRAMEWORK))
     from csa_docx import v2_export_cli
+    if a.v2_action == "cleanup":
+        from csa_docx import v2_cleanup
+        work = local_path(p["work_dir"])
+        if getattr(a, "retired_evidence", False):
+            paths = ["../05 Revloc Tetra/02 Current State Assessment/NetSeg_Current_State_Assessment_REVELOC_TETRA.docx",
+                     "NetSeg_Current_State_Assessment_REVELOC_TETRA.docx",
+                     "02 Current State Assessment/NetSeg_Current_State_Assessment_REVELOC_TETRA.docx",
+                     "RevLoc/archived/NetSeg_Current_State_Assessment_REVELOC_v10.docx"]
+            print(json.dumps(v2_cleanup.cleanup_retired_evidence(work, paths, dry_run=not a.cleanup_commit), indent=2))
+        elif getattr(a, "migrated_leads", False):
+            print(json.dumps(v2_cleanup.archive_migrated_leads(work, dry_run=not a.cleanup_commit), indent=2))
+        elif getattr(a, "repair_provenance", False):
+            print(json.dumps(v2_cleanup.repair_provenance(work, dry_run=not a.cleanup_commit), indent=2))
+        elif getattr(a, "cleanup_apply", None):
+            print(json.dumps(v2_cleanup.apply_pack(work, a.cleanup_apply), indent=2))
+        elif getattr(a, "cleanup_restore", None):
+            print(json.dumps(v2_cleanup.restore_pack(work, a.cleanup_restore), indent=2))
+        else:
+            print(json.dumps(v2_cleanup.create_pack(
+                work, application_key=getattr(a, "application_key", None),
+                out=getattr(a, "out", None), dry_run=True), indent=2))
+        return 0
     if a.v2_action == "scope-rebuild":
         from csa_docx import v2scope
         return print(json.dumps(v2scope.rebuild(p["project_root"], work, a.application_key,
@@ -3940,7 +4047,10 @@ def cmd_topic_table(a):
     p = project(a.project)
     work = local_path(p["work_dir"])
     if getattr(a, "settings", False):
-        print(json.dumps(_fw_json("csa_docx.host_settings", "build", "--work-dir", work)))
+        settings_args = ["--work-dir", work]
+        if work.name == "csa-work-v2":
+            settings_args += ["--application-key", p["key"], "--view", "application"]
+        print(json.dumps(_fw_json("csa_docx.host_settings", "build", *settings_args)))
     res = resolve_target(p, a.section)
     if res.get("status") != "OK":
         die(res.get("message", f"cannot resolve '{a.section}'"))
@@ -4166,7 +4276,33 @@ def cmd_resolve_gaps(a):
     """Search open questions, have the evidence agent settle source hits, then answer affected subsections again."""
     p = project(a.project); banner(p)
     if local_path(p["work_dir"]).name == "csa-work-v2":
-        die("csa resolve-gaps needs the v2 lead-settlement adapter; old csa-work was not used")
+        sys.path.insert(0, str(FRAMEWORK))
+        from csa_docx import v2_gap
+        work = local_path(p["work_dir"])
+        record_path = work / "intake" / "gap-check-latest.json"
+        if getattr(a, "latest", False):
+            if not record_path.is_file():
+                die("no saved V2 gap-check record; run csa gap-check first")
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+        else:
+            record = v2_gap.run(work, getattr(a, "section", None))
+        result = v2_gap.settle(work, record, actor="csa resolve-gaps")
+        if result.get("status") != "OK":
+            print(json.dumps(result, indent=2), file=sys.stderr)
+            return 1
+        resolved = {row["lead_id"]: row["evidence_ids"] for row in result.get("resolved", [])}
+        for question in record.get("questions", []):
+            ids = [lead_id for lead_id in question.get("lead_ids", []) if lead_id in resolved]
+            evidence_ids = [eid for lead_id in ids for eid in resolved[lead_id]]
+            if evidence_ids:
+                question["verdict"] = "ANSWERED"
+                question["answer_evidence_ids"] = sorted(set(evidence_ids))
+        record["settlement"] = result
+        record_path.parent.mkdir(parents=True, exist_ok=True)
+        record_path.write_text(json.dumps(record, indent=1, ensure_ascii=False), encoding="utf-8")
+        print(json.dumps({**result, "answer_repair_evidence_ids": sorted({eid for ids in resolved.values() for eid in ids}),
+                          "gap_check": str(record_path)}, indent=2))
+        return 0
     if getattr(a, "latest", False):
         print(f"{C['b']}Using the gap check already displayed in Evidence Intake.{C['0']}", flush=True)
         first = _latest_gap_check(p, a.section)
@@ -5852,6 +5988,10 @@ def template_target(t: str) -> str:
 
 def cmd_convert(a):
     p = project(a.project); banner(p)
+    if local_path(p["work_dir"]).name == "csa-work-v2":
+        print(json.dumps({"status": "V2_CONVERSION_NOT_REQUIRED", "message":
+                          "V2 projects do not use the V1 conversion pipeline; use csa answer/author against csa-work-v2."}, indent=2))
+        return 0
     if getattr(a, "target", None):
         a.target = template_target(a.target)
     if a.print and a.target:
@@ -6219,7 +6359,7 @@ def main(argv=None) -> int:
     s = sp("model", cmd_model, help="system model store csa-work/model.sqlite (build | counts | export)")
     s.add_argument("action", nargs="?", default="counts", choices=["build", "counts", "export"])
     s.add_argument("--out", help="export: folder to write into (default csa-work/model-export); never over the sources")
-    s = sp("v2", cmd_v2, help="csa-work-v2 repository operations (export | host | report | scope-rebuild)")
+    s = sp("v2", cmd_v2, help="csa-work-v2 repository operations (export | host | report | cleanup | scope-rebuild)")
     v2 = s.add_subparsers(dest="v2_action", required=True)
     e = v2.add_parser("export", help="write a v2 table as CSV")
     e.add_argument("--table", required=True); e.add_argument("--out", required=True)
@@ -6228,6 +6368,16 @@ def main(argv=None) -> int:
     h.add_argument("host"); h.add_argument("--out", required=True)
     r = v2.add_parser("report", help="write the v2 repository summary")
     r.add_argument("--out", required=True)
+    cl = v2.add_parser("cleanup", help="create or apply a hash-guarded reversible V2 cleanup pack")
+    cl.add_argument("--out", help="cleanup pack path (default: csa-work-v2/cleanup-packs/<timestamp>-cleanup.json)")
+    cl.add_argument("--application-key")
+    cl.add_argument("--retired-evidence", action="store_true")
+    cl.add_argument("--migrated-leads", action="store_true")
+    cl.add_argument("--repair-provenance", action="store_true")
+    cl.add_argument("--commit", dest="cleanup_commit", action="store_true", help="apply the selected cleanup")
+    cg = cl.add_mutually_exclusive_group()
+    cg.add_argument("--apply", dest="cleanup_apply", help="apply an audited cleanup pack")
+    cg.add_argument("--restore", dest="cleanup_restore", help="restore rows from a cleanup pack")
     sr = v2.add_parser("scope-rebuild", help="rebuild application scope from the source host register")
     sr.add_argument("--application-key", required=True)
     sr.add_argument("--dry-run", action="store_true")

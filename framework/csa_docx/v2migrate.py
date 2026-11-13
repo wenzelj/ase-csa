@@ -287,8 +287,13 @@ def _load_scope(con, cw: Path, rep, application_key: str):
             (basis, application_key, host),
         )
         rep.add("application_scope_active_peer")
+    inactive_peers = sum(1 for bases in linked.values() if not bases)
     rep.notes.append(f"scope {application_key}: owned={len(owned)}, peers={len(peers)}, "
-                     f"active_peers={sum(bool(v) for v in linked.values())}")
+                     f"active_peers={sum(bool(v) for v in linked.values())}, "
+                     f"peers_inactive={inactive_peers} "
+                     "(a peer stays active=0 with its register/peer basis until a current flow, "
+                     "service/provider relationship or non-rejected source-checked evidence row "
+                     "links it to an owned host; neighbour labels alone are not proof of a dependency)")
 
 
 def _load_graph(con, cw: Path, rep):
@@ -509,13 +514,16 @@ def _report(v2: Path, cw: Path, rep: _Report, src_graph, refresh):
 
 
 # ------------------------------------------------------------------ entry
-def migrate(project_root, v2_dir, application_key: str | None = None) -> dict:
+def migrate(project_root, v2_dir, application_key: str) -> dict:
     root = Path(project_root)
     cw = root if root.name == "csa-work" else root / "csa-work"
     v2 = Path(v2_dir)
     if not cw.is_dir():
         return {"status": "ERROR", "error": f"no csa-work folder at {cw}"}
-    application_key = application_key or root.parent.name.lower().replace(" ", "-")
+    if not (application_key or "").strip():
+        return {"status": "ERROR",
+                "error": "application_key is required (for example 'tetra-reveloc'); "
+                         "it is not inferred from a hostname or folder name"}
     v2.mkdir(parents=True, exist_ok=True)
     rep = _Report()
     hosts = _Hosts()
@@ -546,7 +554,8 @@ def main(argv=None) -> int:
                                  description="Migrate csa-work/ into csa-work-v2/csa.sqlite.")
     ap.add_argument("--project-root", required=True)
     ap.add_argument("--v2-dir", required=True)
-    ap.add_argument("--application-key", required=False)
+    ap.add_argument("--application-key", required=True,
+                    help="application key for scope metadata, e.g. tetra-reveloc")
     a = ap.parse_args(argv)
     res = migrate(a.project_root, a.v2_dir, a.application_key)
     print(json.dumps(res, indent=2))

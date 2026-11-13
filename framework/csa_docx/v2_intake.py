@@ -23,6 +23,7 @@ import csa_docx.v2repo.intake  # noqa: F401  # registers r.intake
 import csa_docx.v2repo.graph  # noqa: F401  # registers r.graph
 
 MAX_FILES = 5  # files per model session; tune here only
+MAX_FILE_CHARS = 60000  # keep one large capture below local-model prompt limits
 
 _AGENT_FILE = Path(__file__).resolve().parents[2] / "csa-evidence-investigator-agent.md"
 _ROW_FIELDS = ("claim", "source_title", "page_or_location", "excerpt", "area", "confidence",
@@ -53,14 +54,34 @@ def build_batch(record_id, file_rel_paths, max_files: int = MAX_FILES, *, repo) 
     hosts = [h[0] for h in con.execute("SELECT name FROM host ORDER BY name")]
     files = []
     for rel in list(file_rel_paths)[:max(1, int(max_files))]:
-        chunks = [t or "" for (t,) in con.execute(
+        source_chunks = [t or "" for (t,) in con.execute(
             "SELECT text FROM indexed_chunk WHERE rel_path=? ORDER BY id", (rel,))]
+        # Large CSV exports can contain hundreds of thousands of indexed characters.
+        # Preserve chunk boundaries and source order, but keep the model payload bounded;
+        # the validator still checks every returned quote against the complete V2 index.
+        chunks = []
+        chars = 0
+        truncated = False
+        for text in source_chunks:
+            remaining = MAX_FILE_CHARS - chars
+            if remaining <= 0:
+                truncated = True
+                break
+            if len(text) > remaining:
+                chunks.append(text[:remaining])
+                chars += remaining
+                truncated = True
+                break
+            chunks.append(text)
+            chars += len(text)
         base = rel.rsplit("/", 1)[-1]
         ids = [e[0] for e in con.execute(
             "SELECT id FROM evidence WHERE source_title LIKE ? ORDER BY id", (f"%{base}%",))]
         blob = "\n".join(chunks).lower()
         known = [h for h in hosts if h.lower() in blob]
         files.append({"rel_path": rel, "chunks": chunks,
+                      "source_chars": sum(len(t) for t in source_chunks),
+                      "payload_chars": chars, "truncated": truncated,
                       "existing_evidence_ids": ids, "existing_hosts": known})
     return {"record_id": record_id, "files": files, "instructions": intake_instructions()}
 

@@ -51,6 +51,17 @@ def test_build_batch_has_chunks_hosts_and_instructions(repo):
     assert len(v2_intake.build_batch(rid, [SRC_A, SRC_B], max_files=1, repo=repo)["files"]) == 1
 
 
+def test_build_batch_bounds_large_source_payload(repo):
+    with repo.tx() as con:
+        con.execute("INSERT INTO indexed_file(rel_path, sha256) VALUES ('large.csv','x')")
+        con.executemany("INSERT INTO indexed_chunk(rel_path,text) VALUES ('large.csv',?)",
+                        [("x" * 20000,), ("y" * 20000,), ("z" * 20000,), ("q" * 20000,)])
+    item = v2_intake.build_batch("I-1", ["large.csv"], repo=repo)["files"][0]
+    assert item["truncated"] is True
+    assert item["source_chars"] == 80000
+    assert item["payload_chars"] == v2_intake.MAX_FILE_CHARS
+
+
 def test_apply_batch_inserts_rows_refreshes_graph_and_marks_files(repo):
     rid = _start(repo, [SRC_A, SRC_B])
     out = [

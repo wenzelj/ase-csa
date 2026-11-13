@@ -39,6 +39,23 @@ def evidence_rows(db: Path) -> list[dict]:
         return [dict(row) for row in rows]
 
 
+def evidence_sources(db: Path) -> list[dict]:
+    """Return V2 source fingerprints and intake status without opening legacy indexes."""
+    with closing(connection(db)) as con:
+        return [dict(row) for row in con.execute(
+            "SELECT s.rel_path, s.sha256, s.indexed_at, "
+            "COALESCE(i.status, 'indexed') AS intake_status "
+            "FROM evidence_source s LEFT JOIN indexed_file i ON i.rel_path=s.rel_path ORDER BY s.rel_path")]
+
+
+def review_events(db: Path, subject_type: str = "evidence") -> list[dict]:
+    """Read append-only V2 review history for a subject type."""
+    with closing(connection(db)) as con:
+        return [dict(row) for row in con.execute(
+            "SELECT id,ts,actor,action,subject_type,subject_id,note FROM review_event "
+            "WHERE subject_type=? ORDER BY id", (subject_type,))]
+
+
 def matrix_command(db: Path, args: list[str], workspace: Path | None = None) -> dict:
     """Reuse the established matrix ranking for v2 read commands via a fresh temporary snapshot."""
     if not args or args[0] not in {"lookup", "get", "stats"}:

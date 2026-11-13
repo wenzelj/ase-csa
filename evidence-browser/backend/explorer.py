@@ -157,22 +157,37 @@ def connected_devices(work: Path, net: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
+def _network_build(work: Path, agents: Path, view: str, application_key: str | None, project: dict[str, str]) -> dict[str, Any]:
+    """Keep older test doubles and V1 extensions callable while using scoped arguments in production."""
+    try:
+        return network.build(work, agents, view=view, application_key=application_key or project.get("key"))
+    except TypeError as exc:
+        if "unexpected keyword argument" not in str(exc):
+            raise
+        return network.build(work, agents)
+
+
 def build(project: dict[str, str], agents: Path, document: Path | None,
           view: str = "global", application_key: str | None = None) -> dict[str, Any]:
     work = Path(project["work_dir"]).expanduser()
-    net = network.build(work, agents, view=view, application_key=application_key or project.get("key"))
+    net = _network_build(work, agents, view, application_key, project)
     v2 = work.name == "csa-work-v2"
     if v2:
         with sqlite3.connect(f"file:{work / 'csa.sqlite'}?mode=ro", uri=True) as con:
             con.row_factory = sqlite3.Row
+            host_details = {row["name"]: dict(row) for row in con.execute(
+                "SELECT name, role, site, os, status FROM host")}
             matrix = {row["id"]: {"evidence_id": row["id"], "csa_area": row["area"],
                                   "status": row["status"], "claim": row["claim"],
                                   "source_title": row["source_title"], "page_or_location": row["page_or_location"],
                                   "evidence_excerpt": row["excerpt"], "confidence": row["confidence"],
                                   "gap_or_action": row["gap_or_action"], "review_state": row["review_state"]}
                       for row in con.execute("SELECT * FROM evidence")}
+            scope = {row["host_name"]: row["membership"] for row in con.execute(
+                "SELECT host_name, membership FROM application_scope WHERE active=1 AND review_state != 'rejected'")}
         register = {node["id"]: {"host": node["id"], "role": node["role"], "site": node["site"],
-                                  "ips": node["ips"], "in_scope": "yes"}
+                                  "ips": node["ips"], "os": host_details.get(node["id"], {}).get("os", ""),
+                                  "status": host_details.get(node["id"], {}).get("status", ""), "in_scope": "yes"}
                     for node in net["nodes"] if node.get("listed")}
     else:
         register = {r["host"]: r for r in _csv(work / "hosts" / "hosts.csv")}
@@ -193,6 +208,11 @@ def build(project: dict[str, str], agents: Path, document: Path | None,
         for edge in net["edges"]:
             for host in (edge["s"], edge["t"]):
                 ev_by_host.setdefault(host, []).extend(edge["ids"])
+        for host in register:
+            for row in matrix.values():
+                text = f"{row.get('claim', '')} {row.get('source_title', '')}"
+                if re.search(rf"\b{re.escape(host)}\b", text, re.I):
+                    ev_by_host.setdefault(host, []).append(row["evidence_id"])
 
     blocks: list[dict] = []
     doc_state = {"state": "missing", "name": ""}
@@ -207,6 +227,10 @@ def build(project: dict[str, str], agents: Path, document: Path | None,
     for n in net["nodes"]:
         h = n["id"]
         r = register.get(h, {})
+        if v2:
+            detail = host_details.get(h, {})
+            facts[h] = [{"attribute": key, "value": str(detail.get(key) or ""), "source": "csa.sqlite host", "line": ""}
+                        for key in ("role", "site", "os", "status") if detail.get(key)]
         hosts.append({**n, "system": r.get("system", ""), "in_scope": r.get("in_scope", ""), "fqdn": r.get("fqdn", ""),
                       "ou": r.get("ou", ""), "capture": r.get("capture", ""), "listening": r.get("listening", ""),
                       "role_source": r.get("role_source", ""), "site_source": r.get("site_source", ""),
@@ -243,14 +267,29 @@ def build(project: dict[str, str], agents: Path, document: Path | None,
         cited.update(h["evidence_ids"])
     evidence = {i: _evidence_view(matrix[i]) for i in sorted(cited) if i in matrix}
 
-    devices = [] if v2 else connected_devices(work, net)
+    if v2:
+        devices = []
+        for node in net["nodes"]:
+            if scope.get(node["id"]) != "peer":
+                continue
+            links = [edge for edge in net["edges"] if node["id"] in (edge["s"], edge["t"])]
+            devices.append({"id": node["id"], "name": node["id"], "kind": "connected_device", "active": True,
+                            "type": "host", "role": node.get("role", ""), "site": node.get("site", ""),
+                            "aliases": [x for x in [node.get("ips", ""), node["id"]] if x],
+                            "connected_application_hosts": sorted({endpoint for edge in links for endpoint in (edge["s"], edge["t"])
+                                                                      if endpoint != node["id"] and scope.get(endpoint) == "owned"}),
+                            "ports": sorted({str(edge.get("port", "")) for edge in links if edge.get("port")}),
+                            "evidence": sorted({evidence_id for edge in links for evidence_id in edge.get("ids", [])})})
+    else:
+        devices = connected_devices(work, net)
     return {"application": spec.get("application") or project.get("label", ""), "hosts": hosts, "edges": net["edges"],
             "devices": devices,
             "components": spec.get("components", []), "dependencies": spec.get("dependencies", []),
             "journeys": spec.get("journeys", []), "issues": issues, "evidence": evidence, "document": doc_state,
             "sources": {"links": net["source"], "journeys": str(spec_path.name) if spec else "",
                         "facts": "csa.sqlite host" if v2 else "hosts/host_facts.csv",
-                        "evidence": "csa.sqlite evidence" if v2 else "evidence-matrix.csv, hosts/evidence_hosts.csv"}}
+                        "evidence": "csa.sqlite evidence" if v2 else "evidence-matrix.csv, hosts/evidence_hosts.csv"},
+            "view": net.get("view", view), "application_key": net.get("application_key", application_key or project.get("key"))}
 
 
 def diagrams(project: dict[str, str], agents: Path, view: str = "global",
@@ -258,7 +297,7 @@ def diagrams(project: dict[str, str], agents: Path, view: str = "global",
     """The project's technical diagrams (system overview + one numbered data flow per journey) as SVG plus their
     models, from csa_docx.techdiagram: the same drawings `csa system-diagram` writes for the CSA figures."""
     work = Path(project["work_dir"]).expanduser()
-    net = network.build(work, agents, view=view, application_key=application_key or project.get("key"))
+    net = _network_build(work, agents, view, application_key, project)
     if not net["nodes"]:
         return {"application": project.get("label", ""), "diagrams": []}
     from csa_docx.techdiagram import diagrams as build_diagrams
@@ -268,4 +307,5 @@ def diagrams(project: dict[str, str], agents: Path, view: str = "global",
     except json.JSONDecodeError:
         spec = {}
     app = spec.get("application") or project.get("label", "")
-    return {"application": app, "diagrams": build_diagrams(net, spec, project.get("key", ""), app)}
+    return {"application": app, "diagrams": build_diagrams(net, spec, project.get("key", ""), app),
+            "view": net.get("view", view), "application_key": net.get("application_key", application_key or project.get("key"))}

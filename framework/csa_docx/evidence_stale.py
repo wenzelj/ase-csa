@@ -47,6 +47,9 @@ def _last_reviews(work: Path) -> dict[str, dict]:
 def stale_rows(work: Path) -> dict[str, list[dict]]:
     """{sheet key: [{id, why, replacements}]} for every sheet that cites a row the accessor does not offer."""
     work = Path(work)
+    if work.name == "csa-work-v2":
+        from csa_docx import v2_access
+        return _stale_rows_v2(work, v2_access.active_db(work.parent))
     rows = {r["evidence_id"]: r for r in evidence_live.read(work / "evidence-matrix.csv")}
     usable = {i for i, r in rows.items() if evidence_live.is_verified(r)}
     reviews = _last_reviews(work)
@@ -69,6 +72,33 @@ def stale_rows(work: Path) -> dict[str, list[dict]]:
             m = re.search(r"re-quoted as (E-\d+)", note)
             repl = [m[1]] if m and m[1] in usable else by_key.get(_key(rows[i]), [])[:3]
             found.append({"id": i, "why": note[:110], "replacements": repl})
+        if found:
+            out[key] = found
+    return out
+
+
+def _stale_rows_v2(work: Path, db: Path) -> dict[str, list[dict]]:
+    from csa_docx import v2_access
+    rows = {r["evidence_id"]: r for r in v2_access.evidence_rows(db)}
+    usable = {i for i, r in rows.items() if r.get("status") == "VERIFIED" and r.get("review_state") != "rejected"}
+    reviews = {r["subject_id"]: r for r in v2_access.review_events(db)}
+    by_key: dict[tuple, list[str]] = collections.defaultdict(list)
+    for i in usable:
+        by_key[_key(rows[i])].append(i)
+    out: dict[str, list[dict]] = {}
+    for f in sorted(glob.glob(str(work / "cards" / "*.answer.md"))):
+        key = os.path.basename(f).split(".")[0]
+        if key in _SKIP:
+            continue
+        found = []
+        for i in sorted(set(_EID.findall(Path(f).read_text(encoding="utf-8"))), key=lambda s: int(s[2:])):
+            if i in usable:
+                continue
+            if i not in rows:
+                found.append({"id": i, "why": "not available in csa.sqlite", "replacements": []})
+                continue
+            note = reviews.get(i, {}).get("note", "") or rows[i].get("review_state", "")
+            found.append({"id": i, "why": note[:110], "replacements": by_key.get(_key(rows[i]), [])[:3]})
         if found:
             out[key] = found
     return out
