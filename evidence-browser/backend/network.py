@@ -130,6 +130,15 @@ def _build_v2(work_dir: Path, agents: Path, view: str = "global", application_ke
     nodes = {row["name"]: {"id": row["name"], "kind": "captured", "role": row["role"] or "",
                            "site": row["site"] or "", "ips": ";".join(ips.get(row["name"], [])), "listed": True}
              for row in hosts}
+    # V2 host rows intentionally keep only canonical inventory fields. Restore a
+    # displayed role when accepted evidence explicitly identifies a domain controller.
+    for claim in evidence:
+        text = claim.get("claim") or ""
+        if "domain controller" not in text.lower() and "ad domain controller" not in text.lower():
+            continue
+        for name, node in nodes.items():
+            if name in text:
+                node["role"] = node["role"] or "Domain controller"
     edges = []
     _framework(agents)
     from csa_docx import evidence_digest
