@@ -31,6 +31,7 @@
 .net .node rect { stroke-width: 1.5; }
 .net .node text { font-family: ui-monospace, Menlo, monospace; font-size: 11.5px; fill: var(--ink); }
 .net .node .role { font-family: inherit; font-size: 10px; fill: var(--muted); }
+.net .node .ip { font-family: ui-monospace, Menlo, monospace; font-size: 9px; fill: var(--muted); }
 .net .node:focus { outline: none; }
 .net .node:focus rect, .net .node.sel rect { stroke: var(--red); stroke-width: 2.5; }
 .net .k-captured rect, .net .sw.k-captured { fill: var(--ase-signal-soft); background: var(--ase-signal-soft); stroke: var(--teal); border-color: var(--teal); }

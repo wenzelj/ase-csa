@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import re
+import sqlite3
 import sys
 import threading
 from datetime import datetime, timezone
@@ -116,7 +117,7 @@ def classify_log(text: str) -> list[dict[str, Any]]:
     return ordered[:MAX_GROUPS]
 
 
-RUN_OPERATIONS = {"ingest": "ingest", "intake": "documents", "gap_check": "gaps", "resolve_gaps": "settle"}
+RUN_OPERATIONS = {"ingest": "ingest", "model_build": "ingest", "intake": "documents", "gap_check": "gaps", "resolve_gaps": "settle"}
 MAX_LOG_BYTES = 8 * 1024 * 1024
 _FAILED_STATES = {"failed", "interrupted"}  # a run the user cancelled is not an error
 _cache: dict[str, tuple[tuple, tuple[list[dict[str, Any]], bool]]] = {}
@@ -179,7 +180,7 @@ def _seconds(started: str | None, finished: str | None) -> float | None:
 
 
 def intake_runs(project: dict[str, str], limit: int = 10) -> list[dict[str, Any]]:
-    """Recent runs of the four intake steps, newest first, each with the problems found in its logs."""
+    """Recent Evidence Intake jobs, newest first, with the problems found in their logs."""
     root = Path(project["work_dir"]).expanduser() / "ui-jobs"
     if not root.is_dir() or limit <= 0:
         return []
@@ -269,6 +270,50 @@ def intake_warnings(work: Path) -> list[dict[str, Any]]:
     unreadable record adds nothing."""
     out: list[dict[str, Any]] = []
     work = Path(work)
+    if work.name == "csa-work-v2" and (work / "csa.sqlite").is_file():
+        # V2 has no legacy graph-audit.jsonl, host CSVs or gap-check JSON.
+        # Read the equivalent durable state from SQLite instead.
+        try:
+            con = sqlite3.connect(f"file:{work / 'csa.sqlite'}?mode=ro", uri=True)
+            pending = con.execute("""
+                WITH latest AS (
+                    SELECT f.status,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY f.rel_path
+                               ORDER BY r.started_at DESC, r.id DESC
+                           ) AS rn
+                    FROM intake_file f
+                    JOIN intake_record r ON r.id = f.record_id
+                )
+                SELECT COUNT(*) FROM latest WHERE rn=1 AND status='pending'
+            """).fetchone()[0]
+            # A failed historical attempt is cleared when a later intake record
+            # processes the same source file. Count only the latest durable state
+            # per path, otherwise successful retries leave a permanent warning.
+            failed = con.execute("""
+                WITH latest AS (
+                    SELECT f.status,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY f.rel_path
+                               ORDER BY r.started_at DESC, r.id DESC
+                           ) AS rn
+                    FROM intake_file f
+                    JOIN intake_record r ON r.id = f.record_id
+                )
+                SELECT COUNT(*) FROM latest WHERE rn=1 AND status='failed'
+            """).fetchone()[0]
+            if pending:
+                out.append(_entry("ingest", "warning", "pending_intake_files",
+                                  f"{pending} intake file(s) are still pending", pending))
+            if failed:
+                out.append(_entry("ingest", "error", "failed_intake_files",
+                                  f"{failed} intake file(s) failed processing", failed))
+            if con.execute("SELECT COUNT(*) FROM gap_check").fetchone()[0] == 0:
+                out.append(_entry("gaps", "warning", "no_gap_check", "No V2 open-question check has been recorded"))
+            con.close()
+        except sqlite3.Error:
+            out.append(_entry("ingest", "error", "v2_store_unreadable", "The V2 SQLite store could not be read"))
+        return out
     gap = _record(work / "intake" / "gap-check-latest.json")
     if gap is not None:
         out.extend(_gap_warnings(gap))

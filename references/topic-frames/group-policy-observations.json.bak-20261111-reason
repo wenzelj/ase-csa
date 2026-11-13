@@ -1,0 +1,52 @@
+{
+  "topic": "Group Policy Observations",
+  "key": "GROUP_POLICY_OBSERVATIONS",
+  "strict": false,
+  "area": "identity_and_access",
+  "section": "group policy observations",
+  "headings": [
+    "Group Policy Observations"
+  ],
+  "basis": "Migration Discovery, Group Policy Observations: the Group Policy objects each host's computer policy applies, read from the newest gpresult capture of every host (migration-discovery-analysis skill). The move to the new OT domain replaces these objects, so the register must list every one with the hosts that apply it.",
+  "slots": [
+    {
+      "id": "S1",
+      "question": "Which Group Policy objects does each host's computer policy apply?",
+      "requirements": [],
+      "source": {
+        "settings": [
+          "gpo.applied"
+        ]
+      },
+      "search": [
+        "gpresult",
+        "Applied Group Policy Objects"
+      ]
+    },
+    {
+      "id": "S2",
+      "question": "Which Group Policy objects are linked to a host but not applied to it?",
+      "requirements": [],
+      "source": {
+        "settings": [
+          "gpo.not_applied"
+        ]
+      },
+      "search": [
+        "gpresult",
+        "filtered out"
+      ]
+    }
+  ],
+  "story_groups": [
+    {
+      "title": "the Group Policy objects the hosts apply",
+      "slots": [
+        "S1",
+        "S2"
+      ]
+    }
+  ],
+  "scope_note": "the Group Policy objects (GPOs) applied to each host and how the hosts differ. Every host that has a gpresult capture is covered, so never say the evidence comes from one host or sampled hosts. The framework places a table under your text with one row per role group (split where its hosts differ): the baseline set and the role-specific GPOs of each, with a note listing the GPOs every host applies and the GPOs that are linked but not applied. Do not write that table and do not call it a register. Write one paragraph of at most four sentences: how many hosts are covered (the number the card gives), what the GPOs control in plain words, and what differs between role groups or between hosts of one role group, naming the hosts. Do not list GPO names the table already shows.",
+  "max_text_sentences": 4
+}

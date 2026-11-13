@@ -16,6 +16,7 @@ from __future__ import annotations
 import csv
 import ipaddress
 import re
+import sqlite3
 from pathlib import Path
 
 IPV4 = re.compile(r"\b(\d{1,3}(?:\.\d{1,3}){3})\b")
@@ -32,6 +33,8 @@ def _csv(path: Path) -> list[dict]:
 
 def load(work_dir: Path) -> dict:
     """The evidence a figure may use: the evidence matrix and the host register."""
+    if work_dir.name == "csa-work-v2" and (work_dir / "csa.sqlite").is_file():
+        return _load_v2(work_dir)
     matrix = _csv(work_dir / "evidence-matrix.csv")
     register = {r["host"]: r for r in _csv(work_dir / "hosts" / "hosts.csv")}
     facts = _csv(work_dir / "hosts" / "host_facts.csv")
@@ -41,6 +44,46 @@ def load(work_dir: Path) -> dict:
             if IPV4.fullmatch(ip or "") and not ip.endswith(".0"):
                 ip_name.setdefault(ip, h)
     return {"matrix": matrix, "register": register, "ip_name": ip_name, "facts": facts}
+
+
+def _load_v2(work_dir: Path) -> dict:
+    """Adapt the V2 read model to the figure extractors without creating a second parser."""
+    with sqlite3.connect(f"file:{work_dir / 'csa.sqlite'}?mode=ro", uri=True) as con:
+        con.row_factory = sqlite3.Row
+        matrix = [{"evidence_id": row["id"], "status": row["status"],
+                   "claim": row["claim"] or "", "source_title": row["source_title"] or "",
+                   "page_or_location": row["page_or_location"] or ""}
+                  for row in con.execute("SELECT id,status,claim,source_title,page_or_location FROM evidence "
+                                         "WHERE review_state != 'rejected' ORDER BY id")]
+        scope = {row["host_name"]: row for row in con.execute(
+            "SELECT host_name,membership,active,review_state FROM application_scope "
+            "WHERE active=1 AND review_state != 'rejected'")}
+        register = {}
+        for row in con.execute("SELECT name,role,site FROM host WHERE status='active' ORDER BY name"):
+            scope_row = scope.get(row["name"])
+            if not scope_row:
+                continue
+            register[row["name"]] = {"host": row["name"], "role": row["role"] or "", "site": row["site"] or "",
+                                      "system": "tetra-reveloc", "in_scope": "peer" if scope_row["membership"] == "peer" else "Yes",
+                                      "capture": "yes"}
+        # V2 keeps canonical host identities but not the legacy register's FQDN/source columns.
+        # Restore only values explicitly present in accepted evidence so residency classification
+        # remains evidence-backed.
+        for item in matrix:
+            claim = item["claim"]
+            for fqdn in re.findall(r"\b([A-Za-z][A-Za-z0-9-]+\.internal\.qr\.com\.au)\b", claim, re.I):
+                short = fqdn.split(".", 1)[0].upper()
+                if short in register:
+                    register[short]["fqdn"] = fqdn
+            for host in register:
+                if host in claim and "domain controller" in claim.lower():
+                    register[host]["sources"] = "domain controller"
+                if host in claim and "internal.qr.com.au" in claim.lower():
+                    register[host].setdefault("fqdn", f"{host.lower()}.internal.qr.com.au")
+                if host in claim and "hosted in ot" in claim.lower():
+                    register[host]["residency"] = "ot"
+    ip_name = {}
+    return {"matrix": matrix, "register": register, "ip_name": ip_name, "facts": []}
 
 
 def _short(name: str) -> str:
@@ -56,6 +99,7 @@ ACTIVE_PEER = re.compile(r"^\s*([A-Za-z][A-Za-z0-9-]+):\s*Active NTP peer\s+([A-
 # per-host row from a w32tm capture, written in prose: "<HOST> synchronises its time from <PROVIDER> (<ip>)."
 SYNC_FROM = re.compile(r"^\s*([A-Za-z][A-Za-z0-9-]+)\s+synchronises?\s+(?:its|the)\s+time\s+from\s+([A-Za-z0-9.-]+)", re.I)
 PENDING_PEER = re.compile(r"^\s*([A-Za-z0-9.-]+)\s+is configured as a pending peer on\s+(.+?)\.", re.I)
+PENDING_LIST = re.compile(r"^\s*(.+?)\s+list\s+([A-Za-z0-9.-]+)\s+as a second peer.*?pending", re.I)
 
 
 def _time(ev: dict) -> list[dict]:
@@ -74,6 +118,12 @@ def _time(ev: dict) -> list[dict]:
             hosts = HOSTLIKE.findall(m.group(2))
             for h in hosts:
                 out.append({"service": "time", "consumer": h.upper(), "provider": m.group(1).lower(), "order": 2,
+                            "state": "inactive", "evidence": [r["evidence_id"]], "text": claim})
+            continue
+        m = PENDING_LIST.match(claim)
+        if m:
+            for h in HOSTLIKE.findall(m.group(1)):
+                out.append({"service": "time", "consumer": h.upper(), "provider": m.group(2).lower(), "order": 2,
                             "state": "inactive", "evidence": [r["evidence_id"]], "text": claim})
     # a host whose time source is in its capture but in no matrix row: cite the capture file and line
     covered = {(r["consumer"], r["state"]) for r in out}
@@ -152,6 +202,8 @@ def residency(provider: str, ev: dict, profile: dict) -> tuple[str, str]:
         if "." in provider and not provider.lower().endswith(tuple(rule.get("it_domains", []))):
             return "internet", "Internet name"
         return "unknown", "Not in the host register"
+    if reg.get("residency") == "ot":
+        return "ot", "Evidence states the provider is hosted in OT"
     fqdn = (reg.get("fqdn") or "").lower()
     is_dc = "domain controller" in (reg.get("sources") or "").lower() or reg.get("ad_site")
     for d in rule.get("ot_domains", []):

@@ -79,8 +79,29 @@ def test_nothing_new_needs_a_complete_index(tmp_path):
 
 
 def test_evidence_jobs_share_one_lock():
-    for key in ("ingest", "intake", "gap_check"):
+    for key in ("ingest", "model_build", "intake", "gap_check"):
         assert commands.OPERATIONS[key].lock == "evidence", key
+
+
+def test_model_rebuild_job_uses_the_existing_cli_command():
+    op, argv = commands.build_argv(AGENTS, "tetra-reveloc", "model_build", CommandRequest())
+    assert argv[3:] == ["model", "build"]
+    assert op.mutation_class == "workspace_write"
+
+
+def test_snapshot_warns_when_model_sources_change(tmp_path):
+    project = _work(tmp_path)
+    work = Path(project["work_dir"])
+    assert intake_workflow.snapshot(project)["model"] == {"status": "missing", "changed_sources": []}
+    con = sqlite3.connect(work / "model.sqlite")
+    con.execute("CREATE TABLE model_meta(table_name TEXT PRIMARY KEY, columns TEXT)")
+    sources = [*intake_workflow.modelstore.SOURCES.values(), intake_workflow.modelstore.MATRIX]
+    con.executemany("INSERT INTO model_meta VALUES (?,?)", [("src:" + rel, json.dumps(intake_workflow.modelstore.fingerprint(work / rel))) for rel in sources])
+    con.commit(); con.close()
+    assert intake_workflow.snapshot(project)["model"] == {"status": "current", "changed_sources": []}
+    (work / "hosts").mkdir()
+    (work / "hosts" / "hosts.csv").write_text("host\nH1\n", encoding="utf-8")
+    assert intake_workflow.snapshot(project)["model"] == {"status": "out_of_date", "changed_sources": ["hosts/hosts.csv"]}
 
 
 def test_snapshot_flags_unreadable(tmp_path):

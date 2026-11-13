@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { api } from "../api";
+import type { GraphView } from "../types";
 import "./explorer.css";
 
 /* System explorer: the technical diagram of the assessed system, the same drawing as the CSA figure
@@ -26,7 +27,7 @@ type DZone = { id: string; label: string };
 type DModel = { id: string; title: string; zones: DZone[]; groups: DGroup[]; nodes: DNode[]; edges: DEdge[]; notes?: string[] };
 type Diagram = { id: string; title: string; svg: string; model: DModel;
   print_svg?: string; print?: { width_mm: number; height_mm: number; fits_page: boolean; min_text_pt: number; tiles?: number; lines?: number } };
-type Diagrams = { application: string; diagrams: Diagram[] };
+type Diagrams = { application: string; diagrams: Diagram[]; view?: GraphView; application_key?: string | null };
 type Sel = { type: "node" | "edge" | "group"; id: string } | { type: "pcard" | "pline"; id: string } | null;
 
 const SAYS: Record<string, string> = { observed: "Observed in connection captures", configured: "Configured setting (DNS, Kerberos, time)",
@@ -114,7 +115,7 @@ function savePng(name: string, svg: string) {
   img.src = url;
 }
 
-export default function SystemExplorer({ system, openEvidenceId }: { system: string; openEvidenceId?: (id: string) => void }) {
+export default function SystemExplorer({ system, graphView, onGraphViewChange, openEvidenceId }: { system: string; graphView: GraphView; onGraphViewChange: (view: GraphView) => void; openEvidenceId?: (id: string) => void }) {
   const [data, setData] = useState<Data | null>(null);
   const [dg, setDg] = useState<Diagrams | null>(null);
   const [error, setError] = useState("");
@@ -133,9 +134,10 @@ export default function SystemExplorer({ system, openEvidenceId }: { system: str
 
   useEffect(() => {
     setData(null); setDg(null); setError(""); setSel(null); setTab(0); setLayoutChoice("portrait");
-    Promise.all([api<Data>(`/api/systems/${system}/explorer`), api<Diagrams>(`/api/systems/${system}/diagram`)])
+    const scope = `view=${graphView}&application_key=${encodeURIComponent(system)}`;
+    Promise.all([api<Data>(`/api/systems/${system}/explorer?${scope}`), api<Diagrams>(`/api/systems/${system}/diagram?${scope}`)])
       .then(([d, g]) => { setData(d); setDg(g); }).catch(e => setError(String(e.message || e)));
-  }, [system]);
+  }, [system, graphView]);
 
   const cur = dg?.diagrams[tab] || null;
   const model = cur?.model || null;
@@ -233,6 +235,7 @@ export default function SystemExplorer({ system, openEvidenceId }: { system: str
   };
 
   if (error) return <section className="sx"><div className="sx-msg">The system explorer could not load: {error}</div></section>;
+  if (data && dg && !dg.diagrams.length) return <section className="sx"><div className="sx-msg">No hosts or connections are recorded for this system yet. The diagram will appear when host data is available.</div></section>;
   if (!data || !dg || !cur || !model) return <section className="sx"><div className="loading"><span /><strong>Drawing the system…</strong></div></section>;
 
   const activeSvg = layout === "portrait" ? (cur.print_svg || cur.svg) : cur.svg;
@@ -246,9 +249,12 @@ export default function SystemExplorer({ system, openEvidenceId }: { system: str
   return <section className="sx">
     <header className="sx-head">
       <div><h2>{dg.application}</h2>
-        <p>{tab === 0 ? `${hostCount} systems${dcs.length ? ` across ${dcs.join(" and ")}` : ""}. ` : ""}
+        <p><b>Scope: {dg.view || graphView} · {dg.application_key || system}</b><br />{tab === 0 ? `${hostCount} systems${dcs.length ? ` across ${dcs.join(" and ")}` : ""}. ` : ""}
           A4 portrait groups hosts by recorded role; Detailed network shows individual hosts. Select a system or a line to see its evidence. The same drawing is the CSA figure.</p></div>
       <div className="sx-tools" role="group" aria-label="Layout">
+        <label>Scope <select value={graphView} onChange={e => onGraphViewChange(e.target.value as GraphView)}>
+          <option value="application">Application and captured peers</option><option value="owned">Owned hosts only</option><option value="global">All applications</option>
+        </select></label>
         <button className={layout === "portrait" ? "on" : ""} aria-pressed={layout === "portrait"} onClick={() => setLayoutChoice("portrait")}>A4 portrait</button>
         <button className={layout === "detailed" ? "on" : ""} aria-pressed={layout === "detailed"} onClick={() => setLayoutChoice("detailed")}>Detailed network</button>
         <button onClick={() => setFit(f => !f)}>{fit ? "Actual size" : "Fit to width"}</button>

@@ -30,7 +30,7 @@ from csa_docx import host_settings
 FRAMES = Path(__file__).resolve().parents[2] / "references" / "topic-frames"
 MATRIX_SCRIPT = Path(__file__).resolve().parents[2] / "skills" / "csa-evidence-matrix" / "scripts" / "evidence_matrix.py"
 MAX_HOSTS_PER_ROW = 6
-LABELS = {"gpo.applied": "Applied Group Policy objects", "gpo.not_applied": "Group Policy objects linked but not applied",
+LABELS = {"gpo.applied": "Applied Group Policy objects", "gpo.not_applied": "Group Policy objects linked but not applied", "gpo.not_applied_reason": "Why those Group Policy objects were not applied",
           "storage.database": "Database service", "storage.shares": "Shares", "transfer.tools": "File transfer tools installed",
           "transfer.removable": "Removable storage policy", "transfer.proxy": "Proxy setting",
           "storage.share_access": "Who may open the shares", "transfer.smb_sessions": "File shares the host has open on other servers",

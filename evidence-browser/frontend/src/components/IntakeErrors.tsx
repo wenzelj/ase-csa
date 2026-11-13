@@ -44,7 +44,7 @@ function LogViewer({ system, jobId, problem, fetcher }: { system?: string; jobId
   </div>;
 }
 
-const OP_LABEL: Record<string, string> = { ingest: "Ingest new data", intake: "Evidence agent", gap_check: "Check open questions", resolve_gaps: "Resolve evidence and update answers" };
+const OP_LABEL: Record<string, string> = { ingest: "Ingest new data", model_build: "Rebuild system model", intake: "Evidence agent", gap_check: "Check open questions", resolve_gaps: "Resolve evidence and update answers" };
 
 function when(value?: string | null) { if (!value) return "—"; const d = new Date(value); return isNaN(d.getTime()) ? value : d.toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }); }
 

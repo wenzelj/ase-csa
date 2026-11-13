@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import atexit
+import csv
 import copy
 import hashlib
 import json
@@ -30,7 +31,9 @@ import shutil
 import subprocess
 import sys
 import threading
+import tempfile
 import time
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
@@ -450,6 +453,64 @@ def work_signature(folder: Path) -> tuple:
 def idle_expired(last_work: float, now: float, idle_min: float) -> bool:
     """True when a call has produced no sheet or patch change for ``idle_min`` minutes (0 = never)."""
     return bool(idle_min) and now - last_work >= idle_min * 60
+
+
+def turn_end_args(argv: list[str], mode: str, marker: Path, env=None) -> list[str]:
+    """Codex arguments that make it record the end of each turn in ``marker`` (its notify hook), or [] when not wanted.
+    Only for an interactive Codex window whose starter asked for it with CSA_CLOSE_ON_TURN_END=1 (the Evidence Browser):
+    that window stays open after the answer is written, so nothing else tells csa the answer is done. In your own
+    terminal the session stays open as before."""
+    env = os.environ if env is None else env
+    if mode != "interactive" or env.get("CSA_CLOSE_ON_TURN_END") != "1":
+        return []
+    if not (argv and Path(argv[0]).name == "codex" and "exec" not in argv):
+        return []
+    program = [framework_python(), str(FRAMEWORK / "csa_docx" / "turn_done.py"), str(marker)]
+    return ["-c", "notify=" + json.dumps(program)]
+
+
+def turn_ended_with_work(marker: Path | None, start_mark: tuple, now_mark: tuple) -> bool:
+    """True when the agent's turn has ended and this run wrote or changed a sheet or patch. A turn that ended with no
+    work (the agent asked something, or failed) leaves the window open; its marker is cleared so a later turn counts."""
+    if marker is None or not marker.is_file():
+        return False
+    if now_mark != start_mark:
+        return True
+    marker.unlink(missing_ok=True)
+    return False
+
+
+def by_block_run(headless: bool, interactive_template: str, env=None) -> bool:
+    """May this run answer one block per model call (cli.yaml answer_by_block)? Yes when each call exits by itself:
+    a headless run, or an interactive window that csa closes at the end of its turn (turn_end_args: the Evidence
+    Browser's Codex window). An interactive window that stays open would have to be closed by hand after every block."""
+    if headless:
+        return True
+    return bool(turn_end_args(shlex.split(interactive_template or ""), "interactive", Path("turn.json"), env))
+
+
+def by_block_workers(configured: int, headless: bool) -> int:
+    """Calls at once for a block-by-block answer: answer_by_block_workers when headless, one when the calls are
+    interactive windows (two sessions cannot share one terminal)."""
+    return max(1, int(configured or 1)) if headless else 1
+
+
+def idle_stop(last_work: float, last_active: float | None, now: float, idle_min: float, no_work_min: float) -> bool:
+    """Stop an answer call? ``last_work`` is when it last wrote a sheet or patch, ``last_active`` when its agent session
+    last did anything (session_activity; None when the CLI keeps no session log). The call is stopped when it has done
+    neither for ``idle_min`` minutes, so reading a large card does not use the limit up. A session that stays busy but
+    writes nothing is stopped after ``no_work_min`` minutes (0 = no such cap). ``idle_min`` 0 turns both off."""
+    if not idle_min:
+        return False
+    if idle_expired(max(last_work, last_active or 0), now, idle_min):
+        return True
+    return bool(no_work_min) and last_active is not None and now - last_work >= no_work_min * 60
+
+
+def stall_check_wanted(stall_min: float, turn_marker) -> bool:
+    """The stall check restarts a call that uses no CPU and holds no connection. A window that csa closes at the end of
+    its turn is quiet in just that way while it waits for the person watching it, so it is left to the idle limit."""
+    return bool(stall_min) and turn_marker is None
 
 
 def python_read_roots(exe: str) -> list[str]:
@@ -1090,13 +1151,39 @@ def run_check_change(p: dict, cf: Path, a, strict: bool = False, section: str | 
                 nf.write_text(json.dumps(node), encoding="utf-8")
                 argv += ["--node", str(nf)]
     if p.get("work_dir"):
-        argv += ["--evidence", str(local_path(p["work_dir"]) / "evidence-matrix.csv")]
+        with _evidence_matrix_path(p) as evidence_path:
+            argv += ["--evidence", str(evidence_path)]
+            if p.get("sites"):
+                argv += ["--sites", p["sites"]]
+            for flag, name in (("--no-anchors", "no_anchors"), ("--no-lint", "no_lint"), ("--json", "json")):
+                if getattr(a, name, False):
+                    argv.append(flag)
+            return subprocess.call(argv, cwd=str(FRAMEWORK))
     if p.get("sites"):
         argv += ["--sites", p["sites"]]
     for flag, name in (("--no-anchors", "no_anchors"), ("--no-lint", "no_lint"), ("--json", "json")):
         if getattr(a, name, False):
             argv.append(flag)
     return subprocess.call(argv, cwd=str(FRAMEWORK))
+
+
+@contextmanager
+def _evidence_matrix_path(p: dict):
+    """Provide a check-compatible evidence view without creating a V1 file in a V2 project."""
+    work = local_path(p["work_dir"])
+    if work.name != "csa-work-v2":
+        yield work / "evidence-matrix.csv"
+        return
+    sys.path.insert(0, str(FRAMEWORK))
+    from csa_docx import v2_access
+    fields = ["evidence_id", "csa_area", "question", "claim", "status", "source_title", "source_version",
+              "section", "page_or_location", "evidence_excerpt", "inference_reason", "confidence", "gap_or_action", "review_state"]
+    with tempfile.TemporaryDirectory(prefix="csa-v2-evidence-") as folder:
+        path = Path(folder) / "evidence-matrix.csv"
+        with path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fields); writer.writeheader()
+            writer.writerows({**{key: "" for key in fields}, **row} for row in v2_access.evidence_rows(work / "csa.sqlite"))
+        yield path
 
 
 def _audit_dirs(p: dict) -> list[Path]:
@@ -1614,16 +1701,49 @@ def _after_agent(p: dict, verb: str, args: list[str], started: float, a) -> int:
 # ---------------------------------------------------------------- commands: script pass-through
 def cmd_ev(a):
     p = project(a.project); banner(p)
+    if local_path(p["work_dir"]).name == "csa-work-v2":
+        sys.path.insert(0, str(FRAMEWORK))
+        from csa_docx import v2_access
+        result = v2_access.matrix_command(v2_access.active_db(local_path(p["project_root"])), a.rest,
+                                          local_path(p["project_root"]))
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        return 0 if result.get("status") == "OK" else 2
     return run_script("ev", ["--workspace", _ws(p), *a.rest])
 
 
 def cmd_appendix(a):
     p = project(a.project); banner(p)
+    if local_path(p["work_dir"]).name == "csa-work-v2":
+        with _evidence_matrix_path(p) as matrix:
+            return run_script("appendix", ["--workspace", _ws(p), "--matrix", str(matrix), *a.rest])
     return run_script("appendix", ["--workspace", _ws(p), *a.rest])
 
 
 def cmd_index(a):
     p = project(a.project); banner(p)
+    if local_path(p["work_dir"]).name == "csa-work-v2":
+        sys.path.insert(0, str(FRAMEWORK))
+        from csa_docx import v2_access
+        db = v2_access.active_db(local_path(p["project_root"]))
+        rest = a.rest
+        if rest == ["status"]:
+            result = v2_access.index_status(db)
+        elif rest and rest[0] == "search" and len(rest) >= 2:
+            parser = argparse.ArgumentParser(prog="csa index search")
+            parser.add_argument("terms")
+            parser.add_argument("--limit", type=int, default=50)
+            parser.add_argument("--per-file", type=int, default=1)
+            parser.add_argument("--path-like", default="")
+            parser.add_argument("--host", default="")
+            parser.add_argument("--any", action="store_true")
+            opts = parser.parse_args(rest[1:])
+            result = v2_access.index_search(db, opts.terms, limit=opts.limit, per_file=opts.per_file,
+                                             path_like=opts.path_like, host=opts.host, any_terms=opts.any)
+        else:
+            result = {"status": "ERROR", "code": "V2_COMMAND_UNAVAILABLE",
+                      "message": "this index command has no v2 implementation; old csa-work was not used"}
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        return 0 if result.get("status") == "OK" else 2
     return run_script("index", ["--project", p["key"], *a.rest])
 
 
@@ -1745,6 +1865,47 @@ def cmd_figure(a):
 
 def cmd_graph(a):
     p = project(a.project); banner(p)
+    if local_path(p["work_dir"]).name == "csa-work-v2":
+        db = local_path(p["work_dir"]) / "csa.sqlite"
+        action = a.rest[0] if a.rest else "stats"
+        sys.path.insert(0, str(FRAMEWORK))
+        from csa_docx.v2repo import Repo
+        import csa_docx.v2repo.graph  # noqa: F401
+        repo = Repo(db)
+        try:
+            graph = repo.graph
+            if action == "stats":
+                nodes, edges = graph.nodes(), graph.edges()
+                counts = lambda rows, key: dict(sorted({k: sum(1 for row in rows if (row.get(key) or "") == k)
+                                                         for k in {row.get(key) or "" for row in rows}}.items()))
+                result = {"status": "OK", "project": p["key"], "nodes": len(nodes), "edges": len(edges),
+                          "nodes_by_type": counts(nodes, "kind"), "edges_by_relationship_type": counts(edges, "kind"),
+                          "source": "csa.sqlite graph_node, graph_edge"}
+            elif action == "list":
+                nodes, edges = graph.nodes(), graph.edges()
+                result = {"status": "OK", "project": p["key"], "node_count": len(nodes), "edge_count": len(edges),
+                          "nodes": nodes, "edges": edges, "source": "csa.sqlite graph_node, graph_edge"}
+            elif action == "get":
+                subject = a.rest[1] if len(a.rest) > 1 else ""
+                row = graph.get(subject)
+                result = {"status": "OK", "subject": row, "source": "csa.sqlite graph_node, graph_edge"} if row else {
+                    "status": "ERROR", "code": "V2_GRAPH_NOT_FOUND", "message": f"graph subject not found: {subject}"}
+            elif action == "verify":
+                result = {**graph.verify(), "source": "csa.sqlite graph_node, graph_edge, evidence"}
+            elif action == "review":
+                subject = a.rest[1] if len(a.rest) > 1 else ""
+                state = a.rest[2] if len(a.rest) > 2 else ""
+                with repo.tx():
+                    result = graph.review(subject, state, actor="csa graph review", note=" ".join(a.rest[3:]))
+            else:
+                result = {"status": "ERROR", "code": "V2_GRAPH_COMMAND_UNAVAILABLE",
+                          "message": f"graph action '{action}' has no V2 implementation; old graph files were not used"}
+        except (KeyError, ValueError) as exc:
+            result = {"status": "ERROR", "code": "V2_GRAPH_REVIEW_ERROR", "message": str(exc)}
+        finally:
+            repo.close()
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        return 0 if result.get("status") == "OK" else 2
     return run_script("graph", ["--workspace", _ws(p), *a.rest])
 
 
@@ -2592,6 +2753,14 @@ def _launch(p: dict, r: dict, args: list[str], a) -> int:
     print(f"{C['d']}launching {cli} ({mode}) as {r['title']} in {run_cwd}{C['0']}", file=sys.stderr)
     if r.get("verb") not in ("answer", "draft"):
         return subprocess.call(argv, cwd=str(run_cwd))
+    turn_marker = None
+    if not closed:
+        candidate = STATE_DIR / "tmp" / f"turn-{os.getpid()}-{threading.get_ident()}-{time.time_ns()}.json"
+        hook = turn_end_args(argv, mode, candidate)
+        if hook:                                    # the interactive window never exits by itself: see turn_end_args
+            candidate.parent.mkdir(parents=True, exist_ok=True)
+            argv[1:1] = hook
+            turn_marker = candidate
 
     # Answer runs can involve several model passes. Keep each pass bounded and make a quiet/stalled call visible.
     # The caller still validates any sheet written before a timeout or non-zero exit.
@@ -2601,9 +2770,11 @@ def _launch(p: dict, r: dict, args: list[str], a) -> int:
     idle_min = float(settings().get("answer_idle_minutes", 25) or 0)                   # no work produced for this long: stop
     heartbeat_min = float(settings().get("answer_heartbeat_minutes", 10) or 0)
     stall_min = float(settings().get("answer_stall_minutes", 3) or 0)
+    no_work_min = float(settings().get("answer_no_work_minutes", 60) or 0)             # busy but nothing written: stop
     restarts = int(float(settings().get("answer_stall_restarts", 1) or 0))
     sys.path.insert(0, str(FRAMEWORK))
     from csa_docx.proc_watch import Watch
+    from csa_docx.session_activity import Activity
 
     def stop(proc) -> None:
         proc.terminate()
@@ -2616,21 +2787,38 @@ def _launch(p: dict, r: dict, args: list[str], a) -> int:
         proc = subprocess.Popen(argv, cwd=str(run_cwd), stdin=subprocess.DEVNULL if mode == "headless" else None,
                                 env=worker_env)
         began, next_beat = time.time(), time.time() + heartbeat_min * 60 if heartbeat_min else float("inf")
-        watch = Watch(proc.pid, stall_min * 60) if stall_min else None
+        watch = Watch(proc.pid, stall_min * 60) if stall_check_wanted(stall_min, turn_marker) else None
+        seen = Activity(run_cwd, began - 2)                             # this call's own agent session, when it keeps a log
         stalled = False
         mark, last_work = work_signature(run_cwd), time.time()         # the idle clock restarts whenever work is produced
+        start_mark = mark
+        if turn_marker is not None:
+            turn_marker.unlink(missing_ok=True)
         try:
             while True:
                 try:
-                    return proc.wait(timeout=30)
+                    return proc.wait(timeout=5 if turn_marker is not None else 30)
                 except subprocess.TimeoutExpired:
                     elapsed = time.time() - began
                     now_mark = work_signature(run_cwd)
+                    if turn_ended_with_work(turn_marker, start_mark, now_mark):
+                        print(f"{C['d']}the agent's turn ended with its answer written; closing its window "
+                              f"and checking the sheet.{C['0']}", file=sys.stderr, flush=True)
+                        stop(proc)
+                        turn_marker.unlink(missing_ok=True)
+                        return 0
                     if now_mark != mark:
                         mark, last_work = now_mark, time.time()
-                    if idle_expired(last_work, time.time(), idle_min):
-                        print(f"{C['r']}CSA {r.get('verb')} model call produced no work for {idle_min:g} min (no answer sheet or patch "
-                              f"written or changed); stopped it. Any sheet it wrote will still be validated.{C['0']}",
+                    last_active = seen.last() if idle_min else None
+                    if idle_stop(last_work, last_active, time.time(), idle_min, no_work_min):
+                        if idle_expired(max(last_work, last_active or 0), time.time(), idle_min):
+                            why = (f"produced no work for {idle_min:g} min (no answer sheet or patch written or changed"
+                                   + ("" if last_active is None else ", and nothing done in its session") + ")")
+                        else:
+                            why = (f"wrote no answer sheet or patch for {no_work_min:g} min although its session was busy "
+                                   f"(answer_no_work_minutes)")
+                        print(f"{C['r']}CSA {r.get('verb')} model call {why}; stopped it. Any sheet it wrote will still "
+                              f"be validated.{C['0']}",
                               file=sys.stderr, flush=True)
                         stop(proc)
                         return 124
@@ -2748,9 +2936,11 @@ def writer_needed_from(findings: list[dict]) -> tuple[bool, str]:
 def _writer_needed(p: dict, cf: Path, sec: str, label: str | None) -> tuple[bool, str]:
     argv = [framework_python(), "-m", "csa_docx.check_change", str(cf), "--workspace", str(local_path(p["project_root"])), "--json"]
     if p.get("work_dir"):
-        argv += ["--notes", str(author_dir(p, sec, label) / "search-notes.md"),
-                 "--evidence", str(local_path(p["work_dir"]) / "evidence-matrix.csv")]
-    r = subprocess.run(argv, cwd=str(FRAMEWORK), capture_output=True, text=True, env=_fw_env(p))
+        with _evidence_matrix_path(p) as evidence_path:
+            argv += ["--notes", str(author_dir(p, sec, label) / "search-notes.md"), "--evidence", str(evidence_path)]
+            r = subprocess.run(argv, cwd=str(FRAMEWORK), capture_output=True, text=True, env=_fw_env(p))
+    else:
+        r = subprocess.run(argv, cwd=str(FRAMEWORK), capture_output=True, text=True, env=_fw_env(p))
     try:
         return writer_needed_from(json.loads(r.stdout).get("findings", []))
     except ValueError:
@@ -2773,8 +2963,8 @@ def _reader_pass(work: Path, cards: Path, key: str, sheet: Path) -> None:
     if not tmpl or not shutil.which(shlex.split(tmpl)[0]):
         return
     print(f"{C['b']}Reader pass ({cli}): reading the whole subsection as the customer...{C['0']}", flush=True)
-    res = _fw_json("csa_docx.reader_pass", "review", "--work-dir", work, "--sheet", sheet, "--key", key, "--cwd", cards,
-                   "--template", tmpl)
+    res = _fw_json_shown("csa_docx.reader_pass", "review", "--work-dir", work, "--sheet", sheet, "--key", key, "--cwd", cards,
+                         "--template", tmpl, "--show")
     if res.get("status") == "OK":
         print(f"{C['b']}Reader review: {res.get('words', 0)} words in {Path(res['file']).name} (also in {key}.RESULT.md){C['0']}")
     else:
@@ -2792,8 +2982,8 @@ def _rating_pass(work: Path, cards: Path, key: str, sheet: Path, card_json: Path
     if not tmpl or not shutil.which(shlex.split(tmpl)[0]):
         return
     print(f"{C['b']}Rating pass ({cli}): scoring each block 1 to 10...{C['0']}", flush=True)
-    res = _fw_json("csa_docx.rating_pass", "rate", "--work-dir", work, "--sheet", sheet, "--card", card_json, "--key", key,
-                   "--cwd", cards, "--template", tmpl)
+    res = _fw_json_shown("csa_docx.rating_pass", "rate", "--work-dir", work, "--sheet", sheet, "--card", card_json, "--key", key,
+                         "--cwd", cards, "--template", tmpl, "--show")
     if res.get("status") == "OK":
         print(f"{C['b']}Answer rating: average {res.get('average')} (kept in ratings/{key}.json){C['0']}")
     else:
@@ -2903,6 +3093,17 @@ def _fw_json(module: str, *args) -> dict:
         return json.loads(r.stdout)
     except ValueError:
         return {"status": "ERROR", "message": (r.stderr or r.stdout or "no output")[-800:]}
+
+
+def _fw_json_shown(module: str, *args) -> dict:
+    """_fw_json for a step whose progress belongs on the terminal: its stderr is not captured, so what the module shows
+    there (a model call's output while it runs) reaches the window the run is in."""
+    r = subprocess.run([framework_python(), "-m", module, *[str(x) for x in args]], cwd=str(FRAMEWORK),
+                       stdout=subprocess.PIPE, text=True, env=_fw_env(None))
+    try:
+        return json.loads(r.stdout)
+    except ValueError:
+        return {"status": "ERROR", "message": (r.stdout or "no output")[-800:]}
 
 
 def _matrix_ids(work: Path) -> set[str]:
@@ -3195,6 +3396,13 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
             return []
         return ids if len(ids) >= 3 else []
 
+    def by_block() -> bool:
+        """Answer this run block by block? The card has enough blocks, and each call exits by itself (by_block_run)."""
+        cli = (getattr(a, "cli", None) or os.environ.get("CSA_CLI") or task_cli("draft" if draft else "answer")
+               or settings().get("default_cli", "codex"))
+        return bool(parallel_blocks()) and by_block_run(getattr(a, "headless", False),
+                                                        settings().get(f"{cli}_interactive") or "")
+
     def parallel_answer(ids: list[str], resume: bool = False) -> int:
         """First answer, one focused call per block (its own evidence only), then the analysis frame from the merged
         blocks. Calls run one at a time unless cli.yaml answer_by_block_workers > 1. Each returned block is merged and
@@ -3206,7 +3414,7 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
         content_ids = [b for b in ids if not b.startswith("F")]
         want_frame = bool(json.loads(card_json.read_text(encoding="utf-8")).get("frame"))
         base = cards / f"{key}.answer-base.md"
-        workers = max(1, int(settings().get("answer_by_block_workers", 1) or 1))
+        workers = by_block_workers(int(settings().get("answer_by_block_workers", 1) or 1), getattr(a, "headless", False))
 
         if not resume:
             if sheet.is_file():
@@ -3379,7 +3587,7 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
         if "*" in redo:
             pass                        # an error that belongs to no block: the fix loop below handles the whole sheet
         elif redo:
-            if parallel_blocks() and getattr(a, "headless", False):
+            if by_block():
                 if parallel_answer(sorted(redo), resume=True) != 0:
                     return 2
             else:
@@ -3393,14 +3601,14 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
         timing["reused"] = "partial"
         shutil.copyfile(sheet, sheet.with_suffix(".prev.md"))      # the applied sheet is the answer this run replaces
         lines = [f"- CHANGED {b}: the evidence for this question changed: answer it again from the card" for b in sorted(ids)]
-        if parallel_blocks() and getattr(a, "headless", False):
+        if by_block():
             if parallel_answer(sorted(ids), resume=True) != 0:
                 return 2
         elif block_round(ids, lines, "changed", "The evidence changed for these questions:") != 0:
             return 2
     else:
         timing["reused"] = False
-        if parallel_blocks() and getattr(a, "headless", False):
+        if by_block():
             if parallel_answer(parallel_blocks()) != 0:
                 return 2
         elif answer([]) != 0:
@@ -3770,9 +3978,67 @@ def cmd_model(a):
     """csa model build|counts|export: the system model store csa-work/model.sqlite (derived tables rebuilt from the host, flow,
     setting and graph files; reviewed tables kept)."""
     p = project(a.project)
+    if local_path(p["work_dir"]).name == "csa-work-v2":
+        import sqlite3
+        with sqlite3.connect(f"file:{local_path(p['work_dir']) / 'csa.sqlite'}?mode=ro", uri=True) as con:
+            tables = {name: con.execute(f"SELECT COUNT(*) FROM {name}").fetchone()[0]
+                      for (name,) in con.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")}
+        result = {"status": "OK", "model": "csa.sqlite", "action": a.action,
+                  "message": "V2 uses csa.sqlite as the system model; no legacy model.sqlite rebuild was run.",
+                  "tables": tables}
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        return 0
     extra = ["--out", a.out] if getattr(a, "out", None) else []
     return subprocess.call([framework_python(), "-m", "csa_docx.modelstore", a.action, "--work-dir",
                             str(local_path(p["work_dir"])), "--project", str(p.get("key") or p.get("name") or ""), *extra], cwd=str(FRAMEWORK))
+
+
+def cmd_v2(a):
+    """On-demand exports from the active project's csa-work-v2 repository."""
+    p = project(a.project)
+    work = local_path(p["work_dir"])
+    if work.name != "csa-work-v2":
+        die("csa v2 commands require the active project work_dir to end in csa-work-v2")
+    sys.path.insert(0, str(FRAMEWORK))
+    from csa_docx import v2_export_cli
+    if a.v2_action == "cleanup":
+        from csa_docx import v2_cleanup
+        work = local_path(p["work_dir"])
+        if getattr(a, "retired_evidence", False):
+            paths = ["../05 Revloc Tetra/02 Current State Assessment/NetSeg_Current_State_Assessment_REVELOC_TETRA.docx",
+                     "NetSeg_Current_State_Assessment_REVELOC_TETRA.docx",
+                     "02 Current State Assessment/NetSeg_Current_State_Assessment_REVELOC_TETRA.docx",
+                     "RevLoc/archived/NetSeg_Current_State_Assessment_REVELOC_v10.docx"]
+            print(json.dumps(v2_cleanup.cleanup_retired_evidence(work, paths, dry_run=not a.cleanup_commit), indent=2))
+        elif getattr(a, "migrated_leads", False):
+            print(json.dumps(v2_cleanup.archive_migrated_leads(work, dry_run=not a.cleanup_commit), indent=2))
+        elif getattr(a, "repair_provenance", False):
+            print(json.dumps(v2_cleanup.repair_provenance(work, dry_run=not a.cleanup_commit), indent=2))
+        elif getattr(a, "cleanup_apply", None):
+            print(json.dumps(v2_cleanup.apply_pack(work, a.cleanup_apply), indent=2))
+        elif getattr(a, "cleanup_restore", None):
+            print(json.dumps(v2_cleanup.restore_pack(work, a.cleanup_restore), indent=2))
+        else:
+            print(json.dumps(v2_cleanup.create_pack(
+                work, application_key=getattr(a, "application_key", None),
+                out=getattr(a, "out", None), dry_run=True), indent=2))
+        return 0
+    if a.v2_action == "scope-rebuild":
+        from csa_docx import v2scope
+        return print(json.dumps(v2scope.rebuild(p["project_root"], work, a.application_key,
+                                                dry_run=a.dry_run), indent=2)) or 0
+    argv = ["--v2-dir", str(work), a.v2_action]
+    if a.v2_action == "export":
+        argv += ["--table", a.table, "--out", a.out]
+        for flag, value in (("--status", a.status), ("--area", a.area),
+                            ("--review-state", a.review_state), ("--state", a.state)):
+            if value is not None:
+                argv += [flag, value]
+    elif a.v2_action == "host":
+        argv += [a.host, "--out", a.out]
+    else:
+        argv += ["--out", a.out]
+    return v2_export_cli.main(argv)
 
 
 def cmd_topic_table(a):
@@ -3781,7 +4047,10 @@ def cmd_topic_table(a):
     p = project(a.project)
     work = local_path(p["work_dir"])
     if getattr(a, "settings", False):
-        print(json.dumps(_fw_json("csa_docx.host_settings", "build", "--work-dir", work)))
+        settings_args = ["--work-dir", work]
+        if work.name == "csa-work-v2":
+            settings_args += ["--application-key", p["key"], "--view", "application"]
+        print(json.dumps(_fw_json("csa_docx.host_settings", "build", *settings_args)))
     res = resolve_target(p, a.section)
     if res.get("status") != "OK":
         die(res.get("message", f"cannot resolve '{a.section}'"))
@@ -3838,6 +4107,31 @@ def stale_sections(p: dict) -> list[dict]:
 
 def cmd_stale(a):
     p = project(a.project); banner(p)
+    if local_path(p["work_dir"]).name == "csa-work-v2":
+        sys.path.insert(0, str(FRAMEWORK))
+        from csa_docx import v2_ingest
+        from csa_docx.v2repo import Repo
+        work = local_path(p["work_dir"])
+        repo = Repo(work)
+        try:
+            stale = v2_ingest.stale_subsections(repo, work)
+        finally:
+            repo.close()
+        rows = []
+        for key, evidence_ids in sorted(stale.items()):
+            rows.append({"key": key, "number": "?", "title": key,
+                         "status": "STALE", "changed": evidence_ids})
+        out = work / "draft" / "stale.json"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps({"checked_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                                   "sections": rows}, indent=1), encoding="utf-8")
+        for row in rows:
+            print(f"  {row['key']:<8} {C['y']}stale{C['0']} ({', '.join(row['changed'])})")
+        print(f"{len(rows)} answered subsection(s) need a new answer" if rows else
+              "No answered subsections need a new answer.")
+        if getattr(a, "json", False):
+            print(json.dumps(rows))
+        return 0
     rows = stale_sections(p)
     stale = [r for r in rows if r["status"] != "REUSE"]
     out = local_path(p["work_dir"]) / "draft" / "stale.json"
@@ -3857,6 +4151,23 @@ def cmd_gap_check(a):
     """Check every open question (draft/open-questions.md) against the evidence matrix and the discovery index.
     What the index finds is stored as append-only leads to settle (no model)."""
     p = project(a.project); banner(p)
+    if local_path(p["work_dir"]).name == "csa-work-v2":
+        sys.path.insert(0, str(FRAMEWORK))
+        from csa_docx import v2_gap
+        section_key = ""
+        if a.section:
+            section_key = a.section if re.fullmatch(r"[A-Z][A-Z0-9_]*", a.section) else None
+            if not section_key:
+                resolved = resolve_target(p, a.section)
+                if resolved.get("status") != "OK":
+                    die(resolved.get("message", f"cannot resolve '{a.section}'"))
+                section_key = resolved["key"]
+        record = v2_gap.run(local_path(p["work_dir"]), section_key)
+        if a.json:
+            print(json.dumps(record, indent=1, ensure_ascii=False))
+        else:
+            print(json.dumps(record["summary"], indent=1, ensure_ascii=False))
+        return 0
     docx = working_docx(p)
     if not docx:
         die("no working DOCX")
@@ -3964,6 +4275,34 @@ def no_answer_block_message(questions: list[dict]) -> str:
 def cmd_resolve_gaps(a):
     """Search open questions, have the evidence agent settle source hits, then answer affected subsections again."""
     p = project(a.project); banner(p)
+    if local_path(p["work_dir"]).name == "csa-work-v2":
+        sys.path.insert(0, str(FRAMEWORK))
+        from csa_docx import v2_gap
+        work = local_path(p["work_dir"])
+        record_path = work / "intake" / "gap-check-latest.json"
+        if getattr(a, "latest", False):
+            if not record_path.is_file():
+                die("no saved V2 gap-check record; run csa gap-check first")
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+        else:
+            record = v2_gap.run(work, getattr(a, "section", None))
+        result = v2_gap.settle(work, record, actor="csa resolve-gaps")
+        if result.get("status") != "OK":
+            print(json.dumps(result, indent=2), file=sys.stderr)
+            return 1
+        resolved = {row["lead_id"]: row["evidence_ids"] for row in result.get("resolved", [])}
+        for question in record.get("questions", []):
+            ids = [lead_id for lead_id in question.get("lead_ids", []) if lead_id in resolved]
+            evidence_ids = [eid for lead_id in ids for eid in resolved[lead_id]]
+            if evidence_ids:
+                question["verdict"] = "ANSWERED"
+                question["answer_evidence_ids"] = sorted(set(evidence_ids))
+        record["settlement"] = result
+        record_path.parent.mkdir(parents=True, exist_ok=True)
+        record_path.write_text(json.dumps(record, indent=1, ensure_ascii=False), encoding="utf-8")
+        print(json.dumps({**result, "answer_repair_evidence_ids": sorted({eid for ids in resolved.values() for eid in ids}),
+                          "gap_check": str(record_path)}, indent=2))
+        return 0
     if getattr(a, "latest", False):
         print(f"{C['b']}Using the gap check already displayed in Evidence Intake.{C['0']}", flush=True)
         first = _latest_gap_check(p, a.section)
@@ -4077,10 +4416,20 @@ def intake_pending(p: dict) -> list[str]:
     if not latest.is_file():
         return []
     report_path = None
+    batched = False
+    completed_paths: set[str] = set()
     try:
         rec = json.loads(latest.read_text(encoding="utf-8"))
         report_path = folder / f"{rec['id']}.evidence.md"
         report = report_path.read_text(encoding="utf-8")
+        # File-by-file reports list pending paths for the person, but only the
+        # completed section proves that a source has been processed.
+        batched = "## Completed files" in report and "## Pending files" in report
+        if batched:
+            completed_text = report.split("## Unreadable files", 1)[0]
+            completed_paths = set(re.findall(r"^### (.+)$", completed_text, re.M))
+            unreadable_text = report.split("## Unreadable files", 1)[1].split("## Pending files", 1)[0]
+            completed_paths.update(re.findall(r"^- (.+)$", unreadable_text, re.M))
     except (OSError, ValueError, KeyError):
         report = ""
         try:
@@ -4091,10 +4440,32 @@ def intake_pending(p: dict) -> list[str]:
                 if isinstance(f, dict) and f.get("source_class") != "capture" and f.get("rel_path")}
     required.update(f.get("rel_path") for f in rec.get("unreadable", [])
                     if isinstance(f, dict) and f.get("rel_path"))
-    missing = sorted(path for path in required if path not in report)
+    missing = sorted(path for path in required if (path not in completed_paths if batched else path not in report))
     if not report.strip() and report_path:
         missing.append(str(report_path))
     return missing
+
+
+def _ingest_v2(p: dict, work: Path, a) -> int:
+    """`csa ingest` for a project whose work_dir is csa-work-v2: the six steps against csa.sqlite (v2_ingest)."""
+    sys.path.insert(0, str(FRAMEWORK))
+    from csa_docx import v2_ingest
+    sources = [local_path(p["default_source_set"])] if p.get("default_source_set") else None
+    if sources:
+        sources += [local_path(x.strip()) for x in str(p.get("index_extra_sources") or "").split(";") if x.strip()]
+
+    def say(n, name, line):
+        print(f"{C['b']}{n}/6 {name}{C['0']}")
+        print(line, flush=True)
+
+    try:
+        s = v2_ingest.run_ingest(local_path(p["project_root"]), work, rebuild=a.rebuild, sources=sources, log=say)
+    except FileNotFoundError as e:
+        die(str(e))
+    if s["pending_intake_files"]:
+        print(f"{C['y']}{s['pending_intake_files']} new or changed document(s) are indexed but not yet recorded as evidence. "
+              f"Run `csa -p {p['key']} intake` before relying on the stale-section result.{C['0']}")
+    return 0
 
 
 def cmd_ingest(a):
@@ -4103,6 +4474,8 @@ def cmd_ingest(a):
     files listed for re-check), estate register, system model, then the answered subsections whose evidence changed."""
     p = project(a.project); banner(p)
     work = local_path(p["work_dir"])
+    if work.name == "csa-work-v2":
+        return _ingest_v2(p, work, a)
     gs = SKILLS / "csa-evidence-matrix" / "scripts" / "graph_sync.py"
     print(f"{C['b']}1/6 discovery index{C['0']}")
     if run_script("index", ["--project", p["key"], "build", *(["--rebuild"] if a.rebuild else [])]) != 0:
@@ -4130,7 +4503,7 @@ def cmd_ingest(a):
     print(f"{C['b']}5/6 system model{C['0']}")
     if subprocess.call([framework_python(), "-m", "csa_docx.modelstore", "build", "--work-dir", str(work),
                         "--project", str(p.get("key") or "")], cwd=str(FRAMEWORK), env=_fw_env(p), stdout=subprocess.DEVNULL) != 0:
-        print(f"{C['y']}system model not rebuilt (csa model build shows why){C['0']}")
+        die("system model not rebuilt; run `csa model build` to see why")
     print(f"{C['b']}6/6 stale subsections{C['0']}")
     pending = intake_pending(p)
     if pending:
@@ -4196,6 +4569,8 @@ SECTION_VERBS = ("author", "write", "review", "cleanup", "answer", "draft")
 
 def cmd_agent(a):
     p = project(a.project); banner(p)
+    if a.verb == "intake":
+        return cmd_intake_files(p, a)
     if a.verb in SECTION_VERBS and a.args and "=" not in a.args[0] and not re.fullmatch(r"\d+(\.\d+)*", a.args[0]):
         a.args = [section_arg(p, a.args[0])] + a.args[1:]
     if (((a.verb in ("author", "answer") and project_stage(p) == "draft") or a.verb == "draft")
@@ -4224,6 +4599,165 @@ def cmd_agent(a):
     if a.verb == "author":
         _record_author_counts(p, a.args)
     return _after_agent(p, a.verb, a.args, started, a)
+
+
+def _intake_file_jobs(p: dict, record: dict) -> list[dict]:
+    """One current, indexed source per fresh intake agent session."""
+    folder = local_path(p["work_dir"]) / "intake"
+    records = [record]
+    for record_id in record.get("carried_from", []):
+        path = folder / f"{record_id}.json"
+        if path.is_file():
+            records.append(json.loads(path.read_text(encoding="utf-8")))
+    jobs = {}
+    # A newer record wins when a path occurs in several intakes.
+    for item in reversed(records):
+        for entry in item.get("added", []) + item.get("changed", []):
+            if isinstance(entry, dict) and entry.get("status") == "indexed" and entry.get("rel_path"):
+                jobs[entry["rel_path"]] = entry
+    root = local_path(p["project_root"]).resolve()
+    selected = []
+    for entry in jobs.values():
+        path = (root / entry["rel_path"]).resolve()
+        if path.is_relative_to(root) and path.is_file():
+            selected.append(dict(entry, path=path))
+    return selected
+
+
+def _intake_source_hash(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        for block in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _intake_report(folder: Path, record: dict, jobs: list[dict]) -> None:
+    """Publish a report after each completed file, without claiming unfinished files."""
+    lines = [f"# Evidence intake {record['id']}", "", "## Completed files", ""]
+    for job in jobs:
+        if job.get("completed"):
+            lines.extend([f"### {job['rel_path']}", "", job["report"].read_text(encoding="utf-8"), ""])
+    pending = [job["rel_path"] for job in jobs if not job.get("completed")]
+    unreadable = [entry.get("rel_path") for entry in record.get("unreadable", []) if isinstance(entry, dict)]
+    lines.extend(["## Unreadable files", "", *[f"- {path}" for path in unreadable if path], ""])
+    lines.extend(["## Pending files", "", *[f"- {path}" for path in pending], ""])
+    target = folder / f"{record['id']}.evidence.md"
+    previous = folder / f"{record['id']}.evidence.before-file-batches.md"
+    if target.is_file() and not previous.exists() and "## Completed files" not in target.read_text(encoding="utf-8"):
+        shutil.copy2(target, previous)
+    temp = target.with_name(target.name + f".{os.getpid()}.tmp")
+    temp.write_text("\n".join(lines), encoding="utf-8")
+    temp.replace(target)
+
+
+def cmd_intake_files(p: dict, a) -> int:
+    """Run pending intake files in batches (v2_intake.MAX_FILES per model session); checkpoints live in intake_file."""
+    folder = local_path(p["work_dir"]) / "intake"
+    latest = folder / "latest.json"
+    v2_project = local_path(p["work_dir"]).name == "csa-work-v2"
+    if not v2_project and not latest.is_file():
+        if getattr(a, "print", False):
+            return launch(p, agent("intake"), a.args, a)
+        die("no intake/latest.json; run csa ingest first")
+    if not v2_project:
+        record = json.loads(latest.read_text(encoding="utf-8"))
+        jobs = _intake_file_jobs(p, record)
+        checkpoint_dir = folder / f"{record['id']}.files"
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        for job in jobs:
+            source = Path(job["path"])
+            digest = _intake_source_hash(source)
+            checkpoint = checkpoint_dir / f"{digest}.json"
+            if checkpoint.is_file():
+                try:
+                    saved = json.loads(checkpoint.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    saved = {}
+                if saved.get("sha256") == digest:
+                    job["completed"] = True
+                    job["report"] = Path(saved.get("report", ""))
+                    continue
+            report = checkpoint_dir / f"{digest}.md"
+            args = [f"INTAKE={record['id']}", "MODE=INTAKE", f"FILE={job['rel_path']}",
+                    f"FILE_REPORT={report}", f"FILE_SHA256={digest}"]
+            worker = copy.copy(a)
+            worker.headless = True
+            rc = launch(p, agent("intake"), args, worker)
+            if rc != 0 or not report.is_file():
+                print(f"intake stopped at {job['rel_path']}; it stays pending", file=sys.stderr)
+                return rc or 1
+            checkpoint.write_text(json.dumps({"rel_path": job["rel_path"], "sha256": digest,
+                                               "report": str(report)}, indent=1), encoding="utf-8")
+            job["completed"] = True
+            job["report"] = report
+            _intake_report(folder, record, jobs)
+        return 0
+    sys.path.insert(0, str(FRAMEWORK))
+    from csa_docx import v2_intake
+    from csa_docx.v2repo import Repo
+    v2_dir = local_path(p["work_dir"]) if v2_project else local_path(p["work_dir"]).parent / "csa-work-v2"
+    if not (v2_dir / "csa.sqlite").is_file():
+        die(f"no {v2_dir / 'csa.sqlite'}; migrate the project to csa-work-v2 first")
+    r = Repo(v2_dir)
+    try:
+        todo: dict[str, list[str]] = {}
+        retry_failed = "RETRY_FAILED=1" in getattr(a, "args", [])
+        intake_jobs = r.intake.pending()
+        if retry_failed:
+            intake_jobs.extend({"record_id": row[0], "rel_path": row[1]}
+                               for row in r.con.execute(
+                                   "SELECT record_id, rel_path FROM intake_file "
+                                   "WHERE status='failed' ORDER BY rel_path"
+                               ).fetchall())
+        for f in intake_jobs:
+            todo.setdefault(f["record_id"], []).append(f["rel_path"])
+        total = sum(len(v) for v in todo.values())
+        done = 0
+        tmp = STATE_DIR / "tmp"
+        tmp.mkdir(parents=True, exist_ok=True)
+        batch_override = next((x.split("=", 1)[1] for x in getattr(a, "args", [])
+                               if x.startswith("BATCH_FILES=")), "")
+        try:
+            batch_files = max(1, int(batch_override)) if batch_override else None
+        except ValueError:
+            die("BATCH_FILES must be a positive integer")
+        for record_id, paths in todo.items():
+            for group in v2_intake.batches(paths, max_files=batch_files or v2_intake.MAX_FILES):
+                payload = v2_intake.build_batch(record_id, group, len(group), repo=r)
+                stamp = f"{os.getpid()}-{time.time_ns()}"
+                batch_file, out_file = tmp / f"intake-batch-{stamp}.json", tmp / f"intake-batch-{stamp}.out.json"
+                batch_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+                print(f"intake {done + 1}-{done + len(group)}/{total}: {len(group)} file(s)", flush=True)
+                worker = copy.copy(a)
+                worker.headless = True  # each batch starts with an empty model context
+                args = [f"INTAKE={record_id}", "MODE=INTAKE", f"BATCH={batch_file}", f"BATCH_OUTPUT={out_file}"]
+                rc = launch(p, agent("intake"), args, worker)
+                if getattr(a, "print", False):
+                    return rc
+                if rc or not out_file.is_file():
+                    print(f"intake stopped at a batch of {len(group)} file(s); they stay pending", file=sys.stderr)
+                    return rc or 1
+                summary = v2_intake.apply_batch(record_id, out_file.read_text(encoding="utf-8"), repo=r,
+                                       rel_paths=group)
+                print(f"intake batch: {summary['files_ok']} ok, {summary['files_failed']} failed, "
+                      f"{summary['rows_added']} row(s) added, {summary['rows_rejected']} rejected", flush=True)
+                for item in summary["rejected"]:
+                    print(f"  rejected: {item['rel_path']}: {item['reason']}", file=sys.stderr)
+                for rel, err in summary["errors"].items():
+                    print(f"  failed: {rel}: {err}", file=sys.stderr)
+                batch_file.unlink(missing_ok=True)
+                out_file.unlink(missing_ok=True)
+                done += len(group)
+        if getattr(a, "print", False):
+            return 0
+        left = r.intake.pending()
+        if left:
+            print(f"intake is incomplete: {len(left)} source(s) still pending", file=sys.stderr)
+            return 1
+        return 0
+    finally:
+        r.close()
 
 
 
@@ -5454,6 +5988,10 @@ def template_target(t: str) -> str:
 
 def cmd_convert(a):
     p = project(a.project); banner(p)
+    if local_path(p["work_dir"]).name == "csa-work-v2":
+        print(json.dumps({"status": "V2_CONVERSION_NOT_REQUIRED", "message":
+                          "V2 projects do not use the V1 conversion pipeline; use csa answer/author against csa-work-v2."}, indent=2))
+        return 0
     if getattr(a, "target", None):
         a.target = template_target(a.target)
     if a.print and a.target:
@@ -5821,6 +6359,28 @@ def main(argv=None) -> int:
     s = sp("model", cmd_model, help="system model store csa-work/model.sqlite (build | counts | export)")
     s.add_argument("action", nargs="?", default="counts", choices=["build", "counts", "export"])
     s.add_argument("--out", help="export: folder to write into (default csa-work/model-export); never over the sources")
+    s = sp("v2", cmd_v2, help="csa-work-v2 repository operations (export | host | report | cleanup | scope-rebuild)")
+    v2 = s.add_subparsers(dest="v2_action", required=True)
+    e = v2.add_parser("export", help="write a v2 table as CSV")
+    e.add_argument("--table", required=True); e.add_argument("--out", required=True)
+    e.add_argument("--status"); e.add_argument("--area"); e.add_argument("--review-state", dest="review_state"); e.add_argument("--state")
+    h = v2.add_parser("host", help="write a v2 per-host Markdown card")
+    h.add_argument("host"); h.add_argument("--out", required=True)
+    r = v2.add_parser("report", help="write the v2 repository summary")
+    r.add_argument("--out", required=True)
+    cl = v2.add_parser("cleanup", help="create or apply a hash-guarded reversible V2 cleanup pack")
+    cl.add_argument("--out", help="cleanup pack path (default: csa-work-v2/cleanup-packs/<timestamp>-cleanup.json)")
+    cl.add_argument("--application-key")
+    cl.add_argument("--retired-evidence", action="store_true")
+    cl.add_argument("--migrated-leads", action="store_true")
+    cl.add_argument("--repair-provenance", action="store_true")
+    cl.add_argument("--commit", dest="cleanup_commit", action="store_true", help="apply the selected cleanup")
+    cg = cl.add_mutually_exclusive_group()
+    cg.add_argument("--apply", dest="cleanup_apply", help="apply an audited cleanup pack")
+    cg.add_argument("--restore", dest="cleanup_restore", help="restore rows from a cleanup pack")
+    sr = v2.add_parser("scope-rebuild", help="rebuild application scope from the source host register")
+    sr.add_argument("--application-key", required=True)
+    sr.add_argument("--dry-run", action="store_true")
     s = sp("topic-table", cmd_topic_table, help="role table for a subsection from the captures, rows = role groups (no model); --place writes it into the document")
     s.add_argument("section", help="number, heading or key (3.4, 'Time Synchronisation', TIME)")
     s.add_argument("--place", action="store_true", help="put it under Discovery Information, above the Aspect table")

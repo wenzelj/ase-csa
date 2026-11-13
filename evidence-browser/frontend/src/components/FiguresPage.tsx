@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactElement } from "react";
 import { api, fetchJob, submitJob } from "../api";
 import { AGENT_CLIS, DEFAULT_AGENT_CLI } from "../agentClis";
-import type { ReviewJob } from "../types";
+import type { GraphView, ReviewJob } from "../types";
 import "./figures.css";
 
 /* CSA figures: where the working document needs a figure, the brief (what the figure must show, tied to the
@@ -17,7 +17,7 @@ type Row = { key: string; number: string; title: string; level: number; status: 
   archetype: string | null; question?: string; must_show?: string[]; caption?: string; requirements: Req[]; hosts_in_text: string[];
   slot: { placeholder: boolean; caption: string | null } | null; saved: Saved };
 type Refreshed = { key: string; number: string; title: string; action: string; placement?: string; message?: string };
-type Listing = { state: string; reason?: string; document?: string; rows: Row[]; counts?: Record<string, number>; gaps?: number;
+type Listing = { state: string; reason?: string; document?: string; rows: Row[]; counts?: Record<string, number>; gaps?: number; view?: GraphView; application_key?: string | null;
   last_refresh?: { at: string; results: Refreshed[] } | null; refreshed?: Refreshed[] };
 type AgentNote = { text: string; at: string };
 type Rel = { consumer: string; provider: string; order: number; state: string; side: string; side_reason: string; evidence: string[]; text: string };
@@ -26,7 +26,7 @@ type Item = { id: string; what: string; status: string; provider?: string; evide
 type Gap = { id: string; what: string; why: string };
 type Brief = { purpose: Text; caption: Text; source: Text; items: Item[]; gaps: Gap[]; question?: string; requirements: string[] };
 type Check = { level: "ok" | "note" | "flag"; kind: string; text: string; evidence: string[] };
-type Detail = { state: string; reason?: string; row: Row; brief: Brief; problems: string[]; fit: { checks: Check[]; counts: Record<string, number> };
+type Detail = { state: string; reason?: string; row: Row; brief: Brief; problems: string[]; fit: { checks: Check[]; counts: Record<string, number> }; view?: GraphView; application_key?: string | null;
   relations: Rel[]; svg: string | null; hash: string | null; print_svg?: string | null; screen_landscape_svg?: string | null;
   print?: { width_mm: number; height_mm: number; fits_page: boolean; min_text_pt: number } | null; notes: string[]; nodes?: number; lines?: number; saved: Saved;
   freshness: "current" | "changed" | "not-saved"; placement: "not-placed" | "placed" | "out-of-date";
@@ -50,7 +50,7 @@ const FILTERS: { id: string; label: string; match: (s: string) => boolean }[] = 
 const when = (s?: string) => s ? new Date(s).toLocaleString("en-AU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "";
 const DONE = ["succeeded", "failed", "cancelled", "interrupted"];
 
-export default function FiguresPage({ system, openEvidenceId }: { system: string; openEvidenceId?: (id: string) => void }) {
+export default function FiguresPage({ system, graphView, onGraphViewChange, openEvidenceId }: { system: string; graphView: GraphView; onGraphViewChange: (view: GraphView) => void; openEvidenceId?: (id: string) => void }) {
   const [list, setList] = useState<Listing | null>(null);
   const [error, setError] = useState("");
   const [filter, setFilter] = useState("need");
@@ -61,13 +61,14 @@ export default function FiguresPage({ system, openEvidenceId }: { system: string
   const [fit, setFit] = useState(true);
   const [showRefresh, setShowRefresh] = useState(false);
 
-  const loadList = () => api<Listing>(`/api/systems/${system}/figures`).then(l => {
+  const scope = `view=${graphView}&application_key=${encodeURIComponent(system)}`;
+  const loadList = () => api<Listing>(`/api/systems/${system}/figures?${scope}`).then(l => {
     setList(l);
     setKey(k => k ?? (l.rows.find(r => r.status === "needed") || l.rows[0])?.key ?? null);
   }).catch(e => setError(String(e.message || e)));
-  const loadDetail = (k: string) => api<Detail>(`/api/systems/${system}/figures/${k}`).then(setDetail).catch(e => setError(String(e.message || e)));
-  useEffect(() => { setList(null); setKey(null); setDetail(null); setError(""); setJob(null); loadList(); }, [system]);
-  useEffect(() => { if (key) { setDetail(null); setError(""); loadDetail(key); } }, [system, key]);
+  const loadDetail = (k: string) => api<Detail>(`/api/systems/${system}/figures/${k}?${scope}`).then(setDetail).catch(e => setError(String(e.message || e)));
+  useEffect(() => { setList(null); setKey(null); setDetail(null); setError(""); setJob(null); loadList(); }, [system, graphView]);
+  useEffect(() => { if (key) { setDetail(null); setError(""); loadDetail(key); } }, [system, key, graphView]);
   useEffect(() => {                                           // follow a running job, then reload
     if (!job || DONE.includes(job.state)) return;
     const t = setTimeout(async () => {
@@ -85,7 +86,7 @@ export default function FiguresPage({ system, openEvidenceId }: { system: string
     if (!key) return;
     setBusy(what); setError("");
     try {
-      const d = await api<Detail>(`/api/systems/${system}/figures/${key}/${path}`, { method: "POST", headers: { "Content-Type": "application/json" },
+      const d = await api<Detail>(`/api/systems/${system}/figures/${key}/${path}?${scope}`, { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body ?? {}) });
       setDetail(d);
       if (d.problems?.length) setError("Not saved: " + d.problems.join("; "));
@@ -95,7 +96,7 @@ export default function FiguresPage({ system, openEvidenceId }: { system: string
   async function refreshAll() {
     setBusy("refresh"); setError("");
     try {
-      const l = await api<Listing>(`/api/systems/${system}/figures/refresh`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      const l = await api<Listing>(`/api/systems/${system}/figures/refresh?${scope}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
       setList(l); setShowRefresh(true);
       if (key) await loadDetail(key);
     } catch (e: any) { setError(String(e.message || e)); } finally { setBusy(""); }
@@ -122,6 +123,9 @@ export default function FiguresPage({ system, openEvidenceId }: { system: string
           <p>Where <b>{list.document}</b> needs a figure, what it must show, and the figure drawn from the current evidence.</p>
         </div>
         <div className="fg-counts">
+          <label>Scope <select value={graphView} onChange={e => onGraphViewChange(e.target.value as GraphView)}>
+            <option value="application">Application and captured peers</option><option value="owned">Owned hosts only</option><option value="global">All applications</option>
+          </select></label>
           <span className="need">{(c.needed || 0) + (c.helpful || 0)} need a figure</span>
           <span className="done">{c.placed || 0} in the document</span>
           <span className="wait">{c["not-built"] || 0} kind not built yet</span>

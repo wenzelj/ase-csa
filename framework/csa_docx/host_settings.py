@@ -288,6 +288,7 @@ def gpo_settings(caps: dict[str, dict[str, dict]]) -> list[dict]:
         lines = cap["text"].splitlines()
         applied: list[tuple[int, str]] = []
         skipped: list[tuple[int, str]] = []
+        reasons: dict[str, str] = {}              # skipped name -> why (the capture's own "Filtering:" line, or the XML flags)
         if cap["fname"].lower().endswith(".xml"):
             # the discovery index keeps the XML as one "Element value" line per element, a GPO opening at a "GPO" line
             start = next((i for i, l in enumerate(lines) if l.strip() == "ComputerResults"), 0)
@@ -309,6 +310,9 @@ def gpo_settings(caps: dict[str, dict[str, dict]]) -> list[dict]:
                     ok = seen.get("IsValid", "").lower() == "true" and seen.get("FilterAllowed", "").lower() == "true" \
                         and seen.get("AccessDenied", "").lower() == "false"
                     (applied if ok else skipped).append((at, name))
+                    if not ok:
+                        reasons[name] = ("Denied (Security)" if seen.get("AccessDenied", "").lower() == "true"
+                                         else "Filter not allowed" if seen.get("FilterAllowed", "").lower() != "true" else "Not valid")
         else:
             at = next((i for i, l in enumerate(lines) if re.search(r"Applied Group Policy Objects", l)), None)
             if at is not None:
@@ -316,12 +320,29 @@ def gpo_settings(caps: dict[str, dict[str, dict]]) -> list[dict]:
                     if not lines[i].strip():
                         break
                     applied.append((i, lines[i].strip()))
+                # the same text lists, right after the computer's applied objects, the ones filtered out (access denied, empty,
+                # ...): a name indented under the heading, each followed by a "Filtering:" reason line
+                j = next((i for i in range(at, len(lines)) if "not applied because they were filtered out" in lines[i]), None)
+                if j is not None:
+                    for i in range(j + 1, len(lines)):
+                        raw, s = lines[i], lines[i].strip()
+                        if s.startswith("Filtering:") and skipped:
+                            reasons.setdefault(skipped[-1][1], s.split(":", 1)[1].strip())
+                            continue
+                        if not s or re.fullmatch(r"-+", s):
+                            continue
+                        if len(raw) - len(raw.lstrip()) < 8:
+                            break
+                        skipped.append((i, s))
         if at_missing(cap):
             continue
         names = list(dict.fromkeys(n for _, n in applied))
         out.append(_row(h, "gpo.applied", ", ".join(names) or "None found", cap, [i for i, _ in applied] if names else [], lines, "group_policy"))
         snames = list(dict.fromkeys(n for _, n in skipped))
         out.append(_row(h, "gpo.not_applied", ", ".join(snames) or "None found", cap, [i for i, _ in skipped] if snames else [], lines, "group_policy"))
+        why = [f"{n}: {reasons[n]}" for n in sorted(snames) if reasons.get(n)]
+        if why:
+            out.append(_row(h, "gpo.not_applied_reason", "; ".join(why), cap, [i for i, _ in skipped], lines, "group_policy"))
     return out
 
 
@@ -1349,10 +1370,70 @@ def _time_chunks(con) -> list:
         return []
 
 
-def build(work_dir: Path, con=None, services: list[dict] | None = None) -> dict:
+def _v2_scope_names(repo, application_key: str | None, view: str) -> set[str]:
+    active = {row["name"] for row in repo.hosts.list(status="active")}
+    if view == "global" or not application_key:
+        return active
+    from csa_docx.v2repo.scope import _scoped_host_ids
+    owned, peers = _scoped_host_ids(repo, application_key)
+    names = owned if view == "owned" else owned | peers
+    return {name.removeprefix("host/") for name in names} & active
+
+
+def build_v2(work_dir: Path, application_key: str | None = None, view: str = "global") -> dict:
+    """Build settings from csa.sqlite; V2 never reads or writes legacy host CSVs."""
+    from csa_docx.v2repo import Repo
+    repo = Repo(work_dir)
+    try:
+        allowed = _v2_scope_names(repo, application_key, view)
+        hosts = {row["name"]: row for row in repo.hosts.list(status="active") if row["name"] in allowed}
+        edges = {(row[0].removeprefix("host/"), row[1].removeprefix("host/"), row[2]):
+                 {"evidence_ids": row[3]} for row in repo.con.execute("SELECT src,dst,kind,evidence_ids FROM graph_edge")}
+        rows = []
+        for row in repo.con.execute("SELECT id,host,provider_host,name,port,protocol FROM service ORDER BY host,id"):
+            sid, client, provider, name, port, protocol = row
+            if client not in allowed or not provider or provider not in allowed:
+                continue
+            kind = (name or "").lower()
+            edge = edges.get((client, provider, kind), {})
+            ids = [x for x in (edge.get("evidence_ids") or "").split(";") if x]
+            source = f"csa.sqlite service/{sid}" + (f" evidence {', '.join(ids)}" if ids else "")
+            value = provider + (f" ({port}/{protocol})" if port else "")
+            if kind == "dns":
+                attrs = "dns"
+                existing = [r for r in rows if r["host"] == client and r["attribute"].startswith("dns.")]
+                attrs += ".primary" if not existing else ".secondary"
+            elif kind in {"time", "ntp", "ntp-time"}:
+                attrs = "time.source"
+                value = provider
+            else:
+                continue
+            rows.append({"host": client, "topic": attrs.split(".", 1)[0], "attribute": attrs,
+                         "value": value, "capture": "csa.sqlite", "source": source,
+                         "excerpt": f"service {name}: {client} -> {provider}"})
+            if kind in {"time", "ntp", "ntp-time"}:
+                rows.append({"host": client, "topic": "time", "attribute": "time.service",
+                             "value": "Windows Time Service", "capture": "csa.sqlite", "source": source,
+                             "excerpt": f"service {name}: {client} -> {provider}"})
+        for ip, host in repo.con.execute("SELECT ip,owner_host FROM address WHERE owner_host IS NOT NULL ORDER BY owner_host,ip"):
+            if host in allowed:
+                rows.append({"host": host, "topic": "network", "attribute": "net.address", "value": ip,
+                             "capture": "csa.sqlite", "source": "csa.sqlite address", "excerpt": f"address {ip} owned by {host}"})
+        out = Path(work_dir) / "host-settings.json"
+        out.write_text(json.dumps({"view": view, "application_key": application_key, "rows": rows}, indent=1) + "\n", encoding="utf-8")
+        return {"status": "OK", "rows": len(rows), "hosts": len({r["host"] for r in rows}), "out": str(out), "view": view,
+                "application_key": application_key}
+    finally:
+        repo.close()
+
+
+def build(work_dir: Path, con=None, services: list[dict] | None = None,
+          application_key: str | None = None, view: str = "global") -> dict:
     """Write host_settings.csv. ``hostmodel.build`` passes its index connection and service rows;
     run on its own, it opens the discovery index and reads hosts/host_services.csv."""
     work_dir = Path(work_dir)
+    if work_dir.name == "csa-work-v2":
+        return build_v2(work_dir, application_key, view)
     own = con is None
     if own:
         p = work_dir / "discovery-index.sqlite"
@@ -1395,6 +1476,14 @@ def load(work_dir: Path, merge_isolation: bool = True) -> dict[str, dict[str, di
     """{HOST: {attribute: row}} from host_settings.csv ({} when it does not exist), with the isolation matrix
     (hosts/isolation.csv, iso.* attributes) merged in when it exists."""
     out: dict[str, dict[str, dict]] = defaultdict(dict)
+    if Path(work_dir).name == "csa-work-v2":
+        try:
+            data = json.loads((Path(work_dir) / "host-settings.json").read_text(encoding="utf-8"))
+            for r in data.get("rows", []):
+                out[r["host"].upper()][r["attribute"]] = r
+        except (OSError, ValueError, KeyError):
+            pass
+        return dict(out)
     files = [Path(work_dir) / "hosts" / "host_settings.csv"]
     if merge_isolation:
         files.append(Path(work_dir) / "hosts" / "isolation.csv")
@@ -1409,12 +1498,12 @@ def load(work_dir: Path, merge_isolation: bool = True) -> dict[str, dict[str, di
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
-    s = sub.add_parser("build"); s.add_argument("--work-dir", type=Path, required=True)
+    s = sub.add_parser("build"); s.add_argument("--work-dir", type=Path, required=True); s.add_argument("--application-key"); s.add_argument("--view", choices=("application", "owned", "global"), default="global")
     s = sub.add_parser("show"); s.add_argument("--work-dir", type=Path, required=True)
     s.add_argument("--topic", default=""); s.add_argument("host", nargs="?", default="")
     a = ap.parse_args(argv)
     if a.cmd == "build":
-        out = build(a.work_dir)
+        out = build(a.work_dir, application_key=a.application_key, view=a.view)
     else:
         data = load(a.work_dir)
         out = {h: {k: v["value"] for k, v in attrs.items() if not a.topic or v["topic"] == a.topic}

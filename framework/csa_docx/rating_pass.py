@@ -104,15 +104,24 @@ def load_summary(work_dir, key: str) -> dict | None:
         return None
 
 
-def _ask(template: str, prompt: str, cwd: Path, timeout_s: int) -> str:
+class CallFailed(Exception):
+    """The CLI could not make the model call (usage limit, no login, a crash): asking again would fail the same way."""
+
+
+def _ask(template: str, prompt: str, cwd: Path, timeout_s: int, show=None) -> str:
+    from csa_docx import live_call
     from csa_docx.reader_pass import argv_for
     with tempfile.NamedTemporaryFile("w+", suffix=".md", delete=False) as last:
-        proc = subprocess.run(argv_for(template, prompt, last.name), cwd=str(cwd), capture_output=True, text=True,
-                              timeout=timeout_s, stdin=subprocess.DEVNULL)
-        return proc.stdout.strip() or Path(last.name).read_text(encoding="utf-8").strip()
+        rc, out, err = live_call.run(argv_for(template, prompt, last.name), cwd, timeout_s, show=show, label="rating pass")
+        reply = out.strip() or Path(last.name).read_text(encoding="utf-8").strip()
+    problem = live_call.failure_notice(rc, reply, err)
+    if problem:
+        raise CallFailed(problem)
+    return reply
 
 
-def rate(work_dir, sheet, card, key: str, cwd, template: str, timeout_s: int = 600) -> dict:
+def rate(work_dir, sheet, card, key: str, cwd, template: str, timeout_s: int = 600, show=None) -> dict:
+    """``show`` is a stream (the terminal) that gets the call's output while it runs; None keeps it quiet."""
     from csa_docx import answer_sheet
     sheet, cwd = Path(sheet), Path(cwd)
     if not sheet.is_file():
@@ -124,7 +133,9 @@ def rate(work_dir, sheet, card, key: str, cwd, template: str, timeout_s: int = 6
     error = ""
     for _ in range(2):                                  # one retry with the reason the first reply was rejected
         try:
-            reply = _ask(template, build_prompt(work_dir, text, ids, error), cwd, timeout_s)
+            reply = _ask(template, build_prompt(work_dir, text, ids, error), cwd, timeout_s, show=show)
+        except CallFailed as e:
+            return {"status": "ERROR", "message": str(e)}
         except (OSError, subprocess.TimeoutExpired) as e:
             return {"status": "ERROR", "message": f"{type(e).__name__}: {e}"}
         blocks, error = parse_reply(reply, ids)
@@ -161,8 +172,11 @@ def main(argv=None) -> int:
     ap.add_argument("--cwd", required=True)
     ap.add_argument("--template", required=True)
     ap.add_argument("--timeout", type=int, default=600)
+    ap.add_argument("--show", action="store_true", help="copy the call's output to stderr while it runs")
     a = ap.parse_args(argv)
-    print(json.dumps(rate(a.work_dir, a.sheet, a.card, a.key, a.cwd, a.template, a.timeout), ensure_ascii=False))
+    import sys
+    print(json.dumps(rate(a.work_dir, a.sheet, a.card, a.key, a.cwd, a.template, a.timeout,
+                          show=sys.stderr if a.show else None), ensure_ascii=False))
     return 0
 
 

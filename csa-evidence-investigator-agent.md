@@ -58,17 +58,37 @@ Stop after reporting the rows per requirement and the Discovery Required items.
 
 ## Intake mode (MODE=INTAKE)
 
-`csa intake` (the Evidence intake page, step 2) runs this mode with `INTAKE=latest`, meaning `WORK_DIR/intake/latest.json`, the record `csa ingest` writes of what the last index build brought in. Your job is to turn what the new documents state into evidence. Never infer: every row quotes its source.
+`csa intake` (the Evidence intake page, step 2) runs this mode with `INTAKE=<record id>`. When `BATCH` and `BATCH_OUTPUT` are supplied, this is the v2 batch contract and it takes precedence over every legacy intake instruction below. Work only on the files listed in the JSON payload named by `BATCH`; do not read `WORK_DIR/intake/latest.json`, `WORK_DIR/evidence-matrix.csv`, legacy lead files, or legacy per-file checkpoints. Do not call `evidence_matrix.py`, `graph_store.py`, or any append command. Never infer: every accepted row quotes its source.
 
-1. Read the record. It also lists files from earlier intakes no agent has read yet (`carried_from`). Work on `added` and `changed` files whose `status` is `indexed`. Graph sync profiles only a defined subset of host-capture facts (host role/application matches, non-Windows services, listeners and sampled connections, configured DNS and time sources); do not assume it converted every other capture file into evidence. Review newly indexed capture content for material current-state facts outside that subset. List every file in `unreadable` in your summary with the format to ask for (for example "supply REVELOC.doc as .docx or PDF"). Never write rows from a file you could not read.
-1b. Read `WORK_DIR/intake/refresh-latest.json` (written by `csa ingest`). Each `recheck` row cites a changed file (or an older capture) whose current text no longer holds its quote. Re-read that place in the file: when the file still states the fact, append it again with the current quote and reject the old row (`evidence_matrix.py review <id> --state rejected --by csa-evidence-investigator --note "re-quoted as <new id>"`); when the file no longer states it, reject the old row with a note saying what the file says now. Rows in `rejected` are already retired (their file was removed, or a newer capture replaced them): do not write them again.
-2. Read each file's indexed text (`csa -p <key> index search "<terms>" --path-like "<file name>"`, or the raw file when it is a document). Before adding anything, check what the matrix already holds (`python3 .agents/skills/csa-evidence-matrix/scripts/evidence_matrix.py --workspace WORKSPACE lookup "<claim>"`) so you add only what is new.
-3. Write one atomic claim per row in plain Australian English, with no semicolons. A host is named exactly as the source writes it. `status` is `VERIFIED` with an exact quote in `evidence_excerpt` (join separate quoted lines with ` | `), `source_title` is the file's path under its source folder (for example `revloc-tetra/IS-REVELOC-111026-234101.pdf`) and `page_or_location` says where in the file. The subject of the claim is the system, never the document ("ROTPRDREV101 is the physical REVELOC server at Rockhampton", not "The page lists...").
-4. When a reading depends on a table's layout (a wrapped host name, a merged cell), set `confidence` to `medium` and say why in `inference_reason`. Use `CONFLICTING` only when two credible sources state incompatible values. A blank or omitted value is absence of observation, not disagreement with a populated value. When a newer replacement inventory or live capture supplies the missing value and no source states a different value, record the populated value as `VERIFIED` and preserve the earlier blank only as scope/provenance. When sources do state different values, write a `CONFLICTING` row that names every source in `source_title` and states in `gap_or_action` which one is authoritative (per the Evidence section of `csa-core-rules.md`: a live capture, connection log, resolver/DNS or asset/inventory record outranks a network-diagram transcription, which may be out of date).
-5. Use existing `csa_area` names (`evidence_matrix.py stats`). Use `--allow-new-area` only for an area name another project already uses (`operations_and_support`, `availability_and_resilience`, `integrations_and_dependencies`, `infrastructure_and_hosting`, `security_posture`).
-6. Write the rows to a JSON file and run `python3 .agents/skills/csa-evidence-matrix/scripts/evidence_matrix.py --workspace WORKSPACE append --agent csa-evidence-investigator --context "intake <record id>" --rows-file <file> --dry-run`. Fix every rejected row (the source check proves each quote is in the cited file), then run it again without `--dry-run`.
-7. Graph: for each new host, service, firewall or external system the new rows name, add a node with `python3 .agents/skills/csa-evidence-matrix/scripts/graph_store.py --workspace WORKSPACE append-node`, and add an edge with `append-edge` only for a relationship a row states (for example a SIP trunk, a database hosted on cluster nodes, traffic passing a firewall). Every node and edge cites the new evidence IDs. Check `get-node`/`list` first so you do not add a node the graph already has: there is one node per host, and `append-node` refuses a second node for a host name the graph already holds (use the existing node_id for edges). Label a host node with the host name first, as `NAME (what it is, site)`: graph sync then puts it in the host register as a peer to classify, so it names links and appears in the host list. Finish with `graph_store.py verify`.
-8. Write `WORK_DIR/intake/<record id>.evidence.md` (the record's `id`): the rows added (ID, one line each), the conflicts, the graph items added, the unreadable files to request, and any file you read that added nothing new. Name every stand-alone `added` or `changed` document and every unreadable file by its exact `rel_path` from the intake record. The framework does not mark an intake complete while one of those paths is absent. Do not change the working DOCX. Stop there: the person checks the open questions next (`csa gap-check`).
+One model session handles one batch of at most five files. The payload holds `record_id`, each file's `rel_path`, indexed text as `chunks`, `existing_evidence_ids`, and `existing_hosts`. The launcher starts a fresh session for the next batch after this one exits successfully.
+
+Your output is one JSON object per file, as a JSON list in `BATCH_OUTPUT`, and nothing else. You do not call `evidence_matrix.py append` or `graph_store.py`, and you do not write the matrix or the graph yourself: the validator checks every quote against its source, drops duplicates, appends the surviving rows and rebuilds the graph. The shape is:
+
+```json
+[
+  {
+    "rel_path": "<exact rel_path from the payload>",
+    "rows": [
+      {"claim": "...", "status": "VERIFIED", "source_title": "...", "page_or_location": "...",
+       "excerpt": "...", "area": "...", "confidence": "...", "gap_or_action": "..."}
+    ],
+    "graph_items": [{"kind": "host", "name": "...", "role": "...", "site": "..."}],
+    "report": "<FILE_REPORT text for this file>"
+  }
+]
+```
+
+Every file in the payload needs one object. An empty `rows` list is valid when the file adds nothing new; say so in `report`. A file with no object, or an object whose `rows` is not a list, is marked failed and stays for a retry.
+
+1. Read each file's `chunks`. Review material current-state facts and do not write rows from a file you could not read.
+2. Use `existing_evidence_ids` and the payload text to avoid duplicates. Do not use the legacy evidence-matrix CLI; the validator de-duplicates against the v2 SQLite evidence table.
+3. Before writing output, copy each file's `rel_path` value character-for-character from the BATCH JSON into that file's output object. Do not shorten it to a basename or reconstruct it from `source_title`. Write one atomic claim per row in plain Australian English, with no semicolons. Use the exact source quote in `excerpt`, the file path in `source_title`, and the source location in `page_or_location`.
+4. Use only the evidence classes `VERIFIED`, `INFERRED`, `UNCONFIRMED`, `CONFLICTING`, and `NOT_FOUND`. Use `VERIFIED` only when the excerpt directly supports the claim. Use existing CSA area names; do not invent a new area.
+5. The validator checks every `VERIFIED` excerpt against the v2 indexed source text and rejects unsupported rows. Copy excerpts exactly from `chunks`.
+6. List in `graph_items` only new hosts named by the proposed rows that are absent from `existing_hosts`. The validator rebuilds graph relationships.
+7. Each file's `report` must name its exact `rel_path`, proposed rows, conflicts, graph items, and anything reviewed that added no new evidence. Stop after writing the required JSON to `BATCH_OUTPUT`.
+
+When only `FILE` and `FILE_REPORT` are supplied, the caller is using the legacy v1 single-file contract. Follow the legacy file/checkpoint instructions for that call only; never mix that contract into a call that supplies `BATCH`.
 
 ## Settlement mode (MODE=SETTLE)
 

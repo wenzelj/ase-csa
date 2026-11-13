@@ -34,6 +34,11 @@ def reviews(matrix: Path) -> dict[str, str]:
 
 
 def rejected(matrix: Path) -> set[str]:
+    from csa_docx import v2_access
+    db = v2_access.active_db()
+    if db is not None:
+        return {str(r["evidence_id"]).upper() for r in v2_access.evidence_rows(db)
+                if r.get("review_state") == "rejected"}
     return {i for i, s in reviews(matrix).items() if s == "rejected"}
 
 
@@ -51,6 +56,12 @@ def apply(rows: list[dict], matrix: Path) -> list[dict]:
 
 def read(matrix: Path, drop_rejected: bool = False) -> list[dict]:
     matrix = Path(matrix)
+    from csa_docx import v2_access
+    db = v2_access.active_db(matrix.parent.parent if matrix.parent.name == "csa-work-v2" else None) \
+        if matrix.parent.name == "csa-work-v2" else v2_access.active_db()
+    if db is not None:
+        rows = v2_access.evidence_rows(db)
+        return [r for r in rows if r.get("review_state") != "rejected"] if drop_rejected else rows
     if not matrix.is_file():
         return []
     with matrix.open(encoding="utf-8-sig", newline="") as fh:

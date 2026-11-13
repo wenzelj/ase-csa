@@ -170,3 +170,90 @@ def test_empty_files_are_answers_not_gaps():
                   ("s/REVELOC_discovery_HOSTA01_20261029T010000Z/85D_volume_shadow_copy_metadata.txt", "\n")])
     got = {x["attribute"]: x["value"] for x in H.newer_settings(H.read_captures(con, H.NEWER_CAPTURES))}
     assert got["transfer.smb_inbound_sessions"] == "None found" and got["backup.vss"] == "None found"
+
+
+VERBOSE = """COMPUTER SETTINGS
+    Applied Group Policy Objects
+    -----------------------------
+        Default Trust Store
+        2019 Prod - SQL Firewall Rules
+
+    The following GPOs were not applied because they were filtered out
+    -------------------------------------------------------------------
+        Microsoft Defender for Identity - Auditing for CAs
+            Filtering:  Denied (Security)
+
+        Microsoft Defender for Identity - Advanced Audit Policy for CAs
+            Filtering:  Denied (Security)
+
+    The computer is a part of the following security groups
+    -------------------------------------------------------
+        BUILTIN\\Administrators
+USER SETTINGS
+    Applied Group Policy Objects
+    -----------------------------
+        Default Domain Policy
+
+    The following GPOs were not applied because they were filtered out
+    -------------------------------------------------------------------
+        Local Group Policy
+            Filtering:  Not Applied (Empty)
+"""
+
+
+def test_the_older_text_reports_the_filtered_out_objects_of_the_computer_only():
+    con = _index([("s/REVELOC_discovery_SQLNODE1_20260709T010000Z/61_gpresult_verbose.txt", VERBOSE)])
+    rows = {x["attribute"]: x for x in H.gpo_settings(H.read_captures(con, {"gpo": H.GPO_LIKES}))}
+    assert rows["gpo.applied"]["value"] == "Default Trust Store, 2019 Prod - SQL Firewall Rules"
+    assert rows["gpo.not_applied"]["value"] == ("Microsoft Defender for Identity - Auditing for CAs, "
+                                                "Microsoft Defender for Identity - Advanced Audit Policy for CAs")
+    assert "Local Group Policy" not in rows["gpo.not_applied"]["value"]
+
+
+def test_the_older_text_without_a_filtered_out_list_still_says_none_found():
+    text = VERBOSE.split("    The following GPOs were not applied")[0] + "\nUSER SETTINGS\n"
+    con = _index([("s/REVELOC_discovery_SQLNODE1_20260709T010000Z/61_gpresult_verbose.txt", text)])
+    rows = {x["attribute"]: x for x in H.gpo_settings(H.read_captures(con, {"gpo": H.GPO_LIKES}))}
+    assert rows["gpo.not_applied"]["value"] == "None found"
+
+
+def test_the_older_text_gives_the_reason_each_object_was_not_applied():
+    con = _index([("s/REVELOC_discovery_SQLNODE1_20260709T010000Z/61_gpresult_verbose.txt", VERBOSE)])
+    rows = {x["attribute"]: x for x in H.gpo_settings(H.read_captures(con, {"gpo": H.GPO_LIKES}))}
+    assert rows["gpo.not_applied_reason"]["value"] == ("Microsoft Defender for Identity - Advanced Audit Policy for CAs: Denied (Security); "
+                                                       "Microsoft Defender for Identity - Auditing for CAs: Denied (Security)")
+    assert "Denied (Security)" in rows["gpo.not_applied_reason"]["excerpt"] or rows["gpo.not_applied_reason"]["excerpt"]
+
+
+XML_DENIED = """Rsop ReadTime 2026-10-29
+ComputerResults
+GPO
+Name Default Domain Policy
+IsValid true
+FilterAllowed true
+AccessDenied false
+GPO
+Name Microsoft Defender for Identity - Auditing for CAs
+IsValid true
+FilterAllowed true
+AccessDenied true
+GPO
+Name A Policy With A Filter
+IsValid true
+FilterAllowed false
+AccessDenied false
+"""
+
+
+def test_the_xml_flags_give_the_reason():
+    con = _index([("s/REVELOC_discovery_HOSTX01_20261029T010000Z/64_gpresult.xml", XML_DENIED)])
+    rows = {x["attribute"]: x for x in H.gpo_settings(H.read_captures(con, {"gpo": H.GPO_LIKES}))}
+    assert rows["gpo.not_applied"]["value"] == "Microsoft Defender for Identity - Auditing for CAs, A Policy With A Filter"
+    assert rows["gpo.not_applied_reason"]["value"] == ("A Policy With A Filter: Filter not allowed; "
+                                                       "Microsoft Defender for Identity - Auditing for CAs: Denied (Security)")
+
+
+def test_no_reason_row_when_nothing_was_filtered_out():
+    con = _index([("s/REVELOC_discovery_HOSTX01_20261029T010000Z/64_gpresult.xml", "Rsop ReadTime 2026\nComputerResults\nGPO\nName Ok\nIsValid true\nFilterAllowed true\nAccessDenied false\n")])
+    attrs = [x["attribute"] for x in H.gpo_settings(H.read_captures(con, {"gpo": H.GPO_LIKES}))]
+    assert "gpo.not_applied_reason" not in attrs and "gpo.not_applied" in attrs

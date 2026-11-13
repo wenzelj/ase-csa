@@ -15,14 +15,18 @@ from . import network
 BLOCKED = {"state": "blocked", "reason": "No single working document was found for this project.", "rows": []}
 
 
-def _ctx(project: dict[str, str], agents: Path, docx: Path):
+def _ctx(project: dict[str, str], agents: Path, docx: Path, view: str = "global",
+         application_key: str | None = None):
     network._framework(agents)                                    # puts the framework on sys.path
     from csa_docx.figures import work as WK
     work = Path(project["work_dir"]).expanduser()
-    return WK, WK.open_ctx(project.get("key", ""), work, docx, network.build(work, agents))
+    return WK, WK.open_ctx(project.get("key", ""), work, docx,
+                           network.build(work, agents, view=view,
+                                         application_key=application_key or project.get("key")))
 
 
-def listing(project: dict[str, str], agents: Path, docx: Path | None) -> dict[str, Any]:
+def listing(project: dict[str, str], agents: Path, docx: Path | None, view: str = "application",
+            application_key: str | None = None) -> dict[str, Any]:
     if docx is None:
         return BLOCKED
     network._framework(agents)
@@ -47,10 +51,11 @@ def listing(project: dict[str, str], agents: Path, docx: Path | None) -> dict[st
         out.append(r)
     gaps = WK.all_gaps(work)
     return {"state": "ready", "document": docx.name, "rows": out, "counts": counts, "gaps": len(gaps),
+            "view": view, "application_key": application_key or project.get("key"),
             "last_refresh": WK.last_refresh(work)}
 
 
-def _shape(res: dict) -> dict[str, Any]:
+def _shape(res: dict, view: str = "application", application_key: str | None = None) -> dict[str, Any]:
     m = res.get("model") or {}
     return {"state": "ready", "row": res["row"], "brief": res["brief"], "problems": res.get("problems", []),
             "fit": res["fit"], "relations": res["relations"], "svg": res["svg"], "hash": res["hash"],
@@ -58,47 +63,51 @@ def _shape(res: dict) -> dict[str, Any]:
             "print_svg": res.get("print_svg"), "print": res.get("print"),
             "notes": m.get("notes", []), "nodes": len(m.get("nodes", [])), "lines": len(m.get("edges", [])),
             "saved": res.get("saved"), "freshness": res.get("freshness"), "placement": res.get("placement", "not-placed"),
-            "agent": res.get("agent", {})}
+            "agent": res.get("agent", {}), "view": view, "application_key": application_key}
 
 
-def detail(project: dict[str, str], agents: Path, docx: Path | None, key: str) -> dict[str, Any]:
+def detail(project: dict[str, str], agents: Path, docx: Path | None, key: str, view: str = "application",
+           application_key: str | None = None) -> dict[str, Any]:
     if docx is None:
         return BLOCKED
-    WK, ctx = _ctx(project, agents, docx)
+    WK, ctx = _ctx(project, agents, docx, view, application_key)
     res = WK.figure(ctx, key)
     res["agent"] = WK.agent_notes(ctx.work, key)            # what the figure design agent wrote for this section
-    return _shape(res)
+    return _shape(res, view, application_key or project.get("key"))
 
 
-def refresh(project: dict[str, str], agents: Path, docx: Path | None) -> dict[str, Any]:
+def refresh(project: dict[str, str], agents: Path, docx: Path | None, view: str = "application",
+            application_key: str | None = None) -> dict[str, Any]:
     """Every figure the document needs, from the latest evidence: create the ones never saved, redraw the changed
     ones. The document is not changed: a placed figure that changed shows as out of date, to replace per figure."""
     if docx is None:
         return BLOCKED
-    WK, ctx = _ctx(project, agents, docx)
+    WK, ctx = _ctx(project, agents, docx, view, application_key)
     results = WK.refresh(ctx)
-    return {**listing(project, agents, docx), "refreshed": results}
+    return {**listing(project, agents, docx, view, application_key), "refreshed": results}
 
 
-def save(project: dict[str, str], agents: Path, docx: Path | None, key: str) -> dict[str, Any]:
+def save(project: dict[str, str], agents: Path, docx: Path | None, key: str, view: str = "application",
+         application_key: str | None = None) -> dict[str, Any]:
     if docx is None:
         return BLOCKED
-    WK, ctx = _ctx(project, agents, docx)
+    WK, ctx = _ctx(project, agents, docx, view, application_key)
     res = WK.figure(ctx, key, save=True)
     if res["svg"] is None:
         return {"state": "blocked", "reason": f"{res['row']['number']} {res['row']['title']}: this kind of figure is not built yet."}
-    return {**_shape(res), "state": "saved"}
+    return {**_shape(res, view, application_key or project.get("key")), "state": "saved"}
 
 
-def edit_brief(project: dict[str, str], agents: Path, docx: Path | None, key: str, edits: dict[str, Any]) -> dict[str, Any]:
+def edit_brief(project: dict[str, str], agents: Path, docx: Path | None, key: str, edits: dict[str, Any],
+               view: str = "application", application_key: str | None = None) -> dict[str, Any]:
     """Your edits to the brief: wording (checked against the evidence) and items left in or out of the figure."""
     if docx is None:
         return BLOCKED
-    WK, ctx = _ctx(project, agents, docx)
+    WK, ctx = _ctx(project, agents, docx, view, application_key)
     from csa_docx.figures import brief as B
     clean = {k: edits.get(k) for k in ("purpose", "caption", "source") if isinstance(edits.get(k), str)}
     include = edits.get("include") if isinstance(edits.get("include"), dict) else None
     res = WK.figure(ctx, key, edits={**clean, "include": include, "by": "you"})
     if not res.get("problems"):
         B.save(ctx.work, key, res["brief"])
-    return {**_shape(res), "state": "rejected" if res.get("problems") else "saved"}
+    return {**_shape(res, view, application_key or project.get("key")), "state": "rejected" if res.get("problems") else "saved"}

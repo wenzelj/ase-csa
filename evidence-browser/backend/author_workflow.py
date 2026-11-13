@@ -5,6 +5,8 @@ import csv
 import hashlib
 import json
 import re
+import sqlite3
+import tempfile
 import sys
 from pathlib import Path
 from typing import Any, Callable
@@ -145,20 +147,39 @@ def _safe_selected_file(project: dict[str, str], row: dict[str, Any]) -> Path | 
 
 
 def _evidence(project: dict[str, str], section: str, stable_key: str) -> list[dict[str, str]]:
-    path = Path(project["work_dir"]).expanduser() / "evidence-matrix.csv"
-    if not path.is_file():
-        return []
+    work = Path(project["work_dir"]).expanduser()
     wanted = {section.casefold(), stable_key.casefold(), stable_key.replace("-", " ").casefold()}
     result = []
+    if work.name == "csa-work-v2":
+        db = work / "csa.sqlite"
+        if not db.is_file():
+            return []
+        try:
+            con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+            con.row_factory = sqlite3.Row
+            rows = [dict(row) for row in con.execute(
+                "SELECT id AS evidence_id, area AS csa_area, question, claim, status, review_state, "
+                "source_title, page_or_location FROM evidence ORDER BY id")]
+            con.close()
+        except sqlite3.Error:
+            return []
+    else:
+        path = work / "evidence-matrix.csv"
+        if not path.is_file():
+            return []
+        try:
+            with path.open(encoding="utf-8-sig", newline="") as handle:
+                rows = [dict(row) for row in csv.DictReader(handle)]
+        except (OSError, csv.Error):
+            return []
     try:
-        with path.open(encoding="utf-8-sig", newline="") as handle:
-            for row in csv.DictReader(handle):
-                scope = " ".join(str(row.get(key) or "") for key in ("section", "csa_area", "question", "claim")).casefold()
-                if not any(value and value in scope for value in wanted):
-                    continue
-                result.append({key: str(row.get(key) or "") for key in
-                               ("evidence_id", "status", "review_state", "question", "claim", "source_title", "page_or_location")})
-    except (OSError, csv.Error):
+        for row in rows:
+            scope = " ".join(str(row.get(key) or "") for key in ("section", "csa_area", "question", "claim")).casefold()
+            if not any(value and value in scope for value in wanted):
+                continue
+            result.append({key: str(row.get(key) or "") for key in
+                           ("evidence_id", "status", "review_state", "question", "claim", "source_title", "page_or_location")})
+    except (TypeError, AttributeError):
         return []
     return result
 
@@ -191,7 +212,22 @@ def _framework_import(agents_dir: Path, name: str) -> Any | None:
 
 
 def _matrix_by_id(project: dict[str, str]) -> dict[str, dict[str, str]]:
-    path = Path(project["work_dir"]) / "evidence-matrix.csv"
+    work = Path(project["work_dir"])
+    if work.name == "csa-work-v2":
+        db = work / "csa.sqlite"
+        if not db.is_file():
+            return {}
+        try:
+            con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+            con.row_factory = sqlite3.Row
+            rows = [dict(row) for row in con.execute(
+                "SELECT id AS evidence_id, area AS csa_area, question, claim, status, review_state, "
+                "source_title, page_or_location FROM evidence")]
+            con.close()
+            return {str(row.get("evidence_id") or "").upper(): row for row in rows}
+        except sqlite3.Error:
+            return {}
+    path = work / "evidence-matrix.csv"
     if not path.is_file():
         return {}
     try:
@@ -204,17 +240,42 @@ def _matrix_by_id(project: dict[str, str]) -> dict[str, dict[str, str]]:
 def _author_state(agents_dir: Path, project: dict[str, str], stable_key: str) -> dict[str, Any]:
     paths = _artifact_paths(project, stable_key)
     card_path, sheet = paths["card_json"], paths["answer_sheet"]
-    matrix = Path(project["work_dir"]) / "evidence-matrix.csv"
-    hosts = Path(project["work_dir"]) / "hosts" / "hosts.csv"
+    work = Path(project["work_dir"])
+    matrix = work / "evidence-matrix.csv"
+    hosts = work / "hosts" / "hosts.csv"
     cards = _cards(card_path)
     cache = {"status": "NONE", "changed": [], "reason": "No validated answer cache is available."}
     fingerprint: dict[str, Any] = {}
     module = _framework_import(agents_dir, "answer_cache")
-    if module is not None and card_path.is_file() and matrix.is_file():
+    if module is not None and card_path.is_file():
         try:
-            fingerprint = module.fingerprint(card_path, matrix, hosts if hosts.is_file() else None)
-            cache = {**cache, **module.compare(sheet, fingerprint)}
-        except (OSError, ValueError, KeyError, TypeError):
+            if work.name == "csa-work-v2":
+                # answer_cache is intentionally file-oriented for V1. Give it
+                # an ephemeral, complete projection of the V2 evidence/host
+                # tables; nothing is written into the project workspace.
+                db = work / "csa.sqlite"
+                with tempfile.TemporaryDirectory(prefix="csa-v2-author-") as folder:
+                    folder = Path(folder)
+                    matrix = folder / "evidence-matrix.csv"
+                    hosts = folder / "hosts.csv"
+                    with sqlite3.connect(f"file:{db}?mode=ro", uri=True) as con:
+                        con.row_factory = sqlite3.Row
+                        evidence = [dict(row) for row in con.execute(
+                            "SELECT id AS evidence_id, area AS csa_area, question, claim, status, review_state "
+                            "FROM evidence")]
+                        host_rows = [dict(row) for row in con.execute(
+                            "SELECT name AS host, role, site FROM host")]
+                    fields = ["evidence_id", "csa_area", "question", "claim", "status", "review_state"]
+                    with matrix.open("w", newline="", encoding="utf-8") as handle:
+                        writer = csv.DictWriter(handle, fieldnames=fields); writer.writeheader(); writer.writerows(evidence)
+                    with hosts.open("w", newline="", encoding="utf-8") as handle:
+                        writer = csv.DictWriter(handle, fieldnames=["host", "role", "site"]); writer.writeheader(); writer.writerows(host_rows)
+                    fingerprint = module.fingerprint(card_path, matrix, hosts)
+                    cache = {**cache, **module.compare(sheet, fingerprint)}
+            elif matrix.is_file():
+                fingerprint = module.fingerprint(card_path, matrix, hosts if hosts.is_file() else None)
+                cache = {**cache, **module.compare(sheet, fingerprint)}
+        except (OSError, ValueError, KeyError, TypeError, sqlite3.Error):
             cache = {"status": "STALE", "changed": [], "reason": "The answer cache manifest could not be validated."}
     changed = set(cache.get("changed") or [])
     decisions = [{"question_id": row["id"], "question": row["question"],

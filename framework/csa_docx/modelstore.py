@@ -579,6 +579,29 @@ def fingerprint(f: Path) -> list | None:
     return [st.st_size, st.st_mtime_ns]
 
 
+def freshness(work_dir: Path) -> dict:
+    """Read-only check of the model against the files that ``build`` mirrors."""
+    work = Path(work_dir)
+    db = path(work)
+    if not db.is_file():
+        return {"status": "missing", "changed_sources": []}
+    try:
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        try:
+            recorded = dict(con.execute("SELECT table_name, columns FROM model_meta WHERE table_name LIKE 'src:%'"))
+        finally:
+            con.close()
+        sources = [*SOURCES.values(), MATRIX]
+        changed = []
+        for rel in sources:
+            saved = recorded.get("src:" + rel)
+            if saved is None or json.loads(saved) != fingerprint(work / rel):
+                changed.append(rel)
+        return {"status": "out_of_date" if changed else "current", "changed_sources": changed}
+    except (sqlite3.Error, ValueError, TypeError):
+        return {"status": "unreadable", "changed_sources": []}
+
+
 def rows(work_dir: Path, rel: str) -> list[dict] | None:
     """The rows of a mirrored source file (``rel`` under csa-work, e.g. "hosts/hosts.csv" or "evidence-matrix.csv") as
     dicts keyed by the file's own columns, exactly as csv.DictReader gives them; or None when the store is missing,

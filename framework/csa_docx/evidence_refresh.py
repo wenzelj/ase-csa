@@ -62,6 +62,8 @@ def _cites(row: dict, rel: str) -> bool:
 
 def run(work_dir: Path, dry_run: bool = False) -> dict:
     work_dir = Path(work_dir)
+    if work_dir.name == "csa-work-v2":
+        return _run_v2(work_dir, dry_run)
     matrix = work_dir / "evidence-matrix.csv"
     rows = evidence_live.read(matrix, drop_rejected=True)
     out = {"status": "OK", "checked": 0, "rejected": [], "recheck": [], "dry_run": dry_run}
@@ -137,6 +139,45 @@ def run(work_dir: Path, dry_run: bool = False) -> dict:
                         "at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")}, indent=1),
             encoding="utf-8")
     return out
+
+
+def _run_v2(work_dir: Path, dry_run: bool = False) -> dict:
+    """Refresh V2 evidence from indexed_file/intake_file and audit through Repo only."""
+    from csa_docx.v2repo import Repo
+    repo = Repo(work_dir)
+    try:
+        indexed = {row[0] for row in repo.con.execute("SELECT rel_path FROM indexed_file")}
+        removed = {row[0] for row in repo.con.execute("SELECT rel_path FROM intake_file WHERE status='removed'")}
+        pending = {row[0] for row in repo.con.execute("SELECT rel_path FROM intake_file WHERE status='pending'")}
+        rows = repo.evidence.list()
+        out = {"status": "OK", "checked": 0, "rejected": [], "recheck": [], "dry_run": dry_run,
+               "sources": {"indexed": len(indexed), "removed": sorted(removed), "pending": sorted(pending)}}
+        reject = []
+        for row in rows:
+            source = (row.get("source_title") or "").replace("\\", "/").strip()
+            if not source or row.get("review_state") == "rejected":
+                continue
+            rel = next((path for path in indexed | removed if source == path or source.startswith(path + " ")), source)
+            if not rel:
+                continue
+            out["checked"] += 1
+            if rel in removed or rel not in indexed:
+                reject.append({"evidence_id": row["id"], "reason": f"source unavailable in V2 index: {rel}"})
+            elif rel in pending and row.get("status") == "VERIFIED":
+                out["recheck"].append({"evidence_id": row["id"], "file": rel,
+                                       "kind": "changed source", "why": "source is pending re-index in V2 intake"})
+        out["rejected"] = reject
+        if not dry_run and reject:
+            with repo.tx():
+                for item in reject:
+                    repo.evidence.reject(item["evidence_id"], by=BY, note=item["reason"])
+        if not dry_run:
+            folder = work_dir / "intake"
+            folder.mkdir(exist_ok=True)
+            (folder / "refresh-latest.json").write_text(json.dumps(out, indent=1) + "\n", encoding="utf-8")
+        return out
+    finally:
+        repo.close()
 
 
 def main(argv: list[str] | None = None) -> int:
