@@ -3916,6 +3916,10 @@ def cmd_v2(a):
         die("csa v2 commands require the active project work_dir to end in csa-work-v2")
     sys.path.insert(0, str(FRAMEWORK))
     from csa_docx import v2_export_cli
+    if a.v2_action == "scope-rebuild":
+        from csa_docx import v2scope
+        return print(json.dumps(v2scope.rebuild(p["project_root"], work, a.application_key,
+                                                dry_run=a.dry_run), indent=2)) or 0
     argv = ["--v2-dir", str(work), a.v2_action]
     if a.v2_action == "export":
         argv += ["--table", a.table, "--out", a.out]
@@ -6215,7 +6219,7 @@ def main(argv=None) -> int:
     s = sp("model", cmd_model, help="system model store csa-work/model.sqlite (build | counts | export)")
     s.add_argument("action", nargs="?", default="counts", choices=["build", "counts", "export"])
     s.add_argument("--out", help="export: folder to write into (default csa-work/model-export); never over the sources")
-    s = sp("v2", cmd_v2, help="csa-work-v2 repository operations (export | host | report)")
+    s = sp("v2", cmd_v2, help="csa-work-v2 repository operations (export | host | report | scope-rebuild)")
     v2 = s.add_subparsers(dest="v2_action", required=True)
     e = v2.add_parser("export", help="write a v2 table as CSV")
     e.add_argument("--table", required=True); e.add_argument("--out", required=True)
@@ -6224,6 +6228,9 @@ def main(argv=None) -> int:
     h.add_argument("host"); h.add_argument("--out", required=True)
     r = v2.add_parser("report", help="write the v2 repository summary")
     r.add_argument("--out", required=True)
+    sr = v2.add_parser("scope-rebuild", help="rebuild application scope from the source host register")
+    sr.add_argument("--application-key", required=True)
+    sr.add_argument("--dry-run", action="store_true")
     s = sp("topic-table", cmd_topic_table, help="role table for a subsection from the captures, rows = role groups (no model); --place writes it into the document")
     s.add_argument("section", help="number, heading or key (3.4, 'Time Synchronisation', TIME)")
     s.add_argument("--place", action="store_true", help="put it under Discovery Information, above the Aspect table")

@@ -5,7 +5,7 @@ import networkCss from "./network.css?raw";
 
 type NetNode = { id: string; kind: "captured" | "dc" | "named" | "unnamed" | "public"; role: string; site: string; ips: string; listed?: boolean };
 type NetEdge = { s: string; t: string; port: string; procs: string[]; ids: string[]; est: boolean };
-type NetData = { nodes: NetNode[]; edges: NetEdge[]; matrix_rows: number };
+type NetData = { nodes: NetNode[]; edges: NetEdge[]; matrix_rows: number; view?: "application" | "global" };
 type Agg = { s: string; t: string; ports: string[]; procs: string[]; ids: string[]; est: boolean; intra: boolean };
 
 const PUB = "Public internet";
@@ -25,11 +25,12 @@ export default function NetworkMap({ system, openEvidenceId }: { system: string;
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const [hiCaptured, setHiCaptured] = useState(false);
+  const [view, setView] = useState<"application" | "global">("application");
 
   useEffect(() => {
     setData(null); setSelected(null); setError("");
-    api<NetData>(`/api/systems/${system}/network`).then(setData).catch(e => setError(String(e.message || e)));
-  }, [system]);
+    api<NetData>(`/api/systems/${system}/network?view=${view}`).then(setData).catch(e => setError(String(e.message || e)));
+  }, [system, view]);
 
   const graph = useMemo(() => {
     if (!data) return null;
@@ -170,6 +171,9 @@ ${networkCss}
     </header>
     <div className="net-controls">
       <input id="net-q" type="search" placeholder="Find a host or address" aria-label="Find a host or address" value={query} onChange={e => setQuery(e.target.value)} />
+      <label>View <select value={view} onChange={e => { setView(e.target.value as "application" | "global"); setSelected(null); }}>
+        <option value="application">This application</option><option value="global">All applications</option>
+      </select></label>
       <label><input id="net-pub" type="checkbox" checked={showPublic} onChange={e => { setShowPublic(e.target.checked); setSelected(null); }} /> Show each public address</label>
       <label><input id="net-att" type="checkbox" checked={attempted} onChange={e => { setAttempted(e.target.checked); setSelected(null); }} /> Include attempted-only connections</label>
       <label><input id="net-intra" type="checkbox" checked={intra} onChange={e => { setIntra(e.target.checked); setSelected(null); }} /> Links inside the system</label>

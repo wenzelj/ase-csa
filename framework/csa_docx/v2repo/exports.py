@@ -32,6 +32,7 @@ class _Export:
         "review_events": "review_event",
         "evidence_sources": "evidence_source",
         "indexed_files": "indexed_file",
+        "application_scope": "application_scope",
     }
 
     def __init__(self, repo):

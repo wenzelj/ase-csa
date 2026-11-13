@@ -71,6 +71,7 @@ class Repo:
         self.backup_dir = self.path.parent / BACKUPS_DIR
         self.hosts = _Hosts(self)
         self.evidence = _Evidence(self)
+        self.application_scope = _ApplicationScope(self)
         self.intake = _Namespace(self, "intake_file")
         self.leads = _Namespace(self, "lead")
         self.export = _Export(self)
@@ -128,6 +129,34 @@ class Repo:
         read-only mirror and is rebuilt by the ingest rewrite (S584+)."""
         con = self.con
         con.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+        scope_cols = {r[1] for r in con.execute("PRAGMA table_info(application_scope)")}
+        if "app" in scope_cols and "application_key" not in scope_cols:
+            # S591 was prototyped with shorter column names. Preserve those rows while
+            # upgrading the table to the canonical application-scope contract.
+            con.execute("DROP INDEX IF EXISTS application_scope_app")
+            con.execute("DROP INDEX IF EXISTS application_scope_membership")
+            con.execute("ALTER TABLE application_scope RENAME TO application_scope_legacy")
+            con.executescript("""
+                CREATE TABLE application_scope (
+                    application_key TEXT NOT NULL,
+                    host_name TEXT NOT NULL REFERENCES host(name),
+                    membership TEXT CHECK (membership IN ('owned', 'peer')) NOT NULL,
+                    basis TEXT,
+                    evidence_ids TEXT,
+                    source_ref TEXT,
+                    review_state TEXT DEFAULT 'proposed' CHECK (review_state IN ('proposed', 'accepted', 'rejected')),
+                    active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+                    PRIMARY KEY (application_key, host_name)
+                );
+                CREATE INDEX application_scope_app ON application_scope(application_key);
+                CREATE INDEX application_scope_membership ON application_scope(membership);
+            """)
+            con.execute(
+                "INSERT INTO application_scope(application_key, host_name, membership, basis, source_ref, review_state, active) "
+                "SELECT app, host, membership, basis, source_provenance, review_state, active "
+                "FROM application_scope_legacy"
+            )
+            con.execute("DROP TABLE application_scope_legacy")
         # provider_host is a v2 addition (DNS/time providers): CREATE TABLE IF NOT EXISTS
         # does not add a column to a pre-existing table, so add it if missing.
         svc_cols = {r[1] for r in con.execute("PRAGMA table_info(service)")}
@@ -504,3 +533,125 @@ class _ReviewEvent:
     def append(self, actor, action, subject_type, subject_id, note=None):
         self._repo._require_tx()
         return self._repo._audit(actor, action, subject_type, subject_id, note)
+
+
+class _ApplicationScope:
+    """CRUD for application_scope table (S591).
+
+    Manages many-to-many relationships between applications and hosts with
+    membership metadata. Supports owned/peer classification with provenance tracking.
+    """
+
+    def __init__(self, repo: Repo):
+        self._repo = repo
+        self._table = "application_scope"
+        self._cols = {"application_key", "host_name", "membership", "basis",
+                      "evidence_ids", "source_ref", "review_state", "active"}
+
+    def add(self, application_key: str, host_name: str, membership: str,
+            basis: str | None = None, evidence_ids: str | None = None,
+            source_ref: str | None = None, review_state: str = 'proposed',
+            active: bool = True):
+        """Add or update an application-host relationship.
+
+        Args:
+            application_key: Registered application identifier (e.g. "tetra-reveloc")
+            host_name: Host name or FQDN
+            membership: 'owned' or 'peer'
+            basis: Classification basis (optional)
+            evidence_ids: Source-checked evidence IDs supporting this relationship
+            source_ref: Source file/path that established this relationship
+            review_state: 'proposed', 'accepted', or 'rejected'
+            active: Whether this relationship is currently valid
+
+        Returns dict with insert/update info.
+        """
+        self._repo._require_tx()
+        if not application_key or not host_name:
+            raise ValueError("application_key and host_name are required")
+        if membership not in {"owned", "peer"}:
+            raise ValueError("membership must be 'owned' or 'peer'")
+        if review_state not in {"proposed", "accepted", "rejected"}:
+            raise ValueError("review_state must be proposed, accepted or rejected")
+        cursor = self._repo.con.cursor()
+        cursor.execute(
+            "SELECT application_key, host_name FROM application_scope "
+            "WHERE application_key = ? AND host_name = ?",
+            (application_key, host_name)
+        )
+        existing = cursor.fetchone()
+        if existing:
+            cursor.execute(
+                """UPDATE application_scope SET 
+                   membership = ?, basis = ?, evidence_ids = ?, source_ref = ?,
+                   review_state = ?, active = ?
+                  WHERE application_key = ? AND host_name = ?""",
+                (membership, basis, evidence_ids, source_ref, review_state,
+                 1 if active else 0, application_key, host_name)
+            )
+            return {"action": "updated", "application_key": application_key, "host_name": host_name}
+        else:
+            cursor.execute(
+                """INSERT INTO application_scope 
+                   (application_key, host_name, membership, basis, evidence_ids, source_ref, review_state, active)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (application_key, host_name, membership, basis, evidence_ids, source_ref,
+                 review_state, 1 if active else 0)
+            )
+            return {"action": "inserted", "application_key": application_key, "host_name": host_name}
+
+    def get(self, application_key: str, host_name: str):
+        """Get application-host relationship."""
+        cursor = self._repo.con.cursor()
+        cursor.execute(
+            "SELECT * FROM application_scope WHERE application_key = ? AND host_name = ?",
+            (application_key, host_name)
+        )
+        row = cursor.fetchone()
+        if row:
+            return dict(zip([desc[0] for desc in cursor.description], row))
+        return None
+
+    def list_app_hosts(self, application_key: str | None = None, membership: str | None = None,
+                       active: bool | None = None):
+        """List hosts for an application or filter by membership."""
+        cursor = self._repo.con.cursor()
+        
+        sql = "SELECT application_key, host_name, membership, basis, evidence_ids, source_ref, review_state, active FROM application_scope"
+        clauses, params = [], []
+        if application_key:
+            clauses.append("application_key = ?"); params.append(application_key)
+        if membership:
+            clauses.append("membership = ?"); params.append(membership)
+        if active is not None:
+            clauses.append("active = ?"); params.append(1 if active else 0)
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY application_key, host_name"
+        
+        cursor.execute(sql, params)
+        return [dict(zip([desc[0] for desc in cursor.description], row)) for row in cursor.fetchall()]
+
+    def count(self):
+        """Count all relationships."""
+        cursor = self._repo.con.cursor()
+        cursor.execute("SELECT COUNT(*) FROM application_scope")
+        return cursor.fetchone()[0]
+
+    def owned_count(self):
+        """Count owned hosts."""
+        cursor = self._repo.con.cursor()
+        cursor.execute("""SELECT COUNT(*) FROM application_scope WHERE membership = 'owned'""")
+        return cursor.fetchone()[0]
+
+    def peer_count(self):
+        """Count peer hosts."""
+        cursor = self._repo.con.cursor()
+        cursor.execute("""SELECT COUNT(*) FROM application_scope WHERE membership = 'peer'""")
+        return cursor.fetchone()[0]
+
+    def active_count(self):
+        """Count active relationships."""
+        cursor = self._repo.con.cursor()
+        cursor.execute("""SELECT COUNT(*) FROM application_scope WHERE active = 1""")
+        return cursor.fetchone()[0]

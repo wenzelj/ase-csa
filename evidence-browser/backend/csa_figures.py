@@ -15,11 +15,14 @@ from . import network
 BLOCKED = {"state": "blocked", "reason": "No single working document was found for this project.", "rows": []}
 
 
-def _ctx(project: dict[str, str], agents: Path, docx: Path):
+def _ctx(project: dict[str, str], agents: Path, docx: Path, view: str = "global",
+         application_key: str | None = None):
     network._framework(agents)                                    # puts the framework on sys.path
     from csa_docx.figures import work as WK
     work = Path(project["work_dir"]).expanduser()
-    return WK, WK.open_ctx(project.get("key", ""), work, docx, network.build(work, agents))
+    return WK, WK.open_ctx(project.get("key", ""), work, docx,
+                           network.build(work, agents, view=view,
+                                         application_key=application_key or project.get("key")))
 
 
 def listing(project: dict[str, str], agents: Path, docx: Path | None) -> dict[str, Any]:

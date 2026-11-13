@@ -165,3 +165,19 @@ CREATE TABLE IF NOT EXISTS indexed_chunk (
   text TEXT
 );
 CREATE INDEX IF NOT EXISTS indexed_chunk_rel ON indexed_chunk(rel_path);
+
+-- ------------------------------------- application scope metadata
+CREATE TABLE IF NOT EXISTS application_scope (
+    application_key TEXT NOT NULL,
+    host_name TEXT NOT NULL REFERENCES host(name),
+    membership TEXT CHECK (membership IN ('owned', 'peer')) NOT NULL,
+    basis TEXT,
+    evidence_ids TEXT,
+    source_ref TEXT,
+    review_state TEXT DEFAULT 'proposed' CHECK (review_state IN ('proposed', 'accepted', 'rejected')),
+    active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+    PRIMARY KEY (application_key, host_name)
+);
+CREATE INDEX IF NOT EXISTS application_scope_app ON application_scope(application_key);
+CREATE INDEX IF NOT EXISTS application_scope_membership ON application_scope(membership);
+

@@ -242,6 +242,55 @@ def _load_hosts(con, cw: Path, rep, hosts: _Hosts):
         rep.notes.append(f"hosts/{name}: {len(rows)} classification rules read; no v2 table, not loaded.")
 
 
+def _load_scope(con, cw: Path, rep, application_key: str):
+    """Restore application ownership and peer metadata without changing the global graph."""
+    rows = _csv_rows(cw / "hosts" / "hosts.csv")[1]
+    owned = {r.get("host", "") for r in rows if (_s(r.get("in_scope")) or "").lower() in {"yes", "no"}}
+    peers = {r.get("host", "") for r in rows if (_s(r.get("in_scope")) or "").lower() == "peer"}
+    for row in rows:
+        host = _s(row.get("host"))
+        scope = (_s(row.get("in_scope")) or "").lower()
+        if not host or scope not in {"yes", "no", "peer"}:
+            continue
+        membership = "owned" if scope in {"yes", "no"} else "peer"
+        active = 1 if membership == "owned" else 0
+        con.execute(
+            "INSERT INTO application_scope "
+            "(application_key, host_name, membership, basis, source_ref, review_state, active) "
+            "VALUES (?, ?, ?, ?, ?, 'proposed', ?) "
+            "ON CONFLICT(application_key, host_name) DO UPDATE SET membership=excluded.membership, "
+            "basis=excluded.basis, source_ref=excluded.source_ref, active=excluded.active",
+            (application_key, host, membership, f"hosts.csv:in_scope={scope}", "hosts/hosts.csv", active),
+        )
+        rep.add("application_scope")
+
+    # A peer is active in the application view only when a loaded flow or service row
+    # connects it to an owned host. The global host/flow/service graph is unchanged.
+    linked: dict[str, list[str]] = {h: [] for h in peers}
+    for src, dst in con.execute("SELECT src_host, dst_host FROM flow"):
+        if src in owned and dst in peers:
+            linked[dst].append("captured_flow")
+        if dst in owned and src in peers:
+            linked[src].append("captured_flow")
+    for client, provider in con.execute("SELECT host, provider_host FROM service WHERE provider_host IS NOT NULL"):
+        if client in owned and provider in peers:
+            linked[provider].append("captured_service")
+        if provider in owned and client in peers:
+            linked[client].append("captured_service")
+    for host, bases in linked.items():
+        if not bases:
+            continue
+        basis = ";".join(sorted(set(bases)))
+        con.execute(
+            "UPDATE application_scope SET active=1, basis=?, review_state='proposed' "
+            "WHERE application_key=? AND host_name=?",
+            (basis, application_key, host),
+        )
+        rep.add("application_scope_active_peer")
+    rep.notes.append(f"scope {application_key}: owned={len(owned)}, peers={len(peers)}, "
+                     f"active_peers={sum(bool(v) for v in linked.values())}")
+
+
 def _load_graph(con, cw: Path, rep):
     _h, nodes = _csv_rows(cw / "graph" / "nodes.csv")
     for row in nodes:
@@ -414,6 +463,10 @@ def _exports(con, out: Path):
     for name, sql, hdr in (
         ("hosts.csv", "SELECT name, role, site, os, status FROM host ORDER BY name",
          ["name", "role", "site", "os", "status"]),
+        ("application-scope.csv", "SELECT application_key, host_name, membership, basis, evidence_ids, "
+         "source_ref, review_state, active FROM application_scope ORDER BY application_key, host_name",
+         ["application_key", "host_name", "membership", "basis", "evidence_ids", "source_ref",
+          "review_state", "active"]),
         ("addresses.csv", "SELECT ip, scope, owner_host FROM address ORDER BY ip",
          ["ip", "scope", "owner_host"]),
         ("services.csv", "SELECT id, host, provider_host, port, protocol, name, configured FROM service ORDER BY id",
@@ -456,12 +509,13 @@ def _report(v2: Path, cw: Path, rep: _Report, src_graph, refresh):
 
 
 # ------------------------------------------------------------------ entry
-def migrate(project_root, v2_dir) -> dict:
+def migrate(project_root, v2_dir, application_key: str | None = None) -> dict:
     root = Path(project_root)
     cw = root if root.name == "csa-work" else root / "csa-work"
     v2 = Path(v2_dir)
     if not cw.is_dir():
         return {"status": "ERROR", "error": f"no csa-work folder at {cw}"}
+    application_key = application_key or root.parent.name.lower().replace(" ", "-")
     v2.mkdir(parents=True, exist_ok=True)
     rep = _Report()
     hosts = _Hosts()
@@ -471,6 +525,7 @@ def migrate(project_root, v2_dir) -> dict:
             con = r.con
             _load_evidence(con, cw, rep)
             _load_hosts(con, cw, rep, hosts)
+            _load_scope(con, cw, rep, application_key)
             n_src, e_src = _load_graph(r.raw_con, cw, rep)
             _load_intake(con, cw, rep)
             _load_index(r, con, cw, rep)
@@ -491,8 +546,9 @@ def main(argv=None) -> int:
                                  description="Migrate csa-work/ into csa-work-v2/csa.sqlite.")
     ap.add_argument("--project-root", required=True)
     ap.add_argument("--v2-dir", required=True)
+    ap.add_argument("--application-key", required=False)
     a = ap.parse_args(argv)
-    res = migrate(a.project_root, a.v2_dir)
+    res = migrate(a.project_root, a.v2_dir, a.application_key)
     print(json.dumps(res, indent=2))
     return 0 if res["status"] == "OK" else 1
 

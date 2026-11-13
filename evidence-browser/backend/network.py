@@ -42,9 +42,9 @@ def device_identities(work_dir: Path, agents: Path) -> dict[str, dict[str, str]]
     return out
 
 
-def build(work_dir: Path, agents: Path) -> dict[str, Any]:
+def build(work_dir: Path, agents: Path, view: str = "global", application_key: str | None = None) -> dict[str, Any]:
     if work_dir.name == "csa-work-v2":
-        return _build_v2(work_dir, agents)
+        return _build_v2(work_dir, agents, view=view, application_key=application_key)
     _framework(agents)
     from csa_docx import evidence_digest, section_card
     identities = device_identities(work_dir, agents)
@@ -108,7 +108,7 @@ def build(work_dir: Path, agents: Path) -> dict[str, Any]:
             "matrix_rows": len(rows)}
 
 
-def _build_v2(work_dir: Path, agents: Path) -> dict[str, Any]:
+def _build_v2(work_dir: Path, agents: Path, view: str = "global", application_key: str | None = None) -> dict[str, Any]:
     """Read the active V2 host and flow records, never leftover V1 exports."""
     db = work_dir / "csa.sqlite"
     with sqlite3.connect(f"file:{db}?mode=ro", uri=True) as con:
@@ -176,5 +176,24 @@ def _build_v2(work_dir: Path, agents: Path) -> dict[str, Any]:
                 edge["ids"] = sorted(set(edge["ids"] + ids))
         elif ids:
             edges.append({"s": source, "t": target, "port": "", "procs": [], "ids": ids, "est": False})
+    if view not in {"global", "application"}:
+        raise ValueError("view must be 'application' or 'global'")
+    if view == "application":
+        if not application_key:
+            raise ValueError("application_key is required for application view")
+        _framework(agents)
+        from csa_docx.v2repo import Repo
+        from csa_docx.v2repo import graph as _v2_graph  # noqa: F401 — patches Repo.graph
+        from csa_docx.v2repo.scope import projected_graph
+        scoped_repo = Repo(db)
+        try:
+            projection = projected_graph(scoped_repo, application_key, view="application")
+        finally:
+            scoped_repo.close()
+        allowed = {node["node_id"].removeprefix("host/")
+                   for node in projection["nodes"] if node["node_id"].startswith("host/")}
+        nodes = {name: node for name, node in nodes.items() if name in allowed}
+        edges = [edge for edge in edges if edge["s"] in allowed and edge["t"] in allowed]
     return {"nodes": list(nodes.values()), "edges": edges,
-            "source": "csa.sqlite host, address, flow, evidence and graph_edge", "matrix_rows": len(evidence)}
+            "source": "csa.sqlite host, address, flow, evidence and graph_edge",
+            "matrix_rows": len(evidence), "view": view, "application_key": application_key}

@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import assets, intake_errors, apply_workflow, audit_workflow, author_workflow, intake_workflow, build_workflow, cleanup_workflow, commands, documents, draft_workflow, prompts_workflow, explorer, csa_figures, network, pipeline, project_setup, project_upload, proposals, review_workflow, sections, validation, word_review, working_document
+from . import assets, intake_errors, apply_workflow, audit_workflow, author_workflow, intake_workflow, build_workflow, cleanup_workflow, commands, documents, draft_workflow, prompts_workflow, explorer, csa_figures, network, global_graph, pipeline, project_setup, project_upload, proposals, review_workflow, sections, validation, word_review, working_document
 from .jobs import JobManager
 from .terminal_sessions import check_write_origin
 from .models import CommandRequest, IntakeErrorsResponse, JobCreateRequest
@@ -694,6 +694,12 @@ def get_systems() -> dict[str, Any]:
     return {"systems": systems}
 
 
+@app.get("/api/global/network")
+def global_network() -> dict[str, Any]:
+    """Read-only portfolio graph across registered V2 application stores."""
+    return global_graph.build(list(projects().values()))
+
+
 @app.get("/api/systems/{system_key}/setup")
 def system_setup_status(system_key: str) -> dict[str, Any]:
     return system_setup(system_key)
@@ -1150,10 +1156,11 @@ def get_summary(system_key: str) -> dict[str, Any]:
 
 
 @app.get("/api/systems/{system_key}/network")
-def host_network(system_key: str) -> dict[str, Any]:
-    """Every connection the captures recorded, as nodes and edges, from the matrix and host register."""
+def host_network(system_key: str, view: str = Query("application"), application_key: str | None = Query(None)) -> dict[str, Any]:
+    """The selected application's bounded network, or the complete global graph."""
     project = system_project(system_key)
-    return network.build(work_dir(project), agents_dir())
+    return network.build(work_dir(project), agents_dir(), view=view,
+                         application_key=application_key or project.get("key"))
 
 
 ASSET_KINDS = ("application_hosts", "devices", "unidentified", "conflicts")
@@ -1294,10 +1301,10 @@ def system_explorer(system_key: str) -> dict[str, Any]:
 
 
 @app.get("/api/systems/{system_key}/diagram")
-def system_diagram(system_key: str) -> dict[str, Any]:
+def system_diagram(system_key: str, view: str = Query("application"), application_key: str | None = Query(None)) -> dict[str, Any]:
     """Technical diagrams (SVG + model) for the System explorer; the same drawings as the CSA figures."""
     project = system_project(system_key)
-    return explorer.diagrams(project, agents_dir())
+    return explorer.diagrams(project, agents_dir(), view=view, application_key=application_key or project.get("key"))
 
 
 def _figure_doc(project: dict[str, str]) -> Path | None:

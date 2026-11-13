@@ -157,9 +157,10 @@ def connected_devices(work: Path, net: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
-def build(project: dict[str, str], agents: Path, document: Path | None) -> dict[str, Any]:
+def build(project: dict[str, str], agents: Path, document: Path | None,
+          view: str = "global", application_key: str | None = None) -> dict[str, Any]:
     work = Path(project["work_dir"]).expanduser()
-    net = network.build(work, agents)
+    net = network.build(work, agents, view=view, application_key=application_key or project.get("key"))
     v2 = work.name == "csa-work-v2"
     if v2:
         with sqlite3.connect(f"file:{work / 'csa.sqlite'}?mode=ro", uri=True) as con:
@@ -252,11 +253,12 @@ def build(project: dict[str, str], agents: Path, document: Path | None) -> dict[
                         "evidence": "csa.sqlite evidence" if v2 else "evidence-matrix.csv, hosts/evidence_hosts.csv"}}
 
 
-def diagrams(project: dict[str, str], agents: Path) -> dict[str, Any]:
+def diagrams(project: dict[str, str], agents: Path, view: str = "global",
+             application_key: str | None = None) -> dict[str, Any]:
     """The project's technical diagrams (system overview + one numbered data flow per journey) as SVG plus their
     models, from csa_docx.techdiagram: the same drawings `csa system-diagram` writes for the CSA figures."""
     work = Path(project["work_dir"]).expanduser()
-    net = network.build(work, agents)                     # also puts the framework on sys.path
+    net = network.build(work, agents, view=view, application_key=application_key or project.get("key"))
     if not net["nodes"]:
         return {"application": project.get("label", ""), "diagrams": []}
     from csa_docx.techdiagram import diagrams as build_diagrams
