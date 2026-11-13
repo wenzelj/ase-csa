@@ -1887,6 +1887,11 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
                       "real system. Never copy a line from it: the answer check rejects one (EXAMPLE_COPIED).", "", ex,
                       "", f"(end of example answer ({k}))"]
     text = "\n".join(lines) + "\n"
+    from csa_docx import answer_obligations
+    obligations = answer_obligations.build({"questions": qs, "evidence": pack or {}, "keep": [
+        {k: x[k] for k in ("question", "fact", "evidence_ids", "capture_ids")} for x in keep],
+        "frame": frame, "ratings": spec.get("ratings") or doc_spec.DEFAULT_RATINGS,
+        "requirement_stories": requirement_stories})
     return {"status": "OK", "key": node["key"], "number": node["number"], "title": node["title"], "text": text,
             "system_name": sysname,
             "questions": qs, "evidence": pack, "established": established, "background_ids": bg_ids,
@@ -1896,7 +1901,8 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
             "role_table": rtable, "role_tables": rtables or [], "frame": frame, "disagree": disagree, "acronyms": acronyms,
             "parts": {k: v for k, v in pview.items() if k != "lines"} if pview else None,
             "practice": practice_view, "requirement_stories": requirement_stories,
-            "drawbridge_functions": {k: v for k, v in db_functions.items() if v}}
+            "drawbridge_functions": {k: v for k, v in db_functions.items() if v},
+            "obligations": obligations}
 
 
 def main(argv: list[str] | None = None) -> int:

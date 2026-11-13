@@ -574,6 +574,22 @@ def settings() -> dict:
     return parse_flat_map(CLI_FILE)
 
 
+def resolve_model_template(template: str) -> str:
+    """Make a configured model command usable from a browser service's reduced PATH."""
+    parts = shlex.split(str(template or ""))
+    if not parts:
+        return ""
+    if shutil.which(parts[0]):
+        return str(template)
+    name = Path(parts[0]).name
+    candidates = [Path.home() / ".local" / "bin" / name, Path("/opt/homebrew/bin") / name]
+    for candidate in candidates:
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            parts[0] = str(candidate)
+            return shlex.join(parts)
+    return str(template)
+
+
 def framework_python() -> str:
     if os.environ.get("CSA_PYTHON"):                       # explicit choice: trusted as-is
         exe = shutil.which(os.environ["CSA_PYTHON"]) or os.environ["CSA_PYTHON"]
@@ -2337,7 +2353,7 @@ def codex_profiles(config: Path | None = None) -> set[str]:
 def cli_profile_report(cli: str, config: Path | None = None) -> list[tuple[str, bool | None, str]]:
     """[(message, good, hint)] for one CLI as csa launches it headless: its cli.yaml line, its binary, and a codex
     --profile it names (the evo profile was missing on a machine once and every evo run failed)."""
-    tmpl = settings().get(f"{cli}_headless")
+    tmpl = resolve_model_template(settings().get(f"{cli}_headless"))
     if not tmpl:
         return [(f"{cli}: no '{cli}_headless' line in cli.yaml", False, "add one, or choose another CLI")]
     argv = shlex.split(tmpl)
@@ -2567,6 +2583,31 @@ def build_prompt(p: dict, r: dict, args: list[str], local: bool | None = None, i
                          "REQUIRED_READING (absolute paths: read them first). Write only SHEET. Do not inspect other "
                          "directories, search for files, open the source set, change file or Word document, or reconstruct any path.")
             lines.append("\nREQUIRED_READING:\n" + "\n".join(f"- {x}" for x in required_reading(p)))
+        if r.get("verb") == "answer":
+            # S607-S609: give small models the bounded contract and exact block
+            # obligations directly.  The full card remains authoritative for
+            # evidence text, while this section prevents rules being lost when
+            # the model does not open every required file.
+            try:
+                sys.path.insert(0, str(FRAMEWORK))
+                from csa_docx import answer_contract, answer_obligations
+                card_path = Path(str(values.get("CARD", "")))
+                if not card_path.is_file():
+                    card_path = local_path(p["work_dir"]) / "cards" / card_path.name
+                card_data = json.loads(card_path.with_suffix(".json").read_text(encoding="utf-8"))
+                only = [x.strip().upper() for x in str(values.get("ONLY", "")).split(",") if x.strip()]
+                obligations = card_data.get("obligations") or answer_obligations.build(card_data, only=only)
+                compact = json.dumps(obligations, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+                lines.append("\n## Bounded answer context\n\n" + answer_contract.render())
+                lines.append("BLOCK OBLIGATIONS (JSON):\n" + compact)
+                lines.append(f"CONTEXT_VERSION={answer_contract.VERSION} CONTEXT_BYTES={len(compact.encode('utf-8'))}")
+            except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+                # Older or hand-built cards remain valid.  Their existing prompt
+                # and validator path are unchanged when obligations are absent.
+                pass
+            finally:
+                if str(FRAMEWORK) in sys.path:
+                    sys.path.remove(str(FRAMEWORK))
         if not inline and values.get("SHEET") and values.get("CARD"):
             # `python3` on an agent's PATH can be Apple's command-line-tools stub: give the interpreter csa itself runs under
             lines.append("\nVALIDATE=PYTHONPATH=\"" + str(FRAMEWORK) + "\" \"" + framework_python() +
@@ -2623,6 +2664,25 @@ def task_cli(verb: str) -> str | None:
     """`task_cli:` in cli.yaml, e.g. `answer: claude, write: codex`: the CLI for one agent verb."""
     pairs = [x.split(":", 1) for x in str(settings().get("task_cli", "") or "").split(",") if ":" in x]
     return {k.strip(): v.strip() for k, v in pairs}.get(verb)
+
+
+def answer_profile(cli: str | None = None) -> dict:
+    """Return the opt-in bounded profile for a small answer model.
+
+    Provider selection remains a per-run CLI choice; this profile only adds
+    conservative context/output guidance for the named small-model route.
+    """
+    selected = cli or settings().get("small_model_answer_profile", "llama3b")
+    if selected in ("llama3b", "qwen8b", "small"):
+        return {
+            "name": str(settings().get("small_model_answer_profile", "llama3b")),
+            "context_bytes": int(settings().get("small_model_answer_context_bytes", 12000) or 12000),
+            "output_tokens": int(settings().get("small_model_answer_output_tokens", 1800) or 1800),
+            "fix_rounds": int(settings().get("small_model_answer_fix_rounds", 2) or 2),
+            "by_block": True,
+        }
+    return {"name": "default", "context_bytes": None, "output_tokens": None,
+            "fix_rounds": int(settings().get("answer_fix_rounds", 2) or 2), "by_block": False}
 
 
 _TL = threading.local()
@@ -2952,14 +3012,16 @@ def _remember_tables(cards: Path, key: str, card_json: Path, sheet: Path) -> Non
     _fw_json("csa_docx.answer_sheet", "best-rows", sheet, "--card", card_json)
 
 
-def _reader_pass(work: Path, cards: Path, key: str, sheet: Path) -> None:
+def _reader_pass(work: Path, cards: Path, key: str, sheet: Path, model_cli: str | None = None) -> None:
     """After an answer is written: one advisory call reads the whole sheet as the customer (contradictions between blocks,
     terms a customer may not know, repeated wording, claims beyond the cited facts). It never edits the sheet; its report is
-    saved as <KEY>.review.md and added to <KEY>.RESULT.md. cli.yaml: answer_reader_pass, answer_reader_cli."""
+    saved as <KEY>.review.md and added to <KEY>.RESULT.md. The answer run's
+    selected CLI is used for this pass; ``answer_reader_cli`` is only the
+    fallback when no answer CLI was selected."""
     if str(settings().get("answer_reader_pass", "true")).strip().lower() not in ("1", "true", "yes", "on"):
         return
-    cli = str(settings().get("answer_reader_cli", "claude") or "claude")
-    tmpl = settings().get(f"{cli}_headless")
+    cli = str(model_cli or settings().get("answer_reader_cli", "claude") or "claude")
+    tmpl = resolve_model_template(settings().get(f"{cli}_headless"))
     if not tmpl or not shutil.which(shlex.split(tmpl)[0]):
         return
     print(f"{C['b']}Reader pass ({cli}): reading the whole subsection as the customer...{C['0']}", flush=True)
@@ -2971,14 +3033,15 @@ def _reader_pass(work: Path, cards: Path, key: str, sheet: Path) -> None:
         print(f"{C['y']}Reader pass did not run: {res.get('message', res.get('status'))}{C['0']}", file=sys.stderr)
 
 
-def _rating_pass(work: Path, cards: Path, key: str, sheet: Path, card_json: Path) -> None:
+def _rating_pass(work: Path, cards: Path, key: str, sheet: Path, card_json: Path, model_cli: str | None = None) -> None:
     """After the reader pass: one call scores each answer block 1 to 10; the last three runs are kept in
     <work>/ratings/<KEY>.json and shown on the Draft answers page. Never edits the sheet.
-    cli.yaml: answer_rating_pass, answer_rating_cli."""
+    The answer run's selected CLI is used for this pass; ``answer_rating_cli``
+    is only the fallback when no answer CLI was selected."""
     if str(settings().get("answer_rating_pass", "true")).strip().lower() not in ("1", "true", "yes", "on"):
         return
-    cli = str(settings().get("answer_rating_cli", "claude") or "claude")
-    tmpl = settings().get(f"{cli}_headless")
+    cli = str(model_cli or settings().get("answer_rating_cli", "claude") or "claude")
+    tmpl = resolve_model_template(settings().get(f"{cli}_headless"))
     if not tmpl or not shutil.which(shlex.split(tmpl)[0]):
         return
     print(f"{C['b']}Rating pass ({cli}): scoring each block 1 to 10...{C['0']}", flush=True)
@@ -3135,6 +3198,17 @@ def answer_blocks_failing(res: dict) -> set[str]:
     return out
 
 
+def repair_findings(res: dict, only: set[str] | None = None) -> list[dict]:
+    """Return only blocking findings relevant to a focused repair.
+
+    Warnings remain available to reporting and to the optional content pass, but
+    must not turn an otherwise valid answer into a repair request.
+    """
+    return [f for f in res.get("findings", [])
+            if f.get("level") == "ERROR"
+            and (only is None or (f.get("question") or "").upper() in only or not f.get("question"))]
+
+
 def _author_cards(p: dict, a, draft: bool = False) -> int:
     """csa author N --cards: the framework builds the section card (questions from the document, evidence
     gathered per question), the answer agent writes the answer sheet, the framework checks it (one search round
@@ -3278,12 +3352,17 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
             run_a.cli = repair_cli_override
         chosen_cli = (getattr(run_a, "cli", None) or os.environ.get("CSA_CLI") or task_cli(verb)
                       or settings().get("default_cli", "codex"))
+        profile = answer_profile(chosen_cli)
+        call_extra = list(extra)
+        if profile["name"] != "default":
+            call_extra.append(f"ANSWER_PROFILE={profile['name']}")
+            call_extra.append(f"OUTPUT_TOKEN_BUDGET={profile['output_tokens']}")
         draft_run("RUNNING", f"model pass {kind}", "REPAIRING" if kind != "answer" else "GENERATING",
                   blocks or ["all"], model=chosen_cli)
         hold_old_sheets()
         try:
             route = agent(verb)
-            rc = launch(p, route, answer_launch_args(p, route, number, card or card_md, out, extra), run_a)
+            rc = launch(p, route, answer_launch_args(p, route, number, card or card_md, out, call_extra), run_a)
         finally:
             release_held()
         sheet_from_last_message(out)
@@ -3353,8 +3432,7 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
                       kind=kind, blocks=ids)
 
     def error_lines(res: dict, only: set[str] | None = None) -> list[str]:
-        blocking = [f for f in res.get("findings", []) if f.get("level") == "ERROR"
-                    and (only is None or (f.get("question") or "").upper() in only or not f.get("question"))]
+        blocking = repair_findings(res, only)
         lines = [f"- {f['level']} {f['code']} {f.get('question') or ''}: {f['message']}" for f in blocking]
         if only is not None:            # a block that is rewritten anyway is sent its content warnings: fix them in the same call
             lines += [f"- CHECK {f['code']} {f.get('question')}: {f['message']}" for f in res.get("findings", [])
@@ -3524,7 +3602,11 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
             shown = shown + [f"ONLY={str(a.blocks).upper()}"]
         return launch(p, route, shown, a)
     hosts_csv = work / "hosts" / "hosts.csv"
-    fix_max = int(settings().get("answer_fix_rounds", 3) or 3)
+    selected_cli = (getattr(a, "cli", None) or os.environ.get("CSA_CLI") or task_cli(verb)
+                    or settings().get("default_cli", "codex"))
+    selected_profile = answer_profile(selected_cli)
+    fix_max = (selected_profile["fix_rounds"] if selected_profile["name"] != "default"
+               else int(settings().get("answer_fix_rounds", 3) or 3))
     cache = {"status": "NONE", "changed": []}
     wip = {"status": "NONE", "changed": [], "failed": []}
     only_blocks = {b.strip().upper() for b in str(getattr(a, "blocks", "") or "").split(",") if b.strip()}
@@ -3634,10 +3716,19 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
             print(f"{C['r']}The blocking validation result repeated without progress; the framework will not "
                   f"spend another identical model call.{C['0']}", file=sys.stderr)
         previous_signature = signature
+        repair_record = {
+            "model": current,
+            "prompt_version": "answer-contract-v1",
+            "blocks": sorted(bad - {"*"}) if "*" not in bad else ["*"],
+            "validation_signature": [list(item) for item in signature],
+            "called": False,
+        }
+        timing.setdefault("repair_history", []).append(repair_record)
         if no_sheet and not resent:
             resent = True           # the agent wrote nothing: ask once more, without spending a fix round on it
             print(f"{C['y']}The {verb} agent wrote no {sheet.name}; asking once more.{C['0']}")
             rc = answer([])
+            repair_record["called"] = True
         elif res2.get("status") == "NEEDS_SEARCH" and not searched:
             searched = True
             asks = [(q, t) for q, ts in res2.get("searches", {}).items() for t in ts]
@@ -3647,6 +3738,7 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
                              [f"- SEARCH {q}: the results of your Search: line are now in the card's evidence pack for {q}; "
                               f"answer the block from them (or Unknown:) and drop the Search: line" for q in res2.get("searches", {})],
                              "search", "Your searches were run:")
+            repair_record["called"] = True
         elif fixes < fix_max:   # a failing sheet always gets its fix rounds: the time budget only limits the optional passes
             fixes += 1
             lines = error_lines(res2, bad - {"*"} if bad - {"*"} else None)
@@ -3662,10 +3754,12 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
                 print(f"{C['y']}The answer sheet has {res2.get('errors', len(lines))} problem(s); fix round {fixes} of {fix_max} "
                       f"(whole sheet).{C['0']}")
                 rc = answer([f"ERRORS={errs}"], kind=f"fix {fixes}") if sheet.is_file() else answer([])
+                repair_record["called"] = True
             else:
                 print(f"{C['y']}The answer sheet has {res2.get('errors', len(lines))} problem(s) in {', '.join(sorted(bad))}; "
                       f"fix round {fixes} of {fix_max}.{C['0']}")
                 rc = block_round(bad, lines, f"fix {fixes}", "Fix these in the answer sheet:")
+                repair_record["called"] = True
         else:
             for f in res2.get("findings", []):
                 print(f"  {f['level']} {f['code']} {f.get('question') or ''}: {f['message']}", file=sys.stderr)
@@ -3798,8 +3892,8 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
                              res2, fixes, sheet, "Every blocking check passes. Document application has not completed.")
         if draft:
             _remember_tables(cards, key, card_json, sheet)
-            _reader_pass(work, cards, key, sheet)
-            _rating_pass(work, cards, key, sheet, card_json)
+            _reader_pass(work, cards, key, sheet, selected_cli)
+            _rating_pass(work, cards, key, sheet, card_json, selected_cli)
         _fw_json("csa_docx.answer_cache", "write", sheet, "--card", card_json, "--matrix", matrix,
                  *(["--hosts", hosts_csv] if hosts_csv.is_file() else []), "--json")
     _fw_json("csa_docx.fact_store", "add", work, sheet, "--card", card_json)

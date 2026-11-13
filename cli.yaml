@@ -24,6 +24,10 @@ claude_headless: claude -p {prompt}
 # Evo: the dedicated Codex profile against the local model. Pick it per run with --cli evo.
 evo_interactive: codex --profile evo-x3-qwen {prompt}
 evo_headless: codex exec --profile evo-x3-qwen --ignore-rules --skip-git-repo-check --output-last-message {last} {prompt}
+# Explicit small-model answer profile. It is opt-in (`csa answer ... --cli llama3b`);
+# the normal/default answer CLI is unchanged.
+llama3b_interactive: codex -c 'model_provider="ollama-local"' -c 'model="llama3.2:3b"' -c 'model_providers.ollama-local.name="Ollama"' -c 'model_providers.ollama-local.base_url="http://localhost:11434/v1"' {prompt}
+llama3b_headless: codex exec -c 'model_provider="ollama-local"' -c 'model="llama3.2:3b"' -c 'model_providers.ollama-local.name="Ollama"' -c 'model_providers.ollama-local.base_url="http://localhost:11434/v1"' --skip-git-repo-check --output-last-message {last} {prompt}
 # Qwen3 8B: Codex against the local Ollama model qwen3:8b (pick it per run with --cli qwen8b). The -c settings are the
 # Codex profile, kept here so it needs no change to ~/.codex/config.toml (codex-profile-qwen3-8b.toml has the same as
 # a named profile).
@@ -69,6 +73,12 @@ hermes_fleet: hermes chat -q {prompt}
 # csa answer: fix rounds after the first answer. Each rewrites only the blocks that fail; the framework merges them.
 answer_fix_rounds: 2
 answer_budget_s: 1200
+# Bounded answer settings for the opt-in 3B profile. These do not change the
+# validator or the normal/default provider.
+small_model_answer_profile: llama3b
+small_model_answer_context_bytes: 12000
+small_model_answer_output_tokens: 1800
+small_model_answer_fix_rounds: 2
 # Each answer/draft model pass reports a heartbeat and is stopped before a dead session can consume hours. A sheet
 # written before a timeout is still validated and can continue through the repair loop.
 answer_heartbeat_minutes: 10

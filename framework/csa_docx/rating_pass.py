@@ -96,10 +96,54 @@ def summary(data: dict | None) -> dict | None:
             "improve": {b: v.get("improve", []) for b, v in latest["blocks"].items() if v.get("improve")}}
 
 
+def _result_summary(work_dir, key: str) -> dict | None:
+    """Recover a rating from the current workspace when JSON history was not migrated.
+
+    This is deliberately scoped to ``work_dir/cards/<key>.RESULT.md``.
+    """
+    result = Path(work_dir) / "cards" / f"{key}.RESULT.md"
+    if not result.is_file():
+        return None
+    text = result.read_text(encoding="utf-8", errors="replace")
+    section = text.split(HEADING, 1)[1] if HEADING in text else ""
+    match = re.search(r"Average\s+([0-9]+(?:\.[0-9]+)?)\s*\(([^)]*)\)", section)
+    if not match:
+        return None
+    blocks: dict[str, dict] = {}
+    for item in match.group(2).split(","):
+        part = re.match(r"\s*([BC]\d+)\s+([0-9]+(?:\.[0-9]+)?)\s*$", item)
+        if part:
+            blocks[part.group(1)] = {"score": float(part.group(2)), "reason": "", "improve": []}
+    if not blocks:
+        return None
+    worse_match = re.search(r"Lower than the previous run:\s*([^\.]+)\.", section)
+    worse = [x.strip() for x in worse_match.group(1).split(",")] if worse_match else []
+    at = datetime.fromtimestamp(result.stat().st_mtime, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    out = summary({"key": key, "runs": [{"at": at, "average": float(match.group(1)), "blocks": blocks}]})
+    if out is not None:
+        out["worse"] = worse
+    return out
+
+
+def _matching_legacy_summary(work_dir, key: str) -> dict | None:
+    """Use same-application legacy history only when its sheet hash matches V2 exactly."""
+    sheet = Path(work_dir) / "cards" / f"{key}.answer.md"
+    legacy = Path(work_dir).parent / "csa-work" / "ratings" / f"{key}.json"
+    if not sheet.is_file() or not legacy.is_file():
+        return None
+    digest = hashlib.sha256(sheet.read_bytes()).hexdigest()
+    data = json.loads(legacy.read_text(encoding="utf-8"))
+    runs = [run for run in data.get("runs", []) if run.get("sheet_sha256") == digest]
+    return summary({"key": key, "runs": runs}) if runs else None
+
+
 def load_summary(work_dir, key: str) -> dict | None:
-    """summary() of the stored history; None when there is none or the file cannot be read."""
+    """Summary of current history, migrated RESULT data, or hash-safe same-app legacy history."""
     try:
-        return summary(json.loads(ratings_path(work_dir, key).read_text(encoding="utf-8")))
+        path = ratings_path(work_dir, key)
+        if path.is_file():
+            return summary(json.loads(path.read_text(encoding="utf-8")))
+        return _result_summary(work_dir, key) or _matching_legacy_summary(work_dir, key)
     except (OSError, ValueError, KeyError, TypeError):
         return None
 

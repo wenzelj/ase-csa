@@ -59,6 +59,12 @@ def digest(stage: str) -> str:
     return text + "\n\n" + plain_language() + "\n"
 
 
+def answer_contract() -> str:
+    """Return the bounded answer contract used by prompt assembly and tests."""
+    from csa_docx.answer_contract import render
+    return render()
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("stage", choices=STAGES)

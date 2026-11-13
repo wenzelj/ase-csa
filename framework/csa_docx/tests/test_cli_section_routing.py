@@ -77,6 +77,29 @@ def test_local_prompt_names_the_supported_codex_cli_shell_tool(tmp_path):
     assert "Never call `exec`" in prompt
 
 
+def test_auxiliary_model_template_resolves_user_local_binary_when_path_is_reduced(monkeypatch):
+    real_which = CSA["shutil"].which
+    monkeypatch.setattr(CSA["shutil"], "which", lambda name: None if name == "claude" else real_which(name))
+    resolved = CSA["resolve_model_template"]("claude -p {prompt}")
+    assert resolved.startswith(str(Path.home() / ".local" / "bin" / "claude"))
+    assert "{prompt}" in resolved
+
+
+def test_answer_auxiliary_passes_keep_the_selected_answer_cli(monkeypatch, tmp_path):
+    settings = CSA["settings"]().copy()
+    seen = []
+    monkeypatch.setitem(settings, "answer_reader_pass", "true")
+    monkeypatch.setitem(settings, "answer_rating_pass", "true")
+    globals_ = CSA["_reader_pass"].__globals__
+    monkeypatch.setitem(globals_, "settings", lambda: settings)
+    monkeypatch.setitem(globals_, "_fw_json_shown", lambda _module, *_args: (seen.append((_module, _args)) or {"status": "ERROR", "message": "test"}))
+    (tmp_path / "K.answer.md").write_text("## B1 Test\nText: answer\n", encoding="utf-8")
+    CSA["_reader_pass"](tmp_path, tmp_path, "K", tmp_path / "K.answer.md", "codex")
+    CSA["_rating_pass"](tmp_path, tmp_path, "K", tmp_path / "K.answer.md", tmp_path / "K.json", "codex")
+    assert len(seen) == 2
+    assert all("codex" in str(args) and "claude" not in str(args) for _, args in seen)
+
+
 def test_answer_agent_runs_in_project_cards_folder_with_bare_names(tmp_path, monkeypatch):
     root = tmp_path / "TETRA" / "06 REVELOC TETRA"
     cards = root / "csa-work" / "cards"

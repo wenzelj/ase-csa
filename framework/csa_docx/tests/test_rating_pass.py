@@ -44,3 +44,43 @@ def test_improvements_are_kept_trimmed_to_three_and_shown_in_the_summary(tmp_pat
     assert err == "" and blocks["B1"]["improve"] == ["a", "b", "c"] and blocks["B2"]["improve"] == []
     R.record(tmp_path, "K", blocks)
     assert R.load_summary(tmp_path, "K")["improve"] == {"B1": ["a", "b", "c"]}
+
+
+def test_result_rating_is_used_when_migrated_workspace_has_no_json_history(tmp_path):
+    cards = tmp_path / "cards"
+    cards.mkdir()
+    (cards / "TIME.RESULT.md").write_text(
+        "# result\n\n## Answer rating\n\nAverage 6.6 (B1 6.3, B2 6.5, B3 7.0). "
+        "Lower than the previous run: B2, B3.\n", encoding="utf-8")
+    out = R.load_summary(tmp_path, "TIME")
+    assert out["latest"] == 6.6
+    assert out["average"] == 6.6
+    assert out["worse"] == ["B2", "B3"]
+    assert out["runs"][0]["blocks"] == {"B1": 6.3, "B2": 6.5, "B3": 7.0}
+
+
+def test_result_fallback_is_not_cross_key_or_cross_workspace(tmp_path):
+    cards = tmp_path / "cards"
+    cards.mkdir()
+    (cards / "TIME.RESULT.md").write_text("## Answer rating\n\nAverage 6.0 (B1 6.0).\n", encoding="utf-8")
+    assert R.load_summary(tmp_path, "DNS") is None
+
+
+def test_legacy_rating_is_used_only_for_an_identical_current_answer(tmp_path):
+    import hashlib
+    cards = tmp_path / "cards"
+    cards.mkdir()
+    answer = cards / "MGT.answer.md"
+    answer.write_text("current V2 answer", encoding="utf-8")
+    digest = hashlib.sha256(answer.read_bytes()).hexdigest()
+    legacy = tmp_path / "../csa-work/ratings"
+    legacy.mkdir(parents=True)
+    (legacy / "MGT.json").write_text(json.dumps({"runs": [
+        {"at": "2026-11-01T00:00:00Z", "sheet_sha256": digest, "average": 7.2,
+         "blocks": {"B1": {"score": 7.2, "reason": "same"}}},
+        {"at": "2026-11-02T00:00:00Z", "sheet_sha256": "different", "average": 2.0,
+         "blocks": {"B1": {"score": 2.0, "reason": "wrong answer"}}}
+    ]}), encoding="utf-8")
+    assert R.load_summary(tmp_path, "MGT")["latest"] == 7.2
+    answer.write_text("changed V2 answer", encoding="utf-8")
+    assert R.load_summary(tmp_path, "MGT") is None

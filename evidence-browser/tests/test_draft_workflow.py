@@ -97,3 +97,21 @@ def test_snapshot_carries_the_rating_history_and_the_blocks_that_got_worse(tmp_p
     rows = {r["key"]: r for r in draft_workflow.snapshot(AGENTS, {"key": "p", "work_dir": str(work)})["sections"]}
     assert rows["TIME"]["rating"]["worse"] == ["B1"] and rows["TIME"]["rating"]["latest"] == 7.0
     assert rows["NONE"]["rating"] is None
+
+
+def test_snapshot_reads_migrated_result_rating_when_json_history_is_missing(tmp_path, monkeypatch):
+    from backend import draft_workflow
+    work = tmp_path / "csa-work-v2"
+    cards = work / "cards"
+    cards.mkdir(parents=True)
+    (cards / "TIME.manifest.json").write_text("{}")
+    (cards / "TIME.RESULT.md").write_text(
+        "## Answer rating\n\nAverage 6.6 (B1 6.3, B2 6.5).\n", encoding="utf-8")
+
+    class Result:
+        parsed = {"nodes": [{"key": "TIME", "number": "3.4", "title": "Time", "kind": "subsection"}]}
+        stderr = ""
+
+    monkeypatch.setattr(draft_workflow.commands, "execute", lambda *a, **k: Result())
+    snap = draft_workflow.snapshot(AGENTS, {"key": "tetra-reveloc", "work_dir": str(work)})
+    assert snap["sections"][0]["rating"]["latest"] == 6.6
