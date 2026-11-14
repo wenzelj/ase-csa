@@ -352,3 +352,33 @@ def test_projection_does_not_write_the_graph(tmp_path):
     assert counts == [repo.con.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
                       for t in ("graph_node", "graph_edge", "review_event")]
     repo.close()
+
+
+def test_address_relationships_resolve_before_application_scope(tmp_path):
+    from csa_docx.v2repo.scope import projected_graph
+    repo = Repo(tmp_path / "v2")
+    with repo.tx():
+        for host in ("APP01", "PEER01", "INACTIVE01", "NOSCOPE01"):
+            repo.hosts.create(host)
+        repo.application_scope.add("app-a", "APP01", "owned", review_state="accepted")
+        repo.application_scope.add("app-a", "PEER01", "peer", review_state="accepted")
+        repo.application_scope.add("app-a", "INACTIVE01", "peer", active=False, review_state="accepted")
+        for address, owner in (("10.0.0.1", "APP01"), ("10.0.0.2", "PEER01"),
+                               ("10.0.0.3", "INACTIVE01"), ("10.0.0.4", "NOSCOPE01"),
+                               ("127.0.0.1", "NOSCOPE01")):
+            repo.con.execute("INSERT INTO address (ip, owner_host) VALUES (?, ?)", (address, owner))
+        for address in ("10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4", "203.0.113.20"):
+            repo.evidence.create(
+                claim=f"APP01 has an established connection to {address} on port 443.",
+                source_title="cap/addresses.txt", excerpt=address, status="VERIFIED")
+        repo.graph.refresh()
+    app = projected_graph(repo, "app-a")
+    node_ids = {node["node_id"] for node in app["nodes"]}
+    assert {"host/APP01", "host/PEER01", "host/203.0.113.20"} <= node_ids
+    for hidden in ("INACTIVE01", "NOSCOPE01", "10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4", "127.0.0.1"):
+        assert f"host/{hidden}" not in node_ids
+    edges = {(edge["src"], edge["dst"]): edge for edge in app["edges"]}
+    assert edges[("host/APP01", "host/PEER01")]["evidence_ids"] == "E-002"
+    assert edges[("host/APP01", "host/203.0.113.20")]["evidence_ids"] == "E-005"
+    assert not any(edge["src"] == edge["dst"] for edge in app["edges"])
+    repo.close()

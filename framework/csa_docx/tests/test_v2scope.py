@@ -197,3 +197,22 @@ def test_rebuild_needs_recorded_ownership_not_a_name_or_folder(tmp_path, no_lega
     assert rebuild(root, v2, " ")["error"] == "application_key is required"
     assert rebuild(root, tmp_path / "missing" / "csa-work-v2", "pilot-app", dry_run=True)["status"] == "ERROR"
     assert not (tmp_path / "missing").exists()
+
+
+def test_scope_rebuild_resolves_address_only_peer_proof(tmp_path, no_legacy_reads):
+    root = tmp_path / "project"
+    v2 = root / "csa-work-v2"
+    repo = Repo(v2)
+    with repo.tx():
+        repo.hosts.create("APP01")
+        repo.hosts.create("PEER01")
+        repo.application_ownership.add("pilot-app", "APP01", "inventory", review_state="accepted")
+        repo.con.execute("INSERT INTO address (ip, owner_host) VALUES ('10.10.0.2', 'PEER01')")
+        repo.evidence.create(
+            claim="APP01 has an established connection to 10.10.0.2 on port 443.",
+            source_title="captures/address.txt", excerpt="APP01 -> 10.10.0.2", status="VERIFIED")
+    repo.close()
+    result = rebuild(root, v2, "pilot-app", dry_run=True)
+    assert result["active_peer_count"] == 1
+    peer = next(row for row in result["active_peer_rows"] if row["host_name"] == "PEER01")
+    assert peer["proof"] == ["evidence:E-001 (10.10.0.2)"]

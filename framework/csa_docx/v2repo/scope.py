@@ -33,6 +33,11 @@ The projection contract (`PROJECTION_CONTRACT`, version `CONTRACT_VERSION`):
     Edges are kept only when one end is an owned host and both ends are
     visible.
 
+Address endpoints in a qualifying relationship are resolved to the first
+registered owner in `address`, except for loopback, unspecified and
+link-local addresses.  The owner's scope row then governs visibility; an
+unowned address remains an external endpoint.
+
 `global`
     The complete active graph exactly as `graph.refresh()` built it.  Scope
     metadata never changes it.
@@ -69,6 +74,8 @@ PROJECTION_CONTRACT = {
     "external_endpoint": "Not a registered host (external IP, named endpoint, provider endpoint or "
                          "service name); needs no scope row, only a qualifying relationship to an "
                          "owned host.",
+    "address_resolution": "Resolve an address to its first address.owner_host except loopback, "
+                          "unspecified and link-local addresses; the owner's scope row governs visibility.",
     "qualifying_relationships": ("flow", "service", "evidence"),
     "never_visible_in_application": ("rejected evidence", "retired hosts", "inactive scope rows",
                                      "rejected scope rows", "neighbour-only labels",
@@ -98,6 +105,26 @@ def _retired_hosts(repo) -> set[str]:
 def _registered_hosts(repo) -> set[str]:
     """Every registered host, active or retired: none of them is an external endpoint."""
     return {name for (name,) in repo.con.execute("SELECT name FROM host")}
+
+
+def _address_owners(con) -> dict[str, str]:
+    """Return the first registered owner for each usable address."""
+    owners = {}
+    for address, owner in con.execute(
+            "SELECT ip, owner_host FROM address WHERE owner_host IS NOT NULL ORDER BY rowid"):
+        try:
+            ip = ipaddress.ip_address(address.split("%")[0])
+        except ValueError:
+            continue
+        if ip.is_loopback or ip.is_unspecified or ip.is_link_local:
+            continue
+        owners.setdefault(address, owner)
+    return owners
+
+
+def _resolve_endpoint(con, endpoint: str) -> str:
+    """Resolve a usable address to its first registered owner, if any."""
+    return _address_owners(con).get(endpoint, endpoint)
 
 
 def _active_scope(repo, application_key: str) -> dict[str, dict]:
@@ -135,7 +162,9 @@ def _evidence_pairs(repo) -> list[tuple[str, str, str]]:
             "AND source_title IS NOT NULL AND TRIM(source_title) != '' ORDER BY id"):
         m = _LINK_IN.match(claim) or _LINK_OUT.match(claim)
         if m and m[1] != m[2]:
-            out.append((m[1], m[2], eid))
+            source, destination = (_resolve_endpoint(repo.con, endpoint) for endpoint in (m[1], m[2]))
+            if source != destination:
+                out.append((source, destination, eid))
     return out
 
 
@@ -307,7 +336,7 @@ def projected_graph(repo, application_key: str | None = None, view: str = "appli
         by_edge: dict[tuple[str, str], list[str]] = {}
         for a, b, eid in _evidence_pairs(repo):
             src, dst = f"host/{a}", f"host/{b}"
-            if (src in owned and dst in external) or (dst in owned and src in external):
+            if (src in visible and dst in visible and (src in owned or dst in owned)):
                 by_edge.setdefault((src, dst), []).append(eid)
         for (src, dst), eids in sorted(by_edge.items()):
             edge_id = _edge_id(src, dst, "flow")

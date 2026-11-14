@@ -26,6 +26,7 @@ from pathlib import Path
 
 from .v2repo import DB_NAME, Repo
 from .v2repo.graph import _LINK_IN, _LINK_OUT
+from .v2repo.scope import _resolve_endpoint
 
 SOURCE = "csa.sqlite application_ownership, application_scope, flow, service, evidence"
 OWNERSHIP_REF = "v2:application_ownership"
@@ -61,7 +62,8 @@ def _proof(con, owned: set[str]) -> dict[str, list[str]]:
     """{host: proof} for every name a current V2 relationship links to an owned host.
 
     Proof is a flow row, a service/provider row, or a non-rejected evidence row that names its
-    source and whose claim links the two hosts."""
+    source and whose claim links the two hosts. Address peers are resolved to their registered
+    owner, with the original address retained beside the proof entry."""
     proof: dict[str, list[str]] = {}
 
     def _add(a: str, b: str, text: str):
@@ -79,7 +81,13 @@ def _proof(con, owned: set[str]) -> dict[str, list[str]]:
             "AND source_title IS NOT NULL AND TRIM(source_title) != '' ORDER BY id"):
         m = _LINK_IN.match(claim) or _LINK_OUT.match(claim)
         if m and m[1] != m[2]:
-            _add(m[1], m[2], f"evidence:{eid}")
+            endpoints = (m[1], m[2])
+            source, destination = (_resolve_endpoint(con, endpoint) for endpoint in endpoints)
+            if source != destination:
+                address = next((endpoint for endpoint, resolved in zip(endpoints, (source, destination))
+                                if endpoint != resolved), None)
+                suffix = f" ({address})" if address else ""
+                _add(source, destination, f"evidence:{eid}{suffix}")
     return {host: sorted(set(items)) for host, items in proof.items()}
 
 
