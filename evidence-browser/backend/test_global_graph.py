@@ -35,3 +35,26 @@ def test_global_graph_qualifies_hosts_and_deduplicates_shared_edge(tmp_path, mon
     assert result["partial"] is True
     assert any(item["application_key"] == "empty" and item["state"] == "missing-scope"
                for item in result["applications"])
+
+
+def test_portfolio_graph_and_store_global_view_both_keep_cross_application_edges(tmp_path):
+    """S615: the portfolio endpoint stays, and one store's explicit global view is never scope-filtered."""
+    from backend import network
+    a = _store(tmp_path, "app-a", ("A", "SHARED"), "A", "SHARED")
+    work = Path(a["work_dir"])
+    repo = Repo(work)
+    with repo.tx():
+        repo.hosts.create("FOREIGN")
+        repo.con.execute("INSERT INTO flow (src_host,dst_host,port) VALUES ('SHARED','FOREIGN',22)")
+        repo.application_scope.add("app-b", "FOREIGN", "owned", review_state="accepted")
+        repo.graph.refresh()
+    repo.close()
+    agents = Path(__file__).resolve().parents[2]
+    scoped = network.build(work, agents, view="application", application_key="app-a")
+    whole = network.build(work, agents, view="global", application_key="app-a")
+    assert "FOREIGN" not in {node["id"] for node in scoped["nodes"]}
+    assert "FOREIGN" in {node["id"] for node in whole["nodes"]}
+    assert ("SHARED", "FOREIGN", "22") in network.identity(whole)["edges"]
+    assert whole["view"] == "global" and whole["application_key"] == "app-a"
+    portfolio = build([a])
+    assert {node["id"] for node in portfolio["nodes"]} >= {"app-a::A", "app-a::SHARED"}

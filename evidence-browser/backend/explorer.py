@@ -158,13 +158,9 @@ def connected_devices(work: Path, net: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _network_build(work: Path, agents: Path, view: str, application_key: str | None, project: dict[str, str]) -> dict[str, Any]:
-    """Keep older test doubles and V1 extensions callable while using scoped arguments in production."""
-    try:
-        return network.build(work, agents, view=view, application_key=application_key or project.get("key"))
-    except TypeError as exc:
-        if "unexpected keyword argument" not in str(exc):
-            raise
-        return network.build(work, agents)
+    """The scoped network from the one adapter every browser surface shares (network.scoped_network)."""
+    return network.scoped_network({**project, "work_dir": str(work)}, agents, view=view,
+                                  application_key=application_key)
 
 
 def build(project: dict[str, str], agents: Path, document: Path | None,
@@ -183,8 +179,9 @@ def build(project: dict[str, str], agents: Path, document: Path | None,
                                   "evidence_excerpt": row["excerpt"], "confidence": row["confidence"],
                                   "gap_or_action": row["gap_or_action"], "review_state": row["review_state"]}
                       for row in con.execute("SELECT * FROM evidence")}
-            scope = {row["host_name"]: row["membership"] for row in con.execute(
-                "SELECT host_name, membership FROM application_scope WHERE active=1 AND review_state != 'rejected'")}
+        # membership comes from the scoped network, never from a second scope query
+        scope = {**{name: "owned" for name in net.get("scope", {}).get("owned", [])},
+                 **{name: "peer" for name in net.get("scope", {}).get("peers", [])}}
         register = {node["id"]: {"host": node["id"], "role": node["role"], "site": node["site"],
                                   "ips": node["ips"], "os": host_details.get(node["id"], {}).get("os", ""),
                                   "status": host_details.get(node["id"], {}).get("status", ""), "in_scope": "yes"}

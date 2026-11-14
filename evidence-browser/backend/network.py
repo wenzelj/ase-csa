@@ -71,9 +71,115 @@ def _scoped_application_keys() -> set[str]:
     return keys
 
 
+def resolve_application_key(registered: list[str], application_key: str | None) -> str:
+    """The canonical V2 application key for the key a caller passed.
+
+    Browser routes pass the project key (for TETRA: ``tetra``) while V2 scope is keyed by the
+    registered application key (``tetra-reveloc``). The short form is accepted only as a
+    deterministic alias: it must be the prefix, up to a hyphen, of exactly one registered key.
+    An unknown key and a key that matches several registered keys both fail clearly."""
+    key = (application_key or "").strip()
+    if not key:
+        raise ValueError("application_key is required for a scoped view")
+    if key in registered:
+        return key
+    aliases = [candidate for candidate in registered if candidate.startswith(f"{key}-")]
+    if len(aliases) == 1:
+        return aliases[0]
+    if aliases:
+        raise ValueError(f"ambiguous application_key: {key} matches {', '.join(aliases)}")
+    raise ValueError(f"unknown application_key: {key}")
+
+
+def _contract_hosts(db: Path, agents: Path, application_key: str) -> tuple[set[str], set[str], set[str]]:
+    """(owned hosts, visible scoped peer hosts, every registered host) from the repository's
+    projection contract (csa_docx.v2repo.scope). The browser never decides scope itself."""
+    _framework(agents)
+    from csa_docx.v2repo import Repo
+    from csa_docx.v2repo import graph as _v2_graph  # noqa: F401 — patches Repo.graph
+    from csa_docx.v2repo import scope as _v2_scope
+    repo = Repo(db)
+    try:
+        owned, peers = _v2_scope._scoped_host_ids(repo, application_key)
+        registered = _v2_scope._registered_hosts(repo)
+    finally:
+        repo.close()
+    if not owned and not peers:
+        raise ValueError(f"unknown application_key: {application_key}")
+    return ({name.removeprefix("host/") for name in owned}, {name.removeprefix("host/") for name in peers},
+            registered)
+
+
+def _apply_contract(nodes: dict[str, dict], edges: list[dict], view: str, owned: set[str], peers: set[str],
+                    registered: set[str]) -> tuple[dict[str, dict], list[dict]]:
+    """The repository contract applied to the browser's port-level network.
+
+    ``owned`` keeps the owned hosts and the links between them. ``application`` adds the scoped
+    peer hosts the contract makes visible and every external endpoint (an address or name that is
+    not a registered host) on a captured link to an owned host. A registered host that the contract
+    does not make visible (an unlinked peer, another application's host) is never shown, and a
+    link is kept only when one end is an owned host and both ends are visible."""
+    if view == "owned":
+        kept = [edge for edge in edges if edge["s"] in owned and edge["t"] in owned]
+        return {name: node for name, node in nodes.items() if name in owned}, kept
+    visible = set(owned) | set(peers)
+    for edge in edges:
+        for near, far in ((edge["s"], edge["t"]), (edge["t"], edge["s"])):
+            if near in owned and far not in registered:
+                visible.add(far)                     # an external endpoint needs no scope row
+    kept = [edge for edge in edges
+            if (edge["s"] in owned or edge["t"] in owned) and edge["s"] in visible and edge["t"] in visible]
+    return {name: node for name, node in nodes.items() if name in visible}, kept
+
+
+def scoped_network(project: dict[str, str], agents: Path, view: str = "application",
+                   application_key: str | None = None) -> dict[str, Any]:
+    """The one adapter Host network, System Explorer, technical diagrams and CSA figures use.
+
+    Every caller gets the same network for the same store and view, with the selected ``view`` and
+    the canonical ``application_key`` in the response; none of them filters hosts or links itself."""
+    work = Path(project["work_dir"]).expanduser()
+    key = application_key or project.get("key")
+    try:
+        net = build(work, agents, view=view, application_key=key)
+    except TypeError as exc:                         # older test doubles and V1 extensions take no view
+        if "unexpected keyword argument" not in str(exc):
+            raise
+        net = build(work, agents)
+    net.setdefault("view", view)
+    net.setdefault("application_key", key)
+    return net
+
+
+def identity(net: dict[str, Any], node_key: str = "nodes") -> dict[str, set]:
+    """The identity sets parity is judged on: endpoint IDs and (source, target, port) links."""
+    return {"nodes": {node["id"] for node in net.get(node_key, [])},
+            "edges": {(edge["s"], edge["t"], str(edge.get("port", ""))) for edge in net.get("edges", [])}}
+
+
+def parity(surfaces: dict[str, dict[str, set]]) -> dict[str, Any]:
+    """Compare the identity sets of several surfaces for one store and view.
+
+    Returns counts per surface and, for every surface that differs from the first one, the
+    identities it is missing and the ones it adds, so a mismatch is reported rather than accepted."""
+    names = list(surfaces)
+    base = surfaces[names[0]]
+    differences = []
+    for name in names[1:]:
+        for part in ("nodes", "edges"):
+            missing, extra = base[part] - surfaces[name][part], surfaces[name][part] - base[part]
+            if missing or extra:
+                differences.append({"surface": name, "against": names[0], "part": part,
+                                    "missing": sorted(map(str, missing)), "extra": sorted(map(str, extra))})
+    return {"status": "OK" if not differences else "MISMATCH",
+            "counts": {name: {part: len(values) for part, values in sets.items()} for name, sets in surfaces.items()},
+            "differences": differences}
+
+
 def build(work_dir: Path, agents: Path, view: str = "global", application_key: str | None = None) -> dict[str, Any]:
     """One graph, every browser page: Host network, System Explorer, technical diagrams and CSA
-    figures all call this, so the same view can never disagree across the workspace."""
+    figures all reach this through ``scoped_network``, so the same view can never disagree across
+    the workspace."""
     if work_dir.name == "csa-work-v2":
         _check_view(view, application_key)
         return _build_v2(work_dir, agents, view=view, application_key=application_key)
@@ -159,18 +265,19 @@ def _build_v2(work_dir: Path, agents: Path, view: str = "global", application_ke
             "SELECT src,dst,evidence_ids FROM graph_edge WHERE kind='flow' ORDER BY edge_id")]
         evidence = [dict(row) for row in con.execute(
             "SELECT id AS evidence_id,area AS csa_area,status,claim,review_state FROM evidence ORDER BY id")]
-        if view != "global":
-            # Browser routes historically pass the project key (for Tetra: ``tetra``),
-            # while V2 scope is keyed by the application identity (``tetra-reveloc``).
-            # Resolve that compatibility alias only when it maps to one V2 application;
-            # keep genuinely unknown or ambiguous keys as errors.
+        try:
             registered = [row[0] for row in con.execute(
                 "SELECT DISTINCT application_key FROM application_scope ORDER BY application_key")]
-            if application_key not in registered:
-                aliases = [candidate for candidate in registered
-                           if candidate.startswith(f"{application_key}-")]
-                if len(aliases) == 1:
-                    application_key = aliases[0]
+        except sqlite3.OperationalError:             # a store with no scope metadata yet: global only
+            registered = []
+    if view != "global":
+        application_key = resolve_application_key(registered, application_key)
+    else:
+        # The global view is never filtered; a key that resolves only labels the response.
+        try:
+            application_key = resolve_application_key(registered, application_key)
+        except ValueError:
+            application_key = None
     ips: dict[str, list[str]] = {}
     for row in addresses:
         if row["owner_host"]:
@@ -233,33 +340,20 @@ def _build_v2(work_dir: Path, agents: Path, view: str = "global", application_ke
                 edge["ids"] = sorted(set(edge["ids"] + ids))
         elif ids:
             edges.append({"s": source, "t": target, "port": "", "procs": [], "ids": ids, "est": False})
-    if view != "global":
-        _framework(agents)
-        from csa_docx.v2repo import Repo
-        from csa_docx.v2repo import graph as _v2_graph  # noqa: F401 — patches Repo.graph
-        from csa_docx.v2repo import scope as _v2_scope
-        scoped_repo = Repo(db)
-        try:
-            owned, peers = _v2_scope._scoped_host_ids(scoped_repo, application_key)
-        finally:
-            scoped_repo.close()
-        if not owned and not peers:
-            raise ValueError(f"unknown application_key: {application_key}")
-        if view == "owned":
-            allowed_hosts = {name.removeprefix("host/") for name in owned}
-        else:
-            allowed_hosts = {name.removeprefix("host/") for name in owned | peers}
-        # Scope owns application hosts, not every endpoint they contact. Keep
-        # every captured named/IP/service endpoint on an edge touching an
-        # included host; otherwise the scoped view loses Internet,
-        # enterprise and other external connections that the global graph has
-        # already proved from evidence.
-        edges = [edge for edge in edges if edge["s"] in allowed_hosts or edge["t"] in allowed_hosts]
-        endpoints = {endpoint for edge in edges for endpoint in (edge["s"], edge["t"])}
-        nodes = {name: node for name, node in nodes.items() if name in allowed_hosts or name in endpoints}
-    else:
-        application_key = None
+    scope = {"owned": [], "peers": [], "external": []}
+    if application_key and view == "global":
+        try:                                         # labels only: the global view never fails on scope
+            _contract_hosts(db, agents, application_key)
+        except ValueError:
+            application_key = None
+    if application_key:
+        owned, peers, registered_hosts = _contract_hosts(db, agents, application_key)
+        if view != "global":
+            nodes, edges = _apply_contract(nodes, edges, view, owned, peers, registered_hosts)
+        scope = {"owned": sorted(owned & set(nodes)), "peers": sorted(peers & set(nodes)),
+                 "external": sorted(name for name in nodes if name not in registered_hosts)
+                 if view == "application" else []}
     return {"nodes": list(nodes.values()), "edges": edges,
             "source": "csa.sqlite host, address, flow, evidence and graph_edge",
             "matrix_rows": len(evidence), "view": view,
-            "application_key": application_key if view != "global" else None}
+            "application_key": application_key, "scope": scope}

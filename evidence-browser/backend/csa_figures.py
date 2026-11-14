@@ -12,6 +12,12 @@ from typing import Any
 
 from . import network
 
+def scoped_network(project: dict[str, str], agents: Path, view: str = "application",
+                   application_key: str | None = None) -> dict[str, Any]:
+    """The network a CSA figure is drawn from: the same scoped network Host network shows."""
+    return network.scoped_network(project, agents, view=view, application_key=application_key)
+
+
 BLOCKED = {"state": "blocked", "reason": "No single working document was found for this project.", "rows": []}
 
 
@@ -21,8 +27,7 @@ def _ctx(project: dict[str, str], agents: Path, docx: Path, view: str = "global"
     from csa_docx.figures import work as WK
     work = Path(project["work_dir"]).expanduser()
     return WK, WK.open_ctx(project.get("key", ""), work, docx,
-                           network.build(work, agents, view=view,
-                                         application_key=application_key or project.get("key")))
+                           scoped_network(project, agents, view, application_key))
 
 
 def listing(project: dict[str, str], agents: Path, docx: Path | None, view: str = "application",

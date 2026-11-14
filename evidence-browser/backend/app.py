@@ -1191,8 +1191,29 @@ def get_summary(system_key: str) -> dict[str, Any]:
 def host_network(system_key: str, view: str = Query("application"), application_key: str | None = Query(None)) -> dict[str, Any]:
     """The selected application's bounded network, or the complete global graph."""
     project = system_project(system_key)
-    return network.build(work_dir(project), agents_dir(), view=view,
-                         application_key=application_key or project.get("key"))
+    try:
+        return network.scoped_network({**project, "work_dir": str(work_dir(project))}, agents_dir(), view=view,
+                                      application_key=application_key)
+    except ValueError as exc:                        # unknown view, unknown or ambiguous application key
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.get("/api/systems/{system_key}/network/parity")
+def host_network_parity(system_key: str, view: str = Query("application"), application_key: str | None = Query(None)) -> dict[str, Any]:
+    """Read-only diagnostic: do Host network, System Explorer and the CSA figures show the same scoped
+    endpoints and links for this view? Differences are listed, never silently accepted."""
+    project = system_project(system_key)
+    scoped = {**project, "work_dir": str(work_dir(project))}
+    try:
+        net = network.scoped_network(scoped, agents_dir(), view=view, application_key=application_key)
+        explored = explorer.build(scoped, agents_dir(), None, view=view, application_key=application_key)
+        figures = csa_figures.scoped_network(scoped, agents_dir(), view, application_key)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    report = network.parity({"host_network": network.identity(net),
+                             "system_explorer": network.identity(explored, "hosts"),
+                             "csa_figures": network.identity(figures)})
+    return {**report, "view": net.get("view", view), "application_key": net.get("application_key")}
 
 
 ASSET_KINDS = ("application_hosts", "devices", "unidentified", "conflicts")
