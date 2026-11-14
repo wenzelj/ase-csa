@@ -4091,12 +4091,25 @@ def _v2_acceptance(p, work, application_key):
                   "inactive_peers": one("SELECT COUNT(*) FROM application_scope WHERE application_key=? AND membership='peer' "
                                         "AND active=0", application_key)}
         pending = one("SELECT COUNT(*) FROM intake_file WHERE status='pending'")
-        failed = one("SELECT COUNT(*) FROM intake_file WHERE status='failed'")
+        failed_rows = con.execute(
+            "SELECT f.record_id, f.rel_path, COALESCE(NULLIF(r.started_at, ''), r.id) "
+            "FROM intake_file f JOIN intake_record r ON r.id=f.record_id WHERE f.status='failed'").fetchall()
+        processed_rows = con.execute(
+            "SELECT f.rel_path, COALESCE(NULLIF(r.started_at, ''), r.id) "
+            "FROM intake_file f JOIN intake_record r ON r.id=f.record_id WHERE f.status='processed'").fetchall()
+        processed_by_path = {}
+        for rel_path, record_order in processed_rows:
+            processed_by_path.setdefault(rel_path, []).append(record_order)
+        failed_superseded = sum(
+            any(processed_order > record_order for processed_order in processed_by_path.get(rel_path, []))
+            for _record_id, rel_path, record_order in failed_rows)
+        failed = len(failed_rows) - failed_superseded
         other_leads = one("SELECT COUNT(*) FROM lead WHERE state='open' AND searched_scope NOT LIKE 'v2 discovery index:%'")
         open_leads = one("SELECT COUNT(*) FROM lead WHERE state='open'")
         legacy_refs = one("SELECT COUNT(*) FROM application_scope WHERE application_key=? AND active=1 "
                           "AND (source_ref LIKE '%hosts.csv%' OR basis LIKE '%hosts.csv%')", application_key)
-    check("no pending intake files", pending == 0, {"pending": pending, "failed": failed})
+    check("no pending intake files", pending == 0, {"pending": pending, "failed": failed,
+                                                     "failed_superseded": failed_superseded})
     check("only V2 open leads", other_leads == 0, {"open": open_leads, "not_v2": other_leads})
     check("no active scope row cites the V1 host register", legacy_refs == 0, {"rows": legacy_refs})
     if failed:

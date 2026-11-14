@@ -88,6 +88,28 @@ def test_gate_fails_when_a_required_check_is_false(tmp_path):
     assert failed == {"no pending intake files", "only V2 open leads", "stored scope equals a scope rebuild from V2 records"}
 
 
+def test_gate_separates_current_and_superseded_intake_failures(tmp_path):
+    work, registry = _fixture(tmp_path)
+    repo = Repo(work)
+    with repo.tx() as con:
+        con.execute("INSERT INTO intake_record(id, started_at) VALUES ('R-old', '2026-01-01T00:00:00Z')")
+        con.execute("INSERT INTO intake_record(id, started_at) VALUES ('R-new', '2026-01-02T00:00:00Z')")
+        con.execute("INSERT INTO intake_file(record_id, rel_path, status) VALUES ('R-old', 'captures/replayed.txt', 'failed')")
+        con.execute("INSERT INTO intake_file(record_id, rel_path, status) VALUES ('R-new', 'captures/replayed.txt', 'processed')")
+        con.execute("INSERT INTO intake_record(id) VALUES ('R0')")
+        con.execute("INSERT INTO intake_record(id) VALUES ('R1')")
+        con.execute("INSERT INTO intake_file(record_id, rel_path, status) VALUES ('R0', 'captures/fallback.txt', 'failed')")
+        con.execute("INSERT INTO intake_file(record_id, rel_path, status) VALUES ('R1', 'captures/fallback.txt', 'processed')")
+        con.execute("INSERT INTO intake_record(id, started_at) VALUES ('R-latest', '2026-01-03T00:00:00Z')")
+        con.execute("INSERT INTO intake_file(record_id, rel_path, status) VALUES ('R-latest', 'captures/current.txt', 'failed')")
+    repo.close()
+    code, result = _gate("app-a", registry)
+    assert code == 0 and result["status"] == "OK"
+    detail = {check["check"]: check["detail"] for check in result["checks"]}
+    assert detail["no pending intake files"] == {"pending": 0, "failed": 1, "failed_superseded": 2}
+    assert "1 intake file(s) are recorded as failed" in result["limitations"]
+
+
 @pilot
 def test_tetra_cleanup_acceptance():
     db = sqlite3.connect(f"file:{PILOT_DB}?mode=ro", uri=True)
