@@ -26,6 +26,7 @@ import sys
 from pathlib import Path
 
 from csa_docx import doc_spec
+from csa_docx.v2repo import subsection_contract
 
 REFERENCES = Path(__file__).resolve().parents[2] / "references"
 EXAMPLES = REFERENCES / "answer-examples"
@@ -1644,6 +1645,36 @@ def requirement_tokens(card: dict) -> dict[str, int]:
     return {q["id"]: v["tokens"] for q in card.get("questions", []) if (v := requirement_view(card, q["id"]))}
 
 
+def subsection_contract_dict(node: dict, qs: list[dict], spec: dict) -> dict:
+    """The versioned V2 subsection evidence contract for this node.
+
+    Every requested block receives an explicit contract (the specialised
+    contract for its key, when one is defined) or the documented fallback.
+    The contract carries the retrieval requirements — what must be answered,
+    what evidence is allowed, the application view and scope, the graph
+    relationship kinds and the citation and context bounds — without any
+    project facts and without any inferred host identities. It never widens
+    the application scope implicitly and is serialisable and deterministic,
+    so it can be embedded in a card, diffed and replayed in tests.
+
+    Legacy cards remain readable: the contract is an addition to the card
+    dict; nothing here mutates the existing question, evidence or frame
+    structures that legacy readers rely on.
+    """
+    from csa_docx.v2repo import subsection_contract as _sc
+    key = node.get("key", "")
+    question = ""
+    if qs:
+        question = qs[0].get("text", "")
+    specialised = _sc.specialisation_for(key)
+    options: dict = {"specialised": specialised is not None}
+    if specialised is not None:
+        options["specialised_body"] = specialised
+    contract = _sc.build(key, question, **options)
+    contract["obligations_version"] = contract["contract_version"]
+    return contract
+
+
 def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool = True,
          extra_searches: dict | None = None, exclude: tuple[str, ...] = ()) -> dict:
     qs = questions(node, spec)
@@ -1901,6 +1932,7 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
         {k: x[k] for k in ("question", "fact", "evidence_ids", "capture_ids")} for x in keep],
         "frame": frame, "ratings": spec.get("ratings") or doc_spec.DEFAULT_RATINGS,
         "requirement_stories": requirement_stories})
+    sub_contract = subsection_contract_dict(node, qs, spec)
     return {"status": "OK", "key": node["key"], "number": node["number"], "title": node["title"], "text": text,
             "system_name": sysname,
             "questions": qs, "evidence": pack, "established": established, "background_ids": bg_ids,
@@ -1911,7 +1943,7 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
             "parts": {k: v for k, v in pview.items() if k != "lines"} if pview else None,
             "practice": practice_view, "requirement_stories": requirement_stories,
             "drawbridge_functions": {k: v for k, v in db_functions.items() if v},
-            "obligations": obligations}
+            "obligations": obligations, "subsection_contract": sub_contract}
 
 
 def main(argv: list[str] | None = None) -> int:
