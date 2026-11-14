@@ -1883,41 +1883,17 @@ def cmd_graph(a):
     p = project(a.project); banner(p)
     if local_path(p["work_dir"]).name == "csa-work-v2":
         db = local_path(p["work_dir"]) / "csa.sqlite"
-        action = a.rest[0] if a.rest else "stats"
+        # Every V2 graph action reads csa.sqlite through the repository (csa_docx.v2repo.scope.graph_command):
+        # stats | list | get ID | verify | review ID STATE, with --view owned|application|global and
+        # --application-key KEY on the read actions. Anything else returns a documented V2 error
+        # (scope.V2_GRAPH_ERRORS); graph/nodes.csv and graph/edges.csv are never read for a V2 project.
         sys.path.insert(0, str(FRAMEWORK))
         from csa_docx.v2repo import Repo
         import csa_docx.v2repo.graph  # noqa: F401
+        from csa_docx.v2repo import scope as v2_scope
         repo = Repo(db)
         try:
-            graph = repo.graph
-            if action == "stats":
-                nodes, edges = graph.nodes(), graph.edges()
-                counts = lambda rows, key: dict(sorted({k: sum(1 for row in rows if (row.get(key) or "") == k)
-                                                         for k in {row.get(key) or "" for row in rows}}.items()))
-                result = {"status": "OK", "project": p["key"], "nodes": len(nodes), "edges": len(edges),
-                          "nodes_by_type": counts(nodes, "kind"), "edges_by_relationship_type": counts(edges, "kind"),
-                          "source": "csa.sqlite graph_node, graph_edge"}
-            elif action == "list":
-                nodes, edges = graph.nodes(), graph.edges()
-                result = {"status": "OK", "project": p["key"], "node_count": len(nodes), "edge_count": len(edges),
-                          "nodes": nodes, "edges": edges, "source": "csa.sqlite graph_node, graph_edge"}
-            elif action == "get":
-                subject = a.rest[1] if len(a.rest) > 1 else ""
-                row = graph.get(subject)
-                result = {"status": "OK", "subject": row, "source": "csa.sqlite graph_node, graph_edge"} if row else {
-                    "status": "ERROR", "code": "V2_GRAPH_NOT_FOUND", "message": f"graph subject not found: {subject}"}
-            elif action == "verify":
-                result = {**graph.verify(), "source": "csa.sqlite graph_node, graph_edge, evidence"}
-            elif action == "review":
-                subject = a.rest[1] if len(a.rest) > 1 else ""
-                state = a.rest[2] if len(a.rest) > 2 else ""
-                with repo.tx():
-                    result = graph.review(subject, state, actor="csa graph review", note=" ".join(a.rest[3:]))
-            else:
-                result = {"status": "ERROR", "code": "V2_GRAPH_COMMAND_UNAVAILABLE",
-                          "message": f"graph action '{action}' has no V2 implementation; old graph files were not used"}
-        except (KeyError, ValueError) as exc:
-            result = {"status": "ERROR", "code": "V2_GRAPH_REVIEW_ERROR", "message": str(exc)}
+            result = v2_scope.graph_command(repo, a.rest, project_key=p["key"])
         finally:
             repo.close()
         print(json.dumps(result, indent=2, ensure_ascii=False))

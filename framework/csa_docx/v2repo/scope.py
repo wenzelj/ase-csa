@@ -328,3 +328,124 @@ def projected_graph(repo, application_key: str | None = None, view: str = "appli
             "nodes": [selected_nodes[k] for k in sorted(selected_nodes)],
             "edges": [selected[k] for k in sorted(selected)],
             "scope": scope}
+
+
+# --------------------------------------------------------------------------- S616
+# `csa graph` on a csa-work-v2 project.  Every action reads `csa.sqlite`; the legacy
+# `graph/nodes.csv` and `graph/edges.csv` files are never opened, whatever they hold.
+
+GRAPH_SOURCE = "csa.sqlite graph_node, graph_edge"
+V2_GRAPH_ACTIONS = ("stats", "list", "get", "verify", "review")
+V2_GRAPH_ERRORS = {
+    "V2_GRAPH_COMMAND_UNAVAILABLE": "The graph action has no V2 implementation. The V2 graph is derived by "
+                                    "graph.refresh(); legacy graph files are not read or written.",
+    "V2_GRAPH_NOT_FOUND": "No graph node or edge with that ID exists in the selected view.",
+    "V2_GRAPH_SCOPE_ERROR": "The view is not owned, application or global, or the application key is "
+                            "missing or has no scope rows.",
+    "V2_GRAPH_REVIEW_ERROR": "The review subject does not exist or the state is not accepted, reviewed "
+                             "or rejected.",
+}
+
+
+def _graph_error(code: str, message: str) -> dict:
+    return {"status": "ERROR", "code": code, "message": message, "source": GRAPH_SOURCE}
+
+
+def _graph_options(rest: list[str]) -> tuple[list[str], str, str | None]:
+    """Split `--view V` and `--application-key K` from the positional arguments."""
+    args, view, key, i = [], "global", None, 0
+    while i < len(rest):
+        item = rest[i]
+        if item in ("--view", "--application-key"):
+            if i + 1 >= len(rest):
+                raise ValueError(f"{item} needs a value")
+            if item == "--view":
+                view = rest[i + 1]
+            else:
+                key = rest[i + 1]
+            i += 2
+            continue
+        if item.startswith("--view=") or item.startswith("--application-key="):
+            name, value = item.split("=", 1)
+            if name == "--view":
+                view = value
+            else:
+                key = value
+            i += 1
+            continue
+        args.append(item)
+        i += 1
+    return args, view, key
+
+
+def _verify_projection(repo, projection: dict) -> dict:
+    """The checks `graph.verify()` runs, on one projection: cited evidence exists, no dangling edge."""
+    evidence = {row[0] for row in repo.con.execute("SELECT id FROM evidence")}
+    node_ids = {node["node_id"] for node in projection["nodes"]}
+    issues = []
+    for row in projection["nodes"] + projection["edges"]:
+        missing = sorted({x for x in str(row.get("evidence_ids") or "").split(";") if x} - evidence)
+        if missing:
+            issues.append({"id": row.get("node_id") or row.get("edge_id"), "missing": missing})
+    for edge in projection["edges"]:
+        if edge["src"] not in node_ids or edge["dst"] not in node_ids:
+            issues.append({"id": edge["edge_id"], "error": "dangling graph endpoint"})
+    return {"status": "OK" if not issues else "ERROR", "issues": issues,
+            "nodes": len(projection["nodes"]), "edges": len(projection["edges"])}
+
+
+def graph_command(repo, rest: list[str] | None = None, project_key: str | None = None) -> dict:
+    """Run one `csa graph` action against the V2 repository and return its result dict.
+
+    Actions (`V2_GRAPH_ACTIONS`): `stats` (the default), `list`, `get ID`, `verify` and
+    `review ID STATE [note]`.  The read actions take `--view owned|application|global`
+    (default `global`) and `--application-key KEY` (default: the project key) and follow the
+    projection contract of `projected_graph`.  `review` runs in its own transaction and
+    appends a review event.  Anything else returns one of the documented `V2_GRAPH_ERRORS`;
+    no action ever falls back to the legacy graph CSV files.
+    """
+    try:
+        args, view, key = _graph_options(list(rest or []))
+    except ValueError as exc:
+        return _graph_error("V2_GRAPH_SCOPE_ERROR", str(exc))
+    action = args[0] if args else "stats"
+    if action not in V2_GRAPH_ACTIONS:
+        return _graph_error("V2_GRAPH_COMMAND_UNAVAILABLE",
+                            f"graph action '{action}' has no V2 implementation; old graph files were not used")
+    if action == "review":
+        subject = args[1] if len(args) > 1 else ""
+        state = args[2] if len(args) > 2 else ""
+        try:
+            with repo.tx():
+                result = repo.graph.review(subject, state, actor="csa graph review", note=" ".join(args[3:]))
+        except KeyError:
+            return _graph_error("V2_GRAPH_REVIEW_ERROR", f"graph subject not found: {subject}")
+        except ValueError as exc:
+            return _graph_error("V2_GRAPH_REVIEW_ERROR", str(exc))
+        return {**result, "source": GRAPH_SOURCE}
+
+    try:
+        projection = projected_graph(repo, None if view == "global" else (key or project_key), view=view)
+    except ValueError as exc:
+        return _graph_error("V2_GRAPH_SCOPE_ERROR", str(exc))
+    nodes, edges = projection["nodes"], projection["edges"]
+    base = {"status": "OK", "project": project_key, "view": projection["view"],
+            "application_key": projection["application_key"]}
+    if action == "stats":
+        def counts(rows):
+            kinds = sorted({row.get("kind") or "" for row in rows})
+            return {kind: sum(1 for row in rows if (row.get("kind") or "") == kind) for kind in kinds}
+        return {**base, "nodes": len(nodes), "edges": len(edges), "nodes_by_type": counts(nodes),
+                "edges_by_relationship_type": counts(edges), "source": GRAPH_SOURCE}
+    if action == "list":
+        return {**base, "node_count": len(nodes), "edge_count": len(edges), "nodes": nodes, "edges": edges,
+                "source": GRAPH_SOURCE}
+    if action == "get":
+        subject = args[1] if len(args) > 1 else ""
+        row = next((n for n in nodes if n["node_id"] == subject), None) or \
+            next((e for e in edges if e["edge_id"] == subject), None)
+        if not row:
+            return _graph_error("V2_GRAPH_NOT_FOUND", f"graph subject not found: {subject}")
+        return {**base, "subject": row, "source": GRAPH_SOURCE}
+    result = repo.graph.verify() if view == "global" else _verify_projection(repo, projection)
+    return {**base, **result, "source": GRAPH_SOURCE + ", evidence"}
