@@ -1,4 +1,4 @@
-"""A register has one row per host or part, so its card keeps more evidence rows than an ordinary question (48, not 8)."""
+"""Registers retain their explicit bound; ordinary question evidence is not truncated."""
 from pathlib import Path
 
 from csa_docx import section_card
@@ -34,10 +34,10 @@ def test_register_keeps_one_evidence_row_per_host(monkeypatch):
     assert limit == 2 * section_card.REGISTER_ROWS_PER_QUESTION
 
 
-def test_other_questions_keep_the_old_cap(monkeypatch):
+def test_other_questions_keep_all_relevant_evidence(monkeypatch):
     block, limit = _run("narrative", 20, monkeypatch)
-    assert len(block["rows"]) == section_card.MAX_ROWS_PER_QUESTION
-    assert limit == 2 * section_card.MAX_ROWS_PER_QUESTION
+    assert len(block["rows"]) == 20 and block["cut"] == []
+    assert limit == section_card.QUESTION_EVIDENCE_LOOKUP_LIMIT
 
 
 def test_register_also_looks_up_its_first_column(monkeypatch):

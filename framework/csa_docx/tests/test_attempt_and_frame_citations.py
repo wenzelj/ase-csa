@@ -36,6 +36,14 @@ def test_a_frame_row_from_another_topic_is_allowed():
     assert "CITATION_OFF_TOPIC" not in _codes(text, frame_ids=["E-002"])
 
 
+def test_a_frame_id_is_known_during_preflight():
+    text = "## B1 SEP-VULN-01\nFacts:\n- No antivirus was found on HOSTAA101. (E-002) {observed; HOSTAA101}\n"
+    card = {"key": "VULN", "questions": [{"id": "B1", "kind": "requirement"}], "evidence": {},
+            "frame": {"ids": ["E-002"]}}
+    res = answer_sheet.validate(answer_sheet.parse(text), card, MATRIX, draft=True)
+    assert "UNKNOWN_EVIDENCE" not in {f["code"] for f in res["findings"]}
+
+
 def test_a_per_host_fact_the_role_table_states_is_not_dropped():
     matrix = {"E-010": {"evidence_id": "E-010", "status": "VERIFIED", "question": "SEP-DNS-01",
                         "claim": "HOSTAA101 is configured to resolve names through DNSSRV00122 (10.40.228.97) first.",

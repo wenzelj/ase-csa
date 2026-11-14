@@ -30,6 +30,10 @@ from csa_docx import doc_spec
 REFERENCES = Path(__file__).resolve().parents[2] / "references"
 EXAMPLES = REFERENCES / "answer-examples"
 MAX_ROWS_PER_QUESTION = 8
+# Question evidence is no longer truncated for the normal answer lane.  The lookup
+# still needs a finite bound because it is a subprocess/API boundary; the final
+# rows are filtered and de-duplicated before they reach the card.
+QUESTION_EVIDENCE_LOOKUP_LIMIT = 10000
 # A register has one row per host or part, and each needs its own evidence row on the card to be cited. It keeps more rows,
 # and fetches a wider lookup pool, so that per-host rows are not crowded out by the first few matches.
 REGISTER_ROWS_PER_QUESTION = 48
@@ -567,8 +571,9 @@ def evidence_pack(node: dict, qs: list[dict], workspace: Path | None, extra_sear
     Rows recorded for this section (the matrix `section` or `csa_area` names its topic) come first, ranked by
     status and by the words they share with the question; matrix lookups add rows recorded elsewhere; index
     hits not yet in the matrix are offered as unverified candidates only when they are about the question.
-    Rejected rows are never offered. Capped per question; what is cut is listed by ID. Rows in ``skip`` (the ones
-    the analysis frame already cites, with their findings, on the same card) are not repeated, so they take no slot."""
+    Rejected rows are never offered. Normal question evidence is kept in full;
+    registers retain their explicit 48-row safety bound. Rows in ``skip`` (the ones
+    the analysis frame already cites, with their findings, on the same card) are not repeated."""
     pack: dict[str, dict] = {}
     if not workspace:
         return pack
@@ -590,7 +595,7 @@ def evidence_pack(node: dict, qs: list[dict], workspace: Path | None, extra_sear
     for q in qs:
         if q["kind"] == "comment":
             continue
-        cap = REGISTER_ROWS_PER_QUESTION if q.get("kind") == "register" else MAX_ROWS_PER_QUESTION
+        cap = REGISTER_ROWS_PER_QUESTION if q.get("kind") == "register" else None
         qwords = _words(q["text"]) | _words(node["title"])
         searched = [f"matrix rows recorded for {node['title']}"]
         scored: dict[str, tuple] = {}
@@ -608,7 +613,8 @@ def evidence_pack(node: dict, qs: list[dict], workspace: Path | None, extra_sear
             queries.append(" ".join(dict.fromkeys(first + plural)))
         for query in queries:
             searched.append(f"matrix lookup '{query.strip()}'")
-            for m in _matrix(workspace, query, limit=2 * cap):
+            lookup_limit = 2 * cap if cap is not None else QUESTION_EVIDENCE_LOOKUP_LIMIT
+            for m in _matrix(workspace, query, limit=lookup_limit):
                 if m["evidence_id"].upper() in rejected or m["evidence_id"] in scored or m["evidence_id"].upper() in skip:
                     continue
                 if m["evidence_id"].upper() not in offered:
@@ -618,12 +624,12 @@ def evidence_pack(node: dict, qs: list[dict], workspace: Path | None, extra_sear
                 scored[m["evidence_id"]] = (_STATUS_RANK.get(m.get("status", ""), 5) + 1, -int(10 * m.get("score", 0)), m)
         ranked = [v[2] for v in sorted(scored.values(), key=lambda v: (v[0], v[1]))]
         ranked.sort(key=lambda m: bool(newer_of.get(m["evidence_id"].upper())))    # newest captures first (stable)
-        kept = [_row(m) for m in ranked[:cap]]
+        kept = [_row(m) for m in (ranked[:cap] if cap is not None else ranked)]
         for k_ in kept:
             if newer_of.get(k_["id"].upper()):
                 k_["superseded_by"] = newer_of[k_["id"].upper()]
         old_ = {m["evidence_id"]: newer_of[m["evidence_id"].upper()] for m in ranked if newer_of.get(m["evidence_id"].upper())}
-        cut =[m["evidence_id"] for m in ranked[cap:]]
+        cut = [m["evidence_id"] for m in (ranked[cap:] if cap is not None else [])]
         cands = []
         for term in (terms or {}).get(q["id"], []):        # the frame's own words for this question's slots
             searched.append(f"index '{term}'")
@@ -1657,13 +1663,16 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
                            and any(k.strip().lower() == "discovery information"
                                    for k in (node.get("facets") or {})))
     fr = None                    # the analysis frame: built first, so each requirement question can list what it owes
-    if evidence and workspace:   # and the evidence pack does not repeat the rows the frame already cites
+    if evidence and workspace:
         from csa_docx import topic_frames
         fr = topic_frames.build(Path(workspace), node["title"], node.get("key", ""), questions=qs)
         if fr.get("status") != "OK":
             fr = None
     on_frame = frozenset(i.upper() for i in topic_frames.all_ids(fr)) if fr else frozenset()
-    pack = evidence_pack(node, qs, workspace, extra_searches, exclude, skip=on_frame,
+    # Keep the frame's source rows in the evidence pack as well as its analysis
+    # findings.  The model can now inspect the underlying claims instead of
+    # relying only on the frame's compressed summary.
+    pack = evidence_pack(node, qs, workspace, extra_searches, exclude, skip=frozenset(),
                          terms=frame_terms(node, qs) if fr else None) if evidence else {}
     established = _established(node, qs, pack, workspace) if pack else {}
     if pack:
