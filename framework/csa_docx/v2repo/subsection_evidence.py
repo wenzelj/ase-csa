@@ -88,18 +88,38 @@ def _scope_projection(con, application_key: str) -> dict:
                 peers.append(row["host_name"])
     except Exception:
         pass
-    # external endpoints: flow endpoints not in owned/peers and not registered hosts
+    # External endpoints are only visible when a flow connects them to this
+    # application's owned or accepted peer hosts.  Do not scan every flow in
+    # the store: that would leak another application's external endpoints.
     external = []
     try:
         for (endpoint,) in con.execute(
-                "SELECT src_host FROM flow UNION SELECT dst_host FROM flow "
-                "ORDER BY 1"):
+                "SELECT src_host FROM flow WHERE dst_host IN ("
+                "SELECT host_name FROM application_scope WHERE application_key=? AND active=1 "
+                "AND review_state IN ('accepted','proposed')) "
+                "UNION SELECT dst_host FROM flow WHERE src_host IN ("
+                "SELECT host_name FROM application_scope WHERE application_key=? AND active=1 "
+                "AND review_state IN ('accepted','proposed')) ORDER BY 1",
+                application_key, application_key):
             if endpoint not in owned and endpoint not in peers:
                 if not _row(con, "SELECT 1 FROM host WHERE name=?", endpoint):
                     external.append(endpoint)
     except Exception:
         pass
     return {"owned": sorted(owned), "peers": sorted(peers), "external": sorted(external)}
+
+
+def _bounded_scope(scope: dict, limit: int) -> tuple[dict, bool]:
+    """Bound visible identities while retaining owned hosts before peers/endpoints."""
+    limit = max(0, int(limit))
+    ordered = [("owned", scope.get("owned", [])), ("peers", scope.get("peers", [])),
+               ("external", scope.get("external", []))]
+    remaining = limit
+    bounded = {}
+    for name, values in ordered:
+        bounded[name] = list(values[:remaining])
+        remaining = max(0, remaining - len(bounded[name]))
+    return bounded, sum(len(v) for _, v in ordered) > limit
 
 
 def _matches(text: str, term: str) -> bool:
@@ -179,8 +199,10 @@ def build_package(db, *, subsection_key: str, application_key: str, question: st
             })
 
         # 2. canonical projection identities
-        scope = _scope_projection(con, application_key)
+        raw_scope = _scope_projection(con, application_key)
+        scope, hosts_truncated = _bounded_scope(raw_scope, lim["hosts"])
         all_hosts = scope["owned"] + scope["peers"] + scope["external"]
+        all_hosts_total = sum(len(v) for v in raw_scope.values())
 
         # 3. addresses / flows / services / graph edges for the visible hosts
         if all_hosts:
@@ -272,7 +294,7 @@ def build_package(db, *, subsection_key: str, application_key: str, question: st
         "terms_used": list(terms),
         "revision": v2_access.store_revision(Path(db)),
         "counts": {
-            "evidence": evidence_total, "hosts": len(all_hosts), "connections": conn_total,
+            "evidence": evidence_total, "hosts": all_hosts_total, "connections": conn_total,
             "chunks": chunks_total, "leads": leads_total, "warnings": warnings_total,
         },
         "evidence": evidence,
@@ -285,10 +307,21 @@ def build_package(db, *, subsection_key: str, application_key: str, question: st
         "leads": leads,
         "warnings": warnings,
         "truncated": {
-            "evidence": evidence_total > lim["evidence"], "hosts": len(all_hosts) > lim["hosts"],
+            "evidence": evidence_total > lim["evidence"], "hosts": hosts_truncated,
             "connections": conn_total > lim["connections"], "chunks": chunks_total > lim["chunks"],
             "leads": leads_total > lim["leads"], "warnings": warnings_total > lim["warnings"],
         },
+        "more_available": bool(evidence_total > lim["evidence"] or hosts_truncated
+                                or conn_total > lim["connections"] or chunks_total > lim["chunks"]
+                                or leads_total > lim["leads"] or warnings_total > lim["warnings"]),
+        "truncation_reasons": [name for name, truncated in (
+            ("evidence_limit", evidence_total > lim["evidence"]),
+            ("host_limit", hosts_truncated),
+            ("connection_limit", conn_total > lim["connections"]),
+            ("chunk_limit", chunks_total > lim["chunks"]),
+            ("lead_limit", leads_total > lim["leads"]),
+            ("warning_limit", warnings_total > lim["warnings"]),
+        ) if truncated],
     }
 
 
@@ -353,7 +386,8 @@ def retrieve(db, *, subsection_key: str, application_key: str, question: str,
     areas = list(dict.fromkeys(list(areas) + list(contract_areas)))  # dedupe, preserve order
 
     with closing(v2_access.connection(Path(db))) as con:
-        scope = _scope_projection(con, application_key)
+        raw_scope = _scope_projection(con, application_key)
+        scope, hosts_truncated = _bounded_scope(raw_scope, lim["hosts"])
         visible_hosts = set(scope["owned"]) | set(scope["peers"]) | set(scope["external"])
 
         # ------------------------------------------------------------------
@@ -584,7 +618,7 @@ def retrieve(db, *, subsection_key: str, application_key: str, question: str,
         "revision": v2_access.store_revision(Path(db)),
         "counts": {
             "evidence": total_evidence,
-            "hosts": len(scope["owned"]) + len(scope["peers"]) + len(scope["external"]),
+            "hosts": sum(len(v) for v in raw_scope.values()),
             "connections": len(flows) + len(services) + len(edges) + len(addresses),
             "chunks": chunks_total,
             "leads": leads_total,
@@ -603,12 +637,17 @@ def retrieve(db, *, subsection_key: str, application_key: str, question: str,
         "warnings": warnings,
         "truncated": {
             "evidence": evidence_trunc,
-            "hosts": False,
+            "hosts": hosts_truncated,
             "connections": connections_trunc,
             "chunks": chunks_trunc,
             "leads": leads_trunc,
             "warnings": warnings_trunc,
         },
         "more_available": (evidence_trunc or chunks_trunc or connections_trunc or
-                           leads_trunc or warnings_trunc),
+                           leads_trunc or warnings_trunc or hosts_truncated),
+        "truncation_reasons": [name for name, truncated in (
+            ("evidence_limit", evidence_trunc), ("host_limit", hosts_truncated),
+            ("connection_limit", connections_trunc), ("chunk_limit", chunks_trunc),
+            ("lead_limit", leads_trunc), ("warning_limit", warnings_trunc),
+        ) if truncated],
     }

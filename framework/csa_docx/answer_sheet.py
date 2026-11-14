@@ -2355,9 +2355,29 @@ def structured_findings(sheet: dict[str, dict], card: dict, pkg: dict) -> list[d
     if not isinstance(pkg, dict):
         return []
     rows, hosts = _pkg_evidence(pkg)
-    v2_host = re.compile(r"\b[A-Z][A-Z0-9-]{4,}\d{2,3}\b")
+    v2_host = re.compile(r"\b[A-Z]{3,}[A-Z0-9-]*\d{2,6}\b")
     ratings = {str(r) for r in card.get("ratings") or []}
     out: list[dict] = []
+
+    def check_ids(qid: str, ids: list[str]) -> None:
+        for raw in ids:
+            i = raw.upper()
+            if _EID.fullmatch(i) and i not in rows:
+                out.append(_f("ERROR", "UNKNOWN_EVIDENCE", qid,
+                               f"{i} is not in the subsection evidence package"))
+
+    def check_zone(qid: str, text: str, ids: list[str]) -> None:
+        if not re.search(r"\bin\s+OT\b", text, re.I):
+            return
+        cited = " ".join((rows.get(i.upper(), {}).get("text") or
+                          rows.get(i.upper(), {}).get("claim") or "")
+                         for i in ids if i.upper() in rows).upper()
+        hosts_named = (set(_HOST.findall(text)) | set(v2_host.findall(text)))
+        unsupported = sorted(h for h in hosts_named if h.upper() not in cited)
+        if unsupported:
+            out.append(_f("ERROR", "ZONE_FACT_NOT_BACKED", qid,
+                           f"the native evidence package does not place {', '.join(unsupported)} in OT"))
+
     for qid, b in sheet.items():
         if qid.startswith("F"):
             continue
@@ -2365,12 +2385,9 @@ def structured_findings(sheet: dict[str, dict], card: dict, pkg: dict) -> list[d
             out.append(_f("ERROR", "RATING_INVALID", qid,
                           f"rating '{b['rating']}' is not one of the card's ratings ({', '.join(sorted(ratings))})"))
         for fact in b.get("facts", []):
-            for i in fact.get("ids", []):
-                i = i.upper()
-                if not _EID.fullmatch(i):
-                    continue                       # another project's row: the cross-project checks decide it
-                if i not in rows:
-                    out.append(_f("ERROR", "UNKNOWN_EVIDENCE", qid, f"{i} is not in the subsection evidence package"))
+            ids = list(fact.get("ids", []))
+            check_ids(qid, ids)
+            check_zone(qid, f"{fact.get('text', '')} {fact.get('scope', '')}", ids)
             if not hosts or fact.get("basis") == "background":
                 continue
             cited = " ".join((rows.get(i.upper(), {}).get("text") or
@@ -2385,6 +2402,16 @@ def structured_findings(sheet: dict[str, dict], card: dict, pkg: dict) -> list[d
                     out.append(_f("ERROR", "HOST_NOT_SUPPORTED", qid,
                                   f"{h} is not a host the subsection evidence package supports"))
                     break
+        for row in b.get("rows", []):
+            text = " | ".join(str(cell) for cell in row)
+            ids = _EID.findall(text)
+            check_ids(qid, ids)
+            check_zone(qid, text, ids)
+        for bullet in b.get("bullets", []):
+            text = str(bullet)
+            ids = _EID.findall(text)
+            check_ids(qid, ids)
+            check_zone(qid, text, ids)
     return out
 
 

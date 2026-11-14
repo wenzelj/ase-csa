@@ -78,14 +78,20 @@ def _contract():
 def test_package_is_versioned_deterministic_and_bounded(tmp_path, monkeypatch):
     db = _seed(tmp_path, monkeypatch)
     a = build_package(db, subsection_key="Time Synchronisation", application_key="tetra-reveloc",
-                      question="Which services?", terms=["1433"], contract=_contract(), limits={"evidence": 2})
+                      question="Which services?", terms=["1433"], contract=_contract(),
+                      limits={"evidence": 2, "hosts": 1})
     b = build_package(db, subsection_key="Time Synchronisation", application_key="tetra-reveloc",
-                      question="Which services?", terms=["1433"], contract=_contract(), limits={"evidence": 2})
+                      question="Which services?", terms=["1433"], contract=_contract(),
+                      limits={"evidence": 2, "hosts": 1})
     assert a == b, "build must be deterministic for the same store revision and options"
     assert a["package_version"] == PACKAGE_VERSION
     assert a["counts"]["evidence"] >= 2                       # two evidence rows matched
     assert len(a["evidence"]) <= 2                             # bounded to cap
     assert a["truncated"]["evidence"] is True                 # and the cut is named
+    assert len(a["hosts"]["owned"]) + len(a["hosts"]["peers"]) <= 1
+    assert a["more_available"] is True
+    assert "host_limit" in a["truncation_reasons"]
+    assert "evidence_limit" in a["truncation_reasons"]
 
 
 def test_package_reads_no_v1_file(tmp_path, monkeypatch):

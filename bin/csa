@@ -34,7 +34,7 @@ import threading
 import tempfile
 import time
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 AGENTS_DIR = Path(__file__).resolve().parents[1]           # .../.agents
@@ -3564,6 +3564,14 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
         res.setdefault("route", answer_route)
         if answer_route.get("package_hash"):
             answer_route["validation_result"] = res.get("status")
+            route_record = dict(answer_route)
+            route_record["validation_findings"] = [
+                {k: f.get(k) for k in ("level", "code", "question", "message")}
+                for f in res.get("findings", [])
+            ]
+            route_record["recorded_at"] = datetime.now(timezone.utc).isoformat()
+            (cards / f"{key}.answer.route.json").write_text(
+                json.dumps(route_record, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         return res
 
     def parallel_blocks() -> list[str]:

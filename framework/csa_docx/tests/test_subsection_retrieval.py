@@ -197,6 +197,7 @@ def test_more_available_shows_when_truncated(tmp_path, monkeypatch):
     # With a very low evidence cap, more_available should be True
     assert pkg["more_available"] is True
     assert pkg["truncated"]["evidence"] is True
+    assert "evidence_limit" in pkg["truncation_reasons"]
 
 
 def test_every_fact_has_provenance_or_non_evidence(tmp_path, monkeypatch):

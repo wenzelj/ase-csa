@@ -145,6 +145,17 @@ def test_unsupported_host_rating_and_evidence_fail_before_render(tmp_path, monke
     assert any(f["code"] == "UNKNOWN_EVIDENCE" for f in findings2)
 
 
+def test_native_structured_checks_cover_rows_bullets_and_zones(tmp_path, monkeypatch):
+    db = _seed(tmp_path, monkeypatch)
+    card = _card(db, monkeypatch)
+    sheet = (f"## B1\nRows:\n| claim | evidence |\n| APP01 is in OT | E-999 |\n"
+             f"Bullets:\n- APP01 is in OT (E-998)\n")
+    findings = answer_sheet.structured_findings(answer_sheet.parse(sheet), card, card["package"])
+    codes = [f["code"] for f in findings]
+    assert codes.count("UNKNOWN_EVIDENCE") == 2
+    assert "ZONE_FACT_NOT_BACKED" in codes
+
+
 def test_valid_structured_sheet_has_no_structured_findings(tmp_path, monkeypatch):
     db = _seed(tmp_path, monkeypatch)
     card = _card(db, monkeypatch)
