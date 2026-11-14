@@ -72,6 +72,7 @@ class Repo:
         self.hosts = _Hosts(self)
         self.evidence = _Evidence(self)
         self.application_scope = _ApplicationScope(self)
+        self.application_ownership = _ApplicationOwnership(self)
         self.intake = _Namespace(self, "intake_file")
         self.leads = _Namespace(self, "lead")
         self.export = _Export(self)
@@ -655,3 +656,52 @@ class _ApplicationScope:
         cursor = self._repo.con.cursor()
         cursor.execute("""SELECT COUNT(*) FROM application_scope WHERE active = 1""")
         return cursor.fetchone()[0]
+
+
+class _ApplicationOwnership:
+    """The explicit ownership record of an application (S617): which hosts it owns, on what
+    source, in which review state. Every write runs in a transaction and appends a review event."""
+
+    COLS = ("application_key", "host_name", "source_ref", "evidence_ids", "review_state",
+            "recorded_by", "recorded_at")
+
+    def __init__(self, repo: Repo):
+        self._repo = repo
+
+    def add(self, application_key: str, host_name: str, source_ref: str, evidence_ids: str | None = None,
+            review_state: str = "proposed", by: str | None = None):
+        """Record (or update) that `application_key` owns `host_name`, with its source reference."""
+        self._repo._require_tx()
+        if not application_key or not host_name:
+            raise ValueError("application_key and host_name are required")
+        if not source_ref or not str(source_ref).strip():
+            raise ValueError("source_ref is required: ownership is never recorded without a source")
+        if review_state not in {"proposed", "accepted", "rejected"}:
+            raise ValueError("review_state must be proposed, accepted or rejected")
+        con = self._repo.con
+        existing = con.execute("SELECT 1 FROM application_ownership WHERE application_key=? AND host_name=?",
+                               (application_key, host_name)).fetchone()
+        if existing:
+            con.execute("UPDATE application_ownership SET source_ref=?, evidence_ids=?, review_state=?, recorded_by=? "
+                        "WHERE application_key=? AND host_name=?",
+                        (source_ref, evidence_ids, review_state, by, application_key, host_name))
+        else:
+            con.execute("INSERT INTO application_ownership (application_key, host_name, source_ref, evidence_ids, "
+                        "review_state, recorded_by) VALUES (?, ?, ?, ?, ?, ?)",
+                        (application_key, host_name, source_ref, evidence_ids, review_state, by))
+        self._repo._audit(by, "ownership.update" if existing else "ownership.add", "application_ownership",
+                          f"{application_key}:{host_name}", f"source_ref={source_ref}; review_state={review_state}")
+        return {"action": "updated" if existing else "inserted", "application_key": application_key,
+                "host_name": host_name}
+
+    def list(self, application_key: str | None = None) -> list[dict]:
+        sql = f"SELECT {', '.join(self.COLS)} FROM application_ownership"
+        params: tuple = ()
+        if application_key:
+            sql += " WHERE application_key = ?"
+            params = (application_key,)
+        sql += " ORDER BY application_key, host_name"
+        return [dict(zip(self.COLS, row)) for row in self._repo.con.execute(sql, params).fetchall()]
+
+    def count(self, application_key: str | None = None) -> int:
+        return len(self.list(application_key))

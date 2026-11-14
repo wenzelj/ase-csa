@@ -181,3 +181,18 @@ CREATE TABLE IF NOT EXISTS application_scope (
 CREATE INDEX IF NOT EXISTS application_scope_app ON application_scope(application_key);
 CREATE INDEX IF NOT EXISTS application_scope_membership ON application_scope(membership);
 
+
+-- ------------------------------------- application ownership (S617)
+-- The explicit, reviewable record that an application owns a host. `csa v2 scope-rebuild`
+-- reads ownership from here, never from a V1 host register, a host name or a folder name.
+CREATE TABLE IF NOT EXISTS application_ownership (
+    application_key TEXT NOT NULL,
+    host_name TEXT NOT NULL REFERENCES host(name),
+    source_ref TEXT NOT NULL,
+    evidence_ids TEXT,
+    review_state TEXT DEFAULT 'proposed' CHECK (review_state IN ('proposed', 'accepted', 'rejected')),
+    recorded_by TEXT,
+    recorded_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    PRIMARY KEY (application_key, host_name)
+);
+CREATE INDEX IF NOT EXISTS application_ownership_app ON application_ownership(application_key);

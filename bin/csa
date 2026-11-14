@@ -4094,9 +4094,29 @@ def cmd_v2(a):
                 out=getattr(a, "out", None), dry_run=True), indent=2))
         return 0
     if a.v2_action == "scope-rebuild":
+        # V2 records only: ownership from application_ownership, proof from flow, service and evidence.
         from csa_docx import v2scope
         return print(json.dumps(v2scope.rebuild(p["project_root"], work, a.application_key,
                                                 dry_run=a.dry_run), indent=2)) or 0
+    if a.v2_action == "ownership":
+        import sqlite3
+        from csa_docx.v2repo import Repo
+        if a.add and not a.source_ref:
+            die("csa v2 ownership --add HOST needs --source-ref: ownership is never recorded without a source")
+        repo = Repo(work)
+        try:
+            if a.add:
+                with repo.tx():
+                    repo.application_ownership.add(a.application_key, a.add, a.source_ref, evidence_ids=a.evidence_ids,
+                                                   review_state=a.review_state, by="csa v2 ownership")
+            rows = repo.application_ownership.list(a.application_key)
+        except (ValueError, sqlite3.IntegrityError) as exc:
+            print(json.dumps({"status": "ERROR", "error": str(exc)}, indent=2)); return 2
+        finally:
+            repo.close()
+        print(json.dumps({"status": "OK", "application_key": a.application_key, "count": len(rows), "owned": rows},
+                         indent=2, ensure_ascii=False))
+        return 0
     argv = ["--v2-dir", str(work), a.v2_action]
     if a.v2_action == "export":
         argv += ["--table", a.table, "--out", a.out]
@@ -6429,7 +6449,7 @@ def main(argv=None) -> int:
     s = sp("model", cmd_model, help="system model store csa-work/model.sqlite (build | counts | export)")
     s.add_argument("action", nargs="?", default="counts", choices=["build", "counts", "export"])
     s.add_argument("--out", help="export: folder to write into (default csa-work/model-export); never over the sources")
-    s = sp("v2", cmd_v2, help="csa-work-v2 repository operations (export | host | report | cleanup | scope-rebuild)")
+    s = sp("v2", cmd_v2, help="csa-work-v2 repository operations (export | host | report | cleanup | scope-rebuild | ownership)")
     v2 = s.add_subparsers(dest="v2_action", required=True)
     e = v2.add_parser("export", help="write a v2 table as CSV")
     e.add_argument("--table", required=True); e.add_argument("--out", required=True)
@@ -6448,9 +6468,15 @@ def main(argv=None) -> int:
     cg = cl.add_mutually_exclusive_group()
     cg.add_argument("--apply", dest="cleanup_apply", help="apply an audited cleanup pack")
     cg.add_argument("--restore", dest="cleanup_restore", help="restore rows from a cleanup pack")
-    sr = v2.add_parser("scope-rebuild", help="rebuild application scope from the source host register")
+    sr = v2.add_parser("scope-rebuild", help="rebuild application scope from V2 ownership, flows, services and evidence")
     sr.add_argument("--application-key", required=True)
     sr.add_argument("--dry-run", action="store_true")
+    ow = v2.add_parser("ownership", help="list an application's owned hosts in V2, or record one (--add HOST --source-ref REF)")
+    ow.add_argument("--application-key", required=True)
+    ow.add_argument("--add", metavar="HOST", help="record that the application owns this host")
+    ow.add_argument("--source-ref", help="where the ownership comes from (an indexed source path or a V2 record)")
+    ow.add_argument("--evidence-ids", help="evidence IDs that support the ownership, comma separated")
+    ow.add_argument("--review-state", default="proposed", choices=["proposed", "accepted", "rejected"])
     s = sp("topic-table", cmd_topic_table, help="role table for a subsection from the captures, rows = role groups (no model); --place writes it into the document")
     s.add_argument("section", help="number, heading or key (3.4, 'Time Synchronisation', TIME)")
     s.add_argument("--place", action="store_true", help="put it under Discovery Information, above the Aspect table")
