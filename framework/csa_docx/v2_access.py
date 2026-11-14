@@ -48,6 +48,45 @@ def evidence_sources(db: Path) -> list[dict]:
             "FROM evidence_source s LEFT JOIN indexed_file i ON i.rel_path=s.rel_path ORDER BY s.rel_path")]
 
 
+def evidence_provenance(db: Path, evidence_id: str | None = None) -> dict[str, dict]:
+    """{evidence ID: provenance} for the rows a provenance repair has checked (S618).
+
+    `state` is `canonical`, `ambiguous` or `unresolved`; `paths` are canonical
+    `indexed_file.rel_path` values and are filled only for a canonical row, so an ambiguous or
+    unresolved row can never be read as a resolved source. A store that has not been checked
+    returns nothing."""
+    with closing(connection(db)) as con:
+        if not con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='evidence_provenance'").fetchone():
+            return {}
+        sql = ("SELECT evidence_id, state, canonical_paths, candidates, original_source, reason, checked_at "
+               "FROM evidence_provenance")
+        rows = con.execute(sql + " WHERE evidence_id=?", (evidence_id,)) if evidence_id else con.execute(sql + " ORDER BY evidence_id")
+        out = {}
+        for row in rows:
+            canonical = row["state"] == "canonical"
+            out[row["evidence_id"]] = {
+                "evidence_id": row["evidence_id"], "state": row["state"],
+                "paths": json.loads(row["canonical_paths"] or "[]") if canonical else [],
+                "candidates": json.loads(row["candidates"] or "[]"),
+                "original_source": row["original_source"] or "", "reason": row["reason"] or "",
+                "checked_at": row["checked_at"] or ""}
+        return out
+
+
+def source_provenance(db: Path, evidence_id: str, source_title: str | None) -> dict:
+    """One row's provenance: the recorded one, or the same resolver run now for an unchecked row."""
+    recorded = evidence_provenance(db, evidence_id).get(evidence_id)
+    if recorded:
+        return {**recorded, "recorded": True}
+    from csa_docx import v2_cleanup
+    with closing(connection(db)) as con:
+        indexed = [row[0] for row in con.execute("SELECT rel_path FROM indexed_file ORDER BY rel_path")]
+    found = v2_cleanup.resolve_source(source_title, indexed)
+    return {"evidence_id": evidence_id, "state": found["state"], "paths": found["paths"],
+            "candidates": found["candidates"], "original_source": source_title or "",
+            "reason": found["reason"], "checked_at": "", "recorded": False}
+
+
 def review_events(db: Path, subject_type: str = "evidence") -> list[dict]:
     """Read append-only V2 review history for a subject type."""
     with closing(connection(db)) as con:

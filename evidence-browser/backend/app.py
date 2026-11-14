@@ -1808,9 +1808,49 @@ def evidence_sources(system_key: str, evidence_id: str) -> dict[str, Any]:
                    if row["evidence_id"].upper() == evidence_id.upper()), None)
     if not target:
         raise HTTPException(404, "Evidence row was not found")
+    if work_dir(project).name == "csa-work-v2":
+        return _v2_evidence_sources(project, target)
     matches = _source_matches(project, target)
     return {"evidence": target, "sources": matches,
             "state": "found" if len(matches) == 1 else "ambiguous" if matches else "unavailable"}
+
+
+def _v2_evidence_sources(project: dict[str, str], target: dict[str, Any]) -> dict[str, Any]:
+    """Source links for a V2 evidence row, from its provenance (csa_docx.v2_access.source_provenance).
+
+    Only a canonical indexed path that resolves to a file inside the project's source boundary is
+    returned as a source. An ambiguous or unresolved row returns no source link: its candidates and
+    the reason are reported beside it so it reads as needing review. A rejected row (previous-CSA
+    evidence among them) is labelled rejected and offers no source."""
+    sys.path.insert(0, str(agents_dir() / "framework"))
+    from csa_docx import v2_access
+    db = work_dir(project) / "csa.sqlite"
+    if (target.get("review_state") or "").lower() == "rejected":
+        return {"evidence": target, "sources": [], "state": "rejected", "candidates": [], "unavailable": [],
+                "provenance": {"state": "rejected", "reason": "the evidence row is rejected and is not a current source"}}
+    provenance = v2_access.source_provenance(db, target["evidence_id"], target.get("source_title"))
+    allowed = source_roots(project)
+    sources, unavailable = [], []
+    with closing(sqlite3.connect(f"file:{db}?mode=ro", uri=True)) as con:
+        for rel_path in provenance["paths"]:
+            row = con.execute("SELECT rowid FROM indexed_file WHERE rel_path=?", (rel_path,)).fetchone()
+            path = resolve_indexed_path(project, rel_path)
+            if row is None:
+                unavailable.append({"rel_path": rel_path, "reason": "the cited path is no longer in the V2 index"})
+            elif not any(path == root or root in path.parents for root in allowed):
+                unavailable.append({"rel_path": rel_path, "reason": "the cited path is outside the project source boundary"})
+            elif not path.is_file():
+                unavailable.append({"rel_path": rel_path, "reason": "the source file is unavailable"})
+            else:
+                sources.append({"file_id": row[0], "rel_path": rel_path, "host": "", "status": "indexed"})
+    if provenance["state"] == "canonical":
+        state = "found" if sources and not unavailable else "unavailable"
+    else:
+        state = "ambiguous" if provenance["state"] == "ambiguous" else "unavailable"
+    return {"evidence": target, "sources": sources if state == "found" else [], "state": state,
+            "candidates": provenance["candidates"], "unavailable": unavailable,
+            "provenance": {"state": provenance["state"], "reason": provenance["reason"],
+                           "original_source": provenance["original_source"], "recorded": provenance["recorded"]}}
 
 
 @app.get("/api/systems/{system_key}/leads/{lead_id}/sources")

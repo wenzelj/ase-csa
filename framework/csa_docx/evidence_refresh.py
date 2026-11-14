@@ -150,21 +150,38 @@ def _run_v2(work_dir: Path, dry_run: bool = False) -> dict:
         removed = {row[0] for row in repo.con.execute("SELECT rel_path FROM intake_file WHERE status='removed'")}
         pending = {row[0] for row in repo.con.execute("SELECT rel_path FROM intake_file WHERE status='pending'")}
         rows = repo.evidence.list()
-        out = {"status": "OK", "checked": 0, "rejected": [], "recheck": [], "dry_run": dry_run,
+        from csa_docx import v2_cleanup
+        recorded = v2_cleanup._provenance_rows(repo.con)
+        listed = sorted(indexed)
+        out = {"status": "OK", "checked": 0, "rejected": [], "recheck": [], "review": [], "dry_run": dry_run,
                "sources": {"indexed": len(indexed), "removed": sorted(removed), "pending": sorted(pending)}}
         reject = []
         for row in rows:
             source = (row.get("source_title") or "").replace("\\", "/").strip()
             if not source or row.get("review_state") == "rejected":
                 continue
-            rel = next((path for path in indexed | removed if source == path or source.startswith(path + " ")), source)
-            if not rel:
-                continue
             out["checked"] += 1
-            if rel in removed or rel not in indexed:
-                reject.append({"evidence_id": row["id"], "reason": f"source unavailable in V2 index: {rel}"})
-            elif rel in pending and row.get("status") == "VERIFIED":
-                out["recheck"].append({"evidence_id": row["id"], "file": rel,
+            # Only a row whose canonical source was recorded (or is itself an indexed or removed path) can be
+            # rejected when that source goes away. A row that never resolved to one indexed file is ambiguous
+            # or unresolved: it is reported for review and stays as it is.
+            before = recorded.get(row["id"])
+            if before and before["state"] == "canonical":
+                paths = json.loads(before["canonical_paths"] or "[]")
+            else:
+                exact = next((path for path in indexed | removed if source == path or source.startswith(path + " ")), None)
+                paths = [exact] if exact else []
+            if not paths:
+                found = v2_cleanup.resolve_source(source, listed)
+                if found["state"] == "canonical":
+                    paths = found["paths"]
+                else:
+                    out["review"].append({"evidence_id": row["id"], "state": found["state"], "why": found["reason"]})
+                    continue
+            gone = [path for path in paths if path in removed or path not in indexed]
+            if gone:
+                reject.append({"evidence_id": row["id"], "reason": f"source unavailable in V2 index: {gone[0]}"})
+            elif any(path in pending for path in paths) and row.get("status") == "VERIFIED":
+                out["recheck"].append({"evidence_id": row["id"], "file": next(p for p in paths if p in pending),
                                        "kind": "changed source", "why": "source is pending re-index in V2 intake"})
         out["rejected"] = reject
         if not dry_run and reject:
