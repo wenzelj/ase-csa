@@ -1,4 +1,6 @@
-"""Read the active v2 store without consulting a project's old csa-work files."""
+"""Read the active v2 store without consulting a project's old csa-work files.
+
+Every read reports its route: `v1-native`, `v2-native` or `v2-compatibility-adapter` (`route()`). A V2 project never opens a csa-work/ file, and a V2 route never falls back to one."""
 
 from __future__ import annotations
 
@@ -14,14 +16,21 @@ from contextlib import closing
 from pathlib import Path
 
 
-def active_db(workspace: Path | None = None) -> Path | None:
+def _db_file(workspace: Path | None = None) -> Path | None:
+    """The csa-work-v2 store's path (or None when not on a V2 route); it may not exist yet."""
     configured = os.environ.get("CSA_WORK_DIR", "")
     work = Path(configured) if configured else (Path(workspace) / "csa-work-v2" if workspace else None)
     if work is None or work.name != "csa-work-v2":
         return None
-    db = work / "csa.sqlite"
+    return work / "csa.sqlite"
+
+
+def active_db(workspace: Path | None = None) -> Path | None:
+    db = _db_file(workspace)
+    if db is None:
+        return None
     if not db.is_file():
-        raise FileNotFoundError(f"v2 store is missing: {db}")
+        raise FileNotFoundError(f"v2 store is missing: {db}; a V2 project never falls back to csa-work/")
     return db
 
 
@@ -95,11 +104,82 @@ def review_events(db: Path, subject_type: str = "evidence") -> list[dict]:
             "WHERE subject_type=? ORDER BY id", (subject_type,))]
 
 
+# ------------------------------------------------------------------ route inventory (S622)
+
+REQUIRED_TABLES = ("evidence", "indexed_file", "indexed_chunk", "lead", "graph_node", "graph_edge",
+                  "host", "address", "service", "flow")
+ROUTE_LABELS = ("v1-native", "v2-native", "v2-compatibility-adapter")
+
+
+def store_revision(db: Path) -> dict:
+    """Bounded, deterministic revision of one V2 store: per-table row counts plus the newest write
+    timestamp SQLite knows (file change time, so it stays stable between reads)."""
+    with closing(connection(db)) as con:
+        names = sorted(name for (name,) in con.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"))
+        tables = {}
+        for name in names:
+            tables[name] = {"rows": con.execute(f"SELECT count(*) FROM {name}").fetchone()[0]}
+        try:
+            mtime = db.stat().st_mtime_ns
+        except OSError:
+            mtime = None
+    return {"tables": tables, "modified_ns": mtime}
+
+
+def missing_tables(db: Path) -> list[str]:
+    """V2 route tables that are absent (or not yet migrated in). A non-empty list fails the route."""
+    have = set()
+    try:
+        with closing(connection(db)) as con:
+            have = {name for (name,) in con.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")}
+    except (sqlite3.Error, OSError):
+        have = set()
+    return [name for name in REQUIRED_TABLES if name not in have]
+
+
+def route(command: str, *, work_dir: Path | None = None, db: Path | None = None,
+          adapter: bool = False, project: str = "") -> dict:
+    """Route diagnostic for one command of one project.
+
+    `route` is `v1-native`, `v2-native` or `v2-compatibility-adapter` (the V2 command still reaches
+    its evidence through a matrix-shaped CSV, e.g. the section card and the answer validator). V2
+    results carry the SQLite path and the database revision; a V2 store with a missing table or the
+    missing store is `BLOCKED`, never a silent csa-work/ fallback."""
+    work = work_dir or (Path(db).parent if db is not None else None)
+    is_v2 = bool(work is not None and Path(work).name == "csa-work-v2")
+    out: dict = {"route": "v2-compatibility-adapter" if adapter else ("v2-native" if is_v2 else "v1-native"),
+                 "command": command, "project": project}
+    if is_v2:
+        candidate = Path(db) if db is not None else _db_file(work)
+        out["store"] = str(candidate)
+        if candidate.is_file():
+            out["revision"] = store_revision(candidate)
+            gaps = missing_tables(candidate)
+            out["missing_tables"] = gaps
+            if gaps:
+                out["status"] = "BLOCKED"
+                out["message"] = ("missing V2 table(s) " + ", ".join(gaps) +
+                                 "; no fallback to csa-work/ files")
+        else:
+            out["status"] = "BLOCKED"
+            out["message"] = f"v2 store is missing: {candidate}; no fallback to csa-work/ files"
+    elif adapter:
+        out["status"] = "ERROR"
+        out["message"] = "v2-compatibility-adapter is not a V1 route"
+    return out
+
+
 def matrix_command(db: Path, args: list[str], workspace: Path | None = None) -> dict:
     """Reuse the established matrix ranking for v2 read commands via a fresh temporary snapshot."""
     if not args or args[0] not in {"lookup", "get", "stats"}:
         return {"status": "ERROR", "code": "V2_COMMAND_UNAVAILABLE",
                 "message": "this evidence command has no v2 implementation; old csa-work was not used"}
+    gaps = missing_tables(db)
+    if gaps:
+        return {"status": "BLOCKED", "code": "V2_TABLES_MISSING",
+                "message": "missing V2 table(s) " + ", ".join(gaps) + "; no fallback to csa-work/ files"}
     script = Path(__file__).resolve().parents[2] / "skills" / "csa-evidence-matrix" / "scripts" / "evidence_matrix.py"
     rows = evidence_rows(db)
     fields = ["evidence_id", "csa_area", "question", "claim", "status", "source_title",
@@ -120,6 +200,11 @@ def matrix_command(db: Path, args: list[str], workspace: Path | None = None) -> 
         return {"status": "ERROR", "code": "V2_LOOKUP_FAILED", "message": (proc.stderr or proc.stdout)[-1000:]}
     if proc.returncode == 0 and result.get("matrix"):
         result["matrix"] = str(db)
+    if "route" not in result:
+        diag = route("ev", work_dir=workspace or db.parent, db=db, adapter=True)
+        result["route"] = diag["route"]
+        if diag.get("revision"):
+            result["revision"] = diag["revision"]
     return result
 
 

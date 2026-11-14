@@ -1192,13 +1192,17 @@ def _evidence_matrix_path(p: dict):
         return
     sys.path.insert(0, str(FRAMEWORK))
     from csa_docx import v2_access
+    db = v2_access.active_db()
+    gaps = v2_access.missing_tables(db)
+    if gaps:
+        die("missing V2 table(s) " + ", ".join(gaps) + "; no fallback to csa-work/ files")
     fields = ["evidence_id", "csa_area", "question", "claim", "status", "source_title", "source_version",
               "section", "page_or_location", "evidence_excerpt", "inference_reason", "confidence", "gap_or_action", "review_state"]
     with tempfile.TemporaryDirectory(prefix="csa-v2-evidence-") as folder:
         path = Path(folder) / "evidence-matrix.csv"
         with path.open("w", newline="", encoding="utf-8") as handle:
             writer = csv.DictWriter(handle, fieldnames=fields); writer.writeheader()
-            writer.writerows({**{key: "" for key in fields}, **row} for row in v2_access.evidence_rows(work / "csa.sqlite"))
+            writer.writerows({**{key: "" for key in fields}, **row} for row in v2_access.evidence_rows(db))
         yield path
 
 
@@ -1720,8 +1724,12 @@ def cmd_ev(a):
     if local_path(p["work_dir"]).name == "csa-work-v2":
         sys.path.insert(0, str(FRAMEWORK))
         from csa_docx import v2_access
+        route = v2_route(p, "ev")
+        if route.get("status") == "BLOCKED":
+            die(route.get("message", "the V2 store cannot be read"))
         result = v2_access.matrix_command(v2_access.active_db(local_path(p["project_root"])), a.rest,
                                           local_path(p["project_root"]))
+        result.setdefault("route", route["route"])
         print(json.dumps(result, indent=2, ensure_ascii=False))
         return 0 if result.get("status") == "OK" else 2
     return run_script("ev", ["--workspace", _ws(p), *a.rest])
@@ -1740,6 +1748,9 @@ def cmd_index(a):
     if local_path(p["work_dir"]).name == "csa-work-v2":
         sys.path.insert(0, str(FRAMEWORK))
         from csa_docx import v2_access
+        route = v2_route(p, "index")
+        if route.get("status") == "BLOCKED":
+            die(route.get("message", "the V2 store cannot be read"))
         db = v2_access.active_db(local_path(p["project_root"]))
         rest = a.rest
         if rest == ["status"]:
@@ -1758,6 +1769,7 @@ def cmd_index(a):
         else:
             result = {"status": "ERROR", "code": "V2_COMMAND_UNAVAILABLE",
                       "message": "this index command has no v2 implementation; old csa-work was not used"}
+        result.setdefault("route", route["route"])
         print(json.dumps(result, indent=2, ensure_ascii=False))
         return 0 if result.get("status") == "OK" else 2
     return run_script("index", ["--project", p["key"], *a.rest])
@@ -3159,6 +3171,38 @@ def project_stage(p: dict) -> str:
     return str(p.get("stage") or "draft").strip().lower()
 
 
+V2_ROUTE_COMMANDS = {
+    "answer": "v2-compatibility-adapter",
+    "draft": "v2-compatibility-adapter",
+    "author": "v2-compatibility-adapter",
+    "ev": "v2-compatibility-adapter",
+    "gap-check": "v2-native",
+    "index": "v2-native",
+    "intake": "v2-native",
+    "ingest": "v2-native",
+    "validate": "v2-compatibility-adapter",
+    "card": "v2-compatibility-adapter",
+    "figure": "v1-native",
+    "figures": "v1-native",
+}
+
+
+def v2_route(p: dict, command: str, *, adapter: bool | None = None, note: str = "") -> dict:
+    """The route diagnostic for one command (S622): `v1-native`, `v2-native` or
+    `v2-compatibility-adapter`, with the SQLite path and database revision for a V2 project.
+    A V2 route that cannot read its store fails BLOCKED; there is no fallback to csa-work/ files."""
+    sys.path.insert(0, str(FRAMEWORK))
+    from csa_docx import v2_access
+    is_adapter = adapter if adapter is not None else (command in V2_ROUTE_COMMANDS and V2_ROUTE_COMMANDS[command] == "v2-compatibility-adapter")
+    out = v2_access.route(command, work_dir=local_path(p["work_dir"]),
+                          adapter=bool(is_adapter),
+                          project=str(p.get("label", p["key"])))
+    out["adapter"] = bool(is_adapter)
+    if note:
+        out["note"] = note
+    return out
+
+
 def answer_blocks_failing(res: dict) -> set[str]:
     """The answer-sheet blocks that the check's errors name (csa_docx.answer_blocks.failing); "*" when an error belongs
     to no block, so the whole sheet goes back."""
@@ -3207,7 +3251,10 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
     cards.mkdir(parents=True, exist_ok=True)
     card_md, sheet, errs = cards / f"{key}.md", cards / f"{key}.answer.md", cards / f"{key}.errors.md"
     card_json = card_md.with_suffix(".json")
-    matrix = work / "evidence-matrix.csv"
+    matrix = work / "evidence-matrix.csv" if work.name != "csa-work-v2" else None
+    answer_route = v2_route(p, "draft" if draft else "answer", note="card and validator evidence through the v2 matrix adapter" if matrix is None else "")
+    if answer_route.get("status") == "BLOCKED":
+        die(answer_route.get("message", "the V2 store cannot be read"))
     started = time.time()
     before = _matrix_ids(work)
     track_draft_run = draft and not getattr(a, "print", False)
@@ -3436,9 +3483,17 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
             return {"status": "ERROR", "findings": [{"level": "ERROR", "code": "NO_SHEET", "question": None,
                                                      "message": f"the answer agent wrote no {sheet.name}. Write the whole sheet "
                                                      f"with your file tool to exactly this path: {sheet}"}], "searches": {}}
-        return _fw_json("csa_docx.answer_sheet", "validate", sheet, "--card", card_json, "--matrix", matrix,
-                        "--new-ids", ",".join(sorted((_matrix_ids(work) - before) | lead_ids)), *(["--draft"] if draft else []), *(["--relaxed"] if draft else []),
-                        *(["--previous", sheet.with_suffix(".prev.md")] if sheet.with_suffix(".prev.md").is_file() else []))
+        if matrix is None:
+            with _evidence_matrix_path(p) as adapter_matrix:
+                res = _fw_json("csa_docx.answer_sheet", "validate", sheet, "--card", card_json, "--matrix", adapter_matrix,
+                               "--new-ids", ",".join(sorted((_matrix_ids(work) - before) | lead_ids)), *(["--draft"] if draft else []), *(["--relaxed"] if draft else []),
+                               *(["--previous", sheet.with_suffix(".prev.md")] if sheet.with_suffix(".prev.md").is_file() else []))
+        else:
+            res = _fw_json("csa_docx.answer_sheet", "validate", sheet, "--card", card_json, "--matrix", matrix,
+                           "--new-ids", ",".join(sorted((_matrix_ids(work) - before) | lead_ids)), *(["--draft"] if draft else []), *(["--relaxed"] if draft else []),
+                           *(["--previous", sheet.with_suffix(".prev.md")] if sheet.with_suffix(".prev.md").is_file() else []))
+        res.setdefault("route", answer_route)
+        return res
 
     def parallel_blocks() -> list[str]:
         """The blocks to answer one call each (cli.yaml answer_by_block: true), from the card; [] means one call."""
@@ -4318,6 +4373,9 @@ def cmd_stale(a):
         sys.path.insert(0, str(FRAMEWORK))
         from csa_docx import v2_ingest
         from csa_docx.v2repo import Repo
+        route = v2_route(p, "stale")
+        if route.get("status") == "BLOCKED":
+            die(route.get("message", "the V2 store cannot be read"))
         work = local_path(p["work_dir"])
         repo = Repo(work)
         try:
@@ -4331,7 +4389,7 @@ def cmd_stale(a):
         out = work / "draft" / "stale.json"
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps({"checked_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-                                   "sections": rows}, indent=1), encoding="utf-8")
+                                   "route": route["route"], "sections": rows}, indent=1), encoding="utf-8")
         for row in rows:
             print(f"  {row['key']:<8} {C['y']}stale{C['0']} ({', '.join(row['changed'])})")
         print(f"{len(rows)} answered subsection(s) need a new answer" if rows else
@@ -4361,6 +4419,9 @@ def cmd_gap_check(a):
     if local_path(p["work_dir"]).name == "csa-work-v2":
         sys.path.insert(0, str(FRAMEWORK))
         from csa_docx import v2_gap
+        route = v2_route(p, "gap-check")
+        if route.get("status") == "BLOCKED":
+            die(route.get("message", "the V2 store cannot be read"))
         section_key = ""
         if a.section:
             section_key = a.section if re.fullmatch(r"[A-Z][A-Z0-9_]*", a.section) else None
@@ -4370,6 +4431,7 @@ def cmd_gap_check(a):
                     die(resolved.get("message", f"cannot resolve '{a.section}'"))
                 section_key = resolved["key"]
         record = v2_gap.run(local_path(p["work_dir"]), section_key)
+        record.setdefault("route", route["route"])
         if a.json:
             print(json.dumps(record, indent=1, ensure_ascii=False))
         else:
@@ -4485,6 +4547,9 @@ def cmd_resolve_gaps(a):
     if local_path(p["work_dir"]).name == "csa-work-v2":
         sys.path.insert(0, str(FRAMEWORK))
         from csa_docx import v2_gap
+        route = v2_route(p, "resolve-gaps")
+        if route.get("status") == "BLOCKED":
+            die(route.get("message", "the V2 store cannot be read"))
         work = local_path(p["work_dir"])
         record_path = work / "intake" / "gap-check-latest.json"
         if getattr(a, "latest", False):
@@ -4494,6 +4559,7 @@ def cmd_resolve_gaps(a):
         else:
             record = v2_gap.run(work, getattr(a, "section", None))
         result = v2_gap.settle(work, record, actor="csa resolve-gaps")
+        result.setdefault("route", route["route"])
         if result.get("status") != "OK":
             print(json.dumps(result, indent=2), file=sys.stderr)
             return 1
@@ -4665,10 +4731,14 @@ def _ingest_v2(p: dict, work: Path, a) -> int:
         print(f"{C['b']}{n}/6 {name}{C['0']}")
         print(line, flush=True)
 
+    route = v2_route(p, "ingest")
+    if route.get("status") == "BLOCKED":
+        die(route.get("message", "the V2 store cannot be read"))
     try:
         s = v2_ingest.run_ingest(local_path(p["project_root"]), work, rebuild=a.rebuild, sources=sources, log=say)
     except FileNotFoundError as e:
         die(str(e))
+    s["route"] = route["route"]
     if s["pending_intake_files"]:
         print(f"{C['y']}{s['pending_intake_files']} new or changed document(s) are indexed but not yet recorded as evidence. "
               f"Run `csa -p {p['key']} intake` before relying on the stale-section result.{C['0']}")
@@ -4780,6 +4850,10 @@ def cmd_agent(a):
         return cmd_intake_files(p, a)
     if a.verb in SECTION_VERBS and a.args and "=" not in a.args[0] and not re.fullmatch(r"\d+(\.\d+)*", a.args[0]):
         a.args = [section_arg(p, a.args[0])] + a.args[1:]
+    if a.verb in ("answer", "draft") and local_path(p["work_dir"]).name == "csa-work-v2":
+        route = v2_route(p, "answer" if a.verb == "answer" else "draft")
+        if route.get("status") == "BLOCKED":
+            die(route.get("message", "the V2 store cannot be read"))
     if (((a.verb in ("author", "answer") and project_stage(p) == "draft") or a.verb == "draft")
             and not getattr(a, "legacy", False) and a.args and not any(x.upper().startswith(("CARD=", "SHEET=", "MODE=", "EDIT_MODE=")) for x in a.args)):
         if not working_docx(p):
@@ -6455,6 +6529,30 @@ def cmd_move(a):
     return _move_run(p, a, ld, a.target, a.stage)
 
 
+def cmd_route(a):
+    """The evidence route of one command for the active project: `v1-native`, `v2-native` or
+    `v2-compatibility-adapter`; for a V2 project the SQLite path and the store revision, and a
+    clear BLOCKED result when the store or a V2 table is missing (never a csa-work/ fallback)."""
+    p = project(a.project)
+    commands = sorted(V2_ROUTE_COMMANDS)
+    command = a.command if a.command in commands else ("unknown" if not a.command else a.command)
+    route = v2_route(p, command)
+    if getattr(a, "json", False):
+        print(json.dumps(route, indent=1, ensure_ascii=False))
+        return 0 if route.get("status") not in ("ERROR", "BLOCKED") else 2
+    print(f"{p.get('label', p['key'])}: {a.command} -> {route['route']}")
+    if route["route"].startswith("v2"):
+        print(f"  store: {route.get('store')}")
+        if route.get("revision"):
+            tables = ", ".join(f"{k}={v['rows']}" for k, v in sorted(route["revision"]["tables"].items()))
+            print(f"  revision: {tables}")
+    if route.get("note"):
+        print(f"  {route['note']}")
+    if route.get("status") == "BLOCKED":
+        print(f"  {C['r']}BLOCKED: {route.get('message')}{C['0']}")
+    return 0 if route.get("status") not in ("ERROR", "BLOCKED") else 2
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="csa", description="CSA agents, skills and framework.", epilog=HELP,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -6477,6 +6575,8 @@ def main(argv=None) -> int:
     sp("projects", cmd_projects)
     s = sp("use", cmd_use); s.add_argument("key")
     sp("agents", cmd_agents)
+    s = sp("route", cmd_route, help="the evidence route of one command: v1-native | v2-native | v2-compatibility-adapter (with the SQLite path and store revision for V2)")
+    s.add_argument("command"); s.add_argument("--json", action="store_true")
     s = sp("scope", cmd_scope, help="one domain's entry from the section scope map"); s.add_argument("key")
     s.add_argument("--json", action="store_true")
     s = sp("brief", cmd_brief, help="the section brief skeleton for an author run (scope map + reviewer comments)"); s.add_argument("section")
