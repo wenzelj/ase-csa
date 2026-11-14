@@ -1,17 +1,83 @@
-"""S592: application-scoped v2 graph projections.
+"""S592/S614: the canonical application-scoped projections of the v2 graph.
 
 `graph.refresh()` keeps `graph_node` / `graph_edge` as the complete global
-view over the active hosts.  This module is a read-only projection over that
-global graph: for a registered application key it returns the owned hosts plus
-the peer endpoints that a current flow, a service/provider relationship or a
-non-rejected source-checked evidence row links to an owned host, where the
-application-scope metadata marks the relationship active.  Nothing here
-deletes or rewrites graph data.
+graph over the active hosts.  This module is the one read-only definition of
+the three views every consumer (repository callers, the Evidence Browser,
+System Explorer and the CSA figures) must share.  Nothing here deletes or
+rewrites graph data, and nothing is copied between application stores.
+
+The projection contract (`PROJECTION_CONTRACT`, version `CONTRACT_VERSION`):
+
+`owned`
+    Only the hosts the selected application owns: an `application_scope` row
+    with `membership='owned'` that is active and not rejected, for a host that
+    is not retired.  Edges are the global edges between two owned hosts.
+
+`application`
+    The owned hosts, plus two different kinds of connected endpoint:
+
+    * a *scoped peer host* is a registered host (a row in `host`).  It is
+      visible only when its `application_scope` row for this application has
+      `membership='peer'`, is active and not rejected, the host is not
+      retired, and a qualifying relationship links it to an owned host;
+    * an *external endpoint* is not a registered host: an external IP address,
+      a named endpoint, a provider endpoint or a service name.  It has no
+      `application_scope` row and needs none.  It is visible when a qualifying
+      relationship links it to an owned host.
+
+    A qualifying relationship is a current flow, a service/provider
+    relationship, or a non-rejected source-backed evidence row whose claim
+    links the two ends.  A registered host with no active scope row for this
+    application (an unlinked peer, another application's host, a retired
+    host, a neighbour-only label) is never visible, whatever touches it.
+    Edges are kept only when one end is an owned host and both ends are
+    visible.
+
+`global`
+    The complete active graph exactly as `graph.refresh()` built it.  Scope
+    metadata never changes it.
+
+`owned` and `application` need an explicit registered application key; an
+omitted key or a key with no scope rows is rejected.  Every projected edge
+keeps its evidence IDs; scoped edges also carry the application key and the
+record they were read from (`source`).
 """
 
 from __future__ import annotations
 
+import hashlib
+import ipaddress
+
 from .graph import _LINK_IN, _LINK_OUT
+
+CONTRACT_VERSION = "v2-scope-1"
+VIEWS = ("owned", "application", "global")
+
+PROJECTION_CONTRACT = {
+    "version": CONTRACT_VERSION,
+    "views": {
+        "owned": "Only active, non-rejected membership='owned' hosts of the application, "
+                 "and the edges between them.",
+        "application": "The owned hosts, plus scoped peer hosts and external endpoints that a "
+                       "current flow, a service/provider relationship or a non-rejected "
+                       "source-backed evidence row links to an owned host.",
+        "global": "The complete active graph; never filtered by application scope.",
+    },
+    "application_key": "Required for 'owned' and 'application'; omitted or unknown keys are rejected.",
+    "scoped_peer_host": "A registered host with an active, non-rejected membership='peer' scope row "
+                        "and a qualifying relationship to an owned host.",
+    "external_endpoint": "Not a registered host (external IP, named endpoint, provider endpoint or "
+                         "service name); needs no scope row, only a qualifying relationship to an "
+                         "owned host.",
+    "qualifying_relationships": ("flow", "service", "evidence"),
+    "never_visible_in_application": ("rejected evidence", "retired hosts", "inactive scope rows",
+                                     "rejected scope rows", "neighbour-only labels",
+                                     "registered hosts without a scope row for the application"),
+    "edge_provenance": ("evidence_ids", "application_key", "source"),
+}
+
+# what an external endpoint is, never a scoped peer host
+EXTERNAL_CLASSES = ("external_ip", "named_endpoint", "provider_endpoint", "service_name")
 
 
 def _scope_rows(repo, application_key: str) -> list[dict]:
@@ -25,16 +91,26 @@ def _scope_rows(repo, application_key: str) -> list[dict]:
     return repo.application_scope.list_app_hosts(application_key=application_key)
 
 
-def _active_scope(repo, application_key: str) -> dict[str, dict]:
-    """Active, non-rejected scope rows keyed by host name.
+def _retired_hosts(repo) -> set[str]:
+    return {name for (name,) in repo.con.execute("SELECT name FROM host WHERE status = 'retired'")}
 
-    `active` marks the relationship as currently valid and `review_state`
-    anything other than `rejected` keeps retired evidence out of scoped views
-    (S592).
+
+def _registered_hosts(repo) -> set[str]:
+    """Every registered host, active or retired: none of them is an external endpoint."""
+    return {name for (name,) in repo.con.execute("SELECT name FROM host")}
+
+
+def _active_scope(repo, application_key: str) -> dict[str, dict]:
+    """Active, non-rejected scope rows of non-retired hosts, keyed by host name.
+
+    `active` marks the relationship as currently valid, a `review_state` of
+    `rejected` keeps retired evidence out of scoped views (S592), and a
+    retired host is never part of a scoped view (S614).
     """
+    retired = _retired_hosts(repo)
     out = {}
     for row in _scope_rows(repo, application_key):
-        if not row["active"] or row["review_state"] == "rejected":
+        if not row["active"] or row["review_state"] == "rejected" or row["host_name"] in retired:
             continue
         out[row["host_name"]] = row
     return out
@@ -45,26 +121,60 @@ def _active_host_names(repo, application_key: str, membership: str) -> set[str]:
             if row["membership"] == membership}
 
 
-def _evidence_link(repo) -> dict[str, set[str]]:
-    """Host pairs linked by a non-rejected source-checked evidence claim.
+def _evidence_pairs(repo) -> list[tuple[str, str, str]]:
+    """(source, destination, evidence ID) for every non-rejected source-backed link claim.
 
     Reuses `graph.py`'s link grammar so an evidence-backed link is the same
-    whether it is read from `graph_edge` or recomputed here (S592).  Rejected
-    rows are excluded.
+    whether it is read from `graph_edge` or recomputed here (S592).  A rejected
+    row, or a row that names no source, is not a qualifying relationship.
     """
-    links: dict[str, set[str]] = {}
-
-    def _add(a: str, b: str):
-        links.setdefault(a, set()).add(b)
-        links.setdefault(b, set()).add(a)
-
+    out = []
     for (eid, claim) in repo.con.execute(
             "SELECT id, claim FROM evidence "
-            "WHERE review_state != 'rejected' AND claim IS NOT NULL ORDER BY id"):
+            "WHERE review_state != 'rejected' AND claim IS NOT NULL "
+            "AND source_title IS NOT NULL AND TRIM(source_title) != '' ORDER BY id"):
         m = _LINK_IN.match(claim) or _LINK_OUT.match(claim)
         if m and m[1] != m[2]:
-            _add(m[1], m[2])
+            out.append((m[1], m[2], eid))
+    return out
+
+
+def _evidence_link(repo) -> dict[str, set[str]]:
+    """Host pairs linked by a non-rejected source-backed evidence claim."""
+    links: dict[str, set[str]] = {}
+    for a, b, _eid in _evidence_pairs(repo):
+        links.setdefault(a, set()).add(b)
+        links.setdefault(b, set()).add(a)
     return links
+
+
+def _relationships(repo) -> list[tuple[str, str, str]]:
+    """Every qualifying relationship as (end, other end, basis), in a stable order."""
+    con = repo.con
+    out = []
+    for (src, dst) in con.execute("SELECT DISTINCT src_host, dst_host FROM flow ORDER BY src_host, dst_host"):
+        if src != dst:
+            out.append((src, dst, "flow"))
+    for (client, provider) in con.execute(
+            "SELECT DISTINCT host, provider_host FROM service "
+            "WHERE provider_host IS NOT NULL AND provider_host != '' ORDER BY host, provider_host"):
+        if client != provider:
+            out.append((client, provider, "service"))
+    for a, b, _eid in _evidence_pairs(repo):
+        out.append((a, b, "evidence"))
+    return out
+
+
+def _linked_to_owned(repo, owned: set[str]) -> dict[str, list[str]]:
+    """{name: bases} for every name a qualifying relationship links to an owned host."""
+    linked: dict[str, list[str]] = {}
+    for a, b, basis in _relationships(repo):
+        for near, far in ((a, b), (b, a)):
+            if near in owned and far not in owned:
+                bases = linked.setdefault(far, [])
+                if basis not in bases:
+                    bases.append(basis)
+    return linked
 
 
 def _scoped_host_ids(repo, application_key: str) -> tuple[set[str], set[str]]:
@@ -72,7 +182,7 @@ def _scoped_host_ids(repo, application_key: str) -> tuple[set[str], set[str]]:
 
     An active peer is visible only when the scope metadata marks it active and
     non-rejected and a current flow, a service/provider relationship or a
-    non-rejected source-checked evidence row links it to an owned host.
+    non-rejected source-backed evidence row links it to an owned host.
     Neighbour-only classifications never link hosts, so they cannot make a
     peer visible (S592).
     """
@@ -80,33 +190,8 @@ def _scoped_host_ids(repo, application_key: str) -> tuple[set[str], set[str]]:
     peers = _active_host_names(repo, application_key, "peer")
     if not owned:
         return set(), set()
-    con = repo.con
-    linked: dict[str, list[str]] = {p: [] for p in peers}
-
-    def _mark(host: str, basis: str):
-        if host in linked:
-            linked[host].append(basis)
-
-    for (src, dst) in con.execute("SELECT src_host, dst_host FROM flow"):
-        if src in owned and dst in peers:
-            _mark(dst, "flow")
-        if dst in owned and src in peers:
-            _mark(src, "flow")
-
-    for (client, provider) in con.execute(
-            "SELECT host, provider_host FROM service WHERE provider_host IS NOT NULL AND provider_host != ''"):
-        if client in owned and provider in peers:
-            _mark(provider, "service")
-        if provider in owned and client in peers:
-            _mark(client, "service")
-
-    for (a, b) in _evidence_link(repo).items():
-        if a in owned and b in peers:
-            _mark(b, "evidence")
-        if b in owned and a in peers:
-            _mark(a, "evidence")
-
-    visible = {h for h, bases in linked.items() if bases}
+    linked = _linked_to_owned(repo, owned)
+    visible = {h for h in peers if linked.get(h)}
     return {f"host/{h}" for h in owned}, {f"host/{h}" for h in visible}
 
 
@@ -116,41 +201,130 @@ def application_hosts(repo, application_key: str) -> set[str]:
     return owned | peers
 
 
+def _require_known_key(repo, application_key: str | None, view: str) -> str:
+    if not application_key or not str(application_key).strip():
+        raise ValueError(f"application_key is required for the {view} view")
+    if not _scope_rows(repo, application_key):
+        raise ValueError(f"unknown application_key: {application_key}")
+    return application_key
+
+
+def _external_class(name: str, kind: str) -> str:
+    """Which kind of external endpoint a node is; never a scoped peer host."""
+    if kind == "service":
+        return "service_name"
+    try:
+        ipaddress.ip_address(name.split("%")[0])
+        return "external_ip"
+    except ValueError:
+        return "provider_endpoint" if kind == "provider" else "named_endpoint"
+
+
+def _edge_id(src: str, dst: str, kind: str) -> str:
+    """The same edge identity `graph.refresh()` gives a (source, destination, kind)."""
+    return f"{kind}/{hashlib.sha1(f'{src}|{dst}|{kind}'.encode('utf-8')).hexdigest()[:12]}"
+
+
+def scope_identities(repo, application_key: str) -> dict:
+    """Who is visible for an application, by class, under the projection contract.
+
+    Returns `owned` and `peers` (sorted `host/<name>` IDs) and `external`, one
+    entry per external endpoint with its node ID, class (`EXTERNAL_CLASSES`)
+    and the bases (`flow`, `service`, `evidence`) that link it to an owned
+    host.  A scoped peer host is never listed as an external endpoint.
+    """
+    _require_known_key(repo, application_key, "application")
+    owned_ids, peer_ids = _scoped_host_ids(repo, application_key)
+    owned = {i.split("/", 1)[1] for i in owned_ids}
+    registered = _registered_hosts(repo)
+    scoped = {row["host_name"] for row in _scope_rows(repo, application_key)}
+    kinds = {n["node_id"]: n["kind"] for n in repo.graph.nodes()}
+    external: dict[str, dict] = {}
+
+    def _external(node_id: str, name: str, kind: str, basis: str):
+        entry = external.setdefault(node_id, {"node_id": node_id, "class": _external_class(name, kind), "basis": []})
+        if basis not in entry["basis"]:
+            entry["basis"].append(basis)
+
+    for name, bases in _linked_to_owned(repo, owned).items():
+        if name in registered or name in scoped:         # a registered or scoped host is governed by its scope row
+            continue
+        node_id = f"host/{name}"
+        for basis in bases:
+            _external(node_id, name, kinds.get(node_id, "endpoint"), basis)
+    for edge in repo.graph.edges(kind="runs"):           # the service names an owned host runs
+        if edge["src"] in owned_ids and edge["dst"].startswith("service/"):
+            _external(edge["dst"], edge["dst"].split("/", 1)[1], "service", "service")
+    return {"application_key": application_key, "owned": sorted(owned_ids), "peers": sorted(peer_ids),
+            "external": [external[k] for k in sorted(external)]}
+
+
 def projected_graph(repo, application_key: str | None = None, view: str = "application") -> dict:
     """Return a graph projection without mutating the repository.
 
+    The three views follow `PROJECTION_CONTRACT` (see the module docstring).
     ``view='global'`` returns the complete graph of active hosts, unchanged
-    regardless of application scope.  ``view='application'`` requires the
-    registered application key and returns its owned hosts plus the
-    evidence-backed active peers, keeping node and edge provenance (including
-    evidence IDs) from the global graph.  Edges are kept only when both
-    endpoints are included hosts, so service and provider context never
-    leaks unrelated global graph nodes.  Shared hosts are projected for every
-    application that holds an active scope row for them (S592).
+    regardless of application scope.  ``view='owned'`` and
+    ``view='application'`` require a registered application key and keep node
+    and edge provenance (including evidence IDs) from the global graph.
+    Shared hosts are projected for every application that holds an active
+    scope row for them (S592).  The result's ``scope`` lists the visible
+    identities by class, so a scoped peer host is told apart from an external
+    endpoint.
     """
-    if view not in {"application", "global"}:
-        raise ValueError("view must be 'application' or 'global'")
-    if view == "application" and not application_key:
-        raise ValueError("application_key is required for the application view")
+    if view not in VIEWS:
+        raise ValueError("view must be 'owned', 'application' or 'global'")
 
     nodes = repo.graph.nodes()
     edges = repo.graph.edges()
     if view == "global":
-        return {
-            "view": "global",
-            "application_key": None,
-            "nodes": nodes,
-            "edges": edges,
-        }
+        return {"view": "global", "application_key": None, "contract": CONTRACT_VERSION,
+                "nodes": nodes, "edges": edges,
+                "scope": {"owned": [], "peers": [], "external": []}}
 
-    owned, peers = _scoped_host_ids(repo, application_key)
-    host_ids = owned | peers
-    selected_edges = [edge for edge in edges
-                      if edge["src"] in host_ids and edge["dst"] in host_ids]
-    selected_nodes = [node for node in nodes if node["node_id"] in host_ids]
-    return {
-        "view": "application",
-        "application_key": application_key,
-        "nodes": selected_nodes,
-        "edges": selected_edges,
-    }
+    ids = scope_identities(repo, _require_known_key(repo, application_key, view))
+    owned = set(ids["owned"])
+    if view == "owned":
+        visible = set(owned)
+        scope = {"owned": ids["owned"], "peers": [], "external": []}
+    else:
+        visible = owned | set(ids["peers"]) | {e["node_id"] for e in ids["external"]}
+        scope = {"owned": ids["owned"], "peers": ids["peers"], "external": ids["external"]}
+
+    def _keep(src: str, dst: str) -> bool:
+        if view == "owned":
+            return src in owned and dst in owned
+        return (src in owned or dst in owned) and src in visible and dst in visible
+
+    selected = {e["edge_id"]: {**e, "application_key": application_key, "source": "graph_edge"}
+                for e in edges if _keep(e["src"], e["dst"])}
+    selected_nodes = {n["node_id"]: n for n in nodes if n["node_id"] in visible}
+
+    if view == "application":
+        # `graph.refresh()` draws an evidence link only between two registered hosts, so an
+        # external endpoint that only an evidence row links to an owned host is projected here.
+        external = {e["node_id"] for e in ids["external"]}
+        by_edge: dict[tuple[str, str], list[str]] = {}
+        for a, b, eid in _evidence_pairs(repo):
+            src, dst = f"host/{a}", f"host/{b}"
+            if (src in owned and dst in external) or (dst in owned and src in external):
+                by_edge.setdefault((src, dst), []).append(eid)
+        for (src, dst), eids in sorted(by_edge.items()):
+            edge_id = _edge_id(src, dst, "flow")
+            edge = selected.get(edge_id)
+            if edge is None:
+                selected[edge_id] = {"edge_id": edge_id, "src": src, "dst": dst, "kind": "flow",
+                                     "evidence_ids": ";".join(sorted(set(eids))),
+                                     "application_key": application_key, "source": "evidence"}
+            else:
+                known = [x for x in (edge["evidence_ids"] or "").split(";") if x]
+                edge["evidence_ids"] = ";".join(sorted(set(known) | set(eids)))
+            for node_id in (src, dst):
+                if node_id not in selected_nodes:
+                    selected_nodes[node_id] = {"node_id": node_id, "label": node_id.split("/", 1)[1],
+                                               "kind": "endpoint", "evidence_ids": ""}
+
+    return {"view": view, "application_key": application_key, "contract": CONTRACT_VERSION,
+            "nodes": [selected_nodes[k] for k in sorted(selected_nodes)],
+            "edges": [selected[k] for k in sorted(selected)],
+            "scope": scope}
