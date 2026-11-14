@@ -111,3 +111,39 @@ def test_previous_csa_evidence_stays_rejected_and_offers_no_source(store):
     assert listed["E-006"]["review_state"] == "rejected"                    # labelled, never shown as current
     assert listed["E-006"]["source_title"] == "Previous_Current_State_Assessment.docx"
     assert not (store.parent / "csa-work").exists()                         # no V1 review log or matrix is written
+
+
+# --------------------------------------------------------------------------- S619: live, read-only
+
+def test_live_v2_source_lookup_never_leaves_the_source_boundary():
+    """Every registered V2 store: a source link is offered only for a canonical path inside the
+    project's source boundary; everything else is reported as ambiguous, unavailable or rejected."""
+    import os
+    import sqlite3
+    registry = Path(os.environ.get("CSA_PROJECTS_FILE") or AGENTS / "csa-context" / "PROJECTS.yaml")
+    if not registry.is_file():
+        pytest.skip("no project registry here: nothing live to check")
+    checked = 0
+    for project in browser.projects().values():
+        work = Path(project["work_dir"]).expanduser()
+        if work.name != "csa-work-v2" or not (work / "csa.sqlite").is_file():
+            continue
+        roots = browser.source_roots(project)
+        with sqlite3.connect(f"file:{work / 'csa.sqlite'}?mode=ro", uri=True) as con:
+            con.row_factory = sqlite3.Row
+            rows = [dict(row) for row in con.execute(
+                "SELECT id AS evidence_id, source_title, review_state FROM evidence ORDER BY id")]
+        states: dict[str, int] = {}
+        for target in rows[::25]:                       # an even sample across the store
+            result = browser._v2_evidence_sources(project, target)
+            states[result["state"]] = states.get(result["state"], 0) + 1
+            assert result["state"] in ("found", "ambiguous", "unavailable", "rejected")
+            if result["state"] != "found":
+                assert result["sources"] == []
+            for source in result["sources"]:
+                path = browser.resolve_indexed_path(project, source["rel_path"])
+                assert path.is_file() and any(root in path.parents for root in roots)
+            checked += 1
+        print(project["key"], states)
+    if not checked:
+        pytest.skip("no registered V2 store is available on this machine")

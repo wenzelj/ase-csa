@@ -4063,6 +4063,106 @@ def cmd_model(a):
                             str(local_path(p["work_dir"])), "--project", str(p.get("key") or p.get("name") or ""), *extra], cwd=str(FRAMEWORK))
 
 
+def _v2_acceptance(p, work, application_key):
+    """The V2 acceptance gate for one application store (S619). It reads; it never repairs.
+
+    Required checks decide the status: no pending intake file, only V2 open leads, stored scope equal
+    to what a scope rebuild would write now, the owned / application / global views consistent with
+    the projection contract, and graph verification clean. What is true but unfinished (ownership not
+    yet imported, provenance not yet recorded or still ambiguous/unresolved, hosts left unclassified)
+    is listed under `limitations` and never hidden or fixed here."""
+    import sqlite3
+    from csa_docx import v2_cleanup, v2scope
+    from csa_docx.v2repo import Repo
+    import csa_docx.v2repo.graph  # noqa: F401
+    from csa_docx.v2repo import scope as v2_scope
+    checks, limitations = [], []
+
+    def check(name, ok, detail):
+        checks.append({"check": name, "ok": bool(ok), "detail": detail})
+
+    db = work / "csa.sqlite"
+    with sqlite3.connect(f"file:{db}?mode=ro", uri=True) as con:
+        one = lambda sql, *args: con.execute(sql, args).fetchone()[0]
+        stored = {"owned": one("SELECT COUNT(*) FROM application_scope WHERE application_key=? AND membership='owned' "
+                               "AND active=1 AND review_state!='rejected'", application_key),
+                  "active_peers": one("SELECT COUNT(*) FROM application_scope WHERE application_key=? AND membership='peer' "
+                                      "AND active=1 AND review_state!='rejected'", application_key),
+                  "inactive_peers": one("SELECT COUNT(*) FROM application_scope WHERE application_key=? AND membership='peer' "
+                                        "AND active=0", application_key)}
+        pending = one("SELECT COUNT(*) FROM intake_file WHERE status='pending'")
+        failed = one("SELECT COUNT(*) FROM intake_file WHERE status='failed'")
+        other_leads = one("SELECT COUNT(*) FROM lead WHERE state='open' AND searched_scope NOT LIKE 'v2 discovery index:%'")
+        open_leads = one("SELECT COUNT(*) FROM lead WHERE state='open'")
+        legacy_refs = one("SELECT COUNT(*) FROM application_scope WHERE application_key=? AND active=1 "
+                          "AND (source_ref LIKE '%hosts.csv%' OR basis LIKE '%hosts.csv%')", application_key)
+    check("no pending intake files", pending == 0, {"pending": pending, "failed": failed})
+    check("only V2 open leads", other_leads == 0, {"open": open_leads, "not_v2": other_leads})
+    check("no active scope row cites the V1 host register", legacy_refs == 0, {"rows": legacy_refs})
+    if failed:
+        limitations.append(f"{failed} intake file(s) are recorded as failed")
+
+    dry = v2scope.rebuild(p["project_root"], work, application_key, dry_run=True)
+    rebuilt = {"owned": dry.get("owned_count"), "active_peers": dry.get("active_peer_count"),
+               "inactive_peers": dry.get("excluded_peer_count")}
+    check("stored scope equals a scope rebuild from V2 records", dry.get("status") == "DRY-RUN" and rebuilt == stored,
+          {"stored": stored, "rebuild": rebuilt, "source": dry.get("source"), "error": dry.get("error")})
+    if dry.get("status") == "DRY-RUN":
+        if dry["ownership_source"] != "application_ownership":
+            limitations.append("ownership is still read from application_scope owned rows; the next applied "
+                               "csa v2 scope-rebuild imports it into application_ownership")
+        if dry["unclassified_hosts"]:
+            limitations.append(f"{len(dry['unclassified_hosts'])} registered host(s) have no ownership, peer scope row "
+                               f"or relationship: {', '.join(dry['unclassified_hosts'][:10])}")
+
+    repo = Repo(db)
+    try:
+        views = {}
+        try:
+            for view in ("owned", "application", "global"):
+                first = v2_scope.projected_graph(repo, None if view == "global" else application_key, view=view)
+                again = v2_scope.projected_graph(repo, None if view == "global" else application_key, view=view)
+                views[view] = first
+                check(f"{view} view is stable", first == again,
+                      {"nodes": len(first["nodes"]), "edges": len(first["edges"]), "contract": first["contract"]})
+            ids = {view: {n["node_id"] for n in views[view]["nodes"]} for view in views}
+            registered = {f"host/{name}" for (name,) in repo.con.execute("SELECT name FROM host")}
+            scope_ids = views["application"]["scope"]
+            allowed_hosts = set(scope_ids["owned"]) | set(scope_ids["peers"])
+            check("owned view holds exactly the owned hosts",
+                  ids["owned"] == set(scope_ids["owned"]) and len(ids["owned"]) == stored["owned"], {"owned": len(ids["owned"])})
+            check("application view holds the owned hosts and only evidence-backed peer hosts",
+                  ids["owned"] <= ids["application"] and (ids["application"] & registered) == allowed_hosts
+                  and len(scope_ids["peers"]) == stored["active_peers"],
+                  {"hosts": len(ids["application"] & registered), "peers": len(scope_ids["peers"]),
+                   "external_endpoints": len(scope_ids["external"])})
+            check("global view is the complete graph",
+                  views["global"]["nodes"] == repo.graph.nodes() and views["global"]["edges"] == repo.graph.edges()
+                  and (ids["application"] & registered) < (ids["global"] & registered),
+                  {"nodes": len(views["global"]["nodes"]), "edges": len(views["global"]["edges"])})
+            verify_global = repo.graph.verify()
+            verify_app = v2_scope.graph_command(repo, ["verify", "--view", "application"], project_key=application_key)
+            check("graph verification passes", verify_global["status"] == "OK" and verify_app["status"] == "OK",
+                  {"global_issues": len(verify_global["issues"]), "application_issues": len(verify_app.get("issues", []))})
+        except ValueError as exc:
+            check("scoped views are available", False, {"error": str(exc)})
+        recorded = v2_cleanup._provenance_rows(repo.con)
+    finally:
+        repo.close()
+    provenance = v2_cleanup.repair_provenance(work, dry_run=True)
+    summary = {k: provenance[k] for k in ("checked", "canonical", "ambiguous", "unresolved")}
+    summary["recorded_rows"] = len(recorded)
+    if len(recorded) < provenance["checked"]:
+        limitations.append(f"provenance is recorded for {len(recorded)} of {provenance['checked']} active evidence rows; "
+                           "csa v2 cleanup --repair-provenance --commit records the rest")
+    if provenance["ambiguous"] or provenance["unresolved"]:
+        limitations.append(f"{provenance['ambiguous']} active evidence row(s) have an ambiguous source and "
+                           f"{provenance['unresolved']} have none that resolves to an indexed file; they need review")
+    return {"status": "OK" if all(c["ok"] for c in checks) else "FAILED", "project": p["key"],
+            "application_key": application_key, "scope": stored, "provenance": summary, "checks": checks,
+            "limitations": limitations, "source": "csa.sqlite (read-only gate; nothing is repaired)"}
+
+
 def cmd_v2(a):
     """On-demand exports from the active project's csa-work-v2 repository."""
     p = project(a.project)
@@ -4098,6 +4198,10 @@ def cmd_v2(a):
         from csa_docx import v2scope
         return print(json.dumps(v2scope.rebuild(p["project_root"], work, a.application_key,
                                                 dry_run=a.dry_run), indent=2)) or 0
+    if a.v2_action == "acceptance":
+        result = _v2_acceptance(p, work, a.application_key or p["key"])
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        return 0 if result["status"] == "OK" else 2
     if a.v2_action == "ownership":
         import sqlite3
         from csa_docx.v2repo import Repo
@@ -6449,7 +6553,7 @@ def main(argv=None) -> int:
     s = sp("model", cmd_model, help="system model store csa-work/model.sqlite (build | counts | export)")
     s.add_argument("action", nargs="?", default="counts", choices=["build", "counts", "export"])
     s.add_argument("--out", help="export: folder to write into (default csa-work/model-export); never over the sources")
-    s = sp("v2", cmd_v2, help="csa-work-v2 repository operations (export | host | report | cleanup | scope-rebuild | ownership)")
+    s = sp("v2", cmd_v2, help="csa-work-v2 repository operations (export | host | report | cleanup | scope-rebuild | ownership | acceptance)")
     v2 = s.add_subparsers(dest="v2_action", required=True)
     e = v2.add_parser("export", help="write a v2 table as CSV")
     e.add_argument("--table", required=True); e.add_argument("--out", required=True)
@@ -6471,6 +6575,8 @@ def main(argv=None) -> int:
     sr = v2.add_parser("scope-rebuild", help="rebuild application scope from V2 ownership, flows, services and evidence")
     sr.add_argument("--application-key", required=True)
     sr.add_argument("--dry-run", action="store_true")
+    ac = v2.add_parser("acceptance", help="read-only V2 acceptance gate: scope, views, graph, intake, leads, provenance")
+    ac.add_argument("--application-key", help="default: the project key")
     ow = v2.add_parser("ownership", help="list an application's owned hosts in V2, or record one (--add HOST --source-ref REF)")
     ow.add_argument("--application-key", required=True)
     ow.add_argument("--add", metavar="HOST", help="record that the application owns this host")

@@ -152,8 +152,8 @@ def test_live_store_parity_reports_counts(tmp_path: Path) -> None:
     """Read-only diagnostic over the registered V2 stores: skipped when none is available here."""
     import os
     registry = Path(os.environ.get("CSA_PROJECTS_FILE") or AGENTS / "csa-context" / "PROJECTS.yaml")
-    if os.environ.get("CSA_LIVE_PARITY") != "1" or not registry.is_file():
-        pytest.skip("set CSA_LIVE_PARITY=1 to compare the surfaces on the registered V2 stores")
+    if os.environ.get("CSA_LIVE_PARITY") == "0" or not registry.is_file():
+        pytest.skip("no project registry here (or CSA_LIVE_PARITY=0): nothing live to compare")
     from backend import app as api, csa_figures, explorer
     checked = 0
     for project in api.projects().values():
@@ -171,5 +171,13 @@ def test_live_store_parity_reports_counts(tmp_path: Path) -> None:
                                      "csa_figures": network.identity(csa_figures.scoped_network(project, AGENTS, view))})
             print(project["key"], view, report["counts"], report["differences"])
             assert report["status"] == "OK", report["differences"]
+            if view == "application":                # no registered host outside the scoped owned and peer hosts
+                with sqlite3.connect(f"file:{work / 'csa.sqlite'}?mode=ro", uri=True) as con:
+                    registered = {row[0] for row in con.execute("SELECT name FROM host")}
+                shown = {node["id"] for node in net["nodes"]} & registered
+                assert shown == set(net["scope"]["owned"]) | set(net["scope"]["peers"])
+                whole = network.scoped_network(project, AGENTS, view="global")
+                assert shown < {node["id"] for node in whole["nodes"]} & registered
             checked += 1
-    assert checked
+    if not checked:
+        pytest.skip("no registered V2 store is available on this machine")
