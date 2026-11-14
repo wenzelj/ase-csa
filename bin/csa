@@ -2589,6 +2589,11 @@ def build_prompt(p: dict, r: dict, args: list[str], local: bool | None = None, i
                 lines.append("\n## Bounded answer context\n\n" + answer_contract.render())
                 lines.append("BLOCK OBLIGATIONS (JSON):\n" + compact)
                 lines.append(f"CONTEXT_VERSION={answer_contract.VERSION} CONTEXT_BYTES={len(compact.encode('utf-8'))}")
+                package = card_data.get("package")
+                if isinstance(package, dict) and package.get("context") == "v2-native":
+                    package_json = json.dumps(package, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+                    lines.append("\nV2_NATIVE_SUBSECTION_PACKAGE (JSON):\n" + package_json)
+                    lines.append("V2_CONTEXT=v2-native PACKAGE_HASH=" + str(package.get("package_hash", "")))
             except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
                 # Older or hand-built cards remain valid.  Their existing prompt
                 # and validator path are unchanged when obligations are absent.
@@ -2671,6 +2676,52 @@ def answer_profile(cli: str | None = None) -> dict:
         }
     return {"name": "default", "context_bytes": None, "output_tokens": None,
             "fix_rounds": int(settings().get("answer_fix_rounds", 2) or 2), "by_block": False}
+
+
+def v2_answer_package(p: dict, number: str, card_path: Path) -> dict | None:
+    """S626: the V2 answer package for one subsection.
+
+    For a V2 project (``work_dir`` named ``csa-work-v2``) this builds the
+    native subsection evidence package (``v2repo.subsection_evidence``) and
+    returns it with the package hash and store revision recorded, so the
+    model call and the validation run share one scoped package.  A V1
+    project returns None: the legacy CSV-only answer path is unchanged, and
+    a V2 route never reads a csa-work/ file.
+    """
+    work = local_path(p["work_dir"])
+    if work.name != "csa-work-v2":
+        return None
+    sys.path.insert(0, str(FRAMEWORK))
+    try:
+        from csa_docx import v2_access
+        from csa_docx.v2repo import subsection_contract as _sc
+        from csa_docx.v2repo import subsection_evidence as _se
+        db = v2_access.active_db(work)
+        if db is None:
+            return None
+        gaps = v2_access.missing_tables(db)
+        if gaps:
+            die("missing V2 table(s) " + ", ".join(gaps) + "; no fallback to csa-work/ files")
+        card = json.loads(card_path.with_suffix(".json").read_text(encoding="utf-8"))
+        key = str(card.get("key") or number)
+        title = str(card.get("title") or card.get("heading") or key)
+        questions = card.get("questions") or []
+        question = str((questions[0] if questions else {}).get("text") or title)
+        contract = _sc.build(title, question, application_view="application")
+        pkg = _se.build_package(db, subsection_key=key, application_key=str(p["key"]),
+                                question=question, terms=[question], contract=contract)
+        import hashlib
+        import json as _json
+        body = {k: v for k, v in pkg.items()
+                if k not in ("revision", "package_hash", "context", "model_profile")}
+        pkg["package_hash"] = hashlib.sha256(
+            _json.dumps(body, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")).hexdigest()[:16]
+        pkg["context"] = "v2-native"
+        pkg["model_profile"] = "v2-subsection-answering"
+        return pkg
+    finally:
+        if str(FRAMEWORK) in sys.path:
+            sys.path.remove(str(FRAMEWORK))
 
 
 _TL = threading.local()
@@ -3325,6 +3376,24 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
         if out.get("status") != "OK":
             die(f"the section card could not be built: {out.get('message', out)}")
         print(f"{C['b']}Card {card_md.name}: {len(out['questions'])} question(s), about {out['tokens']} tokens.{C['0']}")
+        if work.name == "csa-work-v2":
+            # S626: the native subsection evidence package is built before the model
+            # call and carried on the card, so the prompt and the validator share it
+            pkg = v2_answer_package(p, number, card_md)
+            if pkg is not None:
+                card_data = json.loads(card_json.read_text(encoding="utf-8"))
+                card_data["package"] = pkg
+                card_json.write_text(json.dumps(card_data), encoding="utf-8")
+                print(f"{C['d']}V2 evidence package: hash {pkg['package_hash']}, revision "
+                      f"{pkg['revision'].get('modified_ns')} (context v2-native){C['0']}", file=sys.stderr)
+                answer_route["package_hash"] = pkg["package_hash"]
+                answer_route["revision"] = pkg["revision"]
+                answer_route["model_profile"] = pkg["model_profile"]
+                answer_route["note"] = "native V2 subsection evidence package (v2-native context)"
+            else:
+                answer_route["note"] = "legacy compatibility run (explicitly marked)"
+        if answer_route.get("package_hash"):
+            answer_route["validation_result"] = None          # filled by check() below
 
     held_dir = work / "held-from-model"
 
@@ -3493,6 +3562,8 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
                            "--new-ids", ",".join(sorted((_matrix_ids(work) - before) | lead_ids)), *(["--draft"] if draft else []), *(["--relaxed"] if draft else []),
                            *(["--previous", sheet.with_suffix(".prev.md")] if sheet.with_suffix(".prev.md").is_file() else []))
         res.setdefault("route", answer_route)
+        if answer_route.get("package_hash"):
+            answer_route["validation_result"] = res.get("status")
         return res
 
     def parallel_blocks() -> list[str]:

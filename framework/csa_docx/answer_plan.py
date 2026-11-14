@@ -166,5 +166,72 @@ def main(argv: list[str] | None = None) -> int:
     return 1 if errors else 0
 
 
+
+# ---------------------------------------------------------------------------
+# S626: V2 native subsection answering package
+# ---------------------------------------------------------------------------
+#
+# The V2 answer lane works from a native subsection evidence package built
+# natively from the application store (``v2repo.subsection_evidence``), not
+# from a compatibility CSV.  The framework builds the package before the model
+# call and records the package hash, database revision, model profile and the
+# validation result so a run can be replayed and audited.
+#
+# This module exposes a small, deterministic helper that composes the package
+# with the answer-plan rows for one subsection so the plan and the evidence
+# travel together and a legacy card (V1 project, or an explicitly marked
+# compatibility run) keeps the exact same CSV-only shape it has today.
+
+
+def plan_context(rows, card: dict, package: dict | None = None) -> dict:
+    """One structured answer context for a subsection.
+
+    ``rows`` is the answer plan for the subsection (``PlanRows`` or a list of
+    dicts), ``card`` the section card, ``package`` the native V2 subsection
+    evidence package (``v2repo.subsection_evidence.build_package`` or
+    ``retrieve``).  A V1 project or an explicitly marked compatibility run
+    passes ``package=None`` and keeps the legacy CSV-only shape unchanged.
+    """
+    out: dict = {"route": "v2-native" if package is not None else "v1-native",
+                 "contract_version": (package or {}).get("contract_version")
+                 or (card.get("obligations") or {}).get("contract_version") or ""}
+    if package is None:
+        out["plan"] = [dict(r) for r in rows]
+        return out
+    allowed = set()
+    for f in package.get("evidence", []):
+        ids = f.get("evidence_ids") if isinstance(f, dict) else None
+        if isinstance(ids, list):
+            allowed |= {str(x).upper() for x in ids}
+        elif isinstance(f, dict) and f.get("evidence_id"):
+            allowed.add(str(f["evidence_id"]).upper())
+    hosts = set()
+    for k in ("owned", "peers", "external"):
+        hosts.update(str(h).upper() for h in (package.get("hosts") or {}).get(k, []))
+    findings = []
+    for n, r in enumerate(rows, start=1):
+        rr = dict(r)
+        for i in ([x for x in str(rr.get("legacy_ids", "")).split() if x] or []):
+            if i.upper() not in allowed and i.upper().startswith("E-"):
+                findings.append({"level": "ERROR", "code": "UNKNOWN_EVIDENCE",
+                                 "row": n, "message": f"{i} is not in the subsection evidence package"})
+    out["plan"] = [dict(r) for r in rows]
+    out["evidence_ids"] = sorted(allowed)
+    out["hosts"] = sorted(hosts)
+    out["package_hash"] = _package_hash(package)
+    out["revision"] = package.get("revision")
+    out["findings"] = findings
+    return out
+
+
+def _package_hash(package: dict) -> str:
+    """A stable content hash of the package body, independent of dict order."""
+    import hashlib
+    import json
+    body = {k: v for k, v in package.items()
+            if k not in ("revision", "package_hash", "context", "model_profile")}
+    canonical = json.dumps(body, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
 if __name__ == "__main__":
     sys.exit(main())

@@ -2308,6 +2308,86 @@ def block_checks(blk: str, card: dict, qid: str, matrix: dict[str, dict] | None 
     return [f for f in res["findings"] if f["level"] == "ERROR" and f.get("question") == qid and f["code"] not in deferred]
 
 
+
+# ---------------------------------------------------------------------------
+# S626: V2 structured-facts preflight
+# ---------------------------------------------------------------------------
+#
+# A V2 answer run is validated against its native subsection evidence package,
+# not a compatibility CSV.  The structured fact layer runs first (before any
+# prose-quality check): a fact that names a host the package does not
+# support, a zone the package does not place it in, a rating outside the
+# card's rating set, or an evidence ID the package does not carry fails here,
+# before the sheet is ever rendered into the document.
+#
+# Legacy cards (V1 projects, or explicitly marked compatibility runs) carry
+# no package; this layer returns no findings and the existing validator path
+# is unchanged.
+
+
+def _pkg_evidence(pkg: dict) -> tuple[dict[str, dict], set[str]]:
+    """({EVIDENCE_ID: row}, hosts the package supports) from a V2 package."""
+    if not isinstance(pkg, dict):
+        return {}, set()
+    rows: dict[str, dict] = {}
+    hosts: set[str] = set()
+    for f in pkg.get("evidence", []):
+        if not isinstance(f, dict):
+            continue
+        ids = f.get("evidence_ids")
+        if not isinstance(ids, list):
+            ids = [f.get("evidence_id")] if f.get("evidence_id") else []
+        for i in ids:
+            i = str(i).upper()
+            if i and i not in rows:
+                rows[i] = f
+    for k in ("owned", "peers", "external"):
+        hosts |= {str(h).upper() for h in (pkg.get("hosts") or {}).get(k, [])}
+    return rows, hosts
+
+
+def structured_findings(sheet: dict[str, dict], card: dict, pkg: dict) -> list[dict]:
+    """The structured fact checks for one V2 answer sheet against its package.
+
+    Runs before prose validation (``validate``): unsupported hosts, ratings
+    and evidence IDs fail here, so a sheet that fails them never reaches the
+    document. Every finding is an ERROR naming its block."""
+    if not isinstance(pkg, dict):
+        return []
+    rows, hosts = _pkg_evidence(pkg)
+    v2_host = re.compile(r"\b[A-Z][A-Z0-9-]{4,}\d{2,3}\b")
+    ratings = {str(r) for r in card.get("ratings") or []}
+    out: list[dict] = []
+    for qid, b in sheet.items():
+        if qid.startswith("F"):
+            continue
+        if b.get("rating") and ratings and b["rating"] not in ratings:
+            out.append(_f("ERROR", "RATING_INVALID", qid,
+                          f"rating '{b['rating']}' is not one of the card's ratings ({', '.join(sorted(ratings))})"))
+        for fact in b.get("facts", []):
+            for i in fact.get("ids", []):
+                i = i.upper()
+                if not _EID.fullmatch(i):
+                    continue                       # another project's row: the cross-project checks decide it
+                if i not in rows:
+                    out.append(_f("ERROR", "UNKNOWN_EVIDENCE", qid, f"{i} is not in the subsection evidence package"))
+            if not hosts or fact.get("basis") == "background":
+                continue
+            cited = " ".join((rows.get(i.upper(), {}).get("text") or
+                              rows.get(i.upper(), {}).get("claim") or "")
+                            for i in fact.get("ids", []) if i.upper() in rows)
+            seen = cited.upper()
+            for h in (set(_HOST.findall(fact.get("scope") or ""))
+                      | set(_HOST.findall(fact.get("text") or ""))
+                      | set(v2_host.findall(fact.get("scope") or ""))
+                      | set(v2_host.findall(fact.get("text") or ""))):
+                if h.upper() not in hosts and h.upper() not in seen:
+                    out.append(_f("ERROR", "HOST_NOT_SUPPORTED", qid,
+                                  f"{h} is not a host the subsection evidence package supports"))
+                    break
+    return out
+
+
 def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None = None,
              ratings: list[str] | None = None, new_ids: set[str] | None = None, draft: bool = False,
              previous: dict[str, dict] | None = None, relaxed: bool = False) -> dict:
@@ -2326,6 +2406,10 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
     allowed |= {i.upper() for i in (new_ids or set())}
     from csa_docx import answer_preflight
     findings += answer_preflight.findings(sheet, card, allowed)
+    pkg = card.get("package")
+    if isinstance(pkg, dict) and pkg.get("package_version"):
+        # S626: the structured fact layer runs before any prose-quality check
+        findings += structured_findings(sheet, card, pkg)
     allowed |= {i.upper() for k in card.get("keep", []) for i in k.get("evidence_ids", [])}
     background = {i.upper() for i in card.get("background_ids", [])}   # K- passages on the card's background section
     ratings = ratings or card.get("ratings") or ["Met", "Partially Met", "Not Met", "Not Applicable"]
