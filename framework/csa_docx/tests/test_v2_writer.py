@@ -43,6 +43,7 @@ def test_prompt_is_self_contained_and_does_not_require_legacy_reading():
     assert "Do not load legacy agent files" in prompt
     assert "REQUIRED_READING" not in prompt
     assert "cards/TIME.answer.md" in prompt
+    assert len(prompt) < 60000
 
 
 def test_validator_accepts_card_bounded_additions_once():

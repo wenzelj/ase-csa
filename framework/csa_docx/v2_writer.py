@@ -28,19 +28,52 @@ def _canonical(value) -> str:
 
 
 def _card_view(card: dict) -> dict:
-    """Keep the writer-facing card contract, not legacy duplicate evidence projections."""
-    keys = ("key", "number", "title", "system_name", "questions", "obligations", "frame",
-            "ratings", "acronyms", "drawbridge_functions", "parts", "host_register", "role_tables",
-            "role_table", "subsection_contract", "keep", "background_ids")
-    return {key: card[key] for key in keys if key in card}
+    """Keep the writer-facing question contract, not duplicate derived card projections."""
+    qids = {str(q.get("id")) for q in card.get("questions", []) if isinstance(q, dict) and q.get("id")}
+    view = {}
+    for key in ("key", "number", "title", "system_name", "questions", "ratings",
+                "acronyms", "drawbridge_functions", "subsection_contract", "background_ids"):
+        if key in card:
+            view[key] = card[key]
+    obligations = card.get("obligations")
+    if isinstance(obligations, dict):
+        fields = ("contract_version", "question", "kind", "evidence_ids", "digest_ids",
+                  "must_preserve", "table_columns", "ratings", "requirements_stories", "repair")
+        blocks = {
+            qid: {key: block[key] for key in fields if key in block}
+            for qid, block in (obligations.get("blocks") or {}).items()
+            if qid in qids and isinstance(block, dict)
+        }
+        view["obligations"] = {"contract_version": obligations.get("contract_version"), "blocks": blocks}
+    keep = [item for item in (card.get("keep") or [])
+            if isinstance(item, dict) and (not qids or str(item.get("question")) in qids)]
+    if keep:
+        view["keep"] = keep
+    return view
+
+
+def _compact_evidence(rows: list) -> list[dict]:
+    """Keep claim-level provenance; omit repeated filesystem path and candidate dumps."""
+    out = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        item = {key: row[key] for key in ("evidence_id", "text", "source", "location", "status", "review_state", "basis")
+                if row.get(key) is not None}
+        if item:
+            out.append(item)
+    return out
 
 
 def _package_view(package: dict) -> dict:
     """Keep one bounded native package projection and remove derived duplicates."""
     keys = ("context", "package_version", "contract_version", "package_hash", "application_key",
-            "section", "question", "revision", "hosts", "evidence", "connections", "truncated",
+            "section", "question", "revision", "hosts", "truncated",
             "truncation_reasons", "warnings", "counts", "terms_used", "more_available")
-    return {key: package[key] for key in keys if key in package}
+    view = {key: package[key] for key in keys if key in package}
+    if "evidence" in package:
+        view["evidence"] = _compact_evidence(package.get("evidence") or [])
+    return view
 
 
 def _evidence_ids(package: dict) -> set[str]:
