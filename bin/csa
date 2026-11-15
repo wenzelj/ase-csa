@@ -6696,6 +6696,36 @@ def cmd_cutover_gate(a):
     return 0 if result["status"] == "READY" else 2
 
 
+def cmd_retirement_gate(a):
+    sys.path.insert(0, str(FRAMEWORK))
+    from csa_docx import v2_access
+    states = []
+    for item in projects():
+        state = str(item.get("answer_route") or "").strip().lower()
+        if not state:
+            state = "v2-compatibility" if Path(item.get("work_dir", "")).name == "csa-work-v2" else "v1"
+        states.append(state)
+    p = project(a.project)
+    work = local_path(p["work_dir"])
+    acceptance = work / "acceptance"
+    audit = {}
+    try:
+        audit = json.loads((acceptance / "native-audit.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        pass
+    result = v2_access.retirement_gate(states,
+                                       legacy_snapshot=acceptance / "legacy-snapshot.json",
+                                       native_audit=audit)
+    if getattr(a, "json", False):
+        print(json.dumps(result, indent=1, ensure_ascii=False))
+    else:
+        print(f"{p.get('key', '')}: {result['status']}")
+        for name, passed in result["checks"].items():
+            print(f"  {name}: {'PASS' if passed else 'BLOCKED'}")
+        print(f"  {result['message']}")
+    return 0 if result["status"] == "READY" else 2
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="csa", description="CSA agents, skills and framework.", epilog=HELP,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -6721,6 +6751,8 @@ def main(argv=None) -> int:
     s = sp("route", cmd_route, help="the evidence route of one command: v1-native | v2-native | v2-compatibility-adapter (with the SQLite path and store revision for V2)")
     s.add_argument("command"); s.add_argument("--json", action="store_true")
     s = sp("cutover-gate", cmd_cutover_gate, help="read-only V2 native cutover acceptance gate")
+    s.add_argument("--json", action="store_true")
+    s = sp("retirement-gate", cmd_retirement_gate, help="read-only V1 retirement and retention gate")
     s.add_argument("--json", action="store_true")
     s = sp("scope", cmd_scope, help="one domain's entry from the section scope map"); s.add_argument("key")
     s.add_argument("--json", action="store_true")

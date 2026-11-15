@@ -192,6 +192,24 @@ def route(command: str, *, work_dir: Path | None = None, db: Path | None = None,
     return out
 
 
+def retirement_gate(active_route_states: list[str], *, legacy_snapshot: Path | None = None,
+                    native_audit: dict | None = None) -> dict:
+    """Refuse V1 retirement while dependencies or rollback/audit evidence remain incomplete."""
+    states = [str(state or "").strip().lower() for state in active_route_states]
+    checks = {
+        "no_active_v1": not any(state in {"v1", "v1-native"} for state in states),
+        "legacy_snapshot_retained": bool(legacy_snapshot and Path(legacy_snapshot).is_file()),
+        "native_audit": bool(native_audit and native_audit.get("route") == "v2-native"
+                              and native_audit.get("package_hash")
+                              and native_audit.get("validation_result") in ("OK", "READY")),
+    }
+    ready = all(checks.values())
+    return {"status": "READY" if ready else "BLOCKED", "checks": checks,
+            "active_route_states": states,
+            "message": "legacy retirement may proceed to the retained state" if ready
+                       else "retirement is refused until active V1, retention and native-audit gates pass"}
+
+
 def matrix_command(db: Path, args: list[str], workspace: Path | None = None) -> dict:
     """Reuse the established matrix ranking for v2 read commands via a fresh temporary snapshot."""
     if not args or args[0] not in {"lookup", "get", "stats"}:
