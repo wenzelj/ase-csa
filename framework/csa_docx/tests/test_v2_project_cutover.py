@@ -101,3 +101,31 @@ def test_cutover_gate_is_ready_only_when_every_check_passes(tmp_path):
     assert payload["route"] == "v2-native"
     assert all(payload["checks"].values())
     assert not (work / "csa-work" / "evidence-matrix.csv").exists()
+
+
+def test_native_pilot_and_non_migrated_v1_project_are_isolated(tmp_path):
+    registry, work = _gate_project(tmp_path, accepted=True)
+    legacy = tmp_path / "legacy-project" / "csa-work"
+    legacy.mkdir(parents=True)
+    text = registry.read_text(encoding="utf-8").replace("    application: test-app\n",
+                                                           "    application: test-app\n"
+                                                           "    answer_route: v2-native\n")
+    registry.write_text(text +
+                        f"  - key: legacy-app\n"
+                        f"    label: Legacy App\n"
+                        f"    project_root: {legacy.parent}\n"
+                        f"    work_dir: {legacy}\n"
+                        "    answer_route: v1\n")
+    env = {**os.environ, "CSA_PROJECTS_FILE": str(registry)}
+    csa = str(Path(__file__).parents[3] / "bin" / "csa")
+    native = subprocess.run([sys.executable, csa, "--project", "test-app", "route", "answer", "--json"],
+                            capture_output=True, text=True, env=env)
+    legacy_result = subprocess.run([sys.executable, csa, "--project", "legacy-app", "route", "answer", "--json"],
+                                   capture_output=True, text=True, env=env)
+    native_payload = json.loads(native.stdout)
+    legacy_payload = json.loads(legacy_result.stdout)
+    assert native_payload["route"] == "v2-native"
+    assert native_payload["project_route_state"] == "v2-native"
+    assert legacy_payload["route"] == "v1-native"
+    assert legacy_payload["project_route_state"] == "v1"
+    assert native_payload["store"] == str(work / "csa.sqlite")
