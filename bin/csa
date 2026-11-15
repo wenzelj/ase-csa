@@ -3255,7 +3255,7 @@ def v2_route(p: dict, command: str, *, adapter: bool | None = None, note: str = 
     if state == "v2-native" and command in {"answer", "draft", "author"}:
         gate = project_cutover_gate(p)
         out["cutover_gate"] = gate
-        if gate["status"] != "READY":
+        if gate["status"] not in ("READY", "READY_WITH_WARNINGS"):
             out.update({
                 "status": "BLOCKED",
                 "requested_route": "v2-native",
@@ -3280,6 +3280,7 @@ def project_cutover_gate(p: dict) -> dict:
     checks["sources"] = False
     checks["provenance"] = False
     checks["scope"] = False
+    scope_warning = False
     if db.is_file() and checks["schema"]:
         import sqlite3
         try:
@@ -3304,17 +3305,40 @@ def project_cutover_gate(p: dict) -> dict:
         except (OSError, ValueError, AttributeError):
             return False
 
+    scope_review = acceptance / "scope-review.json"
+    try:
+        scope_payload = json.loads(scope_review.read_text(encoding="utf-8"))
+        scope_provisional = (
+            scope_payload.get("status") == "PROVISIONAL"
+            and bool(scope_payload.get("recorded_at"))
+            and bool(scope_payload.get("reviewer"))
+            and bool(scope_payload.get("decision"))
+            and bool(scope_payload.get("store_revision"))
+            and isinstance(scope_payload.get("exceptions"), list)
+        )
+    except (OSError, ValueError, AttributeError):
+        scope_provisional = False
+    if scope_provisional and not checks["scope"]:
+        checks["scope"] = True
+        scope_warning = True
+
     checks["dual_run"] = accepted("dual-run.json")
     checks["draft_lane"] = accepted("draft-lane.json")
     ready = all(checks.values())
+    warnings = []
+    if scope_warning:
+        warnings.append("scope is provisional; recorded exceptions must be re-reviewed when newer evidence is available")
     return {
-        "status": "READY" if ready else "BLOCKED",
+        "status": "READY_WITH_WARNINGS" if ready and warnings else ("READY" if ready else "BLOCKED"),
         "project": p.get("key", ""),
         "route": "v2-native" if ready else "v2-compatibility-adapter",
         "checks": checks,
         "rollback": {"route": "v2-compatibility", "required": True,
                       "snapshot": str(acceptance / "legacy-snapshot.json")},
-        "message": "all native cutover gates passed" if ready else "native answering is refused until every gate passes",
+        "warnings": warnings,
+        "message": ("all native cutover gates passed with warnings" if ready and warnings else
+                     "all native cutover gates passed" if ready else
+                     "native answering is refused until every gate passes"),
     }
 
 
@@ -6706,7 +6730,7 @@ def cmd_cutover_gate(a):
             print(f"  {name}: {'PASS' if passed else 'BLOCKED'}")
         print(f"  rollback: {result['rollback']['route']} (snapshot {result['rollback']['snapshot']})")
         print(f"  {result['message']}")
-    return 0 if result["status"] == "READY" else 2
+    return 0 if result["status"] in ("READY", "READY_WITH_WARNINGS") else 2
 
 
 def cmd_retirement_gate(a):
@@ -6740,6 +6764,7 @@ def cmd_retirement_gate(a):
 
 
 ACCEPTANCE_ARTIFACTS = {
+    "scope-review": ("status", "recorded_at", "reviewer", "decision", "store_revision", "exceptions"),
     "dual-run": ("status", "recorded_at", "route", "model_profile", "contract_version",
                  "native_package_revision", "native_database_revision", "unexplained"),
     "draft-lane": ("status", "recorded_at", "route", "validation_result", "package_hash", "database_revision"),
@@ -6762,8 +6787,9 @@ def cmd_acceptance_record(a):
     if missing:
         print(f"acceptance {a.kind} missing required field(s): {', '.join(missing)}", file=sys.stderr)
         return 2
-    if payload.get("status") not in ("OK", "accepted", "READY"):
-        print("acceptance status must be OK, accepted or READY", file=sys.stderr)
+    allowed_statuses = ("PROVISIONAL", "OK", "accepted", "READY") if a.kind == "scope-review" else ("OK", "accepted", "READY")
+    if payload.get("status") not in allowed_statuses:
+        print("acceptance status must be PROVISIONAL, OK, accepted or READY" if a.kind == "scope-review" else "acceptance status must be OK, accepted or READY", file=sys.stderr)
         return 2
     target_dir = local_path(p["work_dir"]) / "acceptance"
     target_dir.mkdir(parents=True, exist_ok=True)

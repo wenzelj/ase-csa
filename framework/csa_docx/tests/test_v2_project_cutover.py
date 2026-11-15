@@ -2,6 +2,7 @@
 from pathlib import Path
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 
@@ -69,6 +70,47 @@ def _gate_project(tmp_path: Path, accepted: bool) -> tuple[Path, Path]:
                         f"    work_dir: {work}\n"
                         "    application: test-app\n")
     return registry, work
+
+
+def test_cutover_gate_allows_explicit_provisional_scope_with_warning(tmp_path):
+    registry, work = _gate_project(tmp_path, accepted=False)
+    with sqlite3.connect(work / "csa.sqlite") as con:
+        con.execute("UPDATE application_scope SET review_state='proposed'")
+    acceptance = work / "acceptance"
+    acceptance.mkdir()
+    (acceptance / "scope-review.json").write_text(json.dumps({
+        "status": "PROVISIONAL", "recorded_at": "2026-11-15T00:00:00Z",
+        "reviewer": "reviewer", "decision": "continue with current scope; re-review later",
+        "store_revision": {"modified_ns": 1}, "exceptions": ["scope conflict"],
+    }))
+    for name in ("dual-run.json", "draft-lane.json"):
+        (acceptance / name).write_text(json.dumps({"status": "OK", "recorded_at": "2026-11-15T00:00:00Z"}))
+    env = {**os.environ, "CSA_PROJECTS_FILE": str(registry)}
+    result = subprocess.run([sys.executable, str(Path(__file__).parents[3] / "bin" / "csa"),
+                             "--project", "test-app", "cutover-gate", "--json"],
+                            capture_output=True, text=True, env=env)
+    payload = json.loads(result.stdout)
+    assert result.returncode == 0
+    assert payload["status"] == "READY_WITH_WARNINGS"
+    assert payload["checks"]["scope"] is True
+    assert payload["warnings"]
+
+
+def test_acceptance_record_accepts_provisional_scope_review(tmp_path):
+    registry, work = _gate_project(tmp_path, accepted=False)
+    artifact = tmp_path / "scope-review.json"
+    artifact.write_text(json.dumps({
+        "status": "PROVISIONAL", "recorded_at": "2026-11-15T00:00:00Z",
+        "reviewer": "reviewer", "decision": "continue", "store_revision": {"modified_ns": 1},
+        "exceptions": ["scope conflict"],
+    }))
+    env = {**os.environ, "CSA_PROJECTS_FILE": str(registry)}
+    csa = str(Path(__file__).parents[3] / "bin" / "csa")
+    result = subprocess.run([sys.executable, csa, "--project", "test-app", "acceptance", "record",
+                             "--kind", "scope-review", "--input", str(artifact)],
+                            capture_output=True, text=True, env=env)
+    assert result.returncode == 0
+    assert json.loads((work / "acceptance" / "scope-review.json").read_text())["status"] == "PROVISIONAL"
 
 
 def test_cutover_gate_blocks_until_dual_run_and_draft_lane_are_recorded(tmp_path):
