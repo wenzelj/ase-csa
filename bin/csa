@@ -6739,6 +6739,47 @@ def cmd_retirement_gate(a):
     return 0 if result["status"] == "READY" else 2
 
 
+ACCEPTANCE_ARTIFACTS = {
+    "dual-run": ("status", "recorded_at", "route", "model_profile", "contract_version",
+                 "native_package_revision", "native_database_revision", "unexplained"),
+    "draft-lane": ("status", "recorded_at", "route", "validation_result", "package_hash", "database_revision"),
+    "legacy-snapshot": ("status", "recorded_at", "source", "retention"),
+    "native-audit": ("status", "recorded_at", "route", "package_hash", "database_revision",
+                     "contract_version", "validation_result"),
+}
+
+
+def cmd_acceptance_record(a):
+    p = project(a.project)
+    source = Path(a.input).expanduser()
+    try:
+        payload = json.loads(source.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        print(f"acceptance input is not valid JSON: {exc}", file=sys.stderr)
+        return 2
+    required = ACCEPTANCE_ARTIFACTS[a.kind]
+    missing = [key for key in required if key not in payload or payload[key] in (None, "")]
+    if missing:
+        print(f"acceptance {a.kind} missing required field(s): {', '.join(missing)}", file=sys.stderr)
+        return 2
+    if payload.get("status") not in ("OK", "accepted", "READY"):
+        print("acceptance status must be OK, accepted or READY", file=sys.stderr)
+        return 2
+    target_dir = local_path(p["work_dir"]) / "acceptance"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / f"{a.kind}.json"
+    if target.is_file():
+        backup = target.with_name(target.name + "." + time.strftime("%Y%m%d%H%M%S") + ".bak")
+        shutil.copy2(target, backup)
+    payload = dict(payload)
+    payload.setdefault("project", p["key"])
+    payload["artifact_kind"] = a.kind
+    target.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    print(json.dumps({"status": "OK", "project": p["key"], "artifact": a.kind,
+                      "path": str(target)}, ensure_ascii=False))
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="csa", description="CSA agents, skills and framework.", epilog=HELP,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -6767,6 +6808,12 @@ def main(argv=None) -> int:
     s.add_argument("--json", action="store_true")
     s = sp("retirement-gate", cmd_retirement_gate, help="read-only V1 retirement and retention gate")
     s.add_argument("--json", action="store_true")
+    s = sp("acceptance", cmd_acceptance_record, help="record validated project acceptance artifacts")
+    acceptance_sub = s.add_subparsers(dest="acceptance_command")
+    record = acceptance_sub.add_parser("record")
+    record.add_argument("--kind", choices=sorted(ACCEPTANCE_ARTIFACTS), required=True)
+    record.add_argument("--input", required=True, help="JSON artifact to validate and record")
+    record.set_defaults(fn=cmd_acceptance_record)
     s = sp("scope", cmd_scope, help="one domain's entry from the section scope map"); s.add_argument("key")
     s.add_argument("--json", action="store_true")
     s = sp("brief", cmd_brief, help="the section brief skeleton for an author run (scope map + reviewer comments)"); s.add_argument("section")

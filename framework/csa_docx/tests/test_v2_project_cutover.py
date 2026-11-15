@@ -166,3 +166,40 @@ def test_ready_gate_allows_native_route(tmp_path):
     assert payload["project_route_state"] == "v2-native"
     assert payload["cutover_gate"]["status"] == "READY"
     assert payload["store"] == str(work / "csa.sqlite")
+
+
+def test_acceptance_record_validates_artifact_and_creates_backup(tmp_path):
+    registry, work = _gate_project(tmp_path, accepted=False)
+    artifact = tmp_path / "dual-run.json"
+    artifact.write_text(json.dumps({
+        "status": "OK", "recorded_at": "2026-11-15T00:00:00Z", "route": "v2-native",
+        "model_profile": "test", "contract_version": "answer-contract-v1",
+        "native_package_revision": "v1", "native_database_revision": {"modified_ns": 1},
+        "unexplained": [],
+    }))
+    env = {**os.environ, "CSA_PROJECTS_FILE": str(registry)}
+    csa = str(Path(__file__).parents[3] / "bin" / "csa")
+    command = [sys.executable, csa, "--project", "test-app", "acceptance", "record",
+               "--kind", "dual-run", "--input", str(artifact)]
+    first = subprocess.run(command, capture_output=True, text=True, env=env)
+    assert first.returncode == 0
+    target = work / "acceptance" / "dual-run.json"
+    assert json.loads(target.read_text(encoding="utf-8"))["artifact_kind"] == "dual-run"
+    second = subprocess.run(command, capture_output=True, text=True, env=env)
+    assert second.returncode == 0
+    assert list((work / "acceptance").glob("dual-run.json.*.bak"))
+
+
+def test_acceptance_record_rejects_incomplete_and_stays_project_scoped(tmp_path):
+    registry, work = _gate_project(tmp_path, accepted=False)
+    artifact = tmp_path / "bad.json"
+    artifact.write_text(json.dumps({"status": "OK", "recorded_at": "2026-11-15T00:00:00Z"}))
+    env = {**os.environ, "CSA_PROJECTS_FILE": str(registry)}
+    result = subprocess.run([
+        sys.executable, str(Path(__file__).parents[3] / "bin" / "csa"),
+        "--project", "test-app", "acceptance", "record", "--kind", "dual-run",
+        "--input", str(artifact)], capture_output=True, text=True, env=env)
+    assert result.returncode == 2
+    assert "missing required field" in result.stderr
+    assert not (work / "acceptance" / "dual-run.json").exists()
+    assert not (tmp_path / "acceptance" / "dual-run.json").exists()
