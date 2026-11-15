@@ -2859,7 +2859,14 @@ def _launch(p: dict, r: dict, args: list[str], a) -> int:
         # (output captured or redirected, run by another agent or a script) those codes land in the log as text.
         mode = "headless"
         print("csa: no terminal here, so the agent runs headless (no interactive UI)", file=sys.stderr)
-    tmpl = settings().get(f"{cli}_{mode}")
+    template_key = f"{cli}_{mode}"
+    # Simple V2 answers are self-contained packets.  Give them a dedicated
+    # answer-only profile so MCP servers are not started just to write prose.
+    simple_answer = (r.get("verb") in ("answer", "draft") and
+                     any(str(x).upper() == "WRITER_MODE=SIMPLE" for x in args))
+    if simple_answer and settings().get(f"{cli}_answer_{mode}"):
+        template_key = f"{cli}_answer_{mode}"
+    tmpl = settings().get(template_key)
     template_args = shlex.split(tmpl or "")
     closed = (r.get("verb") in ("answer", "draft") and mode == "headless"
               and local_launch(tmpl or "") and template_args and Path(template_args[0]).name == "codex"
