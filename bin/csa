@@ -3252,6 +3252,19 @@ def v2_route(p: dict, command: str, *, adapter: bool | None = None, note: str = 
                           route_state=state if command in {"answer", "draft", "author", "ev", "validate", "card"} else "")
     out["project_route_state"] = state or out.get("route_state")
     out["adapter"] = bool(is_adapter)
+    if state == "v2-native" and command in {"answer", "draft", "author"}:
+        gate = project_cutover_gate(p)
+        out["cutover_gate"] = gate
+        if gate["status"] != "READY":
+            out.update({
+                "status": "BLOCKED",
+                "requested_route": "v2-native",
+                "route": "v2-compatibility-adapter",
+                "route_state": "v2-compatibility",
+                "project_route_state": "v2-compatibility",
+                "adapter": True,
+                "message": "native answer route blocked by cutover gate; compatibility rollback remains explicit",
+            })
     if note:
         out["note"] = note
     return out

@@ -129,3 +129,40 @@ def test_native_pilot_and_non_migrated_v1_project_are_isolated(tmp_path):
     assert legacy_payload["route"] == "v1-native"
     assert legacy_payload["project_route_state"] == "v1"
     assert native_payload["store"] == str(work / "csa.sqlite")
+
+
+def test_native_route_requires_cutover_gate(tmp_path):
+    registry, _work = _gate_project(tmp_path, accepted=False)
+    text = registry.read_text(encoding="utf-8").replace("    application: test-app\n",
+                                                           "    application: test-app\n"
+                                                           "    answer_route: v2-native\n")
+    registry.write_text(text, encoding="utf-8")
+    env = {**os.environ, "CSA_PROJECTS_FILE": str(registry)}
+    result = subprocess.run([sys.executable, str(Path(__file__).parents[3] / "bin" / "csa"),
+                             "--project", "test-app", "route", "answer", "--json"],
+                            capture_output=True, text=True, env=env)
+    payload = json.loads(result.stdout)
+    assert result.returncode == 2
+    assert payload["status"] == "BLOCKED"
+    assert payload["requested_route"] == "v2-native"
+    assert payload["route"] == "v2-compatibility-adapter"
+    assert payload["cutover_gate"]["status"] == "BLOCKED"
+    assert payload["cutover_gate"]["checks"]["dual_run"] is False
+
+
+def test_ready_gate_allows_native_route(tmp_path):
+    registry, work = _gate_project(tmp_path, accepted=True)
+    text = registry.read_text(encoding="utf-8").replace("    application: test-app\n",
+                                                           "    application: test-app\n"
+                                                           "    answer_route: v2-native\n")
+    registry.write_text(text, encoding="utf-8")
+    env = {**os.environ, "CSA_PROJECTS_FILE": str(registry)}
+    result = subprocess.run([sys.executable, str(Path(__file__).parents[3] / "bin" / "csa"),
+                             "--project", "test-app", "route", "answer", "--json"],
+                            capture_output=True, text=True, env=env)
+    payload = json.loads(result.stdout)
+    assert result.returncode == 0
+    assert payload["route"] == "v2-native"
+    assert payload["project_route_state"] == "v2-native"
+    assert payload["cutover_gate"]["status"] == "READY"
+    assert payload["store"] == str(work / "csa.sqlite")
