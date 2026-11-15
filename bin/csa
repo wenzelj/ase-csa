@@ -3257,6 +3257,54 @@ def v2_route(p: dict, command: str, *, adapter: bool | None = None, note: str = 
     return out
 
 
+def project_cutover_gate(p: dict) -> dict:
+    """Read-only acceptance gate for selecting native V2 answering for one project."""
+    work = local_path(p["work_dir"])
+    db = work / "csa.sqlite"
+    checks = {}
+    route = v2_route(p, "gap-check")
+    checks["schema"] = route.get("status") not in ("BLOCKED", "ERROR") and not route.get("missing_tables")
+    checks["sources"] = False
+    checks["provenance"] = False
+    checks["scope"] = False
+    if db.is_file() and checks["schema"]:
+        import sqlite3
+        try:
+            with sqlite3.connect(f"file:{db}?mode=ro", uri=True) as con:
+                checks["sources"] = con.execute("SELECT count(*) FROM indexed_file").fetchone()[0] > 0
+                total = con.execute("SELECT count(*) FROM evidence").fetchone()[0]
+                with_source = con.execute("SELECT count(*) FROM evidence WHERE trim(coalesce(source_title, '')) != ''").fetchone()[0]
+                checks["provenance"] = total > 0 and total == with_source
+                app = str(p.get("application") or p.get("key") or "").strip()
+                checks["scope"] = bool(app and con.execute(
+                    "SELECT count(*) FROM application_scope WHERE application_key=? AND active=1 AND review_state='accepted'",
+                    (app,)).fetchone()[0])
+        except Exception:
+            pass
+
+    acceptance = work / "acceptance"
+    def accepted(name: str) -> bool:
+        path = acceptance / name
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+            return value.get("status") in ("OK", "accepted", "READY") and bool(value.get("recorded_at"))
+        except (OSError, ValueError, AttributeError):
+            return False
+
+    checks["dual_run"] = accepted("dual-run.json")
+    checks["draft_lane"] = accepted("draft-lane.json")
+    ready = all(checks.values())
+    return {
+        "status": "READY" if ready else "BLOCKED",
+        "project": p.get("key", ""),
+        "route": "v2-native" if ready else "v2-compatibility-adapter",
+        "checks": checks,
+        "rollback": {"route": "v2-compatibility", "required": True,
+                      "snapshot": str(acceptance / "legacy-snapshot.json")},
+        "message": "all native cutover gates passed" if ready else "native answering is refused until every gate passes",
+    }
+
+
 def answer_blocks_failing(res: dict) -> set[str]:
     """The answer-sheet blocks that the check's errors name (csa_docx.answer_blocks.failing); "*" when an error belongs
     to no block, so the whole sheet goes back."""
@@ -6635,6 +6683,19 @@ def cmd_route(a):
     return 0 if route.get("status") not in ("ERROR", "BLOCKED") else 2
 
 
+def cmd_cutover_gate(a):
+    result = project_cutover_gate(project(a.project))
+    if getattr(a, "json", False):
+        print(json.dumps(result, indent=1, ensure_ascii=False))
+    else:
+        print(f"{result['project']}: {result['status']} -> {result['route']}")
+        for name, passed in result["checks"].items():
+            print(f"  {name}: {'PASS' if passed else 'BLOCKED'}")
+        print(f"  rollback: {result['rollback']['route']} (snapshot {result['rollback']['snapshot']})")
+        print(f"  {result['message']}")
+    return 0 if result["status"] == "READY" else 2
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="csa", description="CSA agents, skills and framework.", epilog=HELP,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -6659,6 +6720,8 @@ def main(argv=None) -> int:
     sp("agents", cmd_agents)
     s = sp("route", cmd_route, help="the evidence route of one command: v1-native | v2-native | v2-compatibility-adapter (with the SQLite path and store revision for V2)")
     s.add_argument("command"); s.add_argument("--json", action="store_true")
+    s = sp("cutover-gate", cmd_cutover_gate, help="read-only V2 native cutover acceptance gate")
+    s.add_argument("--json", action="store_true")
     s = sp("scope", cmd_scope, help="one domain's entry from the section scope map"); s.add_argument("key")
     s.add_argument("--json", action="store_true")
     s = sp("brief", cmd_brief, help="the section brief skeleton for an author run (scope map + reviewer comments)"); s.add_argument("section")
