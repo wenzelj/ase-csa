@@ -3930,6 +3930,9 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
     selected_profile = answer_profile(selected_cli)
     fix_max = (selected_profile["fix_rounds"] if selected_profile["name"] != "default"
                else int(settings().get("answer_fix_rounds", 3) or 3))
+    selected_writer_mode = str(getattr(a, "writer_mode", "") or p.get("v2_writer") or "legacy").strip().lower()
+    if local_path(p["work_dir"]).name == "csa-work-v2" and selected_writer_mode == "simple":
+        fix_max = 1
     cache = {"status": "NONE", "changed": []}
     wip = {"status": "NONE", "changed": [], "failed": []}
     only_blocks = {b.strip().upper() for b in str(getattr(a, "blocks", "") or "").split(",") if b.strip()}

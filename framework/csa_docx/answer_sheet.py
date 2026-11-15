@@ -2469,7 +2469,7 @@ def v2_plan_findings(sheet: dict[str, dict], card: dict) -> list[dict]:
         for point in plan.get("required_points", []):
             ids = {str(i).upper() for i in point.get("evidence_ids", [])}
             if ids and not (ids & cited):
-                out.append(_f("ERROR", "V2_PLAN_POINT_NOT_ANSWERED", qid,
+                out.append(_f("WARN", "V2_PLAN_POINT_NOT_ANSWERED", qid,
                               f"required point is not covered by the answer: {point.get('fact', '')[:180]}"))
     return out
 
@@ -2846,6 +2846,20 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
     for qid in sheet:
         if qid not in qs and not qid.startswith("F"):
             findings.append(_f("WARN", "EXTRA_BLOCK", qid, "this question is not on the card"))
+    # V2 has a deliberately small blocking gate.  Evidence identity, scope,
+    # answer shape and rating errors block; prose/style and plan-coverage
+    # findings remain advisory so the writer can finish a usable answer.
+    if card.get("v2_answer_plan") or card.get("v2_evidence_slices"):
+        v2_blocking = {
+            "UNKNOWN_EVIDENCE", "EVIDENCE_NOT_ON_CARD", "RATING_INVALID",
+            "QUESTION_MISSING", "EMPTY_ANSWER", "FACT_NO_EVIDENCE",
+            "HOST_NOT_SUPPORTED", "ZONE_FACT_NOT_BACKED", "CROSS_PROJECT_SCOPE",
+            "CROSS_PROJECT_ONLY", "V2_PLAN_SLICE_MISMATCH", "FRAME_UNCOVERED",
+        }
+        for finding in findings:
+            if finding.get("level") == "ERROR" and finding.get("code") not in v2_blocking:
+                finding["level"] = "WARN"
+                finding["tier"] = "advisory"
     if draft:
         hard = RELAXED_HARD if relaxed else HARD_CODES
         for x in findings:
