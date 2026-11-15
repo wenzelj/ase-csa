@@ -2317,7 +2317,7 @@ def block_checks(blk: str, card: dict, qid: str, matrix: dict[str, dict] | None 
 # not a compatibility CSV.  The structured fact layer runs first (before any
 # prose-quality check): a fact that names a host the package does not
 # support, a zone the package does not place it in, a rating outside the
-# card's rating set, or an evidence ID the package does not carry fails here,
+# card's rating set, or an evidence ID neither the package nor its bounded card additions carry fails here,
 # before the sheet is ever rendered into the document.
 #
 # Legacy cards (V1 projects, or explicitly marked compatibility runs) carry
@@ -2325,8 +2325,14 @@ def block_checks(blk: str, card: dict, qid: str, matrix: dict[str, dict] | None 
 # is unchanged.
 
 
-def _pkg_evidence(pkg: dict) -> tuple[dict[str, dict], set[str]]:
-    """({EVIDENCE_ID: row}, hosts the package supports) from a V2 package."""
+def _pkg_evidence(pkg: dict, card: dict | None = None) -> tuple[dict[str, dict], set[str]]:
+    """({EVIDENCE_ID: row}, hosts the package supports) from a V2 package.
+
+    Card-level bounded additions are accepted as part of the same V2 evidence
+    boundary. They are produced when the card retains a relevant row that was
+    outside the native package's evidence limit, so the writer and validator do
+    not disagree about valid citations.
+    """
     if not isinstance(pkg, dict):
         return {}, set()
     rows: dict[str, dict] = {}
@@ -2343,6 +2349,22 @@ def _pkg_evidence(pkg: dict) -> tuple[dict[str, dict], set[str]]:
                 rows[i] = f
     for k in ("owned", "peers", "external"):
         hosts |= {str(h).upper() for h in (pkg.get("hosts") or {}).get(k, [])}
+    additions = dict(pkg.get("card_evidence_additions") or {})
+    for qblock in ((card or {}).get("evidence") or {}).values():
+        extras = {"rows": [], "cut_ids": qblock.get("cut", []), "digest_ids": qblock.get("digest_ids", [])}
+        extras["rows"] = qblock.get("rows", [])
+        additions.setdefault("_card", extras)
+    for block in additions.values():
+        for f in block.get("rows", []):
+            if not isinstance(f, dict):
+                continue
+            i = str(f.get("id") or "").upper()
+            if i and i not in rows:
+                rows[i] = {"evidence_id": i, "text": f.get("claim") or f.get("excerpt") or ""}
+        for i in list(block.get("cut_ids", [])) + list(block.get("digest_ids", [])):
+            i = str(i).upper()
+            if i and i not in rows:
+                rows[i] = {"evidence_id": i, "text": ""}
     return rows, hosts
 
 
@@ -2354,7 +2376,7 @@ def structured_findings(sheet: dict[str, dict], card: dict, pkg: dict) -> list[d
     document. Every finding is an ERROR naming its block."""
     if not isinstance(pkg, dict):
         return []
-    rows, hosts = _pkg_evidence(pkg)
+    rows, hosts = _pkg_evidence(pkg, card)
     v2_host = re.compile(r"\b[A-Z]{3,}[A-Z0-9-]*\d{2,6}\b")
     ratings = {str(r) for r in card.get("ratings") or []}
     out: list[dict] = []

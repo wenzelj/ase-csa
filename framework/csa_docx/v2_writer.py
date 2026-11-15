@@ -43,6 +43,33 @@ def _package_view(package: dict) -> dict:
     return {key: package[key] for key in keys if key in package}
 
 
+def _evidence_ids(package: dict) -> set[str]:
+    ids = set()
+    for row in package.get("evidence", []):
+        if isinstance(row, dict):
+            ids.update(str(i).upper() for i in (row.get("evidence_ids") or ([row.get("evidence_id")] if row.get("evidence_id") else [])))
+    return {i for i in ids if i}
+
+
+def _card_evidence(card: dict, package: dict) -> dict:
+    """Return only card evidence that is not already in the native package."""
+    package_ids = _evidence_ids(package)
+    out = {}
+    for qid, block in (card.get("evidence") or {}).items():
+        extras = []
+        for row in block.get("rows", []):
+            if not isinstance(row, dict):
+                continue
+            eid = str(row.get("id") or "").upper()
+            if eid and eid not in package_ids:
+                extras.append({k: row.get(k) for k in ("id", "claim", "excerpt", "source", "where", "status") if row.get(k) is not None})
+        extra_ids = [str(i).upper() for i in (block.get("cut") or []) if str(i).upper() not in package_ids]
+        digest_ids = [str(i).upper() for i in (block.get("digest_ids") or []) if str(i).upper() not in package_ids]
+        if extras or extra_ids or digest_ids:
+            out[qid] = {"rows": extras, "cut_ids": extra_ids, "digest_ids": digest_ids}
+    return out
+
+
 def build_packet(*, project: str, subsection: str, card: dict,
                  package: dict | None = None, answer: str = "", errors: str = "") -> dict:
     """Build one complete, deterministic writer input from prepared framework data."""
@@ -56,6 +83,7 @@ def build_packet(*, project: str, subsection: str, card: dict,
         ],
         "return_only": "the requested blocks in card order",
     }
+    native_package = package or card.get("package") or {}
     body = {
         "packet_version": VERSION,
         "project": project,
@@ -63,7 +91,8 @@ def build_packet(*, project: str, subsection: str, card: dict,
         "instructions": INSTRUCTIONS.read_text(encoding="utf-8"),
         "output_contract": output_contract,
         "card": _card_view(card),
-        "evidence_package": _package_view(package or card.get("package") or {}),
+        "evidence_package": _package_view(native_package),
+        "card_evidence_additions": _card_evidence(card, native_package),
         "retained_answer": answer,
         "repair_request": errors,
     }

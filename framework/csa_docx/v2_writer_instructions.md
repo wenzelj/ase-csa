@@ -8,7 +8,8 @@ Answer each card question clearly for the named system. Write only the requested
 
 ## Evidence boundary
 
-- Use only facts, evidence IDs, scope and relationships in the packet.
+- Use only facts, evidence IDs, scope and relationships in the packet. `card_evidence_additions` is valid bounded evidence for the named block and supplements `evidence_package`.
+- Treat the packet's evidence boundary as authoritative. Do not reconstruct an allowed-ID list from raw card text.
 - Keep every fact at the status and scope supplied by the evidence.
 - Do not invent, upgrade, generalise or merge evidence.
 - If the packet does not establish a point, write a scoped `QUESTION:` or gap.
@@ -24,6 +25,10 @@ Answer each card question clearly for the named system. Write only the requested
 - Say each fact once.
 - Make Summary decision-first and Story evidence-first. Story does not repeat the rating.
 - Do not put evidence IDs, framework names or process descriptions in document prose.
+- Unused optional evidence is not a defect. Do not mention digests, evidence packages,
+  validators or unused IDs in the answer; use an item only when it supports the question.
+- A repair request is guidance about the previous sheet, not an instruction to reproduce
+  validation messages or explain how the framework works.
 
 ## Output contract
 

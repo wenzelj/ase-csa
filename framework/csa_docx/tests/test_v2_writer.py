@@ -2,11 +2,15 @@
 import json
 
 from csa_docx import v2_writer
+from csa_docx.answer_sheet import _pkg_evidence
 
 
 def _card():
     return {"questions": [{"id": "B1", "kind": "requirement"}],
-            "package": {"context": "v2-native", "scope": {"owned": ["APP01"]}}}
+            "package": {"context": "v2-native", "hosts": {"owned": ["APP01"]},
+                        "evidence": [{"evidence_id": "E-001", "text": "base"}]},
+            "evidence": {"B1": {"rows": [{"id": "E-999", "claim": "card addition"}],
+                                  "cut": ["E-998"], "digest_ids": ["E-997"]}}}
 
 
 def test_packet_is_stable_and_contains_new_instructions_only():
@@ -19,6 +23,8 @@ def test_packet_is_stable_and_contains_new_instructions_only():
     assert "answer-contract-v1" not in json.dumps(first["instructions"])
     assert "package" not in first["card"]
     assert "evidence" not in first["card"]
+    assert first["card_evidence_additions"]["B1"]["rows"][0]["id"] == "E-999"
+    assert first["card_evidence_additions"]["B1"]["cut_ids"] == ["E-998"]
 
 
 def test_packet_keeps_evidence_and_repair_inputs_separate():
@@ -37,3 +43,10 @@ def test_prompt_is_self_contained_and_does_not_require_legacy_reading():
     assert "Do not load legacy agent files" in prompt
     assert "REQUIRED_READING" not in prompt
     assert "cards/TIME.answer.md" in prompt
+
+
+def test_validator_accepts_card_bounded_additions_once():
+    packet = v2_writer.build_packet(project="test", subsection="TIME", card=_card())
+    rows, hosts = _pkg_evidence(packet["evidence_package"] | {"card_evidence_additions": packet["card_evidence_additions"]})
+    assert {"E-001", "E-997", "E-998", "E-999"}.issubset(rows)
+    assert hosts == {"APP01"}
