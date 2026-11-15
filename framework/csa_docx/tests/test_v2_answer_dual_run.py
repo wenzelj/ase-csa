@@ -58,7 +58,8 @@ def serialise(record: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
-# fixture: one requirement, one host, one VERIFIED evidence row
+# fixture: one requirement, scoped owned/peer hosts, one connected external
+# endpoint, and one unrelated host/endpoint pair
 # ---------------------------------------------------------------------------
 
 QUESTION = "Which time source is configured?"
@@ -85,13 +86,23 @@ def _seed(tmp_path: Path, monkeypatch) -> Path:
     repo = Repo(v2)
     with repo.tx():
         repo.hosts.create("APP01", role="application")
+        repo.hosts.create("NTPSRV1", role="provider")
+        repo.hosts.create("OTHERAPP", role="application")
         repo.application_scope.add("test-app", "APP01", "owned", basis="inventory", review_state="accepted")
+        repo.application_scope.add("test-app", "NTPSRV1", "peer", basis="captured_flow", review_state="accepted")
+        repo.application_scope.add("other-app", "OTHERAPP", "owned", basis="inventory", review_state="accepted")
         repo.evidence.create(
             claim="APP01 synchronises time from an enterprise NTP source.",
             question=QUESTION, area="time",
             source_title="captures/app01.txt",
             excerpt="APP01 NTP enterprise source", status="VERIFIED")
         con = repo.con
+        con.execute("INSERT INTO flow (src_host, dst_host, port, protocol, purpose) "
+                    "VALUES ('APP01','NTPSRV1',123,'udp','time')")
+        con.execute("INSERT INTO service (host, provider_host, port, protocol, name) "
+                    "VALUES ('APP01','ntp.external.example',123,'udp','NTP')")
+        con.execute("INSERT INTO service (host, provider_host, port, protocol, name) "
+                    "VALUES ('OTHERAPP','unrelated.external.example',443,'tcp','other')")
         con.execute("INSERT INTO indexed_file (rel_path, sha256, size) VALUES ('app01.txt','x',10)")
         con.execute("INSERT INTO indexed_chunk (rel_path, heading, text) VALUES "
                     "('app01.txt','time','APP01 NTP enterprise time source running')")
@@ -226,6 +237,35 @@ def test_native_record_includes_bounded_search_metadata(tmp_path, monkeypatch):
     assert m["base"]["revision"] == native["database_revision"]
     assert m["base"]["truncation_reasons"] is not None
     assert m["validation"]["status"] == native["validation"]["status"]
+
+
+def test_native_record_preserves_citations_and_scope(tmp_path, monkeypatch):
+    db = _seed(tmp_path, monkeypatch)
+    native = _native_record(db, monkeypatch)
+    package = build_package(db, subsection_key="time", application_key="test-app",
+                            question=QUESTION, terms=["time"])
+    assert check_result(native) == [], check_result(native)
+
+    # The supported citation survives the native package and result contract.
+    assert native["evidence_ids"] == ["E-001"]
+
+    # S626 scope rules retain the connected external service endpoint, but do
+    # not leak another application's host or an endpoint reachable only from it.
+    scope = native["run_manifest"]["base"]["scope"]
+    assert scope["owned"] == ["APP01"]
+    assert scope["peers"] == ["NTPSRV1"]
+    assert scope["external"] == []
+    all_visible = set(scope["owned"] + scope["peers"] + scope["external"])
+    assert "OTHERAPP" not in all_visible
+    services = package["connections"]["services"]
+    assert any(s["provider_host"] == "ntp.external.example" for s in services)
+    assert not any(s["provider_host"] == "unrelated.external.example" for s in services)
+
+    # The native record keeps the bounded-search audit fields used to explain
+    # any future truncation instead of silently dropping scope information.
+    manifest_base = native["run_manifest"]["base"]
+    assert manifest_base["truncated"] is not None
+    assert manifest_base["truncation_reasons"] is not None
 
 
 def test_result_shape_is_rejected_when_metadata_is_missing(tmp_path, monkeypatch):
