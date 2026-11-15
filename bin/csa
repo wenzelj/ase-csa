@@ -553,6 +553,15 @@ def model_file_path(p: dict, r: dict, value: str | Path) -> str:
     return "." if relative == Path(".") else relative.as_posix()
 
 
+def _read_text(path: Path | None) -> str:
+    if not path:
+        return ""
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
 _ANSWER_PATH_INPUTS = frozenset({"CARD", "SHEET", "ANSWER", "ERRORS"})
 
 
@@ -2511,7 +2520,13 @@ def build_prompt(p: dict, r: dict, args: list[str], local: bool | None = None, i
     missing = [k for k, _, req in inputs if req and not values.get(k)]
     if missing:
         die(f"`csa {r['verb']}` needs {', '.join(missing)}, e.g. `csa {r['verb']} <{missing[0].lower()}>`")
-    if answer_workspace:
+    writer_mode = str(values.get("WRITER_MODE") or p.get("v2_writer") or "legacy").strip().lower()
+    simple_v2 = bool(answer_workspace and Path(str(p.get("work_dir", ""))).name == "csa-work-v2"
+                    and writer_mode == "simple")
+    if simple_v2:
+        lines = ["Act as the V2 Simple Writer.",
+                 f"PROJECT={p.get('label')} ({p['key']})", "WORKSPACE=."]
+    elif answer_workspace:
         values.pop("SOURCE_SET", None)
         lines = [f"Load this agent definition:\n{CANON_AGENTS / r['file']}\n", f"Act as the {r['title']}.\n",
                  f"PROJECT={p.get('label')} ({p['key']})  -- confirmed by the user via `csa use`; do not ask again.",
@@ -2551,6 +2566,45 @@ def build_prompt(p: dict, r: dict, args: list[str], local: bool | None = None, i
     if r.get("verb") == "write" and str(values.get("MODE", "")).lower() == "records":
         stage = "writer"
     is_local = local if local is not None else local_launch()
+    if simple_v2:
+        try:
+            sys.path.insert(0, str(FRAMEWORK))
+            from csa_docx import v2_writer
+            card_path = Path(str(values.get("CARD", "")))
+            if not card_path.is_absolute():
+                card_path = agent_working_dir(p, r) / card_path
+            card_json = card_path.with_suffix(".json")
+            card_data = json.loads(card_json.read_text(encoding="utf-8"))
+            answer_path = Path(str(values.get("ANSWER", ""))) if values.get("ANSWER") else None
+            if answer_path and not answer_path.is_absolute():
+                answer_path = agent_working_dir(p, r) / answer_path
+            errors_path = Path(str(values.get("ERRORS", ""))) if values.get("ERRORS") else None
+            if errors_path and not errors_path.is_absolute():
+                errors_path = agent_working_dir(p, r) / errors_path
+            packet = v2_writer.build_packet(
+                project=str(p.get("label", p.get("key", ""))),
+                subsection=str(values.get("SUBSECTION") or values.get("SECTION") or ""),
+                card=card_data,
+                package=card_data.get("package"),
+                answer=_read_text(answer_path),
+                errors=_read_text(errors_path),
+            )
+            lines.append("\n" + v2_writer.render_prompt(
+                packet,
+                card_path=model_file_path(p, r, card_path),
+                sheet_path=str(values.get("SHEET", "")),
+            ))
+            lines.append("WRITER_MODE=simple PACKET_HASH=" + packet["packet_hash"])
+            if values.get("SHEET") and values.get("CARD"):
+                lines.append("\nVALIDATE=PYTHONPATH=\"" + str(FRAMEWORK) + "\" \"" + framework_python()
+                             + "\" -m csa_docx.answer_sheet validate " + shlex.quote(str(values["SHEET"]))
+                             + " --card " + shlex.quote(str(values["CARD"]).replace(".md", ".json")))
+            return "\n".join(lines)
+        except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+            die(f"simple V2 writer packet: {exc}")
+        finally:
+            if str(FRAMEWORK) in sys.path:
+                sys.path.remove(str(FRAMEWORK))
     if is_local and not inline:
         lines.append("\nCodex CLI tool rule: use `exec_command` for shell commands. Never call `exec`, which is not a supported CLI tool.")
     if answer_workspace:
@@ -3252,6 +3306,7 @@ def v2_route(p: dict, command: str, *, adapter: bool | None = None, note: str = 
                           route_state=state if command in {"answer", "draft", "author", "ev", "validate", "card"} else "")
     out["project_route_state"] = state or out.get("route_state")
     out["adapter"] = bool(is_adapter)
+    out["writer_mode"] = str(p.get("v2_writer") or "legacy")
     if state == "v2-native" and command in {"answer", "draft", "author"}:
         gate = project_cutover_gate(p)
         out["cutover_gate"] = gate
@@ -3394,6 +3449,10 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
     answer_route = v2_route(p, "draft" if draft else "answer", note="card and validator evidence through the v2 matrix adapter" if matrix is None else "")
     if answer_route.get("status") == "BLOCKED":
         die(answer_route.get("message", "the V2 store cannot be read"))
+    selected_writer_mode = str(getattr(a, "writer_mode", "") or p.get("v2_writer") or "legacy").strip().lower()
+    if work.name == "csa-work-v2" and selected_writer_mode not in ("legacy", "simple"):
+        die("--writer-mode must be legacy or simple")
+    answer_route["writer_mode"] = selected_writer_mode
     started = time.time()
     before = _matrix_ids(work)
     track_draft_run = draft and not getattr(a, "print", False)
@@ -3482,6 +3541,19 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
                 answer_route["note"] = "legacy compatibility run (explicitly marked)"
         if answer_route.get("package_hash"):
             answer_route["validation_result"] = None          # filled by check() below
+        if selected_writer_mode == "simple":
+            sys.path.insert(0, str(FRAMEWORK))
+            try:
+                from csa_docx import v2_writer
+                data = json.loads(card_json.read_text(encoding="utf-8"))
+                packet = v2_writer.build_packet(project=str(p.get("label", p.get("key", ""))),
+                                                subsection=str(key), card=data,
+                                                package=data.get("package"),
+                                                answer=_read_text(sheet), errors=_read_text(errs))
+                answer_route["writer_packet_hash"] = packet["packet_hash"]
+            finally:
+                if str(FRAMEWORK) in sys.path:
+                    sys.path.remove(str(FRAMEWORK))
 
     held_dir = work / "held-from-model"
 
@@ -3534,6 +3606,11 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
                       or settings().get("default_cli", "codex"))
         profile = answer_profile(chosen_cli)
         call_extra = list(extra)
+        selected_writer_mode = str(getattr(run_a, "writer_mode", "") or p.get("v2_writer") or "legacy").strip().lower()
+        if local_path(p["work_dir"]).name == "csa-work-v2" and selected_writer_mode != "legacy":
+            if selected_writer_mode != "simple":
+                die("--writer-mode must be legacy or simple")
+            call_extra.append("WRITER_MODE=simple")
         if profile["name"] != "default":
             call_extra.append(f"ANSWER_PROFILE={profile['name']}")
             call_extra.append(f"OUTPUT_TOKEN_BUDGET={profile['output_tokens']}")
@@ -3784,6 +3861,23 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
     except OSError:
         pass
     build()
+    if getattr(a, "print_packet", False):
+        selected_writer_mode = str(getattr(a, "writer_mode", "") or p.get("v2_writer") or "legacy").strip().lower()
+        if local_path(p["work_dir"]).name != "csa-work-v2" or selected_writer_mode != "simple":
+            die("--print-packet requires a V2 project and --writer-mode simple")
+        sys.path.insert(0, str(FRAMEWORK))
+        try:
+            from csa_docx import v2_writer
+            data = json.loads(card_json.read_text(encoding="utf-8"))
+            packet = v2_writer.build_packet(project=str(p.get("label", p.get("key", ""))),
+                                            subsection=str(key), card=data,
+                                            package=data.get("package"),
+                                            answer=_read_text(sheet), errors=_read_text(errs))
+            print(json.dumps(packet, indent=2, ensure_ascii=False))
+        finally:
+            if str(FRAMEWORK) in sys.path:
+                sys.path.remove(str(FRAMEWORK))
+        return 0
     if draft and not getattr(a, "print", False):
         title = json.loads(card_json.read_text(encoding="utf-8")).get("title", "")
         if (Path(docx).parent / ("~$" + Path(docx).name[2:])).exists():
@@ -3796,6 +3890,9 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
     if getattr(a, "print", False):
         route = agent(verb)
         shown = answer_launch_args(p, route, number, card_md, sheet)
+        selected_writer_mode = str(getattr(a, "writer_mode", "") or p.get("v2_writer") or "legacy").strip().lower()
+        if local_path(p["work_dir"]).name == "csa-work-v2" and selected_writer_mode != "legacy":
+            shown.append(f"WRITER_MODE={selected_writer_mode}")
         if getattr(a, "blocks", ""):               # preview the prompt of a focused call (--blocks B1)
             shown = shown + [f"ONLY={str(a.blocks).upper()}"]
         return launch(p, route, shown, a)
@@ -7058,6 +7155,10 @@ def main(argv=None) -> int:
                        help="author --cards: an advisory answer check after the sheet passes (shown in the author report)")
         s.add_argument("--no-resolve", action="store_true",
                        help="answer/author --cards: skip the pass that shows the agent matrix rows which may already answer an Unknown: line")
+        s.add_argument("--writer-mode", choices=["legacy", "simple"], default=None,
+                       help="V2 answer writer mode (default: project setting or legacy)")
+        s.add_argument("--print-packet", action="store_true",
+                       help="build and print the complete simple V2 writer packet without starting a model")
 
     argv = list(sys.argv[1:] if argv is None else argv)
     glob_project = None
