@@ -11,7 +11,9 @@ import json
 import re
 from pathlib import Path
 
-VERSION = "v2-writer-packet-v1"
+from . import v2_evidence_slice
+
+VERSION = "v2-writer-packet-v2"
 INSTRUCTIONS = Path(__file__).with_name("v2_writer_instructions.md")
 
 
@@ -105,6 +107,9 @@ def _card_evidence(card: dict, package: dict) -> dict:
 
 
 def _packet_evidence_ids(card: dict, package: dict) -> set[str]:
+    slices = card.get("v2_evidence_slices") or {}
+    if slices:
+        return {str(i).upper() for value in slices.values() for i in value.get("allowed_evidence_ids", [])}
     ids = _evidence_ids(package)
     additions = _card_evidence(card, package)
     for block in additions.values():
@@ -149,6 +154,7 @@ def build_packet(*, project: str, subsection: str, card: dict,
         "return_only": "the requested blocks in card order",
     }
     native_package = package or card.get("package") or {}
+    slices = card.get("v2_evidence_slices") or v2_evidence_slice.build_slices(card, native_package)
     body = {
         "packet_version": VERSION,
         "project": project,
@@ -156,8 +162,7 @@ def build_packet(*, project: str, subsection: str, card: dict,
         "instructions": INSTRUCTIONS.read_text(encoding="utf-8"),
         "output_contract": output_contract,
         "card": _card_view(card),
-        "evidence_package": _package_view(native_package),
-        "card_evidence_additions": _card_evidence(card, native_package),
+        "evidence_slices": slices,
         "retained_answer": answer,
         "repair_request": _clean_repair_request(errors, card, native_package),
     }

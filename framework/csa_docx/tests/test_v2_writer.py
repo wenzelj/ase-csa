@@ -2,11 +2,11 @@
 import json
 
 from csa_docx import v2_writer
-from csa_docx.answer_sheet import _pkg_evidence
 
 
 def _card():
     return {"questions": [{"id": "B1", "kind": "requirement"}],
+            "obligations": {"blocks": {"B1": {"evidence_ids": ["E-001"]}}},
             "package": {"context": "v2-native", "hosts": {"owned": ["APP01"]},
                         "evidence": [{"evidence_id": "E-001", "text": "base"}]},
             "evidence": {"B1": {"rows": [{"id": "E-999", "claim": "card addition"}],
@@ -17,21 +17,23 @@ def test_packet_is_stable_and_contains_new_instructions_only():
     first = v2_writer.build_packet(project="test", subsection="TIME", card=_card())
     second = v2_writer.build_packet(project="test", subsection="TIME", card=_card())
     assert first["packet_hash"] == second["packet_hash"]
-    assert first["packet_version"] == "v2-writer-packet-v1"
+    assert first["packet_version"] == "v2-writer-packet-v2"
     assert first["instructions"].startswith("# V2 writer instructions")
     assert first["output_contract"]["version"] == "v2-output-v1"
     assert "answer-contract-v1" not in json.dumps(first["instructions"])
     assert "package" not in first["card"]
     assert "evidence" not in first["card"]
-    assert first["card_evidence_additions"]["B1"]["rows"][0]["id"] == "E-999"
-    assert first["card_evidence_additions"]["B1"]["cut_ids"] == ["E-998"]
+    assert "evidence_package" not in first
+    assert "card_evidence_additions" not in first
+    assert first["evidence_slices"]["B1"]["allowed_evidence_ids"] == ["E-001", "E-999"]
+    assert first["evidence_slices"]["B1"]["evidence"][0]["evidence_id"] == "E-001"
 
 
 def test_packet_keeps_evidence_and_repair_inputs_separate():
     packet = v2_writer.build_packet(project="test", subsection="TIME", card=_card(),
                                     package={"evidence": [{"evidence_id": "E-001"}]},
                                     answer="old sheet", errors="Fix B1 scope")
-    assert packet["evidence_package"]["evidence"][0]["evidence_id"] == "E-001"
+    assert packet["evidence_slices"]["B1"]["evidence"][0]["evidence_id"] == "E-001"
     assert packet["retained_answer"] == "old sheet"
     assert packet["repair_request"] == "Fix B1 scope"
 
@@ -46,11 +48,17 @@ def test_prompt_is_self_contained_and_does_not_require_legacy_reading():
     assert len(prompt) < 60000
 
 
-def test_validator_accepts_card_bounded_additions_once():
+def test_slice_does_not_include_cut_or_digest_ids_without_claims():
     packet = v2_writer.build_packet(project="test", subsection="TIME", card=_card())
-    rows, hosts = _pkg_evidence(packet["evidence_package"] | {"card_evidence_additions": packet["card_evidence_additions"]})
-    assert {"E-001", "E-997", "E-998", "E-999"}.issubset(rows)
-    assert hosts == {"APP01"}
+    assert packet["evidence_slices"]["B1"]["allowed_evidence_ids"] == ["E-001", "E-999"]
+
+
+def test_slice_artifacts_are_inspectable(tmp_path):
+    from csa_docx.v2_evidence_slice import build_slices, write_slices
+    slices = build_slices(_card())
+    paths = write_slices(tmp_path / "TIME.evidence", slices)
+    assert paths["B1"].endswith("B1.json")
+    assert (tmp_path / "TIME.evidence" / "B1.md").read_text().startswith("# B1 evidence slice")
 
 
 def test_stale_unknown_evidence_repair_lines_are_removed_only_when_now_valid():

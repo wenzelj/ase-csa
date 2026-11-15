@@ -2349,11 +2349,20 @@ def _pkg_evidence(pkg: dict, card: dict | None = None) -> tuple[dict[str, dict],
                 rows[i] = f
     for k in ("owned", "peers", "external"):
         hosts |= {str(h).upper() for h in (pkg.get("hosts") or {}).get(k, [])}
+    for slice_data in ((card or {}).get("v2_evidence_slices") or {}).values():
+        for f in slice_data.get("evidence", []) if isinstance(slice_data, dict) else []:
+            if isinstance(f, dict):
+                i = str(f.get("evidence_id") or "").upper()
+                if i and i not in rows:
+                    rows[i] = f
     additions = dict(pkg.get("card_evidence_additions") or {})
-    for qblock in ((card or {}).get("evidence") or {}).values():
-        extras = {"rows": [], "cut_ids": qblock.get("cut", []), "digest_ids": qblock.get("digest_ids", [])}
-        extras["rows"] = qblock.get("rows", [])
-        additions.setdefault("_card", extras)
+    # Once a V2 slice is embedded, it is the complete evidence boundary.  The
+    # raw card projections remain available for compatibility cards only.
+    if not (card or {}).get("v2_evidence_slices"):
+        for qblock in ((card or {}).get("evidence") or {}).values():
+            extras = {"rows": [], "cut_ids": qblock.get("cut", []), "digest_ids": qblock.get("digest_ids", [])}
+            extras["rows"] = qblock.get("rows", [])
+            additions.setdefault("_card", extras)
     for block in additions.values():
         for f in block.get("rows", []):
             if not isinstance(f, dict):

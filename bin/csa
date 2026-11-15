@@ -2575,6 +2575,12 @@ def build_prompt(p: dict, r: dict, args: list[str], local: bool | None = None, i
                 card_path = agent_working_dir(p, r) / card_path
             card_json = card_path.with_suffix(".json")
             card_data = json.loads(card_json.read_text(encoding="utf-8"))
+            if not card_data.get("package"):
+                base_json = card_json.parent / f"{card_path.name.split('.focus', 1)[0]}.json"
+                if base_json != card_json and base_json.is_file():
+                    base_data = json.loads(base_json.read_text(encoding="utf-8"))
+                    card_data["package"] = base_data.get("package", {})
+                    card_data.setdefault("v2_evidence_slices", base_data.get("v2_evidence_slices", {}))
             answer_path = Path(str(values.get("ANSWER", ""))) if values.get("ANSWER") else None
             if answer_path and not answer_path.is_absolute():
                 answer_path = agent_working_dir(p, r) / answer_path
@@ -3537,6 +3543,16 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
             if pkg is not None:
                 card_data = json.loads(card_json.read_text(encoding="utf-8"))
                 card_data["package"] = pkg
+                if selected_writer_mode == "simple":
+                    sys.path.insert(0, str(FRAMEWORK))
+                    try:
+                        from csa_docx import v2_evidence_slice
+                        slices = v2_evidence_slice.build_slices(card_data, pkg)
+                        card_data["v2_evidence_slices"] = slices
+                        v2_evidence_slice.write_slices(cards / f"{key}.evidence", slices)
+                    finally:
+                        if str(FRAMEWORK) in sys.path:
+                            sys.path.remove(str(FRAMEWORK))
                 card_json.write_text(json.dumps(card_data), encoding="utf-8")
                 print(f"{C['d']}V2 evidence package: hash {pkg['package_hash']}, revision "
                       f"{pkg['revision'].get('modified_ns')} (context v2-native){C['0']}", file=sys.stderr)
