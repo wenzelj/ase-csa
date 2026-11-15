@@ -31,9 +31,10 @@ def build_plan(card: dict, slices: dict[str, dict]) -> dict[str, dict]:
             "question": question,
             "required_points": preserved,
             "optional_points": optional,
-            "known_gaps": [],
+            "known_gaps": list(slice_data.get("known_gaps", [])),
             "conflicts": slice_data.get("conflicts", []),
             "allowed_evidence_ids": list(slice_data.get("allowed_evidence_ids", [])),
+            "selection_policy": "latest accepted evidence wins; superseded or conflicting rows are disclosed, not silently merged",
             "rating_options": list(block.get("ratings") or card.get("ratings") or []),
             "rating_basis": "requirement rating must be supported by the required points and evidence"
             if question.get("kind") == "requirement" else "describe the evidenced current state",
@@ -58,6 +59,7 @@ def write_plan(directory: str | Path, plan: dict[str, dict]) -> tuple[str, str]:
         for point in item["optional_points"]:
             lines.append(f"- {point['text']} ({', '.join(point['evidence_ids'])})")
         lines += ["", f"Allowed evidence: {', '.join(item['allowed_evidence_ids'])}",
+                  f"Selection policy: {item['selection_policy']}",
                   f"Rating basis: {item['rating_basis']}", ""]
     md_path.write_text("\n".join(lines), encoding="utf-8")
     return str(json_path), str(md_path)

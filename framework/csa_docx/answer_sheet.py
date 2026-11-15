@@ -2446,6 +2446,34 @@ def structured_findings(sheet: dict[str, dict], card: dict, pkg: dict) -> list[d
     return out
 
 
+def v2_plan_findings(sheet: dict[str, dict], card: dict) -> list[dict]:
+    """Validate that the V2 answer plan and evidence slices agree and are executed."""
+    plans = card.get("v2_answer_plan") or {}
+    slices = card.get("v2_evidence_slices") or {}
+    if not plans or not slices:
+        return []
+    out = []
+    for qid, plan in plans.items():
+        slice_data = slices.get(qid) or {}
+        plan_ids = {str(i).upper() for i in plan.get("allowed_evidence_ids", [])}
+        slice_ids = {str(i).upper() for i in slice_data.get("allowed_evidence_ids", [])}
+        if plan_ids != slice_ids:
+            out.append(_f("ERROR", "V2_PLAN_SLICE_MISMATCH", qid,
+                          "the answer plan and evidence slice have different allowed evidence IDs"))
+        block = sheet.get(qid)
+        if not block:
+            continue
+        cited = {str(i).upper() for fact in block.get("facts", []) for i in fact.get("ids", [])}
+        cited |= {str(i).upper() for row in block.get("rows", []) for cell in row for i in _EID.findall(str(cell))}
+        cited |= {str(i).upper() for item in block.get("bullets", []) for i in _EID.findall(str(item))}
+        for point in plan.get("required_points", []):
+            ids = {str(i).upper() for i in point.get("evidence_ids", [])}
+            if ids and not (ids & cited):
+                out.append(_f("ERROR", "V2_PLAN_POINT_NOT_ANSWERED", qid,
+                              f"required point is not covered by the answer: {point.get('fact', '')[:180]}"))
+    return out
+
+
 def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None = None,
              ratings: list[str] | None = None, new_ids: set[str] | None = None, draft: bool = False,
              previous: dict[str, dict] | None = None, relaxed: bool = False) -> dict:
@@ -2471,6 +2499,7 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
     if isinstance(pkg, dict) and pkg.get("package_version"):
         # S626: the structured fact layer runs before any prose-quality check
         findings += structured_findings(sheet, card, pkg)
+    findings += v2_plan_findings(sheet, card)
     allowed |= {i.upper() for k in card.get("keep", []) for i in k.get("evidence_ids", [])}
     background = {i.upper() for i in card.get("background_ids", [])}   # K- passages on the card's background section
     ratings = ratings or card.get("ratings") or ["Met", "Partially Met", "Not Met", "Not Applicable"]

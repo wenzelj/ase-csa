@@ -85,6 +85,14 @@ def build_slices(card: dict, package: dict | None = None) -> dict[str, dict]:
         allowed = set(package_rows) | _block_ids(block, obligations.get(qid, {}))
         rows = {evidence_id: package_rows[evidence_id] for evidence_id in sorted(allowed) if evidence_id in package_rows}
         rows.update(_digest_rows(block))
+        warnings = [w for w in (package.get("warnings", []) if isinstance(package, dict) else [])
+                    if isinstance(w, dict) and (not w.get("evidence_id") or str(w.get("evidence_id")).upper() in rows)]
+        conflicts = list(block.get("disagree", []) if isinstance(block, dict) else [])
+        conflicts += [w for w in warnings if w.get("kind") in ("conflict", "superseded")]
+        gaps = [
+            {"evidence_id": row["evidence_id"], "text": row.get("text", ""), "status": row.get("status")}
+            for row in rows.values() if row.get("status") in ("NOT_FOUND", "CONFLICTING")
+        ]
         for raw in block.get("rows", []) if isinstance(block, dict) else []:
             if not isinstance(raw, dict):
                 continue
@@ -99,7 +107,8 @@ def build_slices(card: dict, package: dict | None = None) -> dict[str, dict]:
             "allowed_evidence_ids": sorted(rows),
             "evidence": [rows[evidence_id] for evidence_id in sorted(rows)],
             "hosts": {key: list(value) for key, value in hosts.items() if isinstance(value, list)},
-            "conflicts": block.get("disagree", []) if isinstance(block, dict) else [],
+            "conflicts": conflicts,
+            "known_gaps": gaps,
         }
     return out
 
