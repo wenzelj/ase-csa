@@ -3245,9 +3245,12 @@ def v2_route(p: dict, command: str, *, adapter: bool | None = None, note: str = 
     sys.path.insert(0, str(FRAMEWORK))
     from csa_docx import v2_access
     is_adapter = adapter if adapter is not None else (command in V2_ROUTE_COMMANDS and V2_ROUTE_COMMANDS[command] == "v2-compatibility-adapter")
+    state = str(p.get("answer_route") or "").strip().lower()
     out = v2_access.route(command, work_dir=local_path(p["work_dir"]),
                           adapter=bool(is_adapter),
-                          project=str(p.get("label", p["key"])))
+                          project=str(p.get("label", p["key"])),
+                          route_state=state if command in {"answer", "draft", "author", "ev", "validate", "card"} else "")
+    out["project_route_state"] = state or out.get("route_state")
     out["adapter"] = bool(is_adapter)
     if note:
         out["note"] = note

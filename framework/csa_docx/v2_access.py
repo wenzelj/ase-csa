@@ -109,6 +109,12 @@ def review_events(db: Path, subject_type: str = "evidence") -> list[dict]:
 REQUIRED_TABLES = ("evidence", "indexed_file", "indexed_chunk", "lead", "graph_node", "graph_edge",
                   "host", "address", "service", "flow")
 ROUTE_LABELS = ("v1-native", "v2-native", "v2-compatibility-adapter")
+ROUTE_STATES = ("v1", "v2-compatibility", "v2-native")
+ROUTE_STATE_LABELS = {
+    "v1": "v1-native",
+    "v2-compatibility": "v2-compatibility-adapter",
+    "v2-native": "v2-native",
+}
 
 
 def store_revision(db: Path) -> dict:
@@ -140,7 +146,7 @@ def missing_tables(db: Path) -> list[str]:
 
 
 def route(command: str, *, work_dir: Path | None = None, db: Path | None = None,
-          adapter: bool = False, project: str = "") -> dict:
+          adapter: bool = False, project: str = "", route_state: str = "") -> dict:
     """Route diagnostic for one command of one project.
 
     `route` is `v1-native`, `v2-native` or `v2-compatibility-adapter` (the V2 command still reaches
@@ -149,7 +155,16 @@ def route(command: str, *, work_dir: Path | None = None, db: Path | None = None,
     missing store is `BLOCKED`, never a silent csa-work/ fallback."""
     work = work_dir or (Path(db).parent if db is not None else None)
     is_v2 = bool(work is not None and Path(work).name == "csa-work-v2")
-    out: dict = {"route": "v2-compatibility-adapter" if adapter else ("v2-native" if is_v2 else "v1-native"),
+    state = str(route_state or "").strip().lower()
+    if state and state not in ROUTE_STATE_LABELS:
+        return {"route": "v1-native" if not is_v2 else "v2-compatibility-adapter",
+                "command": command, "project": project, "status": "ERROR",
+                "code": "V2_ROUTE_STATE_INVALID",
+                "message": f"unknown project route state {route_state!r}; expected one of {', '.join(ROUTE_STATES)}"}
+    selected = ROUTE_STATE_LABELS[state] if state else ("v2-compatibility-adapter" if adapter else ("v2-native" if is_v2 else "v1-native"))
+    out: dict = {"route": selected,
+                 "route_state": state or ("v2-native" if is_v2 and selected == "v2-native" else
+                                            "v2-compatibility" if selected == "v2-compatibility-adapter" else "v1"),
                  "command": command, "project": project}
     if is_v2:
         candidate = Path(db) if db is not None else _db_file(work)
