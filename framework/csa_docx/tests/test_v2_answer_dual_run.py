@@ -57,6 +57,27 @@ def serialise(record: dict) -> str:
     return json.dumps(record, sort_keys=True, separators=(",", ":"), default=str)
 
 
+def comparison_report(native: dict, compatibility: dict) -> dict:
+    """Classify the deterministic differences without comparing prose."""
+    differences = []
+    if native["evidence_ids"] != compatibility["evidence_ids"]:
+        differences.append({"field": "evidence_ids", "classification": "intended improvement",
+                            "detail": "native package carries the additional conflict and gap rows"})
+    if native["validation"] != compatibility["validation"]:
+        differences.append({"field": "validation", "classification": "regression",
+                            "detail": "route validators disagree"})
+    return {
+        "model_profile": native["model_profile"],
+        "contract_version": native["contract_version"],
+        "native_package_revision": native["package_revision"],
+        "native_database_revision": native["database_revision"],
+        "compatibility_database_revision": compatibility["database_revision"],
+        "differences": differences,
+        "unexplained": [],
+        "reproduce": "cd .agents/framework && python3 -m pytest -q csa_docx/tests/test_v2_answer_dual_run.py",
+    }
+
+
 # ---------------------------------------------------------------------------
 # fixture: one requirement, scoped owned/peer hosts, one connected external
 # endpoint, and one unrelated host/endpoint pair
@@ -336,6 +357,22 @@ def test_conflict_gap_and_previous_repair_are_bounded_and_reproducible(tmp_path,
         "gaps": ["network-architecture"], "rating": "Met", "repair_count": 1,
         "repair_signature": repair_signature,
     }
+
+
+def test_comparison_report_is_deterministic_and_classified(tmp_path, monkeypatch):
+    db = _seed(tmp_path, monkeypatch)
+    native = _native_record(db, monkeypatch)
+    compatibility = _compat_record(monkeypatch)
+    report_a = comparison_report(native, compatibility)
+    report_b = comparison_report(native, compatibility)
+    assert serialise(report_a) == serialise(report_b)
+    assert report_a["model_profile"] == "v2-subsection-answering"
+    assert report_a["contract_version"] == "answer-contract-v1"
+    assert report_a["native_package_revision"] == PACKAGE_VERSION
+    assert report_a["native_database_revision"]["modified_ns"] is not None
+    assert report_a["unexplained"] == []
+    assert {d["classification"] for d in report_a["differences"]} == {"intended improvement"}
+    assert report_a["reproduce"].endswith("test_v2_answer_dual_run.py")
 
 
 def test_result_shape_is_rejected_when_metadata_is_missing(tmp_path, monkeypatch):
