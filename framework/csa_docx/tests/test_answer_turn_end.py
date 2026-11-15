@@ -38,6 +38,15 @@ def test_a_turn_closes_the_run_only_when_it_produced_work(tmp_path):
     assert not ended(None, before, after)                      # hook not in use
 
 
+def test_browser_work_close_fallback_requires_browser_marker_and_quiet_work():
+    ready = CSA["browser_work_close_ready"]
+    before, after = (), (("TIME.patch-B1.md", 10, 2),)
+    assert ready("interactive", {"CSA_CLOSE_ON_TURN_END": "1"}, before, after, 0, 5)
+    assert not ready("interactive", {}, before, after, 0, 5)
+    assert not ready("headless", {"CSA_CLOSE_ON_TURN_END": "1"}, before, after, 0, 5)
+    assert not ready("interactive", {"CSA_CLOSE_ON_TURN_END": "1"}, before, after, 4, 5)
+
+
 def test_the_notify_program_writes_the_marker(tmp_path):
     marker = tmp_path / "turn.json"
     payload = json.dumps({"type": "agent-turn-complete", "last-assistant-message": "done"})

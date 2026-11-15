@@ -92,6 +92,9 @@ answer_idle_minutes: 25
 # log (Codex), so reading a large card does not use the limit up. A session that stays busy but has written no sheet or patch
 # for this many minutes is stopped all the same. 0 turns this cap off.
 answer_no_work_minutes: 60
+# Evidence Browser fallback: close an interactive Codex child after its answer/patch
+# has been quiet this long when the turn-end notification was not delivered.
+answer_browser_close_quiet_seconds: 5
 # If a focused repair returns the same blocking signature, use this already-configured CLI for subsequent repairs.
 answer_repair_cli: evo
 answer_resolve_leads: false

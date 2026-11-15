@@ -480,6 +480,13 @@ def turn_ended_with_work(marker: Path | None, start_mark: tuple, now_mark: tuple
     return False
 
 
+def browser_work_close_ready(mode: str, env, start_mark: tuple, now_mark: tuple,
+                             last_work: float, now: float, quiet_s: float = 5.0) -> bool:
+    """Fallback for an Evidence Browser Codex turn when its notify marker is missed."""
+    return (mode == "interactive" and (env or {}).get("CSA_CLOSE_ON_TURN_END") == "1"
+            and now_mark != start_mark and now - last_work >= quiet_s)
+
+
 def by_block_run(headless: bool, interactive_template: str, env=None) -> bool:
     """May this run answer one block per model call (cli.yaml answer_by_block)? Yes when each call exits by itself:
     a headless run, or an interactive window that csa closes at the end of its turn (turn_end_args: the Evidence
@@ -2935,6 +2942,7 @@ def _launch(p: dict, r: dict, args: list[str], a) -> int:
     # sign of life (no CPU, no connection to its model) for answer_stall_minutes is stopped and started again.
     timeout_min = float(settings().get("answer_call_timeout_minutes", 0) or 0)       # an absolute cap, off by default
     idle_min = float(settings().get("answer_idle_minutes", 25) or 0)                   # no work produced for this long: stop
+    browser_close_quiet_s = float(settings().get("answer_browser_close_quiet_seconds", 5) or 5)
     heartbeat_min = float(settings().get("answer_heartbeat_minutes", 10) or 0)
     stall_min = float(settings().get("answer_stall_minutes", 3) or 0)
     no_work_min = float(settings().get("answer_no_work_minutes", 60) or 0)             # busy but nothing written: stop
@@ -2976,6 +2984,14 @@ def _launch(p: dict, r: dict, args: list[str], a) -> int:
                         return 0
                     if now_mark != mark:
                         mark, last_work = now_mark, time.time()
+                    if browser_work_close_ready(mode, worker_env or os.environ, start_mark, now_mark,
+                                                last_work, time.time(), browser_close_quiet_s):
+                        print(f"{C['d']}the browser answer wrote its patch; closing the window after the grace period "
+                              f"and checking the sheet.{C['0']}", file=sys.stderr, flush=True)
+                        stop(proc)
+                        if turn_marker is not None:
+                            turn_marker.unlink(missing_ok=True)
+                        return 0
                     last_active = seen.last() if idle_min else None
                     if idle_stop(last_work, last_active, time.time(), idle_min, no_work_min):
                         if idle_expired(max(last_work, last_active or 0), time.time(), idle_min):
