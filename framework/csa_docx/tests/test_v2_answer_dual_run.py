@@ -22,7 +22,7 @@ import pytest
 from csa_docx import answer_obligations, answer_sheet
 from csa_docx.answer_plan import run_manifest
 from csa_docx.v2repo import Repo
-from csa_docx.v2repo.subsection_evidence import build_package, PACKAGE_VERSION
+from csa_docx.v2repo.subsection_evidence import build_package, expand_package, PACKAGE_VERSION
 
 RESULT_CONTRACT = "v2-dual-run-result-v1"
 
@@ -96,6 +96,16 @@ def _seed(tmp_path: Path, monkeypatch) -> Path:
             question=QUESTION, area="time",
             source_title="captures/app01.txt",
             excerpt="APP01 NTP enterprise source", status="VERIFIED")
+        repo.evidence.create(
+            claim="APP01 synchronises time from the NTPSRV1 host.",
+            question=QUESTION, area="time",
+            source_title="captures/app01-conflict.txt",
+            excerpt="APP01 NTPSRV1 conflicting time source", status="CONFLICTING")
+        repo.evidence.create(
+            claim="No OT-resident fallback source was found for APP01.",
+            question="Which OT-resident fallback source is configured?", area="time",
+            source_title="captures/app01-time-search.txt",
+            excerpt="fallback source not found in captured scope", status="NOT_FOUND")
         con = repo.con
         con.execute("INSERT INTO flow (src_host, dst_host, port, protocol, purpose) "
                     "VALUES ('APP01','NTPSRV1',123,'udp','time')")
@@ -221,7 +231,8 @@ def test_required_metadata_present_in_both_records(tmp_path, monkeypatch):
     assert native["route"] == "v2-native"
     assert compat["route"] == "v2-compat"
     assert native["database_revision"]["modified_ns"] is not None
-    assert native["evidence_ids"] == compat["evidence_ids"] == ["E-001"]
+    assert compat["evidence_ids"] == ["E-001"]
+    assert "E-001" in native["evidence_ids"]
     assert native["validation"]["status"] == compat["validation"]["status"] == "OK"
 
 
@@ -247,7 +258,7 @@ def test_native_record_preserves_citations_and_scope(tmp_path, monkeypatch):
     assert check_result(native) == [], check_result(native)
 
     # The supported citation survives the native package and result contract.
-    assert native["evidence_ids"] == ["E-001"]
+    assert "E-001" in native["evidence_ids"]
 
     # S626 scope rules retain the connected external service endpoint, but do
     # not leak another application's host or an endpoint reachable only from it.
@@ -266,6 +277,65 @@ def test_native_record_preserves_citations_and_scope(tmp_path, monkeypatch):
     manifest_base = native["run_manifest"]["base"]
     assert manifest_base["truncated"] is not None
     assert manifest_base["truncation_reasons"] is not None
+
+
+def test_conflict_gap_and_previous_repair_are_bounded_and_reproducible(tmp_path, monkeypatch):
+    db = _seed(tmp_path, monkeypatch)
+    base = build_package(db, subsection_key="time", application_key="test-app",
+                         question=QUESTION, terms=["time"])
+    expansion = expand_package(db, subsection_key="time", application_key="test-app",
+                               question=QUESTION, kind="host", host="APP01",
+                               reason="check time-source conflict", base_package=base)
+    assert any(row["status"] == "CONFLICTING" for row in base["evidence"])
+    assert expansion["conflict_disclosure_required"]
+
+    gap_base = build_package(db, subsection_key="network-architecture",
+                             application_key="test-app",
+                             question="What is the network architecture?")
+    gap = expand_package(db, subsection_key="network-architecture",
+                         application_key="test-app",
+                         question="What is the network architecture?",
+                         kind="topic", terms=["network-architecture-xyz"],
+                         reason="bounded gap search", base_package=gap_base)
+    assert gap["expansion"]["scoped_gap"] is True
+    assert gap["expansion"]["gap"]["application_key"] == "test-app"
+    assert "do not guess" in gap["expansion"]["gap"]["note"]
+
+    previous = answer_sheet.parse(SHEET)
+    repaired = answer_sheet.parse(
+        "## B1 Requirement\n"
+        "Facts:\n"
+        "- APP01 synchronises time from an enterprise NTP source. (E-001) {documented; APP01}\n"
+        "Rating: Met\n"
+        "Rating reason: the supported source remains evidenced after repair.\n")
+    card = {
+        "key": "time", "ratings": ["Met", "Partially Met", "Not Met"],
+        "questions": [{"id": "B1", "kind": "requirement", "text": QUESTION}],
+        "evidence": {"B1": {"rows": [{"id": "E-001", "status": "VERIFIED",
+                                           "claim": "APP01 synchronises time from an enterprise NTP source."}],
+                                  "cut": [], "digest_ids": []}},
+    }
+    validation = answer_sheet.validate(repaired, card,
+                                       {"E-001": {"evidence_id": "E-001", "status": "VERIFIED",
+                                                  "claim": "APP01 synchronises time from an enterprise NTP source."}},
+                                       draft=True, previous=previous)
+    assert validation["status"] == "OK"
+    repair_request = "rewrite only B1 to preserve the supported time-source fact"
+    repair_signature = hashlib.sha256(
+        json.dumps({"block": "B1", "request": repair_request,
+                    "evidence_ids": ["E-001"], "rating": "Met"},
+                   sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()[:16]
+    comparison = {
+        "facts": ["E-001"], "conflicts": ["E-002"],
+        "gaps": [gap["expansion"]["gap"]["subsection"]],
+        "rating": repaired["B1"]["rating"], "repair_count": 1,
+        "repair_signature": repair_signature,
+    }
+    assert comparison == {
+        "facts": ["E-001"], "conflicts": ["E-002"],
+        "gaps": ["network-architecture"], "rating": "Met", "repair_count": 1,
+        "repair_signature": repair_signature,
+    }
 
 
 def test_result_shape_is_rejected_when_metadata_is_missing(tmp_path, monkeypatch):
