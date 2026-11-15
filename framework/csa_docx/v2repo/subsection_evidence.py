@@ -23,6 +23,8 @@ whose result was cut by a cap.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from contextlib import closing
 from pathlib import Path
@@ -328,7 +330,6 @@ def build_package(db, *, subsection_key: str, application_key: str, question: st
 # ---------------------------------------------------------------------------
 # S625: scoped hybrid retrieval
 # ---------------------------------------------------------------------------
-
 def _host_from_text(text: str) -> set[str]:
     """Extract host-like tokens from free text (3+ uppercase letters + 2+ digits)."""
     return set(_HOST.findall(text or ""))
@@ -650,4 +651,335 @@ def retrieve(db, *, subsection_key: str, application_key: str, question: str,
             ("connection_limit", connections_trunc), ("chunk_limit", chunks_trunc),
             ("lead_limit", leads_trunc), ("warning_limit", warnings_trunc),
         ) if truncated],
+    }
+
+# ---------------------------------------------------------------------------
+# S627: focused evidence expansion and conflict handling
+# ---------------------------------------------------------------------------
+#
+# The first package pass may be incomplete.  The answer agent can request one
+# or more *focused* follow-up searches instead of guessing or receiving the
+# entire database.  Every expansion stays inside the subsection and
+# application scope that the first pass established: it may add no host, peer
+# or external endpoint outside that projection, and index hits and leads never
+# become verified evidence without source settlement.
+#
+# An expansion record carries the request, its query, result counts and the
+# reason it was requested; a repeated empty request produces a *scoped gap*
+# instead of a guessed answer.  Conflicts and NOT_FOUND outcomes are exposed
+# as structured findings.  The run manifest is bounded: search history,
+# package hash, database revision, scope, truncation reasons and the
+# validation outcome all remain auditable from it.
+
+EXPANSION_VERSION = "v2-expansion-v1"
+MANIFEST_SEARCH_HISTORY_LIMIT = 12
+_EXPANSION_KINDS = ("host", "address", "topic", "service", "source_path",
+                    "graph_neighbours", "contradiction")
+
+_EVIDENCE_SELECT = ("SELECT id, area, question, claim, status, source_title, "
+                    "page_or_location, excerpt, review_state FROM evidence WHERE "
+                    "{where} AND (review_state IS NULL OR review_state IN ('proposed','accepted')) ORDER BY id")
+
+
+def _evidence_where(*clauses) -> str:
+    return " AND ".join(clauses)
+
+
+def expansion_outcomes(evidence: list[dict]) -> list[dict]:
+    """The structured conflict and NOT_FOUND outcomes of one evidence list.
+
+    Every CONFLICTING or NOT_FOUND row is passed to the model as a disclosure
+    requirement: it is never silently dropped or read as verified, and an
+    answer that cites it without disclosing it fails validation."""
+    out = []
+    for f in evidence or []:
+        status = f.get("status", "")
+        if status not in ("CONFLICTING", "NOT_FOUND"):
+            continue
+        if status == "CONFLICTING":
+            out.append({"kind": "conflict", "evidence_id": f.get("evidence_id", ""),
+                        "status": status, "text": f.get("text", ""),
+                        "requirement": "disclose the conflict before stating or rating it",
+                        "non_evidence": False})
+        else:
+            out.append({"kind": "not_found", "evidence_id": f.get("evidence_id", ""),
+                        "status": status, "text": f.get("text", ""),
+                        "requirement": "state it as an evidenced absence; it raises the question, it does not answer it",
+                        "non_evidence": False})
+    return out
+
+
+def _scope_hosts(con, application_key: str) -> set:
+    raw = _scope_projection(con, application_key)
+    return set(raw["owned"]) | set(raw["peers"]) | set(raw["external"])
+
+
+def _scope_evidence(con, rows: list[dict], in_scope: set[str]) -> list[dict]:
+    """Keep only evidence that cannot name a host outside this projection.
+
+    Focused searches such as topic and source-path searches do not have a host
+    predicate of their own.  Rejecting a row that names a known out-of-scope
+    host prevents those searches from becoming an application boundary escape.
+    Rows without a host identity remain eligible when the caller supplied an
+    exact scoped source/query; they do not introduce a host by themselves.
+    """
+    all_hosts = {str(r[0]) for r in con.execute("SELECT name FROM host")}
+    out = []
+    for row in rows:
+        text = " ".join(str(row.get(k) or "") for k in ("claim", "question", "excerpt"))
+        named = {h for h in all_hosts if re.search(rf"(?<![A-Za-z0-9_-]){re.escape(h)}(?![A-Za-z0-9_-])", text, re.I)}
+        if named and not named <= in_scope:
+            continue
+        out.append(row)
+    return out
+
+
+def _expand_evidence(con, *, application_key: str, subsection_key: str,
+                     kind: str, host: str = "", address: str = "",
+                     terms: list[str] | None = None, service: str = "",
+                     port: int | None = None, provider: str = "",
+                     source_path: str = "", neighbour: str = "") -> tuple[list[dict], int, int]:
+    """Rows relevant to one focused request, plus the true (evidence, connection) counts.
+
+    The query is always anchored to this application's scope: a host or
+    address request resolves the address to an in-scope owner first, and a
+    service request is bound to an in-scope host or provider. Requests that
+    resolve outside the projection return nothing: expansion cannot pull in an
+    unrelated application's host or external endpoint."""
+    in_scope = _scope_hosts(con, application_key)
+    host = (host or "").strip()
+    address = (address or "").strip()
+    terms = [t for t in (terms or []) if (t or "").strip()]
+
+    def ev_where(where: str, params: tuple) -> list[dict]:
+        return _row(con, _EVIDENCE_SELECT.format(where=where), *params)
+
+    if kind == "host":
+        if host not in in_scope:
+            return [], 0, 0
+        ev = ev_where("claim LIKE ?", (f"%{host}%",))
+        ph = ",".join("?" * max(1, len(in_scope)))
+        binds = sorted(in_scope)
+        conns = len(_row(con, f"SELECT 1 FROM address WHERE owner_host IN ({ph})", *binds))
+        conns += len(_row(con, f"SELECT 1 FROM flow WHERE src_host IN ({ph}) OR dst_host IN ({ph})", *binds, *binds))
+        conns += len(_row(con, f"SELECT 1 FROM service WHERE host IN ({ph}) OR provider_host IN ({ph})", *binds, *binds))
+    elif kind == "address":
+        owner = _resolve_address(con, address)
+        if owner not in in_scope:
+            return [], 0, 0
+        ev = ev_where(_evidence_where("claim LIKE ?", "excerpt LIKE ?"), (f"%{address}%", f"%{address}%"))
+        conns = len(_row(con, "SELECT 1 FROM address WHERE ip=? OR owner_host=?", address, owner))
+        conns += len(_row(con, "SELECT 1 FROM flow WHERE src_host=? OR dst_host=?", owner, owner))
+        conns += len(_row(con, "SELECT 1 FROM service WHERE host=? OR provider_host=?", owner, owner))
+    elif kind == "service":
+        has_query = bool((service or "").strip()) or port is not None or bool((provider or "").strip()) or bool(terms)
+        if not has_query:
+            return [], 0, 0
+        host_ok = host if host in in_scope else ""
+        prov_ok = provider if provider in in_scope else ""
+        clauses, params = [], []
+        if host_ok:
+            clauses.append("claim LIKE ?"); params.append(f"%{host_ok}%")
+        if prov_ok:
+            clauses.append("claim LIKE ?"); params.append(f"%{prov_ok}%")
+        if not clauses:
+            clauses.append("claim LIKE ?"); params.append(f"%{service}%")
+        if port is not None:
+            clauses.append("claim LIKE ?"); params.append(f"%{port}%")
+        for t in terms:
+            clauses.append("claim LIKE ?"); params.append(f"%{t}%")
+        ev = ev_where(_evidence_where(*clauses), tuple(params))
+        ph = ",".join("?" * max(1, len(in_scope)))
+        binds = sorted(in_scope)
+        conns = len(_row(con, f"SELECT 1 FROM service WHERE host IN ({ph}) OR provider_host IN ({ph})",
+                         *binds, *binds))
+    elif kind == "topic":
+        keys = terms or ([subsection_key] if subsection_key else [])
+        if not keys:
+            return [], 0, 0
+        clauses = ["(claim LIKE ? OR question LIKE ?)"] * len(keys)
+        params = [f"%{k}%" for k in keys]
+        params = [p for k in keys for p in (f"%{k}%", f"%{k}%")]
+        ev = ev_where(" OR ".join(clauses), tuple(params))
+        conns = 0
+    elif kind == "source_path":
+        sp = (source_path or "").strip()
+        if not sp:
+            return [], 0, 0
+        ev = ev_where(_evidence_where("source_title LIKE ?", "page_or_location LIKE ?"),
+                      (f"%{sp}%", f"%{sp}%"))
+        conns = len(_row(con, "SELECT 1 FROM indexed_file WHERE rel_path LIKE ?", f"%{sp}%"))
+    elif kind == "graph_neighbours":
+        nb = (neighbour or "").strip() or host
+        if nb not in in_scope:
+            return [], 0, 0
+        ev = ev_where("claim LIKE ?", (f"%{nb}%",))
+        ph = ",".join("?" * max(1, len(in_scope)))
+        binds = sorted(in_scope)
+        conns = len(_row(con, f"SELECT 1 FROM graph_edge WHERE (src=? OR dst=?) AND (src IN ({ph}) OR dst IN ({ph}))",
+                         nb, nb, *binds, *binds))
+        conns += len(_row(con, f"SELECT 1 FROM flow WHERE (src_host=? OR dst_host=?) AND (src_host IN ({ph}) OR dst_host IN ({ph}))",
+                          nb, nb, *binds, *binds))
+    else:  # contradiction: same subject, disagreeing status
+        key = host or (terms[0] if terms else "")
+        if not key:
+            return [], 0, 0
+        ev = ev_where("claim LIKE ?", (f"%{key}%",))
+        statuses = {r["status"] for r in ev}
+        if len(statuses) <= 1:
+            ev = [r for r in ev if r["status"] in ("CONFLICTING", "NOT_FOUND")]
+        conns = 0
+    ev = _scope_evidence(con, ev, in_scope)
+    # de-duplicate by ID, keep first (stable) order, attach provenance
+    seen: set[str] = set()
+    out = []
+    for r in ev:
+        if r["id"] in seen:
+            continue
+        seen.add(r["id"])
+        state, paths, cands = _prov(con, r["id"])
+        out.append({
+            "evidence_id": r["id"], "text": r.get("claim") or "",
+            "source": r.get("source_title") or "", "location": r.get("page_or_location") or "",
+            "status": r.get("status") or "", "review_state": r.get("review_state") or "",
+            "basis": "stated" if state == "canonical" else state, "paths": paths, "candidates": cands,
+            "reason": f"expansion-{kind}", "non_evidence": False,
+            "verified": r.get("status") == "VERIFIED" and r.get("review_state") != "rejected",
+        })
+    return out, len(seen), conns
+
+
+def expand_package(db, *, subsection_key: str, application_key: str, question: str,
+                   kind: str, host: str = "", address: str = "",
+                   terms: list[str] | None = None, service: str = "",
+                   port: int | None = None, provider: str = "",
+                   source_path: str = "", neighbour: str = "",
+                   reason: str = "", base_package: dict | None = None,
+                   limits: dict | None = None) -> dict:
+    """One focused expansion search for ``subsection_key`` of ``application_key``.
+
+    ``kind`` selects the bounded query (host, address, topic, service,
+    source_path, graph_neighbours, contradiction); the remaining arguments are
+    the query terms. The result is a full package: the same shape, limits,
+    scope and truncation reporting as the first pass, plus ``expansion``
+    (request, query, result counts, reason, outcomes) so the run manifest can
+    carry the search history and audit the result."""
+    if kind not in _EXPANSION_KINDS:
+        raise ValueError(f"expansion kind must be one of {', '.join(_EXPANSION_KINDS)}, got {kind!r}")
+    terms = [t for t in (terms or []) if t and t.strip()]
+    base = base_package or build_package(db, subsection_key=subsection_key,
+                                         application_key=application_key, question=question,
+                                         terms=terms or None)
+    lim = {**DEFAULT_LIMITS, **(limits or {})}
+    with closing(v2_access.connection(Path(db))) as con:
+        ev, ev_total, conn_total = _expand_evidence(
+            con, application_key=application_key, subsection_key=subsection_key,
+            kind=kind, host=host, address=address, terms=terms, service=service,
+            port=port, provider=provider, source_path=source_path, neighbour=neighbour)
+    evidence = ev[:lim["evidence"]]
+    outcomes = expansion_outcomes(evidence)
+    conflict_ids = {o["evidence_id"] for o in outcomes if o["kind"] == "conflict"}
+    not_found_ids = {o["evidence_id"] for o in outcomes if o["kind"] == "not_found"}
+    scoped_gap = (not evidence) and (not outcomes) and (not base.get("evidence"))
+    query = {k: v for k, v in (("kind", kind), ("host", host), ("address", address),
+                               ("terms", terms), ("service", service), ("port", port),
+                               ("provider", provider), ("source_path", source_path),
+                               ("neighbour", neighbour)) if v not in ("", None, [])}
+    expansion = {
+        "version": EXPANSION_VERSION,
+        "kind": kind,
+        "query": query,
+        "reason": (reason or "").strip() or f"focused-{kind}-search",
+        "result_counts": {"evidence": ev_total, "connections": conn_total},
+        "outcomes": outcomes,
+        "scoped_gap": bool(scoped_gap),
+        "gap": ({"subsection": subsection_key, "application_key": application_key,
+                 "query": query, "note": "no evidence matched this scoped search; raise as a scoped gap, do not guess"}
+                if scoped_gap else None),
+    }
+    pkg = dict(base)
+    existing_ids = {f.get("evidence_id") for f in base.get("evidence", [])}
+    combined = list(base.get("evidence", [])) + [f for f in evidence if f["evidence_id"] not in existing_ids]
+    unique_added = len([f for f in evidence if f["evidence_id"] not in existing_ids])
+    combined_total = int(base.get("counts", {}).get("evidence", len(base.get("evidence", [])))) + unique_added
+    pkg["evidence"] = combined[:lim["evidence"]]
+    pkg["expansion"] = expansion
+    pkg["expansion_outcomes"] = outcomes
+    pkg["conflict_disclosure_required"] = sorted(conflict_ids)
+    pkg["not_found_disclosure_required"] = sorted(not_found_ids)
+    pkg["counts"] = {
+        "evidence": combined_total,
+        "hosts": sum(len(v) for v in (base.get("hosts") or {}).values()),
+        "connections": base.get("counts", {}).get("connections", 0),
+        "chunks": base.get("counts", {}).get("chunks", 0),
+        "leads": base.get("counts", {}).get("leads", 0),
+        "warnings": base.get("counts", {}).get("warnings", 0),
+    }
+    pkg["truncated"] = {
+        **base.get("truncated", {}),
+        "evidence": bool(base.get("truncated", {}).get("evidence")) or combined_total > lim["evidence"],
+    }
+    pkg["more_available"] = bool(base.get("more_available") or pkg["truncated"]["evidence"])
+    if pkg["truncated"]["evidence"] and "evidence_limit" not in base.get("truncation_reasons", []):
+        pkg["truncation_reasons"] = list(base.get("truncation_reasons", [])) + ["evidence_limit"]
+    pkg["package_version"] = PACKAGE_VERSION
+    body = {k: v for k, v in pkg.items() if k not in ("revision", "package_hash", "context", "model_profile")}
+    pkg["package_hash"] = hashlib.sha256(
+        json.dumps(body, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    ).hexdigest()[:16]
+    return pkg
+
+
+def _audit_expansion(exp: dict) -> dict:
+    """One expansion entry for the bounded run-manifest search history."""
+    e = exp.get("expansion") or {}
+    return {
+        "kind": e.get("kind"),
+        "query": e.get("query"),
+        "reason": e.get("reason"),
+        "result_counts": e.get("result_counts"),
+        "outcomes": e.get("outcomes"),
+        "scoped_gap": e.get("scoped_gap"),
+        "gap": e.get("gap"),
+        "package_hash": exp.get("package_hash"),
+        "truncated": exp.get("truncated"),
+        "truncation_reasons": exp.get("truncation_reasons"),
+        "more_available": exp.get("more_available"),
+    }
+
+
+def run_manifest(base_package: dict, expansions: list[dict] | None = None,
+                 validation: dict | None = None, manifest: dict | None = None) -> dict:
+    """The bounded, auditable run manifest for one V2 answer run.
+
+    It carries the base package's hash, database revision, scope and
+    truncation reasons, the bounded search history of every expansion (kind,
+    query, result counts, reason, outcomes), and the validation outcome, so a
+    run can be replayed and audited without re-running the searches."""
+    manifest = dict(manifest or {})
+    def _pkg_audit(pkg: dict) -> dict:
+        return {
+            "package_hash": pkg.get("package_hash") or hashlib.sha256(
+                json.dumps({k: v for k, v in pkg.items()
+                            if k not in ("revision", "package_hash", "context", "model_profile")},
+                           sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+            ).hexdigest()[:16],
+            "package_version": pkg.get("package_version") or PACKAGE_VERSION,
+            "revision": pkg.get("revision"),
+            "application_key": pkg.get("application_key"),
+            "subsection": pkg.get("section"),
+            "scope": pkg.get("hosts"),
+            "truncated": pkg.get("truncated"),
+            "truncation_reasons": pkg.get("truncation_reasons"),
+            "more_available": pkg.get("more_available"),
+        }
+    history = [_audit_expansion(e) for e in (expansions or [])]
+    return {
+        "manifest_version": "v2-run-manifest-v1",
+        "route": manifest.get("route", "v2-native"),
+        "contract_version": manifest.get("contract_version") or base_package.get("contract_version") or "",
+        "base": _pkg_audit(base_package),
+        "expansions": history[:MANIFEST_SEARCH_HISTORY_LIMIT],
+        "search_history_bounded": len(history) <= MANIFEST_SEARCH_HISTORY_LIMIT,
+        "validation": validation,
     }
