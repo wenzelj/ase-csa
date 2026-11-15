@@ -68,3 +68,20 @@ def test_retirement_requires_retained_snapshot_and_native_audit(tmp_path):
         native_audit={"route": "v2-native", "package_hash": "abc", "validation_result": "OK"})
     assert ready["status"] == "READY"
     assert snapshot.read_text(encoding="utf-8") == "retained\n"
+
+
+def test_native_audit_metadata_survives_quarantine_and_retirement_gate(tmp_path):
+    snapshot = tmp_path / "legacy-snapshot.json"
+    snapshot.write_text('{"retained": true}\n', encoding="utf-8")
+    audit = {
+        "route": "v2-native", "package_hash": "pkg-abc123",
+        "database_revision": {"modified_ns": 123},
+        "contract_version": "answer-contract-v1", "validation_result": "OK",
+    }
+    result = v2_access.retirement_gate(["v2-quarantine", "v2-native"],
+                                       legacy_snapshot=snapshot, native_audit=audit)
+    assert result["status"] == "READY"
+    assert audit["route"] == "v2-native"
+    assert audit["package_hash"] == "pkg-abc123"
+    assert audit["validation_result"] == "OK"
+    assert snapshot.read_text(encoding="utf-8") == '{"retained": true}\n'
