@@ -142,7 +142,19 @@ def load_summary(work_dir, key: str) -> dict | None:
     try:
         path = ratings_path(work_dir, key)
         if path.is_file():
-            return summary(json.loads(path.read_text(encoding="utf-8")))
+            data = json.loads(path.read_text(encoding="utf-8"))
+            # A quality score belongs to the exact answer sheet it reviewed.
+            # Do not show a stale score for a newer answer when a current sheet
+            # exists; the browser should show that the new answer is unscored.
+            sheet = Path(work_dir) / "cards" / f"{key}.answer.md"
+            if sheet.is_file():
+                digest = hashlib.sha256(sheet.read_bytes()).hexdigest()
+                runs = [run for run in data.get("runs", [])
+                        if run.get("sheet_sha256") == digest]
+                if not runs:
+                    return None
+                data = {**data, "runs": runs[-RUNS_KEPT:]}
+            return summary(data)
         return _result_summary(work_dir, key) or _matching_legacy_summary(work_dir, key)
     except (OSError, ValueError, KeyError, TypeError):
         return None

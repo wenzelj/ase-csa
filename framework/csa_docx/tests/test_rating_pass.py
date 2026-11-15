@@ -84,3 +84,24 @@ def test_legacy_rating_is_used_only_for_an_identical_current_answer(tmp_path):
     assert R.load_summary(tmp_path, "MGT")["latest"] == 7.2
     answer.write_text("changed V2 answer", encoding="utf-8")
     assert R.load_summary(tmp_path, "MGT") is None
+
+
+def test_current_rating_history_is_hidden_when_answer_sheet_hash_changes(tmp_path):
+    cards = tmp_path / "cards"
+    cards.mkdir()
+    answer = cards / "TIME.answer.md"
+    answer.write_text("new answer", encoding="utf-8")
+    R.record(tmp_path, "TIME", {"B1": {"score": 5.7, "reason": "old"}},
+            sheet_sha256="old-sheet-hash")
+    assert R.load_summary(tmp_path, "TIME") is None
+
+
+def test_current_rating_history_is_returned_for_the_matching_answer_sheet(tmp_path):
+    cards = tmp_path / "cards"
+    cards.mkdir()
+    answer = cards / "TIME.answer.md"
+    answer.write_text("current answer", encoding="utf-8")
+    digest = __import__("hashlib").sha256(answer.read_bytes()).hexdigest()
+    R.record(tmp_path, "TIME", {"B1": {"score": 7.4, "reason": "current"}},
+             sheet_sha256=digest)
+    assert R.load_summary(tmp_path, "TIME")["latest"] == 7.4
