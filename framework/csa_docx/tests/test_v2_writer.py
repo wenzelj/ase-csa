@@ -51,3 +51,15 @@ def test_validator_accepts_card_bounded_additions_once():
     rows, hosts = _pkg_evidence(packet["evidence_package"] | {"card_evidence_additions": packet["card_evidence_additions"]})
     assert {"E-001", "E-997", "E-998", "E-999"}.issubset(rows)
     assert hosts == {"APP01"}
+
+
+def test_stale_unknown_evidence_repair_lines_are_removed_only_when_now_valid():
+    packet = v2_writer.build_packet(
+        project="test", subsection="TIME", card=_card(),
+        errors=("ERROR UNKNOWN_EVIDENCE B1: E-12345 is not in the subsection evidence package\n"
+                "ERROR UNKNOWN_EVIDENCE B1: E-001 is not in the subsection evidence package\n"
+                "CHECK EVIDENCE_DROPPED B1: E-001, E-12345"))
+    assert "E-001 is not" not in packet["repair_request"]
+    assert "E-12345 is not" in packet["repair_request"]
+    assert "EVIDENCE_DROPPED B1: E-12345" in packet["repair_request"]
+    assert "EVIDENCE_DROPPED B1: E-001" not in packet["repair_request"]

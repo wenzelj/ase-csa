@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 
 VERSION = "v2-writer-packet-v1"
@@ -103,6 +104,37 @@ def _card_evidence(card: dict, package: dict) -> dict:
     return out
 
 
+def _packet_evidence_ids(card: dict, package: dict) -> set[str]:
+    ids = _evidence_ids(package)
+    additions = _card_evidence(card, package)
+    for block in additions.values():
+        ids.update(str(row.get("id")).upper() for row in block.get("rows", []) if row.get("id"))
+        ids.update(str(i).upper() for i in block.get("cut_ids", []) + block.get("digest_ids", []))
+    return ids
+
+
+def _clean_repair_request(errors: str, card: dict, package: dict) -> str:
+    """Discard stale unknown-ID messages once the packet proves the ID is valid."""
+    if not errors:
+        return ""
+    valid = _packet_evidence_ids(card, package)
+    lines = []
+    for line in str(errors).splitlines():
+        if "UNKNOWN_EVIDENCE" in line:
+            found = re.findall(r"\bE-\d+\b", line.upper())
+            if found and found[0] in valid:
+                continue
+        if "EVIDENCE_DROPPED" in line:
+            found = re.findall(r"\bE-\d+\b", line.upper())
+            remaining = [item for item in found if item not in valid]
+            if not remaining:
+                continue
+            prefix = line.split(":", 1)[0]
+            line = prefix + ": " + ", ".join(remaining)
+        lines.append(line)
+    return "\n".join(lines).strip()
+
+
 def build_packet(*, project: str, subsection: str, card: dict,
                  package: dict | None = None, answer: str = "", errors: str = "") -> dict:
     """Build one complete, deterministic writer input from prepared framework data."""
@@ -127,7 +159,7 @@ def build_packet(*, project: str, subsection: str, card: dict,
         "evidence_package": _package_view(native_package),
         "card_evidence_additions": _card_evidence(card, native_package),
         "retained_answer": answer,
-        "repair_request": errors,
+        "repair_request": _clean_repair_request(errors, card, native_package),
     }
     body["packet_hash"] = hashlib.sha256(_canonical(body).encode("utf-8")).hexdigest()[:16]
     return body
