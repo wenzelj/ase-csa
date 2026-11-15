@@ -109,10 +109,11 @@ def review_events(db: Path, subject_type: str = "evidence") -> list[dict]:
 REQUIRED_TABLES = ("evidence", "indexed_file", "indexed_chunk", "lead", "graph_node", "graph_edge",
                   "host", "address", "service", "flow")
 ROUTE_LABELS = ("v1-native", "v2-native", "v2-compatibility-adapter")
-ROUTE_STATES = ("v1", "v2-compatibility", "v2-native")
+ROUTE_STATES = ("v1", "v2-compatibility", "v2-quarantine", "v2-native")
 ROUTE_STATE_LABELS = {
     "v1": "v1-native",
     "v2-compatibility": "v2-compatibility-adapter",
+    "v2-quarantine": "v2-compatibility-adapter",
     "v2-native": "v2-native",
 }
 
@@ -166,6 +167,11 @@ def route(command: str, *, work_dir: Path | None = None, db: Path | None = None,
                  "route_state": state or ("v2-native" if is_v2 and selected == "v2-native" else
                                             "v2-compatibility" if selected == "v2-compatibility-adapter" else "v1"),
                  "command": command, "project": project}
+    if state == "v2-quarantine":
+        out["status"] = "QUARANTINED"
+        out["warning"] = "project is quarantined; compatibility is explicit and native fallback is refused"
+    elif state == "v2-compatibility":
+        out["warning"] = "compatibility adapter selected explicitly; native V2 is not active"
     if is_v2:
         candidate = Path(db) if db is not None else _db_file(work)
         out["store"] = str(candidate)
