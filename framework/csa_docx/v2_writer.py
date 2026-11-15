@@ -12,6 +12,7 @@ import re
 from pathlib import Path
 
 from . import v2_evidence_slice
+from . import v2_answer_plan
 
 VERSION = "v2-writer-packet-v2"
 INSTRUCTIONS = Path(__file__).with_name("v2_writer_instructions.md")
@@ -155,6 +156,7 @@ def build_packet(*, project: str, subsection: str, card: dict,
     }
     native_package = package or card.get("package") or {}
     slices = card.get("v2_evidence_slices") or v2_evidence_slice.build_slices(card, native_package)
+    plan = card.get("v2_answer_plan") or v2_answer_plan.build_plan(card, slices)
     body = {
         "packet_version": VERSION,
         "project": project,
@@ -163,6 +165,7 @@ def build_packet(*, project: str, subsection: str, card: dict,
         "output_contract": output_contract,
         "card": _card_view(card),
         "evidence_slices": slices,
+        "answer_plan": plan,
         "retained_answer": answer,
         "repair_request": _clean_repair_request(errors, card, native_package),
     }

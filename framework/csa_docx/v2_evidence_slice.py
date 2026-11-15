@@ -7,6 +7,7 @@ native package's duplicate provenance, tables or connection dumps.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 VERSION = "v2-evidence-slice-v1"
@@ -52,6 +53,23 @@ def _block_ids(block: dict, obligations: dict) -> set[str]:
     return ids
 
 
+def _digest_rows(block: dict) -> dict[str, dict]:
+    rows = {}
+    def visit(value):
+        if isinstance(value, list):
+            for item in value:
+                visit(item)
+        elif isinstance(value, str):
+            match = re.search(r"\b(E-\d+)\s*:\s*(.+)", value)
+            if match:
+                rows[match.group(1).upper()] = {
+                    "evidence_id": match.group(1).upper(), "text": match.group(2).strip(),
+                    "status": "DIGEST", "basis": "digest"
+                }
+    visit(block.get("digest", []) if isinstance(block, dict) else [])
+    return rows
+
+
 def build_slices(card: dict, package: dict | None = None) -> dict[str, dict]:
     """Build deterministic, question-scoped slices from a card and native package."""
     package = package or card.get("package") or {}
@@ -61,10 +79,12 @@ def build_slices(card: dict, package: dict | None = None) -> dict[str, dict]:
     questions = {str(q.get("id")): q for q in card.get("questions", []) if isinstance(q, dict) and q.get("id")}
     for qid, question in questions.items():
         block = (card.get("evidence") or {}).get(qid, {})
-        allowed = _block_ids(block, obligations.get(qid, {}))
-        if not allowed:
-            allowed = set(package_rows)
+        # The native package is already bounded to this subsection/question.
+        # Keep all of its claim rows so an existing answer is not invalidated
+        # merely because a derived obligation list omitted a supporting row.
+        allowed = set(package_rows) | _block_ids(block, obligations.get(qid, {}))
         rows = {evidence_id: package_rows[evidence_id] for evidence_id in sorted(allowed) if evidence_id in package_rows}
+        rows.update(_digest_rows(block))
         for raw in block.get("rows", []) if isinstance(block, dict) else []:
             if not isinstance(raw, dict):
                 continue

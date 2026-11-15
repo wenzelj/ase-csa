@@ -27,6 +27,7 @@ def test_packet_is_stable_and_contains_new_instructions_only():
     assert "card_evidence_additions" not in first
     assert first["evidence_slices"]["B1"]["allowed_evidence_ids"] == ["E-001", "E-999"]
     assert first["evidence_slices"]["B1"]["evidence"][0]["evidence_id"] == "E-001"
+    assert first["answer_plan"]["B1"]["allowed_evidence_ids"] == ["E-001", "E-999"]
 
 
 def test_packet_keeps_evidence_and_repair_inputs_separate():
@@ -59,6 +60,14 @@ def test_slice_artifacts_are_inspectable(tmp_path):
     paths = write_slices(tmp_path / "TIME.evidence", slices)
     assert paths["B1"].endswith("B1.json")
     assert (tmp_path / "TIME.evidence" / "B1.md").read_text().startswith("# B1 evidence slice")
+
+
+def test_answer_plan_artifact_is_inspectable(tmp_path):
+    from csa_docx.v2_answer_plan import build_plan, write_plan
+    packet = v2_writer.build_packet(project="test", subsection="TIME", card=_card())
+    paths = write_plan(tmp_path / "TIME.plan", build_plan(_card(), packet["evidence_slices"]))
+    assert paths[0].endswith("answer-plan.json")
+    assert (tmp_path / "TIME.plan" / "answer-plan.md").read_text().startswith("# V2 answer plan")
 
 
 def test_stale_unknown_evidence_repair_lines_are_removed_only_when_now_valid():

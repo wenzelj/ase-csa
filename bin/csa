@@ -2581,6 +2581,7 @@ def build_prompt(p: dict, r: dict, args: list[str], local: bool | None = None, i
                     base_data = json.loads(base_json.read_text(encoding="utf-8"))
                     card_data["package"] = base_data.get("package", {})
                     card_data.setdefault("v2_evidence_slices", base_data.get("v2_evidence_slices", {}))
+                    card_data.setdefault("v2_answer_plan", base_data.get("v2_answer_plan", {}))
             answer_path = Path(str(values.get("ANSWER", ""))) if values.get("ANSWER") else None
             if answer_path and not answer_path.is_absolute():
                 answer_path = agent_working_dir(p, r) / answer_path
@@ -3547,9 +3548,13 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
                     sys.path.insert(0, str(FRAMEWORK))
                     try:
                         from csa_docx import v2_evidence_slice
+                        from csa_docx import v2_answer_plan
                         slices = v2_evidence_slice.build_slices(card_data, pkg)
                         card_data["v2_evidence_slices"] = slices
                         v2_evidence_slice.write_slices(cards / f"{key}.evidence", slices)
+                        plan = v2_answer_plan.build_plan(card_data, slices)
+                        card_data["v2_answer_plan"] = plan
+                        v2_answer_plan.write_plan(cards / f"{key}.plan", plan)
                     finally:
                         if str(FRAMEWORK) in sys.path:
                             sys.path.remove(str(FRAMEWORK))

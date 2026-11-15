@@ -2461,6 +2461,9 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
     allowed |= {i.upper() for i in (card.get("frame") or {}).get("network_ids", [])}      # the register's own rows (Network answers)
     allowed |= {i.upper() for i in (card.get("frame") or {}).get("entity_ids", [])}       # the rows about the servers the settings name
     allowed |= {i.upper() for i in (card.get("frame") or {}).get("ids", [])}              # the analysis frame's findings
+    for slice_data in (card.get("v2_evidence_slices") or {}).values():
+        if isinstance(slice_data, dict):
+            allowed |= {str(i).upper() for i in slice_data.get("allowed_evidence_ids", [])}
     allowed |= {i.upper() for i in (new_ids or set())}
     from csa_docx import answer_preflight
     findings += answer_preflight.findings(sheet, card, allowed)

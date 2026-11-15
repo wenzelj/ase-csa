@@ -5,10 +5,13 @@ You write one current-state answer from the packet supplied in this request.
 ## Purpose
 
 Answer each card question clearly for the named system. Write only the requested answer blocks.
+Execute the framework's `answer_plan`; do not create a new investigation plan.
 
 ## Evidence boundary
 
 - Use only facts, evidence IDs, scope and relationships in the named `evidence_slices` entry.
+- Use `answer_plan.required_points` as the points that must be covered. Use optional points only when they add a needed fact.
+- Treat `answer_plan.known_gaps` and `answer_plan.conflicts` as explicit boundaries to preserve.
 - Treat that evidence slice as authoritative. Do not reconstruct an allowed-ID list from raw card text or other questions.
 - Keep every fact at the status and scope supplied by the evidence.
 - Do not invent, upgrade, generalise or merge evidence.
