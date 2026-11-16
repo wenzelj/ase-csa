@@ -89,9 +89,6 @@ answer_heartbeat_minutes: 10
 # answer sheet or a per-block patch is written or changed), and the call is stopped when it has produced none for this many
 # minutes. Reading files and running commands is not work. 0 turns the idle limit off.
 answer_call_timeout_minutes: 0
-# V2 answer-only calls are finite and must not hold a block open indefinitely.
-# Legacy calls retain the unbounded setting above.
-answer_simple_call_timeout_minutes: 12
 answer_idle_minutes: 25
 # What the agent does in its own session (a model reply, a command) also restarts the idle clock, when its CLI keeps a session
 # log (Codex), so reading a large card does not use the limit up. A session that stays busy but has written no sheet or patch

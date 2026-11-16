@@ -46,6 +46,13 @@ def test_visible_migration_numbers_resolve_to_live_structural_paths(tmp_path):
     assert CSA["resolve_visible_section"](p, "5.6")["stable_path"] == "6.7"
 
 
+def test_v2_simple_writer_treats_validation_as_advisory(tmp_path):
+    v2 = tmp_path / "csa-work-v2"
+    v2.mkdir()
+    assert CSA["v2_advisory_mode"]({"work_dir": str(v2)}, "simple") is True
+    assert CSA["v2_advisory_mode"]({"work_dir": str(v2)}, "legacy") is False
+
+
 def test_appendix_e_framework_section_resolves_to_live_structural_path(tmp_path):
     result = CSA["resolve_visible_section"](_project(tmp_path), "8")
     assert result["heading"] == "Discovery Required"

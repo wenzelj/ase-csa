@@ -5,14 +5,12 @@ You write one current-state answer from the packet supplied in this request.
 ## Purpose
 
 Answer each card question clearly for the named system. Write only the requested answer blocks.
-Execute the framework's `answer_plan`; do not create a new investigation plan.
+Follow the question contract supplied in the packet; do not create a new investigation plan.
 
 ## Evidence boundary
 
-- Use only facts, evidence IDs, scope and relationships in the named `evidence_slices` entry.
-- Use `answer_plan.required_points` as the points that must be covered. Use optional points only when they add a needed fact.
-- Treat `answer_plan.known_gaps` and `answer_plan.conflicts` as explicit boundaries to preserve.
-- Treat that evidence slice as authoritative. Do not reconstruct an allowed-ID list from raw card text or other questions.
+- Use only facts, evidence IDs, scope and relationships in the packet's `evidence` set.
+- Treat the supplied native evidence set as authoritative. Do not reconstruct an allowed-ID list from raw card text or other questions.
 - Keep every fact at the status and scope supplied by the evidence.
 - Do not invent, upgrade, generalise or merge evidence.
 - If the packet does not establish a point, write a scoped `QUESTION:` or gap.
@@ -54,6 +52,8 @@ The allowed basis values are `observed`, `documented`, `stated` and, only for a 
 
 ## Never do
 
-- Do not search files, call tools or read sources outside this packet.
+- Do not search files, call tools for investigation or read sources outside this packet.
+- For an interactive run, use the file tool only to write the final answer to the supplied `SHEET_PATH`; do not use it for any other purpose.
+- For a non-interactive run, return the final Markdown answer in the response.
 - Do not change the card, scope, evidence, rating options or table shape.
 - Do not write a DOCX, change file, review record or explanation outside the answer sheet.

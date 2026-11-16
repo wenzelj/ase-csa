@@ -27,6 +27,23 @@ def test_blocks_are_answered_one_call_each_when_headless_or_when_the_window_clos
     assert not ok(False, "", browser)
 
 
+def test_v2_interactive_blocks_use_the_framework_handshake_not_provider_hooks():
+    ok = CSA["by_block_run"]
+    assert ok(False, "codex --profile any-model {prompt}", {}, framework_owned=True)
+    assert ok(False, "claude {prompt}", {}, framework_owned=True)
+    assert not ok(False, "", {}, framework_owned=True)
+
+
+def test_answer_output_path_and_stable_output_handshake_are_provider_neutral(tmp_path):
+    path = CSA["answer_output_path"](["3.6", "SHEET=answer.patch-B1.md"], tmp_path)
+    assert path == tmp_path / "answer.patch-B1.md"
+    ready = CSA["answer_output_ready"]
+    assert not ready(path, (0, 0), 10, None)
+    path.write_text("## B1\n", encoding="utf-8")
+    assert not ready(path, (0, 0), 10, 9.9, quiet_s=1)
+    assert ready(path, (0, 0), 11.1, 9.9, quiet_s=1)
+
+
 def test_an_interactive_run_answers_one_block_at_a_time():
     workers = CSA["by_block_workers"]
     assert workers(4, headless=True) == 4

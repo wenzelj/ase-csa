@@ -116,6 +116,25 @@ def test_referenced_native_rows_are_included_even_when_text_does_not_match(tmp_p
     assert eid in {row["evidence_id"] for row in pkg["evidence"]}
 
 
+def test_all_requested_rows_survive_the_context_cap(tmp_path, monkeypatch):
+    db = _seed(tmp_path, monkeypatch)
+    from csa_docx.v2repo import Repo
+    repo = Repo(db.parent)
+    ids = []
+    with repo.tx():
+        for n in range(3):
+            repo.evidence.create(
+                claim=f"Required native fact {n}.", question="A required question", area="services",
+                source_title="captures/required.txt", excerpt=f"fact {n}", status="VERIFIED")
+        ids = [r[0] for r in repo.con.execute(
+            "SELECT id FROM evidence WHERE claim LIKE 'Required native fact %' ORDER BY id")]
+    repo.close()
+    pkg = build_package(db, subsection_key="unrelated", application_key="tetra-reveloc",
+                        question="Required question", contract=_contract(),
+                        limits={"evidence": 1}, evidence_ids=ids)
+    assert set(ids) <= {row["evidence_id"] for row in pkg["evidence"]}
+
+
 def test_package_reads_no_v1_file(tmp_path, monkeypatch):
     db = _seed(tmp_path, monkeypatch)
     import builtins

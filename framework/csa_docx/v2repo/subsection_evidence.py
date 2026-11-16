@@ -206,8 +206,15 @@ def build_package(db, *, subsection_key: str, application_key: str, question: st
                     reason, (r.get("id") or "").lower())
         candidates.sort(key=_ev_rank)
         evidence_total = len(candidates)
+        # Required question evidence is not optional context.  Keep every
+        # requested native row even when it exceeds the bounded context cap;
+        # apply the cap only to additional supporting rows.  Otherwise the
+        # writer can see a card citation that the validator cannot see.
+        required = [item for item in candidates if item[0].get("id") in requested_ids]
+        supporting = [item for item in candidates if item[0].get("id") not in requested_ids]
+        selected = required + supporting[:max(0, lim["evidence"] - len(required))]
         evidence = []
-        for r, reason in candidates[:lim["evidence"]]:
+        for r, reason in selected:
             state, paths, cands = _prov(con, r["id"])
             evidence.append({
                 "evidence_id": r["id"], "text": r.get("claim") or "",

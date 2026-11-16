@@ -11,9 +11,6 @@ import json
 import re
 from pathlib import Path
 
-from . import v2_evidence_slice
-from . import v2_answer_plan
-
 VERSION = "v2-writer-packet-v2"
 INSTRUCTIONS = Path(__file__).with_name("v2_writer_instructions.md")
 
@@ -39,12 +36,20 @@ def _card_view(card: dict) -> dict:
                 "acronyms", "drawbridge_functions", "subsection_contract", "background_ids"):
         if key in card:
             view[key] = card[key]
+    def without_evidence_ids(value):
+        if isinstance(value, dict):
+            return {key: without_evidence_ids(item) for key, item in value.items()
+                    if key not in {"evidence_ids", "digest_ids", "capture_ids"}}
+        if isinstance(value, list):
+            return [without_evidence_ids(item) for item in value]
+        return value
+
     obligations = card.get("obligations")
     if isinstance(obligations, dict):
         fields = ("contract_version", "question", "kind", "evidence_ids", "digest_ids",
                   "must_preserve", "table_columns", "ratings", "requirements_stories", "repair")
         blocks = {
-            qid: {key: block[key] for key in fields if key in block}
+            qid: without_evidence_ids({key: block[key] for key in fields if key in block})
             for qid, block in (obligations.get("blocks") or {}).items()
             if qid in qids and isinstance(block, dict)
         }
@@ -52,7 +57,7 @@ def _card_view(card: dict) -> dict:
     keep = [item for item in (card.get("keep") or [])
             if isinstance(item, dict) and (not qids or str(item.get("question")) in qids)]
     if keep:
-        view["keep"] = keep
+        view["keep"] = without_evidence_ids(keep)
     return view
 
 
@@ -88,6 +93,27 @@ def _evidence_ids(package: dict) -> set[str]:
     return {i for i in ids if i}
 
 
+def _question_evidence_ids(card: dict, question_ids: set[str]) -> set[str]:
+    """IDs explicitly routed to the requested question blocks."""
+    wanted: set[str] = set()
+    blocks = (card.get("obligations") or {}).get("blocks") or {}
+    for qid in question_ids:
+        block = blocks.get(qid) or blocks.get(qid.upper()) or {}
+        wanted.update(str(i).upper() for i in block.get("evidence_ids", []) if i)
+        for item in block.get("must_preserve", []) + block.get("findings", []):
+            if isinstance(item, dict):
+                wanted.update(str(i).upper() for i in item.get("evidence_ids", []) if i)
+        rows = (card.get("evidence") or {}).get(qid) or (card.get("evidence") or {}).get(qid.upper()) or {}
+        wanted.update(str(row.get("id")).upper() for row in rows.get("rows", [])
+                      if isinstance(row, dict) and row.get("id"))
+        wanted.update(str(i).upper() for i in rows.get("digest_ids", []) if i)
+    for item in card.get("keep", []) or []:
+        if isinstance(item, dict) and (not question_ids or str(item.get("question")) in question_ids):
+            wanted.update(str(i).upper() for i in item.get("evidence_ids", []) if i)
+            wanted.update(str(i).upper() for i in item.get("capture_ids", []) if i)
+    return wanted
+
+
 def _card_evidence(card: dict, package: dict) -> dict:
     """Return only card evidence that is not already in the native package."""
     package_ids = _evidence_ids(package)
@@ -107,23 +133,11 @@ def _card_evidence(card: dict, package: dict) -> dict:
     return out
 
 
-def _packet_evidence_ids(card: dict, package: dict) -> set[str]:
-    slices = card.get("v2_evidence_slices") or {}
-    if slices:
-        return {str(i).upper() for value in slices.values() for i in value.get("allowed_evidence_ids", [])}
-    ids = _evidence_ids(package)
-    additions = _card_evidence(card, package)
-    for block in additions.values():
-        ids.update(str(row.get("id")).upper() for row in block.get("rows", []) if row.get("id"))
-        ids.update(str(i).upper() for i in block.get("cut_ids", []) + block.get("digest_ids", []))
-    return ids
-
-
 def _clean_repair_request(errors: str, card: dict, package: dict) -> str:
-    """Discard stale unknown-ID messages once the packet proves the ID is valid."""
+    """Discard stale unknown-ID messages once the native package proves validity."""
     if not errors:
         return ""
-    valid = _packet_evidence_ids(card, package)
+    valid = _evidence_ids(package)
     lines = []
     for line in str(errors).splitlines():
         if "UNKNOWN_EVIDENCE" in line:
@@ -178,10 +192,14 @@ def build_packet(*, project: str, subsection: str, card: dict,
         "return_only": "the requested blocks in card order",
     }
     native_package = package or card.get("package") or {}
-    # Rebuild from the native package every time.  Cached slices/plans can
-    # contain derived-only IDs from an older card and are not authoritative.
-    slices = v2_evidence_slice.build_slices(card, native_package)
-    plan = v2_answer_plan.build_plan(card, slices)
+    if only_ids and isinstance(native_package, dict):
+        routed = _question_evidence_ids(card, only_ids)
+        if routed:
+            native_package = dict(native_package)
+            native_package["evidence"] = [
+                row for row in native_package.get("evidence", [])
+                if str(row.get("evidence_id") or "").upper() in routed
+            ]
     body = {
         "packet_version": VERSION,
         "project": project,
@@ -189,8 +207,9 @@ def build_packet(*, project: str, subsection: str, card: dict,
         "instructions": INSTRUCTIONS.read_text(encoding="utf-8"),
         "output_contract": output_contract,
         "card": _card_view(card),
-        "evidence_slices": slices,
-        "answer_plan": plan,
+        # This is the single citeable evidence set. The validator reads the
+        # same native package rows; no second slice or plan allowlist exists.
+        "evidence": _package_view(native_package),
         "retained_answer": answer,
         "repair_request": _clean_repair_request(errors, card, native_package),
     }
@@ -198,11 +217,20 @@ def build_packet(*, project: str, subsection: str, card: dict,
     return body
 
 
-def render_prompt(packet: dict, *, card_path: str, sheet_path: str) -> str:
-    """Render a self-contained prompt. Paths identify output only, not inputs to search."""
+def render_prompt(packet: dict, *, card_path: str, sheet_path: str,
+                  allow_output_tool: bool = False) -> str:
+    """Render a self-contained prompt.
+
+    Interactive calls may use the file tool only for the supplied output path;
+    all evidence remains packet-only and no investigation tools are allowed.
+    """
     payload = _canonical(packet)
+    output_rule = ("You may use the file tool once to write the final Markdown answer to SHEET_PATH. "
+                   "Do not use tools for investigation or to read any other file.\n"
+                   if allow_output_tool else
+                   "Do not call tools or read files. Return the final Markdown answer in your response.\n")
     return ("Act as the V2 Simple Writer. The packet below is complete. Do not load legacy agent files, "
-            "skills, prompts or source files. Return only the Markdown answer sheet.\n\n"
+            "skills, prompts or source files.\n" + output_rule + "\n"
             f"CARD_PATH={card_path}\nSHEET_PATH={sheet_path}\n"
             "V2_WRITER_PACKET (JSON):\n" + payload + "\n")
 

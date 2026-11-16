@@ -2481,25 +2481,35 @@ def validate(sheet: dict[str, dict], card: dict, matrix: dict[str, dict] | None 
     ``draft`` keeps only HARD_CODES as errors (the draft lane)."""
     findings: list[dict] = []
     matrix = matrix or {}
-    allowed = {r["id"].upper() for p in card.get("evidence", {}).values() for r in p.get("rows", [])}
-    # rows the card lists as "more rows not shown" are this section's evidence too: the card cut them
-    # for length, not relevance, so citing one is allowed (UNKNOWN_EVIDENCE still checks the matrix)
-    allowed |= {i.upper() for p in card.get("evidence", {}).values() for i in p.get("cut", [])}
-    allowed |= {i.upper() for p in card.get("evidence", {}).values() for i in p.get("digest_ids", [])}
-    allowed |= {i.upper() for i in (card.get("frame") or {}).get("network_ids", [])}      # the register's own rows (Network answers)
-    allowed |= {i.upper() for i in (card.get("frame") or {}).get("entity_ids", [])}       # the rows about the servers the settings name
-    allowed |= {i.upper() for i in (card.get("frame") or {}).get("ids", [])}              # the analysis frame's findings
-    for slice_data in (card.get("v2_evidence_slices") or {}).values():
-        if isinstance(slice_data, dict):
-            allowed |= {str(i).upper() for i in slice_data.get("allowed_evidence_ids", [])}
-    allowed |= {i.upper() for i in (new_ids or set())}
+    pkg = card.get("package")
+    if isinstance(pkg, dict) and pkg.get("package_version"):
+        # V2 simple answers have one boundary: the native package supplied to
+        # the writer. The validator must not widen it with card/frame/plan
+        # projections or compatibility additions.
+        allowed = {
+            str(i).upper()
+            for row in pkg.get("evidence", []) if isinstance(row, dict)
+            for i in (row.get("evidence_ids") or ([row.get("evidence_id")] if row.get("evidence_id") else []))
+        }
+    else:
+        allowed = {r["id"].upper() for p in card.get("evidence", {}).values() for r in p.get("rows", [])}
+        # Legacy cards retain their existing bounded card/frame/matrix rules.
+        allowed |= {i.upper() for p in card.get("evidence", {}).values() for i in p.get("cut", [])}
+        allowed |= {i.upper() for p in card.get("evidence", {}).values() for i in p.get("digest_ids", [])}
+        allowed |= {i.upper() for i in (card.get("frame") or {}).get("network_ids", [])}
+        allowed |= {i.upper() for i in (card.get("frame") or {}).get("entity_ids", [])}
+        allowed |= {i.upper() for i in (card.get("frame") or {}).get("ids", [])}
+        for slice_data in (card.get("v2_evidence_slices") or {}).values():
+            if isinstance(slice_data, dict):
+                allowed |= {str(i).upper() for i in slice_data.get("allowed_evidence_ids", [])}
+        allowed |= {i.upper() for i in (new_ids or set())}
     from csa_docx import answer_preflight
     findings += answer_preflight.findings(sheet, card, allowed)
-    pkg = card.get("package")
     if isinstance(pkg, dict) and pkg.get("package_version"):
         # S626: the structured fact layer runs before any prose-quality check
         findings += structured_findings(sheet, card, pkg)
-    findings += v2_plan_findings(sheet, card)
+    if not (isinstance(pkg, dict) and pkg.get("package_version")):
+        findings += v2_plan_findings(sheet, card)
     allowed |= {i.upper() for k in card.get("keep", []) for i in k.get("evidence_ids", [])}
     background = {i.upper() for i in card.get("background_ids", [])}   # K- passages on the card's background section
     ratings = ratings or card.get("ratings") or ["Met", "Partially Met", "Not Met", "Not Applicable"]
