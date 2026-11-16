@@ -94,6 +94,28 @@ def test_package_is_versioned_deterministic_and_bounded(tmp_path, monkeypatch):
     assert "evidence_limit" in a["truncation_reasons"]
 
 
+def test_referenced_native_rows_are_included_even_when_text_does_not_match(tmp_path, monkeypatch):
+    db = _seed(tmp_path, monkeypatch)
+    from csa_docx.v2repo import Repo
+    repo = Repo(db.parent)
+    with repo.tx():
+        repo.evidence.create(
+            claim="Check Point SmartConsole is installed on the OT jump host.",
+            question="Which firewall management client is installed?",
+            area="network_and_connectivity",
+            source_title="captures/jump-host.txt",
+            excerpt="Check Point SmartConsole",
+            status="VERIFIED",
+        )
+    eid = repo.con.execute("SELECT id FROM evidence ORDER BY rowid DESC LIMIT 1").fetchone()[0]
+    repo.close()
+    pkg = build_package(db, subsection_key="Management & Administrative Access",
+                        application_key="tetra-reveloc", question="Which management tools?",
+                        terms=["Management & Administrative Access"], contract=_contract(),
+                        evidence_ids=[eid])
+    assert eid in {row["evidence_id"] for row in pkg["evidence"]}
+
+
 def test_package_reads_no_v1_file(tmp_path, monkeypatch):
     db = _seed(tmp_path, monkeypatch)
     import builtins

@@ -16,11 +16,17 @@ from pathlib import Path
 def main(argv: list[str]) -> int:
     if len(argv) < 3:
         return 2
+    raw = argv[-1]
     try:
-        event = json.loads(argv[-1])
+        event = json.loads(raw)
     except ValueError:
-        return 0
-    if not isinstance(event, dict) or event.get("type") != "agent-turn-complete":
+        # Codex versions using the legacy notify protocol pass the event name
+        # directly (the default config uses ``turn-ended``), rather than a
+        # JSON object.  Treat that form as the same completed-turn signal.
+        if raw != "turn-ended":
+            return 0
+        event = {"type": "agent-turn-complete"}
+    if not isinstance(event, dict) or event.get("type") not in {"agent-turn-complete", "turn-ended"}:
         return 0
     marker = Path(argv[1])
     marker.parent.mkdir(parents=True, exist_ok=True)

@@ -47,11 +47,35 @@ def test_browser_work_close_fallback_requires_browser_marker_and_quiet_work():
     assert not ready("interactive", {"CSA_CLOSE_ON_TURN_END": "1"}, before, after, 4, 5)
 
 
+def test_browser_turn_cannot_close_until_the_block_wrote_work(tmp_path):
+    ready = CSA["browser_turn_ready"]
+    marker = tmp_path / "turn.json"
+    assert not ready(marker, (), ())
+    marker.write_text("{}")
+    assert not ready(marker, (), ())
+    assert ready(marker, (), (("TIME.patch-B1.md", 10, 2),))
+
+
+def test_browser_turn_marker_is_checked_before_the_work_helper_can_clear_it(tmp_path):
+    marker = tmp_path / "turn.json"
+    marker.write_text("{}")
+    # This is the exact no-patch state: the browser completion marker exists,
+    # but the answer/patch signature has not changed.  The browser path must
+    # close the child instead of delegating to turn_ended_with_work(), which
+    # intentionally clears a no-work marker for an ordinary terminal run.
+    assert CSA["browser_turn_ready"](marker, (), (("TIME.patch-B1.md", 10, 2),))
+    assert not CSA["turn_ended_with_work"](marker, (), ())
+    assert not marker.exists()
+
+
 def test_the_notify_program_writes_the_marker(tmp_path):
     marker = tmp_path / "turn.json"
     payload = json.dumps({"type": "agent-turn-complete", "last-assistant-message": "done"})
     subprocess.run([sys.executable, str(ROOT / "framework" / "csa_docx" / "turn_done.py"), str(marker), payload], check=True)
     assert json.loads(marker.read_text())["type"] == "agent-turn-complete"
+    legacy = tmp_path / "legacy.json"
+    subprocess.run([sys.executable, str(ROOT / "framework" / "csa_docx" / "turn_done.py"), str(legacy), "turn-ended"], check=True)
+    assert json.loads(legacy.read_text())["type"] == "agent-turn-complete"
     other = tmp_path / "other.json"
     subprocess.run([sys.executable, str(ROOT / "framework" / "csa_docx" / "turn_done.py"), str(other),
                     json.dumps({"type": "something-else"})], check=True)

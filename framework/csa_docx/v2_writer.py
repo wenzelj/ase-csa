@@ -142,8 +142,31 @@ def _clean_repair_request(errors: str, card: dict, package: dict) -> str:
 
 
 def build_packet(*, project: str, subsection: str, card: dict,
-                 package: dict | None = None, answer: str = "", errors: str = "") -> dict:
+                 package: dict | None = None, answer: str = "", errors: str = "",
+                 only: str | list[str] | None = None) -> dict:
     """Build one complete, deterministic writer input from prepared framework data."""
+    if isinstance(only, str):
+        only_ids = {item.strip().upper() for item in only.split(",") if item.strip()}
+    else:
+        only_ids = {str(item).strip().upper() for item in (only or []) if str(item).strip()}
+    if only_ids:
+        # A focused call must receive only its own question contract.  The
+        # retained answer still carries earlier blocks for continuity, but the
+        # model no longer spends context re-reading every other plan and slice.
+        card = dict(card)
+        card["questions"] = [q for q in card.get("questions", [])
+                             if isinstance(q, dict) and str(q.get("id", "")).upper() in only_ids]
+        obligations = dict(card.get("obligations") or {})
+        blocks = obligations.get("blocks") or {}
+        obligations["blocks"] = {qid: block for qid, block in blocks.items()
+                                  if str(qid).upper() in only_ids}
+        card["obligations"] = obligations
+        card["evidence"] = {qid: value for qid, value in (card.get("evidence") or {}).items()
+                             if str(qid).upper() in only_ids}
+        card["v2_evidence_slices"] = {qid: value for qid, value in (card.get("v2_evidence_slices") or {}).items()
+                                      if str(qid).upper() in only_ids}
+        card["v2_answer_plan"] = {qid: value for qid, value in (card.get("v2_answer_plan") or {}).items()
+                                   if str(qid).upper() in only_ids}
     output_contract = {
         "version": "v2-output-v1",
         "format": "Markdown answer sheet",
@@ -155,8 +178,10 @@ def build_packet(*, project: str, subsection: str, card: dict,
         "return_only": "the requested blocks in card order",
     }
     native_package = package or card.get("package") or {}
-    slices = card.get("v2_evidence_slices") or v2_evidence_slice.build_slices(card, native_package)
-    plan = card.get("v2_answer_plan") or v2_answer_plan.build_plan(card, slices)
+    # Rebuild from the native package every time.  Cached slices/plans can
+    # contain derived-only IDs from an older card and are not authoritative.
+    slices = v2_evidence_slice.build_slices(card, native_package)
+    plan = v2_answer_plan.build_plan(card, slices)
     body = {
         "packet_version": VERSION,
         "project": project,

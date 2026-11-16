@@ -21,6 +21,7 @@ def test_blocks_are_answered_one_call_each_when_headless_or_when_the_window_clos
     browser = {"CSA_CLOSE_ON_TURN_END": "1"}
     assert ok(True, "codex {prompt}", {})                                   # --headless: as before
     assert ok(False, "codex --profile evo-x3-qwen {prompt}", browser)      # the browser's Codex window closes at turn end
+    assert ok(False, "codex exec --output-last-message {last} {prompt}", browser)  # finite visible-window answer call
     assert not ok(False, "codex --profile evo-x3-qwen {prompt}", {})       # your own terminal: the window stays open
     assert not ok(False, "claude {prompt}", browser)                       # no turn-end signal for this CLI
     assert not ok(False, "", browser)

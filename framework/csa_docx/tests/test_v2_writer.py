@@ -25,9 +25,9 @@ def test_packet_is_stable_and_contains_new_instructions_only():
     assert "evidence" not in first["card"]
     assert "evidence_package" not in first
     assert "card_evidence_additions" not in first
-    assert first["evidence_slices"]["B1"]["allowed_evidence_ids"] == ["E-001", "E-999"]
+    assert first["evidence_slices"]["B1"]["allowed_evidence_ids"] == ["E-001"]
     assert first["evidence_slices"]["B1"]["evidence"][0]["evidence_id"] == "E-001"
-    assert first["answer_plan"]["B1"]["allowed_evidence_ids"] == ["E-001", "E-999"]
+    assert first["answer_plan"]["B1"]["allowed_evidence_ids"] == ["E-001"]
 
 
 def test_packet_keeps_evidence_and_repair_inputs_separate():
@@ -37,6 +37,20 @@ def test_packet_keeps_evidence_and_repair_inputs_separate():
     assert packet["evidence_slices"]["B1"]["evidence"][0]["evidence_id"] == "E-001"
     assert packet["retained_answer"] == "old sheet"
     assert packet["repair_request"] == "Fix B1 scope"
+
+
+def test_focused_packet_contains_only_the_requested_block():
+    card = {"questions": [{"id": "B1", "kind": "requirement"}, {"id": "B2", "kind": "requirement"}],
+            "obligations": {"blocks": {"B1": {"evidence_ids": ["E-001"]},
+                                           "B2": {"evidence_ids": ["E-002"]}}},
+            "package": {"evidence": [{"evidence_id": "E-001", "text": "one"},
+                                       {"evidence_id": "E-002", "text": "two"}]},
+            "evidence": {"B1": {"rows": []}, "B2": {"rows": []}}}
+    packet = v2_writer.build_packet(project="test", subsection="TIME", card=card, only="B2")
+    assert [q["id"] for q in packet["card"]["questions"]] == ["B2"]
+    assert set(packet["answer_plan"]) == {"B2"}
+    assert set(packet["evidence_slices"]) == {"B2"}
+    assert packet["output_contract"]["blocks"][0]["id"] == "B2"
 
 
 def test_prompt_is_self_contained_and_does_not_require_legacy_reading():
@@ -51,7 +65,16 @@ def test_prompt_is_self_contained_and_does_not_require_legacy_reading():
 
 def test_slice_does_not_include_cut_or_digest_ids_without_claims():
     packet = v2_writer.build_packet(project="test", subsection="TIME", card=_card())
-    assert packet["evidence_slices"]["B1"]["allowed_evidence_ids"] == ["E-001", "E-999"]
+    assert packet["evidence_slices"]["B1"]["allowed_evidence_ids"] == ["E-001"]
+
+
+def test_stale_cached_plan_ids_are_not_sent_to_writer():
+    card = _card()
+    card["v2_evidence_slices"] = {"B1": {"allowed_evidence_ids": ["E-989"], "evidence": []}}
+    card["v2_answer_plan"] = {"B1": {"allowed_evidence_ids": ["E-989"]}}
+    packet = v2_writer.build_packet(project="test", subsection="TIME", card=card)
+    assert "E-989" not in packet["evidence_slices"]["B1"]["allowed_evidence_ids"]
+    assert "E-989" not in packet["answer_plan"]["B1"]["allowed_evidence_ids"]
 
 
 def test_slice_artifacts_are_inspectable(tmp_path):

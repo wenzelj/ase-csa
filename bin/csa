@@ -480,6 +480,11 @@ def turn_ended_with_work(marker: Path | None, start_mark: tuple, now_mark: tuple
     return False
 
 
+def browser_turn_ready(marker: Path | None, start_mark: tuple, now_mark: tuple) -> bool:
+    """True only when a browser turn ended *and* produced new answer work."""
+    return bool(marker is not None and marker.is_file() and now_mark != start_mark)
+
+
 def browser_work_close_ready(mode: str, env, start_mark: tuple, now_mark: tuple,
                              last_work: float, now: float, quiet_s: float = 5.0) -> bool:
     """Fallback for an Evidence Browser Codex turn when its notify marker is missed."""
@@ -493,7 +498,14 @@ def by_block_run(headless: bool, interactive_template: str, env=None) -> bool:
     Browser's Codex window). An interactive window that stays open would have to be closed by hand after every block."""
     if headless:
         return True
-    return bool(turn_end_args(shlex.split(interactive_template or ""), "interactive", Path("turn.json"), env))
+    argv = shlex.split(interactive_template or "")
+    # The Evidence Browser uses a visible terminal, but its answer-only profile is
+    # deliberately a finite `codex exec` call.  It still runs in the same window;
+    # unlike the conversational TUI it has a reliable process exit and last-message
+    # file, so the next block cannot be released on a marker alone.
+    if "exec" in argv and "{last}" in argv:
+        return True
+    return bool(turn_end_args(argv, "interactive", Path("turn.json"), env))
 
 
 def by_block_workers(configured: int, headless: bool) -> int:
@@ -2602,6 +2614,7 @@ def build_prompt(p: dict, r: dict, args: list[str], local: bool | None = None, i
                 package=card_data.get("package"),
                 answer=_read_text(answer_path),
                 errors=_read_text(errors_path),
+                only=values.get("ONLY"),
             )
             lines.append("\n" + v2_writer.render_prompt(
                 packet,
@@ -2776,8 +2789,16 @@ def v2_answer_package(p: dict, number: str, card_path: Path) -> dict | None:
         questions = card.get("questions") or []
         question = str((questions[0] if questions else {}).get("text") or title)
         contract = _sc.build(title, question, application_view="application")
+        requested_ids = set()
+        for block in (card.get("obligations") or {}).get("blocks", {}).values():
+            for item in block.get("must_preserve", []) + block.get("findings", []):
+                requested_ids.update(str(i).upper() for i in item.get("evidence_ids", []) if i)
+        for block in (card.get("evidence") or {}).values():
+            requested_ids.update(str(row.get("id")).upper() for row in block.get("rows", [])
+                                 if isinstance(row, dict) and row.get("id"))
         pkg = _se.build_package(db, subsection_key=key, application_key=str(p["key"]),
-                                question=question, terms=[question], contract=contract)
+                                question=question, terms=[question], contract=contract,
+                                evidence_ids=sorted(requested_ids))
         import hashlib
         import json as _json
         body = {k: v for k, v in pkg.items()
@@ -2802,7 +2823,10 @@ def sheet_from_last_message(sheet: Path) -> bool:
     if sheet.is_file() or not LAST_MESSAGE or not LAST_MESSAGE.is_file():
         return False
     text = LAST_MESSAGE.read_text(encoding="utf-8", errors="replace")
-    m = re.search(r"^##\s+B1\b", text, re.M)
+    # Focused block calls may return B1, B2, B3 or F1.  The old B1-only
+    # fallback made later blocks look empty even though the model had finished
+    # them in its final response.
+    m = re.search(r"^##\s+[BCF]\d+\b", text, re.M)
     if not m:
         return False
     body = re.sub(r"\n```\s*$", "", text[m.start():].rstrip()) + "\n"
@@ -2878,7 +2902,13 @@ def _launch(p: dict, r: dict, args: list[str], a) -> int:
     # answer-only profile so MCP servers are not started just to write prose.
     simple_answer = (r.get("verb") in ("answer", "draft") and
                      any(str(x).upper() == "WRITER_MODE=SIMPLE" for x in args))
-    if simple_answer and settings().get(f"{cli}_answer_{mode}"):
+    if (mode == "interactive" and os.environ.get("CSA_CLOSE_ON_TURN_END") == "1"
+            and settings().get(f"{cli}_browser")):
+        # Evidence Browser answer-again runs in the visible terminal, but use a
+        # finite answer-only invocation so the final response can be captured as
+        # the patch when the model does not call the shell to write it.
+        template_key = f"{cli}_browser"
+    elif simple_answer and settings().get(f"{cli}_answer_{mode}"):
         template_key = f"{cli}_answer_{mode}"
     tmpl = settings().get(template_key)
     template_args = shlex.split(tmpl or "")
@@ -2940,7 +2970,8 @@ def _launch(p: dict, r: dict, args: list[str], a) -> int:
     # The caller still validates any sheet written before a timeout or non-zero exit.
     # A headless call never reads our stdin (codex exec waits on it when it is an open pipe), and a call that shows no
     # sign of life (no CPU, no connection to its model) for answer_stall_minutes is stopped and started again.
-    timeout_min = float(settings().get("answer_call_timeout_minutes", 0) or 0)       # an absolute cap, off by default
+    timeout_key = "answer_simple_call_timeout_minutes" if simple_answer else "answer_call_timeout_minutes"
+    timeout_min = float(settings().get(timeout_key, 0) or 0)       # bounded for V2 answer-only calls
     idle_min = float(settings().get("answer_idle_minutes", 25) or 0)                   # no work produced for this long: stop
     browser_close_quiet_s = float(settings().get("answer_browser_close_quiet_seconds", 5) or 5)
     heartbeat_min = float(settings().get("answer_heartbeat_minutes", 10) or 0)
@@ -2976,12 +3007,18 @@ def _launch(p: dict, r: dict, args: list[str], a) -> int:
                 except subprocess.TimeoutExpired:
                     elapsed = time.time() - began
                     now_mark = work_signature(run_cwd)
-                    if turn_ended_with_work(turn_marker, start_mark, now_mark):
-                        print(f"{C['d']}the agent's turn ended with its answer written; closing its window "
-                              f"and checking the sheet.{C['0']}", file=sys.stderr, flush=True)
+                    if browser_turn_ready(turn_marker, start_mark, now_mark):
+                        print(f"{C['d']}the agent's turn ended with new answer work; closing its window "
+                              f"and checking the block before moving on.{C['0']}",
+                              file=sys.stderr, flush=True)
                         stop(proc)
                         turn_marker.unlink(missing_ok=True)
                         return 0
+                    if turn_marker is not None and turn_marker.is_file() and now_mark == start_mark:
+                        print(f"{C['y']}the agent turn ended, but this block has produced no patch; "
+                              f"keeping the step open until its work is present.{C['0']}",
+                              file=sys.stderr, flush=True)
+                        turn_marker.unlink(missing_ok=True)
                     if now_mark != mark:
                         mark, last_work = now_mark, time.time()
                     if browser_work_close_ready(mode, worker_env or os.environ, start_mark, now_mark,
@@ -3845,9 +3882,10 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
               f"({workers} at a time): {', '.join(content_ids)}{C['0']}")
         got, missing = [], list(content_ids)
 
-        def merge_result(result: tuple[str, int]) -> None:
+        def merge_result(result: tuple[str, int]) -> bool:
             bid, rc = result
             part = cards / f"{key}.patch-{bid}.md"
+            completed = False
             if part.is_file() and part.stat().st_size:
                 mg = _fw_json("csa_docx.answer_blocks", "merge", sheet, "--patch", part, "--only", bid)
                 if mg.get("normalized"):
@@ -3859,15 +3897,22 @@ def _author_cards(p: dict, a, draft: bool = False) -> int:
                         missing.remove(bid)
                     if workers == 1:
                         shutil.copyfile(sheet, base)   # the next block sees completed context, through a safe snapshot
+                    completed = True
             if sheet.is_file():
                 pending = missing + (["F1"] if want_frame else [])
                 _fw_json("csa_docx.answer_blocks", "wip-write", sheet, "--card", card_json, "--matrix", matrix,
                          *(["--hosts", hosts_csv] if hosts_csv.is_file() else []),
                          "--failed", ",".join(pending), "--codes", "PARTIAL_BLOCKS")
+            return completed
 
         if workers == 1:                         # local model: do not enqueue work it can only serialise
             for bid in content_ids:
-                merge_result(one(bid))
+                result = one(bid)
+                if not merge_result(result):
+                    failed_bid, rc = result
+                    print(f"{C['r']}Block {failed_bid} did not complete: no valid patch was merged; "
+                          f"stopping before the next block.{C['0']}", file=sys.stderr)
+                    return 2
         else:
             with ThreadPoolExecutor(max_workers=workers) as ex:
                 for result in ex.map(one, content_ids):

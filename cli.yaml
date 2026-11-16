@@ -17,13 +17,15 @@ comments: off
 # How to launch each CLI. {prompt} is replaced by the generated prompt (passed as
 # one argument, never through a shell). interactive = you stay in the session;
 # headless = runs to completion and exits (used by --headless and `csa pipeline`).
-codex_interactive: codex -m gpt-5.6-sol -c model_reasoning_effort=medium {prompt}
+codex_interactive: /Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex --no-alt-screen -m gpt-5.6-sol -c model_reasoning_effort=medium {prompt}
+codex_browser: /Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex exec -m gpt-5.6-sol -c model_reasoning_effort=medium --skip-git-repo-check --output-last-message {last} {prompt}
 codex_headless: codex exec -m gpt-5.6-sol -c model_reasoning_effort=medium --skip-git-repo-check --output-last-message {last} {prompt}
 claude_interactive: claude {prompt}
 claude_headless: claude -p {prompt}
 # Evo: the dedicated Codex profile against the local model. Pick it per run with --cli evo.
 evo_interactive: codex --profile evo-x3-qwen {prompt}
 evo_headless: codex exec --profile evo-x3-qwen --ignore-rules --skip-git-repo-check --output-last-message {last} {prompt}
+evo_browser: codex exec --profile evo-x3-qwen --ignore-rules --skip-git-repo-check --output-last-message {last} {prompt}
 evo_answer_headless: codex exec --ignore-user-config -c 'model="qwen3.8:latest"' -c model_context_window=131072 -c model_reasoning_effort="none" -c model_provider="remote_ollama" -c model_catalog_json="/Users/wenzel/.codex/model-catalogs/qwen3.8-evo.json" -c 'model_providers.remote_ollama.name="EVO-X3 Ollama answer-only"' -c 'model_providers.remote_ollama.base_url="http://192.168.0.110:11434/v1"' -c 'model_providers.remote_ollama.wire_api="responses"' --ephemeral --sandbox read-only --ignore-rules --skip-git-repo-check --output-last-message {last} {prompt}
 # Explicit small-model answer profile. It is opt-in (`csa answer ... --cli llama3b`);
 # the normal/default answer CLI is unchanged.
@@ -87,6 +89,9 @@ answer_heartbeat_minutes: 10
 # answer sheet or a per-block patch is written or changed), and the call is stopped when it has produced none for this many
 # minutes. Reading files and running commands is not work. 0 turns the idle limit off.
 answer_call_timeout_minutes: 0
+# V2 answer-only calls are finite and must not hold a block open indefinitely.
+# Legacy calls retain the unbounded setting above.
+answer_simple_call_timeout_minutes: 12
 answer_idle_minutes: 25
 # What the agent does in its own session (a model reply, a command) also restarts the idle clock, when its CLI keeps a session
 # log (Codex), so reading a large card does not use the limit up. A session that stays busy but has written no sheet or patch

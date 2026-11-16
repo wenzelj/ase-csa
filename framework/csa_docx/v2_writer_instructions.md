@@ -41,6 +41,17 @@ Execute the framework's `answer_plan`; do not create a new investigation plan.
 - Put evidence IDs in the answer-sheet evidence fields, not in prose.
 - Use `QUESTION:` for unresolved points rather than guessing.
 
+### Exact fact syntax
+
+Facts must use the validator's existing line format. Do not write `Text:`, `Evidence:` or `Basis:` inside a fact bullet, and do not use square brackets for evidence IDs. Use one fact per bullet, with the evidence IDs in parentheses followed by basis and scope in braces:
+
+```markdown
+Facts:
+- The SQL Server cluster uses two DNS servers. (E-2951, E-2952) {observed; SQL Server cluster nodes (instance S01)}
+```
+
+The allowed basis values are `observed`, `documented`, `stated` and, only for a background knowledge fact, `background`. Summary, Story and Rating reason are prose fields and must not contain evidence IDs.
+
 ## Never do
 
 - Do not search files, call tools or read sources outside this packet.

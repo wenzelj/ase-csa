@@ -132,7 +132,7 @@ def _matches(text: str, term: str) -> bool:
 
 def build_package(db, *, subsection_key: str, application_key: str, question: str,
                   terms: list[str] | None = None, contract: dict | None = None,
-                  limits: dict | None = None) -> dict:
+                  limits: dict | None = None, evidence_ids: list[str] | None = None) -> dict:
     """Build one bounded, read-only native V2 package for ``subsection_key`` of ``application_key``.
 
     The package is read-only: it opens the store read-only and derives every
@@ -146,6 +146,7 @@ def build_package(db, *, subsection_key: str, application_key: str, question: st
     terms = [t for t in (terms or []) if t and t.strip()]
     contract = contract or {}
     contract_version = contract.get("contract_version") or ""
+    requested_ids = {str(e).upper() for e in (evidence_ids or []) if str(e).strip()}
     areas = contract.get("body", {}).get("evidence", {}).get("areas") or []
     if isinstance(areas, str):
         areas = [areas]
@@ -183,9 +184,25 @@ def build_package(db, *, subsection_key: str, application_key: str, question: st
                 candidates.append((r, "area-match"))
                 seen_ids.add(r["id"])
 
+        # Card obligations may identify a relevant native evidence row whose
+        # wording does not match the subsection title.  Fetch that row from
+        # csa.sqlite directly; the database remains the authority and rejected
+        # or missing IDs are simply not returned.
+        if requested_ids:
+            for start in range(0, len(requested_ids), 500):
+                chunk = sorted(requested_ids)[start:start + 500]
+                marks = ",".join("?" for _ in chunk)
+                for r in _row(con, f"SELECT id, area, question, claim, status, source_title, page_or_location, "
+                                  f"excerpt, review_state FROM evidence WHERE id IN ({marks}) "
+                                  "AND (review_state IS NULL OR review_state IN ('proposed','accepted')) ORDER BY id", *chunk):
+                    if r["id"] not in seen_ids:
+                        candidates.append((r, "question-evidence"))
+                        seen_ids.add(r["id"])
+
         def _ev_rank(pr):
             r, reason = pr
-            return (_EVIDENCE_RANK.get(r.get("status", ""), 5), 0 if reason in ("question-match", "term-match", "area-match") else 1,
+            return (_EVIDENCE_RANK.get(r.get("status", ""), 5), 0 if reason == "question-evidence" else
+                    (1 if reason in ("question-match", "term-match", "area-match") else 2),
                     reason, (r.get("id") or "").lower())
         candidates.sort(key=_ev_rank)
         evidence_total = len(candidates)
