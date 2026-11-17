@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import assets, intake_errors, apply_workflow, audit_workflow, author_workflow, intake_workflow, build_workflow, cleanup_workflow, commands, documents, draft_workflow, prompts_workflow, explorer, csa_figures, network, global_graph, pipeline, project_setup, project_upload, proposals, review_workflow, sections, validation, word_review, working_document
+from . import assets, intake_errors, apply_workflow, audit_workflow, author_workflow, intake_workflow, build_workflow, cleanup_workflow, commands, documents, draft_workflow, improve_workflow, prompts_workflow, explorer, csa_figures, network, global_graph, pipeline, project_setup, project_upload, proposals, review_workflow, sections, validation, word_review, working_document
 from .jobs import JobManager
 from .terminal_sessions import check_write_origin
 from .models import CommandRequest, IntakeErrorsResponse, JobCreateRequest
@@ -766,6 +766,39 @@ def get_prompt_preview(system_key: str, key: str, block: str = "") -> dict[str, 
 @app.get("/api/systems/{system_key}/draft")
 def get_draft(system_key: str) -> dict[str, Any]:
     return draft_workflow.snapshot(agents_dir(), system_project(system_key))
+
+
+@app.get("/api/systems/{system_key}/improve")
+def get_improve(system_key: str) -> dict[str, Any]:
+    return improve_workflow.snapshot(agents_dir(), system_project(system_key))
+
+
+@app.get("/api/systems/{system_key}/sections/{section}/improve")
+def get_section_improve(system_key: str, section: str) -> dict[str, Any]:
+    result = improve_workflow.section(agents_dir(), system_project(system_key), section)
+    if result.get("status") == "NOT_FOUND":
+        raise HTTPException(404, result.get("message", "section not found"))
+    return result
+
+
+@app.post("/api/systems/{system_key}/sections/{section}/improve/check")
+def check_section_improve(system_key: str, section: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    return improve_workflow.check_proposal(system_project(system_key), section, payload or None)
+
+
+@app.post("/api/systems/{system_key}/sections/{section}/improve/apply")
+def apply_section_improve(system_key: str, section: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    if (payload or {}).get("confirmed") is not True:
+        raise HTTPException(400, "Applying an Improve proposal requires explicit confirmation.")
+    result = improve_workflow.apply_proposal(system_project(system_key), section)
+    if result.get("status") == "BLOCKED":
+        raise HTTPException(409, result.get("errors", ["Improve proposal is blocked"])[0])
+    return result
+
+
+@app.post("/api/systems/{system_key}/sections/{section}/improve/discard")
+def discard_section_improve(system_key: str, section: str) -> dict[str, Any]:
+    return improve_workflow.discard_proposal(system_project(system_key), section)
 
 
 @app.get("/api/systems/{system_key}/intake")

@@ -61,6 +61,18 @@ agents:
     skill: csa-draft-agent
     summary: Draft lane (before V1) - csa answer N (or csa draft N) builds the card, this agent writes the answer with its prose, the framework writes it into the document as plain text. One model call.
 
+  - verb: improve
+    file: csa-improve-agent.md
+    title: CSA Improve Agent
+    group: pipeline
+    tier: frontier
+    arg: SECTION
+    inputs: SECTION*, CONTEXT*, PROPOSAL*
+    locks: section
+    instruction: Inspect the bounded current-answer context and write a bounded Improve proposal.
+    skill: csa-answer-agent
+    summary: Incrementally improve an existing subsection answer from named gaps and bounded evidence; never rebuild the answer.
+
   - verb: apply
     file: current-state-assessment-document.md
     title: Current-State-Assessment-Document Agent

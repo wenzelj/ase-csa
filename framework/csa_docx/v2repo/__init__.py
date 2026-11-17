@@ -475,8 +475,50 @@ class _Evidence:
         r._audit(actor, "verify", "evidence", eid, note or f"verify failed: {res}")
         return {"verdict": res.get("verdict"), "reason": res.get("reason"), **{k: v for k, v in res.items() if k not in ("verdict", "reason")}, "eid": eid}
 
+    def verify_proposed(self, actor=None, note=None):
+        """Verify every source-backed proposed row in this V2 store.
+
+        Evidence intake has already checked new quoted rows, but that check used to stop at
+        insertion and leave the rows proposed.  The framework owns this transition: rows with
+        a source and excerpt are checked against the repository's indexed source text, rows that
+        match become accepted VERIFIED evidence, and rows that cannot be checked stay proposed
+        with a diagnostic.  Rows without a source quote are reported, never guessed accepted.
+        """
+        r = self._repo
+        r._require_tx()
+        results = []
+        for row in self.list(review_state="proposed"):
+            if not str(row.get("source_title") or "").strip() or not str(row.get("excerpt") or "").strip():
+                results.append({"eid": row["id"], "verdict": "NOT_CHECKABLE",
+                                "reason": "source_title and excerpt are required for automatic verification"})
+                continue
+            results.append(self.verify(row["id"], actor=actor,
+                                       note=note or "automatic verification of source-backed proposed evidence"))
+        return {
+            "checked": len([x for x in results if x["verdict"] not in ("NOT_CHECKABLE",)]),
+            "verified": len([x for x in results if x["verdict"] == "SOURCE_OK"]),
+            "unresolved": len([x for x in results if x["verdict"] not in ("SOURCE_OK",)]),
+            "results": results,
+        }
+
     def _source_index(self):
-        """Open the discovery index next to the DB (csa-work-v2/discovery-index.sqlite), if present."""
+        """Return the V2 indexed source in the shape used by evidence_matrix.source_check.
+
+        V2 stores the authoritative source index in csa.sqlite.  The old implementation only
+        looked for a separate legacy discovery-index.sqlite, which made automatic verification
+        report SOURCE_NOT_FOUND even though V2 had the source text available.
+        """
+        legacy = self._repo.path.parent / "discovery-index.sqlite"
+        if legacy.is_file():
+            return sqlite3.connect(str(legacy))
+        con = self._repo.con
+        con.execute("DROP VIEW IF EXISTS temp.files")
+        con.execute("DROP VIEW IF EXISTS temp.chunks_content")
+        con.execute("DROP VIEW IF EXISTS temp.chunk_map")
+        con.execute("CREATE TEMP VIEW files AS SELECT rowid AS file_id, rel_path, NULL AS dup_of, 0 AS archived FROM indexed_file")
+        con.execute("CREATE TEMP VIEW chunks_content AS SELECT id, text AS c0 FROM indexed_chunk")
+        con.execute("CREATE TEMP VIEW chunk_map AS SELECT c.id AS chunk_id, f.rowid AS file_id, c.id AS line_start FROM indexed_chunk c JOIN indexed_file f ON f.rel_path = c.rel_path")
+        return con
         p = self._repo.path.parent / "discovery-index.sqlite"
         if p.is_file():
             return sqlite3.connect(str(p))

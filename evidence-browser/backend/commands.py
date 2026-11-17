@@ -136,6 +136,11 @@ OPERATIONS: dict[str, Operation] = {
         ("refresh-draft",), options={"cli": "identifier"},
         timeout=14400, mutating=True, mutation_class="document_write", lock="docx", closes_word=True,
     ),
+    "improve": Operation(
+        "improve", "Improve existing answer", "Draft lane: propose a bounded repair to the answer already in the working document.",
+        ("improve",), "required", "section", {"cli": "identifier"}, timeout=14400,
+        mutation_class="workspace_write", lock="section",
+    ),
     # CSA figures: the agent rewords one figure's purpose and caption; placing puts a saved figure in the document.
     "figure_wording": Operation(
         "figure_wording", "Reword figure caption", "The wording agent rewords one figure's purpose and caption; the framework checks it against the evidence.",
@@ -222,13 +227,19 @@ def build_argv(agents_dir: Path, project_key: str, operation_key: str, request: 
         raise HTTPException(422, "layout must be print or screen")
     if operation.key == "figure_design" and request.options.get("mode") not in (None, "design", "build", "review"):
         raise HTTPException(422, "mode must be design, build or review")
-    if operation.key in ("answer", "refresh_draft", "figure_wording", "figure_design", "intake", "resolve_gaps"):
+    if operation.key in ("answer", "refresh_draft", "improve", "figure_wording", "figure_design", "intake", "resolve_gaps"):
         if request.options.get("cli") not in (None, *DRAFT_CLIS):
             raise HTTPException(422, "cli must be claude, codex, evo, qwen8b or eagle")
     if operation.key == "freeze" and request.target != "v1":
         raise HTTPException(422, "freeze takes the target v1")
+    # Improve is launched by the Evidence Browser as a background job. It has
+    # no terminal surface to drive, so use the bounded one-turn model path.
+    # Draft Answer remains an interactive operation and is intentionally
+    # unchanged.
+    if operation.key == "improve":
+        argv.append("--headless")
     if operation.key not in {"author", "review", "cleanup", "build_preview", "build", "audit",
-                             "ingest", "model_build", "stale", "answer", "refresh_draft", "freeze", "intake", "gap_check", "resolve_gaps"}:
+                             "ingest", "model_build", "stale", "answer", "refresh_draft", "improve", "freeze", "intake", "gap_check", "resolve_gaps"}:
         argv.append("--json")
     return operation, argv
 

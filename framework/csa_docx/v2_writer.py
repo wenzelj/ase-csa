@@ -33,7 +33,8 @@ def _card_view(card: dict) -> dict:
     qids = {str(q.get("id")) for q in card.get("questions", []) if isinstance(q, dict) and q.get("id")}
     view = {}
     for key in ("key", "number", "title", "system_name", "questions", "ratings",
-                "acronyms", "drawbridge_functions", "subsection_contract", "background_ids"):
+                "acronyms", "drawbridge_functions", "subsection_contract", "background_ids",
+                "writing_purpose", "current_content", "current_tables"):
         if key in card:
             view[key] = card[key]
     def without_evidence_ids(value):

@@ -39,7 +39,20 @@ def resolve(template: str, home: Path | None = None) -> dict:
         cfg = _merge(cfg, layer)
     for i, arg in enumerate(args[:-1]):
         if arg in ("-c", "--config"):
-            cfg = _merge(cfg, tomllib.loads(args[i + 1]))
+            override = args[i + 1]
+            try:
+                parsed = tomllib.loads(override)
+            except tomllib.TOMLDecodeError:
+                # cli.yaml is tokenised with shlex before it reaches here.
+                # That removes shell quoting from simple string overrides
+                # such as model=qwen3.8:latest. Restore the TOML string form
+                # for a single bare scalar without changing the configured
+                # value or accepting arbitrary expressions.
+                key, sep, value = override.partition("=")
+                if not sep or not value or value[:1] in "\"'" or value.strip().isdigit():
+                    raise
+                parsed = tomllib.loads(f'{key}="{value.replace(chr(34), chr(92)+chr(34))}"')
+            cfg = _merge(cfg, parsed)
         elif arg in ("-m", "--model"):
             cfg["model"] = args[i + 1]
     name = cfg.get("model_provider", "")
@@ -66,6 +79,12 @@ def inline_inputs(args: list[str], folder: Path) -> tuple[str, Path]:
         return p
 
     blocks = []
+    if values.get("PROPOSAL"):
+        for key in ("CONTEXT",):
+            if values.get(key):
+                p = path(values[key])
+                blocks.append(f"\n--- {key} INPUT ---\n{p.read_text(encoding='utf-8')}\n--- END {key} INPUT ---\n")
+        return "\n".join(blocks), path(values["PROPOSAL"])
     for key in ("CARD", "ANSWER", "ERRORS"):
         if values.get(key):
             p = path(values[key])
@@ -98,6 +117,18 @@ def generate(job: dict) -> str:
         raise ValueError("local model returned a tool call instead of an answer; no tool was executed")
     text = "\n".join(c["text"] for item in output if item.get("type") == "message"
                      for c in item.get("content", []) if c.get("type") == "output_text")
+    if job.get("kind") == "improve":
+        start = text.find("{")
+        end = text.rfind("}")
+        if start < 0 or end <= start:
+            raise ValueError("local model returned no Improve proposal JSON")
+        try:
+            proposal = json.loads(text[start:end + 1])
+        except json.JSONDecodeError as exc:
+            raise ValueError("local model returned invalid Improve proposal JSON") from exc
+        if not isinstance(proposal, dict):
+            raise ValueError("local model returned a non-object Improve proposal")
+        return json.dumps(proposal, indent=2, ensure_ascii=False) + "\n"
     start = re.search(r"(?m)^##\s+(?:B|F)\d+\b", text)
     if not start:
         raise ValueError("local model returned no answer-sheet blocks")

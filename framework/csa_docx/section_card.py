@@ -673,6 +673,45 @@ def _current(node: dict) -> list[str]:
     return out
 
 
+def writing_purpose(node: dict, qs: list[dict]) -> str:
+    """The plain-language purpose the V2 writer must fulfil.
+
+    The document question remains authoritative for routing and validation. This
+    sentence stops a narrow coverage or register question becoming the whole
+    purpose of a subsection.
+    """
+    key = str(node.get("key") or "")
+    if key == "GROUP_POLICY_OBSERVATIONS":
+        return ("Describe the current Group Policy observations across the sampled roles, "
+                "including common policies, role-specific differences and coverage limits. "
+                "Preserve useful existing observations and tables.")
+    kinds = {str(q.get("kind")) for q in qs if q.get("kind") != "comment"}
+    title = str(node.get("title") or "the subsection")
+    if "requirement" in kinds:
+        return f"Assess the current state of {title} against each requested requirement, using the evidence and stating what is unknown."
+    if "register" in kinds:
+        return f"Build the {title} register from the evidence, retaining supported existing rows and stating gaps where the evidence is incomplete."
+    if "findings" in kinds:
+        return f"Describe the material current-state findings for {title}, including differences, limitations and unresolved points."
+    return f"Describe the current state of {title} using the evidence, preserving supported existing content and stating gaps where needed."
+
+
+def current_content(node: dict) -> list[dict]:
+    """Full existing prose available on the subsection node for a V2 rewrite."""
+    out = []
+    for p in node.get("parts", []):
+        kind = p.get("kind")
+        if kind == "requirement":
+            for r in p.get("requirements", []):
+                out.append({"kind": "requirement", "id": r.get("id"),
+                            "current_state": r.get("current_state", ""),
+                            "rating": r.get("rating", "")})
+        elif kind in ("narrative", "note", "text") and p.get("text"):
+            out.append({"kind": kind, "label": p.get("facet") or p.get("label") or node.get("title"),
+                        "text": p.get("text")})
+    return out
+
+
 _HOST = re.compile(r"\b(?=[A-Z0-9]*\d)[A-Z][A-Z0-9]{6,}\b")
 _NEGATIVE_ASSERTION = re.compile(r"\b(?:no|not|none|without|absent|missing|never|neither|nor)\b", re.I)
 
@@ -1933,6 +1972,7 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
         "frame": frame, "ratings": spec.get("ratings") or doc_spec.DEFAULT_RATINGS,
         "requirement_stories": requirement_stories})
     sub_contract = subsection_contract_dict(node, qs, spec)
+    purpose = writing_purpose(node, qs)
     return {"status": "OK", "key": node["key"], "number": node["number"], "title": node["title"], "text": text,
             "system_name": sysname,
             "questions": qs, "evidence": pack, "established": established, "background_ids": bg_ids,
@@ -1943,7 +1983,9 @@ def card(node: dict, spec: dict, workspace: Path | None = None, evidence: bool =
             "parts": {k: v for k, v in pview.items() if k != "lines"} if pview else None,
             "practice": practice_view, "requirement_stories": requirement_stories,
             "drawbridge_functions": {k: v for k, v in db_functions.items() if v},
-            "obligations": obligations, "subsection_contract": sub_contract}
+            "obligations": obligations, "subsection_contract": sub_contract,
+            "writing_purpose": purpose, "current_content": current_content(node),
+            "current_tables": rtables or []}
 
 
 def main(argv: list[str] | None = None) -> int:

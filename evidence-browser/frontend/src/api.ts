@@ -1,4 +1,4 @@
-import type { AliasPreview, DeviceEditResult, DevicePayload, PromptList, PromptPreview, JobLogPage, IntakeSnapshot, IntakeErrors, DraftSnapshot, WordReview, ReviewSubmit, ReviewJob, ReviewJobResponse, ReviewLatest, AuthorSetup, AuthorSubmit, AuthorJobResponse, AuthorOptions, CleanupSubmit, CleanupJobResponse, CleanupLatest, CleanupPreflight, BuildSetup, BuildOutcome, AuditSnapshot } from "./types";
+import type { AliasPreview, DeviceEditResult, DevicePayload, PromptList, PromptPreview, JobLogPage, IntakeSnapshot, IntakeErrors, DraftSnapshot, ImproveSnapshot, ImproveDetail, WordReview, ReviewSubmit, ReviewJob, ReviewJobResponse, ReviewLatest, AuthorSetup, AuthorSubmit, AuthorJobResponse, AuthorOptions, CleanupSubmit, CleanupJobResponse, CleanupLatest, CleanupPreflight, BuildSetup, BuildOutcome, AuditSnapshot } from "./types";
 
 export async function api<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
@@ -177,6 +177,11 @@ export async function fetchAuditJob(system: string, id: string): Promise<{ job: 
 export async function recordAuditGap(system: string, payload: Record<string, string>): Promise<{ state: string; path: string }> { return api(`/api/systems/${system}/audit/gaps`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }); }
 
 export async function fetchDraft(system: string): Promise<DraftSnapshot> { return api(`/api/systems/${system}/draft`); }
+export async function fetchImprove(system: string): Promise<ImproveSnapshot> { return api(`/api/systems/${system}/improve`); }
+export async function fetchImproveSection(system: string, section: string): Promise<ImproveDetail> { return api(`/api/systems/${system}/sections/${encodeURIComponent(section)}/improve`); }
+export async function checkImprove(system: string, section: string, proposal?: Record<string, unknown>) { return api(`/api/systems/${system}/sections/${encodeURIComponent(section)}/improve/check`, { method: "POST", headers: JSON_HEADERS, body: JSON.stringify(proposal || {}) }); }
+export async function applyImprove(system: string, section: string) { return api(`/api/systems/${system}/sections/${encodeURIComponent(section)}/improve/apply`, { method: "POST", headers: JSON_HEADERS, body: JSON.stringify({ confirmed: true }) }); }
+export async function discardImprove(system: string, section: string) { return api(`/api/systems/${system}/sections/${encodeURIComponent(section)}/improve/discard`, { method: "POST", headers: JSON_HEADERS, body: JSON.stringify({}) }); }
 export async function submitJob(system: string, operation: string, target?: string, options: Record<string, string | boolean> = {}): Promise<ReviewJob> { return api(`/api/systems/${system}/jobs`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ operation, target: target || null, options }) }); }
 export async function fetchJobs(system: string): Promise<ReviewJob[]> { const data = await api<{ jobs: ReviewJob[] }>(`/api/systems/${system}/jobs`); return data.jobs; }
 export async function fetchJob(system: string, id: string): Promise<ReviewJob> { return api(`/api/systems/${system}/jobs/${id}`); }

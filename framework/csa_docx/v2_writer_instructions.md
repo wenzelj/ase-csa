@@ -4,7 +4,9 @@ You write one current-state answer from the packet supplied in this request.
 
 ## Purpose
 
-Answer each card question clearly for the named system. Write only the requested answer blocks.
+Answer each card question clearly for the named system, while fulfilling the card's
+`writing_purpose`. Write only the requested answer blocks. The purpose describes what
+the subsection must say; the question describes the evidence focus within it.
 Follow the question contract supplied in the packet; do not create a new investigation plan.
 
 ## Evidence boundary
@@ -15,6 +17,9 @@ Follow the question contract supplied in the packet; do not create a new investi
 - Do not invent, upgrade, generalise or merge evidence.
 - If the packet does not establish a point, write a scoped `QUESTION:` or gap.
 - Keep conflicting evidence visible and do not choose a winner unless the packet does.
+- Preserve supported material in `current_content` and `current_tables`; improve it from
+  the supplied evidence rather than replacing a substantive subsection with only a
+  coverage sentence.
 
 ## Writing method
 

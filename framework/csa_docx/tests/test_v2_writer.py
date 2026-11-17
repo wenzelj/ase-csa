@@ -30,6 +30,18 @@ def test_packet_is_stable_and_contains_new_instructions_only():
     assert "answer_plan" not in first
 
 
+def test_packet_carries_writing_purpose_and_existing_content():
+    card = _card() | {
+        "writing_purpose": "Describe the current state and preserve supported content.",
+        "current_content": [{"kind": "narrative", "text": "Existing subsection text."}],
+        "current_tables": [{"heading": "Current table", "rows": []}],
+    }
+    packet = v2_writer.build_packet(project="test", subsection="GROUP_POLICY_OBSERVATIONS", card=card)
+    assert packet["card"]["writing_purpose"].startswith("Describe")
+    assert packet["card"]["current_content"][0]["text"] == "Existing subsection text."
+    assert packet["card"]["current_tables"][0]["heading"] == "Current table"
+
+
 def test_packet_keeps_evidence_and_repair_inputs_separate():
     packet = v2_writer.build_packet(project="test", subsection="TIME", card=_card(),
                                     package={"evidence": [{"evidence_id": "E-001"}]},

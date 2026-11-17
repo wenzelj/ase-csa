@@ -158,6 +158,18 @@ export type DraftSnapshot = {
   open_questions: { groups: { title: string; items: string[] }[]; total: number; file?: string | null }; spec_error?: string | null;
 };
 
+export type ImproveState = { state: string; reason?: string; proposal_available?: boolean; context_available?: boolean; document_hash?: string | null; answer_run_id?: string | null; provenance?: string };
+export type ImproveSection = DraftSection & { eligible: boolean; improve: ImproveState };
+export type ImproveSnapshot = { project_key: string; stage: string; generated_at: string; sections: ImproveSection[]; eligible_count: number; proposal_count: number };
+export type ImproveDetail = {
+  status: string; section: string; row?: ImproveSection;
+  current?: { heading?: string; text?: string; blocks?: { kind?: string; text?: string; rows?: string[][]; level?: number }[]; rating?: DraftRating | null; document_hash?: string; provenance?: string };
+  findings?: string[]; open_questions?: string[];
+  evidence?: { supporting_ids: string[]; new: Record<string, unknown>[]; related: Record<string, unknown>[] };
+  proposal?: Record<string, unknown> | null; latest_run?: Record<string, unknown> | null;
+  message?: string;
+};
+
 // Evidence intake page (GET /api/systems/{key}/intake)
 export type IntakeFile = { rel_path: string; ext: string; status: string; reason?: string | null; source_class: string; host?: string | null };
 export type IntakeRecord = { id: string; built_at_utc: string; matrix_last_id: string; carried_from?: string[]; added: IntakeFile[]; changed: IntakeFile[]; removed: string[]; unreadable: IntakeFile[] };

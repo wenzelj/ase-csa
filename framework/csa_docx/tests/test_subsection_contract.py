@@ -188,3 +188,14 @@ def test_section_card_card_includes_subsection_contract():
         assert k in card
     assert card["status"] == "OK"
     assert card["key"] == "DNS01"
+
+
+def test_section_card_adds_v2_writing_purpose_and_current_content():
+    node = {"key": "GROUP_POLICY_OBSERVATIONS", "title": "Group Policy Observations", "number": "4.9",
+            "kind": "narrative", "parent": None, "path": "Group Policy Observations", "facets": {},
+            "parts": [{"kind": "narrative", "facet": "Group Policy Observations",
+                       "text": "Existing Group Policy observations."}]}
+    spec = {"nodes": [node], "ratings": ["Met", "Partially Met", "Not Met", "Not Applicable"]}
+    card = section_card.card(node, spec, None, evidence=False)
+    assert "Group Policy observations" in card["writing_purpose"]
+    assert card["current_content"][0]["text"] == "Existing Group Policy observations."

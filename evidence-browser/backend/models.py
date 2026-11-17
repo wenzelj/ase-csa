@@ -68,6 +68,24 @@ class JobRecord(BaseModel):
     pid: int | None = None
 
 
+class ImproveSection(BaseModel):
+    key: str
+    number: str = ""
+    title: str = ""
+    eligible: bool = False
+    state: str = "unavailable"
+    improve: dict[str, Any] = Field(default_factory=dict)
+
+
+class ImproveSnapshot(BaseModel):
+    project_key: str
+    stage: str = "draft"
+    generated_at: str
+    sections: list[dict[str, Any]] = Field(default_factory=list)
+    eligible_count: int = 0
+    proposal_count: int = 0
+
+
 class PipelineIssue(BaseModel):
     code: str
     message: str

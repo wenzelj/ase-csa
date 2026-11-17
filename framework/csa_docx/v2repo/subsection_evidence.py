@@ -132,7 +132,8 @@ def _matches(text: str, term: str) -> bool:
 
 def build_package(db, *, subsection_key: str, application_key: str, question: str,
                   terms: list[str] | None = None, contract: dict | None = None,
-                  limits: dict | None = None, evidence_ids: list[str] | None = None) -> dict:
+                  limits: dict | None = None, evidence_ids: list[str] | None = None,
+                  source_terms: list[str] | None = None) -> dict:
     """Build one bounded, read-only native V2 package for ``subsection_key`` of ``application_key``.
 
     The package is read-only: it opens the store read-only and derives every
@@ -144,6 +145,7 @@ def build_package(db, *, subsection_key: str, application_key: str, question: st
         raise ValueError("application_key is required for a V2 package (scope cannot be omitted)")
     lim = {**DEFAULT_LIMITS, **dict(limits or {})}
     terms = [t for t in (terms or []) if t and t.strip()]
+    source_terms = [t for t in (source_terms or []) if t and t.strip()]
     contract = contract or {}
     contract_version = contract.get("contract_version") or ""
     requested_ids = {str(e).upper() for e in (evidence_ids or []) if str(e).strip()}
@@ -153,6 +155,8 @@ def build_package(db, *, subsection_key: str, application_key: str, question: st
     area = areas[0] if areas else (subsection_key or "")
 
     with closing(v2_access.connection(Path(db))) as con:
+        raw_scope = _scope_projection(con, application_key)
+        owned_hosts = [str(h).upper() for h in raw_scope.get("owned", [])]
         # 1. evidence rows matching the subsection contract (question/area/claim), dedup by ID
         candidates = []
         seen_ids: set[str] = set()
@@ -174,6 +178,22 @@ def build_package(db, *, subsection_key: str, application_key: str, question: st
                 if r["id"] in seen_ids or r.get("review_state") == "rejected":
                     continue
                 candidates.append((r, "term-match"))
+                seen_ids.add(r["id"])
+        # Newly ingested source files often have no legacy question or subsection
+        # tag yet. Route an explicitly named source subject by source title, but
+        # keep it within the application's owned hosts so another application is
+        # not pulled into the answer.
+        for t in source_terms:
+            for r in _row(con, "SELECT id, area, question, claim, status, source_title, page_or_location, "
+                              "excerpt, review_state FROM evidence WHERE source_title LIKE ? "
+                              "AND (review_state IS NULL OR review_state IN ('proposed','accepted')) ORDER BY id",
+                          f"%{t}%"):
+                source = str(r.get("source_title") or "").upper()
+                if owned_hosts and not any(host in source for host in owned_hosts):
+                    continue
+                if r["id"] in seen_ids or r.get("review_state") == "rejected":
+                    continue
+                candidates.append((r, "source-match"))
                 seen_ids.add(r["id"])
         for a in areas:
             for r in _row(con, "SELECT id, area, question, claim, status, source_title, page_or_location, "
@@ -210,8 +230,9 @@ def build_package(db, *, subsection_key: str, application_key: str, question: st
         # requested native row even when it exceeds the bounded context cap;
         # apply the cap only to additional supporting rows.  Otherwise the
         # writer can see a card citation that the validator cannot see.
-        required = [item for item in candidates if item[0].get("id") in requested_ids]
-        supporting = [item for item in candidates if item[0].get("id") not in requested_ids]
+        required = [item for item in candidates if item[0].get("id") in requested_ids
+                    or item[1] == "source-match"]
+        supporting = [item for item in candidates if item not in required]
         selected = required + supporting[:max(0, lim["evidence"] - len(required))]
         evidence = []
         for r, reason in selected:
@@ -225,7 +246,6 @@ def build_package(db, *, subsection_key: str, application_key: str, question: st
             })
 
         # 2. canonical projection identities
-        raw_scope = _scope_projection(con, application_key)
         scope, hosts_truncated = _bounded_scope(raw_scope, lim["hosts"])
         all_hosts = scope["owned"] + scope["peers"] + scope["external"]
         all_hosts_total = sum(len(v) for v in raw_scope.values())

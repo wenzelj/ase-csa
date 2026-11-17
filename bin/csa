@@ -2524,7 +2524,8 @@ def local_launch(cmdline: str = "") -> bool:
     """A local-model launch: CSA_LOCAL=1, or a codex command line that picks a --profile."""
     if os.environ.get("CSA_LOCAL", "").strip().lower() in ("1", "true", "yes", "on"):
         return True
-    return "--profile" in cmdline or "model_provider=\"ollama" in cmdline
+    return ("--profile" in cmdline
+            or ("model_provider=" in cmdline and "ollama" in cmdline.lower()))
 
 
 def required_reading(p: dict) -> list[str]:
@@ -2581,13 +2582,14 @@ def build_prompt(p: dict, r: dict, args: list[str], local: bool | None = None,
     if simple_v2:
         lines = ["Act as the V2 Simple Writer.",
                  f"PROJECT={p.get('label')} ({p['key']})", "WORKSPACE=."]
-    elif answer_workspace:
+    elif answer_workspace or (inline and r.get("verb") == "improve"):
         values.pop("SOURCE_SET", None)
         lines = [f"Load this agent definition:\n{CANON_AGENTS / r['file']}\n", f"Act as the {r['title']}.\n",
                  f"PROJECT={p.get('label')} ({p['key']})  -- confirmed by the user via `csa use`; do not ask again.",
                  "WORKSPACE=."]
         if inline:
-            lines = [f"Act as the {r['title']}.",
+            lines = [f"Load and follow this agent definition:\n{(CANON_AGENTS / r['file']).read_text(encoding='utf-8')}\n",
+                     f"Act as the {r['title']}.",
                      f"PROJECT={p.get('label')} ({p['key']})", "WORKSPACE=inline inputs below"]
     else:
         lines = [f"Load this agent definition:\n{CANON_AGENTS / r['file']}\n", f"Act as the {r['title']}.\n",
@@ -2855,9 +2857,20 @@ def v2_answer_package(p: dict, number: str, card_path: Path) -> dict | None:
             # corresponding accepted evidence row; the package builder filters
             # missing/rejected IDs at the database boundary.
             requested_ids.update(str(i).upper() for i in block.get("digest_ids", []) if i)
+        # Source-file routing closes the intake-to-answer gap for new evidence
+        # that has not received a legacy question/subsection tag yet. The native
+        # package still narrows matches to owned hosts and preserves review state.
+        source_terms = [title]
+        source_base = re.sub(r"\b(observations?|inventory|behaviour|behavior|tooling|management)\b", " ", title,
+                             flags=re.IGNORECASE)
+        source_base = " ".join(source_base.split())
+        if source_base and source_base.casefold() != title.casefold():
+            source_terms.append(source_base)
+            if source_base.casefold().endswith("y"):
+                source_terms.append(source_base[:-1] + "ies")
         pkg = _se.build_package(db, subsection_key=key, application_key=str(p["key"]),
-                                question=question, terms=[question], contract=contract,
-                                evidence_ids=sorted(requested_ids))
+                                question=question, terms=[question], source_terms=source_terms,
+                                contract=contract, evidence_ids=sorted(requested_ids))
         import hashlib
         import json as _json
         body = {k: v for k, v in pkg.items()
@@ -2958,16 +2971,24 @@ def _launch(p: dict, r: dict, args: list[str], a) -> int:
         print("csa: no terminal here, so the agent runs headless (no interactive UI)", file=sys.stderr)
     framework_owned_answer = (r.get("verb") in ("answer", "draft")
                               and local_path(p.get("work_dir", "")).name == "csa-work-v2")
+    framework_owned_improve = (r.get("verb") == "improve" and local_path(p.get("work_dir", "")).name == "csa-work-v2")
     template_key = f"{cli}_{mode}"
     # Simple V2 answers are self-contained packets.  Give them a dedicated
     # answer-only profile so MCP servers are not started just to write prose.
-    simple_answer = (r.get("verb") in ("answer", "draft") and
+    simple_answer = (r.get("verb") in ("answer", "draft", "improve") and
                      any(str(x).upper() == "WRITER_MODE=SIMPLE" for x in args))
+    if r.get("verb") == "improve" and settings().get(f"{cli}_answer_{mode}"):
+        simple_answer = True
     if simple_answer and settings().get(f"{cli}_answer_{mode}"):
+        template_key = f"{cli}_answer_{mode}"
+    # Improve is a bounded JSON proposal, so local V2 Improve runs must use
+    # the same tool-free answer transport even when no writer-mode flag was
+    # supplied by the browser or CLI caller.
+    if r.get("verb") == "improve" and settings().get(f"{cli}_answer_{mode}"):
         template_key = f"{cli}_answer_{mode}"
     tmpl = settings().get(template_key)
     template_args = shlex.split(tmpl or "")
-    closed = (r.get("verb") in ("answer", "draft") and mode == "headless"
+    closed = (r.get("verb") in ("answer", "draft", "improve") and mode == "headless"
               and local_launch(tmpl or "") and template_args and Path(template_args[0]).name == "codex"
               and not getattr(a, "print", False))
     closed = bool(closed)
@@ -2986,7 +3007,12 @@ def _launch(p: dict, r: dict, args: list[str], a) -> int:
         die(f"no '{cli}_{mode}' command in .agents/cli.yaml")
     LAST_MESSAGE = _TL.last = None
     if "{last}" in tmpl and not closed:  # codex exec --output-last-message: the agent's final reply, kept for a fallback
-        LAST_MESSAGE = _TL.last = STATE_DIR / "tmp" / f"last-{os.getpid()}-{threading.get_ident()}-{time.time_ns()}.md"
+        # Browser/project workers may not be allowed to write the shared
+        # framework state directory. Keep this transient provider artifact in
+        # the selected project's writable work area instead.
+        runtime_dir = local_path(p.get("work_dir") or str(STATE_DIR / "tmp")) / "improve-runtime"
+        runtime_dir.mkdir(parents=True, exist_ok=True)
+        LAST_MESSAGE = _TL.last = runtime_dir / f"last-{os.getpid()}-{threading.get_ident()}-{time.time_ns()}.md"
         LAST_MESSAGE.parent.mkdir(parents=True, exist_ok=True)
     argv = [prompt if t == "{prompt}" else str(LAST_MESSAGE) if t == "{last}" else t for t in shlex.split(tmpl)]
     if not shutil.which(argv[0]):
@@ -3010,10 +3036,13 @@ def _launch(p: dict, r: dict, args: list[str], a) -> int:
         sys.path.insert(0, str(FRAMEWORK))
         from csa_docx.closed_answer import inline_inputs
         inputs, output = inline_inputs(args, run_cwd)
-        job = STATE_DIR / "tmp" / f"closed-answer-{os.getpid()}-{threading.get_ident()}-{time.time_ns()}.json"
+        job_dir = local_path(p.get("work_dir") or str(STATE_DIR / "tmp")) / "improve-runtime"
+        job_dir.mkdir(parents=True, exist_ok=True)
+        job = job_dir / f"closed-answer-{os.getpid()}-{threading.get_ident()}-{time.time_ns()}.json"
         job.parent.mkdir(parents=True, exist_ok=True)
         _TL.closed_job = job
         job.write_text(json.dumps({"provider": provider, "prompt": prompt + "\n" + inputs,
+                                   "kind": "improve" if r.get("verb") == "improve" else "answer",
                                    "output": str(output), "timeout_s": None}), encoding="utf-8")
         argv = [_py, "-m", "csa_docx.closed_answer", "generate", "--job", str(job)]
         # The worker needs the framework on its import path, without exposing it to the model.
@@ -3023,7 +3052,7 @@ def _launch(p: dict, r: dict, args: list[str], a) -> int:
         i = argv.index("exec") + 1 if "exec" in argv else 1
         argv[i:i] = _closed_sandbox_args(argv)
     print(f"{C['d']}launching {cli} ({mode}) as {r['title']} in {run_cwd}{C['0']}", file=sys.stderr)
-    if r.get("verb") not in ("answer", "draft"):
+    if r.get("verb") not in ("answer", "draft", "improve"):
         return subprocess.call(argv, cwd=str(run_cwd))
     turn_marker = None
     if not closed and not framework_owned_answer:
@@ -4772,6 +4801,63 @@ def cmd_v2(a):
         print(json.dumps({"status": "OK", "application_key": a.application_key, "count": len(rows), "owned": rows},
                          indent=2, ensure_ascii=False))
         return 0
+    if a.v2_action == "evidence":
+        from csa_docx.v2repo import Repo
+        action = a.evidence_action
+        results = []
+        if action == "accept" and not a.evidence_ids:
+            print(json.dumps({"status": "ERROR", "project": p["key"], "action": action,
+                              "error": "accept requires at least one --id; verification discovers all proposed rows automatically"},
+                             indent=2, ensure_ascii=False))
+            return 2
+        if action == "verify" and not a.evidence_ids:
+            repo = Repo(work)
+            try:
+                with repo.tx():
+                    review = repo.evidence.verify_proposed(actor=a.actor, note=a.note)
+                results = [{"evidence_id": item["eid"], "verdict": item["verdict"],
+                            **({"reason": item["reason"]} if item.get("reason") else {})}
+                           for item in review["results"]]
+            finally:
+                repo.close()
+            output = {"status": "OK" if review["unresolved"] == 0 else "INCOMPLETE",
+                      "project": p["key"], "action": action,
+                      "scope": "all proposed source-backed evidence",
+                      "checked": review["checked"], "verified": review["verified"],
+                      "unresolved": review["unresolved"], "results": results}
+            print(json.dumps(output, indent=2, ensure_ascii=False))
+            return 0 if output["status"] == "OK" else 2
+        for raw_eid in a.evidence_ids:
+            eid = str(raw_eid).strip().upper()
+            if not eid:
+                continue
+            repo = Repo(work)
+            try:
+                with repo.tx():
+                    before = repo.evidence.get(eid)
+                    if action == "verify":
+                        outcome = repo.evidence.verify(eid, actor=a.actor, note=a.note)
+                    else:
+                        repo.evidence.accept(eid, by=a.actor, note=a.note)
+                        outcome = {"verdict": "ACCEPTED", "eid": eid}
+                    after = repo.evidence.get(eid)
+                results.append({"evidence_id": eid, "verdict": outcome.get("verdict"),
+                                "before": {"status": before["status"], "review_state": before["review_state"]},
+                                "after": {"status": after["status"], "review_state": after["review_state"]},
+                                **({"reason": outcome["reason"]} if outcome.get("reason") else {})})
+            except KeyError:
+                results.append({"evidence_id": eid, "verdict": "NOT_FOUND",
+                                "reason": "evidence ID is not in this project's V2 store"})
+            except Exception as exc:
+                results.append({"evidence_id": eid, "verdict": "ERROR", "reason": str(exc)})
+            finally:
+                repo.close()
+        ok_verdicts = {"SOURCE_OK", "ACCEPTED"}
+        failed = [r for r in results if r.get("verdict") not in ok_verdicts]
+        output = {"status": "OK" if results and not failed else "ERROR",
+                  "project": p["key"], "action": action, "results": results}
+        print(json.dumps(output, indent=2, ensure_ascii=False))
+        return 0 if output["status"] == "OK" else 2
     argv = ["--v2-dir", str(work), a.v2_action]
     if a.v2_action == "export":
         argv += ["--table", a.table, "--out", a.out]
@@ -5137,6 +5223,141 @@ def cmd_refresh_draft(a):
     return 1 if failed else 0
 
 
+def cmd_improve(a):
+    """Build or validate one bounded improvement proposal without using the Draft answer path."""
+    p = project(a.project); banner(p)
+    if project_stage(p) != "draft":
+        die("csa improve currently supports the draft lane only; V1 integration is a separate story")
+    target = resolve_target(p, a.section)
+    if target.get("status") != "OK":
+        die(target.get("message", "cannot resolve the section"))
+    docx = working_docx(p)
+    if not docx:
+        die("no working DOCX; Improve requires an existing document answer")
+    work = local_path(p["work_dir"])
+    sys.path.insert(0, str(FRAMEWORK))
+    from csa_docx import improve_context, improve_lane, improve_state
+    root = improve_state.improve_root(work)
+    key = target["key"]
+    section_dir = root / key
+    context_path = section_dir / "context.json"
+    proposal_path = section_dir / "proposal.json"
+    if a.action == "discard":
+        proposal_path.unlink(missing_ok=True)
+        latest = improve_state.latest_run(root, key)
+        if latest:
+            latest = dict(latest); latest["status"] = "discarded"; improve_state.write_run(root, latest)
+        result = {"status": "OK", "action": "discard", "section": key}
+        print(json.dumps(result, indent=2) if a.json else f"Discarded pending Improve proposal for {key}.")
+        return 0
+    # Improve must see the same rating diagnostics shown by Draft answers and
+    # the evidence already cited by the answer sheet.  A legacy context may
+    # exist without either, so enrich it on every run rather than treating the
+    # presence of context.json as proof that it is complete.
+    rating_summary = None
+    try:
+        from csa_docx import rating_pass, evidence_live
+        rating_summary = rating_pass.load_summary(work, key)
+    except (ImportError, OSError, ValueError):
+        rating_summary = None
+    cited_ids: set[str] = set()
+    answer_sheet = work / "cards" / f"{key}.answer.md"
+    if answer_sheet.is_file():
+        cited_ids = {value.upper() for value in re.findall(r"\bE-\d+\b", answer_sheet.read_text(encoding="utf-8", errors="replace"))}
+    evidence_rows: list[dict] = []
+    matrix = work / "evidence-matrix.csv"
+    if cited_ids:
+        try:
+            evidence_rows = [row for row in evidence_live.get_verified_evidence(matrix)
+                             if str(row.get("evidence_id") or "").upper() in cited_ids]
+        except (OSError, ValueError):
+            evidence_rows = []
+    if not context_path.is_file():
+        # The state directory uses the stable key, while the DOCX extractor uses
+        # the visible heading number (for example TIME -> 3.4).
+        context = improve_context.build_context(target.get("number") or key, docx, section_title=target.get("title"),
+                                                rating=str((rating_summary or {}).get("latest") or "") or None,
+                                                rating_summary=rating_summary,
+                                                supporting_evidence=sorted(cited_ids),
+                                                related_evidence=evidence_rows)
+        section_dir.mkdir(parents=True, exist_ok=True)
+        context_path.write_text(json.dumps(context, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        run = improve_state.new_run(key, context_hash=hashlib.sha256(context_path.read_bytes()).hexdigest(),
+                                    base_document_hash=context["document_hash"])
+        run["status"] = "context_built"
+        improve_state.write_run(root, run)
+    else:
+        context = json.loads(context_path.read_text(encoding="utf-8"))
+    context["rating"] = str((rating_summary or {}).get("latest") or context.get("rating") or "") or None
+    context["base_document_hash"] = context.get("document_hash") or context.get("base_document_hash")
+    context["rating_summary"] = rating_summary or context.get("rating_summary") or {}
+    if cited_ids:
+        context["supporting_evidence_ids"] = sorted(cited_ids)
+        context["related_evidence"] = evidence_rows
+    if rating_summary:
+        context["rating_findings"] = [
+            {"block": block, "reason": reason, "improve": (rating_summary.get("improve") or {}).get(block, [])}
+            for block, reason in (rating_summary.get("reasons") or {}).items()
+        ]
+    section_dir.mkdir(parents=True, exist_ok=True)
+    context_path.write_text(json.dumps(context, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    if a.action == "check":
+        if not proposal_path.is_file():
+            die(f"no pending Improve proposal for {key}")
+        proposal = json.loads(proposal_path.read_text(encoding="utf-8"))
+        result = improve_lane.check(proposal, context)
+        print(json.dumps(result, indent=2) if a.json else ("Proposal is valid." if result["valid"] else "\n".join(result["errors"])))
+        return 0 if result["valid"] else 1
+    if a.action == "apply":
+        die("Improve apply is not available until the explicit draft-apply story is implemented")
+    if a.proposal:
+        source = Path(a.proposal).expanduser()
+        if not source.is_file():
+            die(f"proposal file not found: {source}")
+        proposal_path.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+        result = improve_lane.check(json.loads(proposal_path.read_text(encoding="utf-8")), context)
+        if not result["valid"]:
+            die("proposal failed Improve validation: " + "; ".join(result["errors"]))
+        print(json.dumps({"status": "OK", "proposal": str(proposal_path), "section": key}, indent=2))
+        return 0
+    run_args = [key, f"CONTEXT={context_path}", f"PROPOSAL={proposal_path}", "OUTPUT_MODE=PROPOSAL_JSON"]
+    agent_args = argparse.Namespace(**vars(a), args=run_args, verb="improve")
+    rc = launch(p, agent("improve"), run_args, agent_args)
+    if getattr(a, "print", False):
+        return rc
+    if rc != 0:
+        latest = improve_state.latest_run(root, key)
+        if latest:
+            latest = dict(latest); latest["status"] = "failed"; latest["error"] = f"agent exit {rc}"; improve_state.write_run(root, latest)
+        return rc
+    if not proposal_path.is_file():
+        last_message = getattr(_TL, "last", None)
+        if last_message and Path(last_message).is_file():
+            raw = Path(last_message).read_text(encoding="utf-8", errors="replace").strip()
+            start, end = raw.find("{"), raw.rfind("}")
+            if start >= 0 and end > start:
+                try:
+                    proposal_path.parent.mkdir(parents=True, exist_ok=True)
+                    proposal_path.write_text(json.dumps(json.loads(raw[start:end + 1]), indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+                except (OSError, ValueError, json.JSONDecodeError):
+                    pass
+    if not proposal_path.is_file():
+        die(f"Improve agent completed without writing {proposal_path}")
+    proposal = json.loads(proposal_path.read_text(encoding="utf-8"))
+    result = improve_lane.check(proposal, context)
+    latest = improve_state.latest_run(root, key)
+    if latest:
+        latest = dict(latest); latest["status"] = "proposed" if result["valid"] else "failed"
+        latest["cli"] = getattr(a, "cli", None) or settings().get("default_cli", "evo")
+        latest["proposal_hash"] = hashlib.sha256(proposal_path.read_bytes()).hexdigest()
+        latest["error"] = None if result["valid"] else "; ".join(result["errors"])
+        improve_state.write_run(root, latest)
+    if not result["valid"]:
+        die("Improve agent returned an invalid proposal: " + "; ".join(result["errors"]))
+    print(json.dumps({"status": "OK", "section": key, "proposal": str(proposal_path)}, indent=2) if a.json else f"Improve proposal ready: {proposal_path}")
+    return 0
+
+
 def cmd_shared(a):
     """Estate view: the enterprise DNS and time servers this project's hosts share with other projects of its
     estate (`estate:` in PROJECTS.yaml). build | list | show SERVER."""
@@ -5222,6 +5443,16 @@ def _ingest_v2(p: dict, work: Path, a) -> int:
     except FileNotFoundError as e:
         die(str(e))
     s["route"] = route["route"]
+    from csa_docx.v2repo import Repo
+    repo = Repo(work)
+    try:
+        with repo.tx():
+            review = repo.evidence.verify_proposed(actor="csa-ingest")
+    finally:
+        repo.close()
+    s["evidence_verified"] = review["verified"]
+    s["evidence_unresolved"] = review["unresolved"]
+    print(f"Evidence verification: {review['verified']} promoted; {review['unresolved']} unresolved or not checkable")
     if s["pending_intake_files"]:
         print(f"{C['y']}{s['pending_intake_files']} new or changed document(s) are indexed but not yet recorded as evidence. "
               f"Run `csa -p {p['key']} intake` before relying on the stale-section result.{C['0']}")
@@ -5510,6 +5741,10 @@ def cmd_intake_files(p: dict, a) -> int:
                     print(f"  rejected: {item['rel_path']}: {item['reason']}", file=sys.stderr)
                 for rel, err in summary["errors"].items():
                     print(f"  failed: {rel}: {err}", file=sys.stderr)
+                with r.tx():
+                    review = r.evidence.verify_proposed(actor="csa-intake")
+                print(f"  automatic evidence verification: {review['verified']} promoted; "
+                      f"{review['unresolved']} unresolved or not checkable", flush=True)
                 batch_file.unlink(missing_ok=True)
                 out_file.unlink(missing_ok=True)
                 done += len(group)
@@ -7232,6 +7467,10 @@ def main(argv=None) -> int:
     agent_opts(s)
     s = sp("refresh-draft", cmd_refresh_draft, help="draft lane: answer again every subsection whose evidence changed")
     agent_opts(s); s.add_argument("--fresh", action="store_true")
+    s = sp("improve", cmd_improve, help="incrementally improve an existing draft answer from bounded evidence")
+    s.add_argument("section"); s.add_argument("action", nargs="?", choices=["check", "apply", "discard"], default="build")
+    s.add_argument("--proposal", help="validated proposal JSON to store and check")
+    s.add_argument("--json", action="store_true"); s.add_argument("--cli"); s.add_argument("--headless", action="store_true"); s.add_argument("--print", action="store_true", help="print the Improve prompt instead of launching")
     s = sp("freeze", cmd_freeze, help="csa freeze v1: baseline copy of the DOCX and switch the project to the V1 change lane")
     s.add_argument("stage")
     s = sp("shared", cmd_shared, help="estate view: DNS and time servers shared with other projects of the estate (build | list | show SERVER)")
@@ -7275,6 +7514,14 @@ def main(argv=None) -> int:
     ow.add_argument("--source-ref", help="where the ownership comes from (an indexed source path or a V2 record)")
     ow.add_argument("--evidence-ids", help="evidence IDs that support the ownership, comma separated")
     ow.add_argument("--review-state", default="proposed", choices=["proposed", "accepted", "rejected"])
+    ev = v2.add_parser("evidence", help="verify or explicitly accept V2 evidence rows")
+    ev_sub = ev.add_subparsers(dest="evidence_action", required=True)
+    for action in ("verify", "accept"):
+        ep = ev_sub.add_parser(action, help=f"{action} one or more evidence IDs")
+        ep.add_argument("--id", dest="evidence_ids", action="append",
+                        help="evidence ID; repeat --id for a batch (verify defaults to all proposed rows)")
+        ep.add_argument("--actor", default="csa", help="audit actor (default: csa)")
+        ep.add_argument("--note", help="audit note")
     s = sp("topic-table", cmd_topic_table, help="role table for a subsection from the captures, rows = role groups (no model); --place writes it into the document")
     s.add_argument("section", help="number, heading or key (3.4, 'Time Synchronisation', TIME)")
     s.add_argument("--place", action="store_true", help="put it under Discovery Information, above the Aspect table")
@@ -7345,7 +7592,7 @@ def main(argv=None) -> int:
     except SystemExit:
         verbs = []
     for v in verbs:
-        if v == "apply":
+        if v in ("apply", "improve"):
             continue
         s = sp(v, cmd_agent, help=f"launch the {v} agent"); s.set_defaults(verb=v)
         s.add_argument("args", nargs="*", help="positional value and KEY=VALUE overrides"); agent_opts(s)
@@ -7402,7 +7649,7 @@ def main(argv=None) -> int:
     if isinstance(getattr(a, "section", None), str):
         sec, label = split_section(a.section)
         if label:
-            if a.cmd in ("brief", "topic-table"):
+            if a.cmd in ("brief", "topic-table", "improve"):
                 pass                             # takes the visible number as given (3.1, 3.1.2)
             elif a.cmd in ("validate", "prepare"):
                 a.section = sec                  # document-level checks: the whole section

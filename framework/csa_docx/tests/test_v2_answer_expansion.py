@@ -104,6 +104,30 @@ def _base_package(db: Path) -> dict:
         terms=["time"])
 
 
+def test_source_file_evidence_reaches_subsection_package_without_legacy_tag(tmp_path, monkeypatch):
+    db = _seed(tmp_path, monkeypatch)
+    repo = Repo(db.parent)
+    with repo.tx():
+        repo.evidence.create(
+            claim="APP01 has an enabled Group Policy firewall profile.",
+            source_title="captures/APP01/Group Policies - APP01(ALL).csv",
+            area="Security", status="VERIFIED")
+        repo.evidence.create(
+            claim="OTHERAPP has an unrelated Group Policy firewall profile.",
+            source_title="captures/OTHERAPP/Group Policies - OTHERAPP(ALL).csv",
+            area="Security", status="VERIFIED")
+    repo.close()
+
+    pkg = build_package(
+        db, subsection_key="GROUP_POLICY_OBSERVATIONS", application_key="test-app",
+        question="Which hosts have applied Group Policy?", terms=["Which hosts have applied Group Policy?"],
+        source_terms=["Group Policies"])
+    ids = {row["evidence_id"]: row for row in pkg["evidence"]}
+    assert any("APP01/Group Policies" in row["source"] for row in ids.values())
+    assert not any("OTHERAPP/Group Policies" in row["source"] for row in ids.values())
+    assert any(row["reason"] == "source-match" for row in ids.values())
+
+
 # ---------------------------------------------------------------------------
 # acceptance tests
 # ---------------------------------------------------------------------------
