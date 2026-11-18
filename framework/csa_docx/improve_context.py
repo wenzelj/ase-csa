@@ -15,6 +15,7 @@ class ContextError(ValueError):
 
 _HEADING = re.compile(r"^(?P<key>\d+(?:\.\d+)*)(?:\s+|$)")
 _NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+_QUESTION_LINE = re.compile(r"^\s*(?:[-*]\s*)?(?:QUESTION|UNKNOWN|OPEN QUESTION)\s*:\s*(.+?)\s*$", re.I)
 
 
 def _heading_level(style_name: str) -> int | None:
@@ -128,6 +129,45 @@ def _ids(values: Iterable[str] | None) -> list[str]:
     return sorted({value.strip() for value in (values or ()) if isinstance(value, str) and value.strip()})
 
 
+def extract_gap_questions(answer_text: str, *, limit: int = 8) -> list[str]:
+    """Extract explicit unanswered questions from the current subsection only."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for line in str(answer_text or "").splitlines():
+        match = _QUESTION_LINE.match(line)
+        question = " ".join(match.group(1).split()) if match else ""
+        if question and question.casefold() not in seen:
+            seen.add(question.casefold())
+            out.append(question)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def extract_improvement_searches(answer_text: str, reader_review: str = "", rating_summary: dict[str, Any] | None = None,
+                                 *, limit: int = 8) -> list[str]:
+    """Build bounded searches from explicit gaps plus review/rating diagnostics."""
+    requests = extract_gap_questions(answer_text)
+    seen = {q.casefold() for q in requests}
+    active = False
+    for line in str(reader_review or "").splitlines():
+        if line.startswith("## "):
+            active = line.casefold().startswith(("## claims that go beyond", "## does each story"))
+            continue
+        if active and line.lstrip().startswith("-"):
+            text = re.sub(r"^\s*-\s*", "", line).strip()
+            if text and text.casefold() not in seen:
+                requests.append(f"Verify this answer issue: {text}")
+                seen.add(text.casefold())
+    for block, tips in ((rating_summary or {}).get("improve") or {}).items():
+        for tip in tips:
+            text = " ".join(str(tip).split())
+            if text and text.casefold() not in seen:
+                requests.append(f"Check evidence for {block}: {text}")
+                seen.add(text.casefold())
+    return requests[:limit]
+
+
 def build_context(
     section_key: str,
     document_path: Path | str,
@@ -141,6 +181,8 @@ def build_context(
     new_evidence: Iterable[dict[str, Any]] | None = None,
     related_evidence: Iterable[dict[str, Any]] | None = None,
     rating_summary: dict[str, Any] | None = None,
+    subsection_data: dict[str, Any] | None = None,
+    reader_review: str = "",
 ) -> dict[str, Any]:
     """Build bounded, provenance-aware context without performing model or index work."""
     source = Path(document_path)
@@ -166,4 +208,47 @@ def build_context(
         "supporting_evidence_ids": _ids(supporting_evidence),
         "new_evidence": list(new_evidence or ()),
         "related_evidence": list(related_evidence or ()),
+        # The current answer is not the evidence boundary for Improve.  The
+        # live subsection card may contain supported rows that the old answer
+        # omitted; retain that pack separately from the document baseline.
+        "subsection_data": dict(subsection_data or {}),
+        "reader_review": reader_review,
+    }
+
+
+def collect_subsection_data(card: dict[str, Any], verified_rows: Iterable[dict[str, Any]] = ()) -> dict[str, Any]:
+    """Return the complete live subsection pack for the Improve agent.
+
+    Card evidence is routed per question, while ``available_evidence`` is the
+    deduplicated set of verified rows the proposal may cite.  Candidates remain
+    visible as unverified leads but are deliberately not added to citeable IDs.
+    No normal question rows are truncated here; the card builder owns only its
+    explicit register bound.
+    """
+    evidence = card.get("evidence") or {}
+    by_id: dict[str, dict[str, Any]] = {}
+    for pack in evidence.values():
+        for row in pack.get("rows", []) if isinstance(pack, dict) else []:
+            if isinstance(row, dict) and row.get("id"):
+                by_id.setdefault(str(row["id"]).upper(), dict(row))
+    verified = {str(row.get("evidence_id") or row.get("id") or "").upper(): dict(row)
+                for row in verified_rows if isinstance(row, dict)
+                and (row.get("evidence_id") or row.get("id"))}
+    available = [verified[eid] for eid in sorted(by_id) if eid in verified]
+    candidates = []
+    for qid, pack in evidence.items():
+        for candidate in (pack.get("candidates", []) if isinstance(pack, dict) else []):
+            candidates.append({"question": qid, **candidate})
+    return {
+        "questions": card.get("questions", []),
+        "evidence": evidence,
+        "available_evidence": available,
+        "available_evidence_ids": [str(row.get("evidence_id") or row.get("id")).upper() for row in available],
+        "unverified_candidates": candidates,
+        "established": card.get("established", {}),
+        "keep": card.get("keep", []),
+        "correct": card.get("correct", []),
+        "frame": card.get("frame"),
+        "current_content": card.get("current_content", []),
+        "writing_purpose": card.get("writing_purpose", ""),
     }

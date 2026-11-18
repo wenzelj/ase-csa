@@ -131,5 +131,10 @@ def proposal_hash(proposal: Mapping[str, Any]) -> str:
 def repeated_proposal(root: Path | str, section_key: str, proposal: Mapping[str, Any]) -> bool:
     digest = proposal_hash(proposal)
     return any(row.get("section_key") == section_key and row.get("proposal_hash") == digest
-               and row.get("status") in {"proposed", "checked", "discarded", "stale"}
+               # The current pending proposal is the one the user is being
+               # asked to apply.  Treating ``proposed`` as a repeat blocked
+               # every first Apply from the Evidence Browser.  Once it has
+               # been applied (or otherwise closed), the same proposal must
+               # not be applied again.
+               and row.get("status") in {"applied", "checked", "discarded", "stale"}
                for row in read_runs(root))

@@ -15,7 +15,7 @@ VERSION = "improve-contract-v1"
 
 PROPOSAL_STATUSES = frozenset({"improve", "no_material_change", "blocked"})
 RATING_DECISIONS = frozenset({"keep", "change"})
-EDIT_OPERATIONS = frozenset({"replace_sentence", "insert_after", "replace_row", "keep"})
+EDIT_OPERATIONS = frozenset({"replace_sentence", "insert_after", "replace_row", "insert_row", "delete_row", "keep"})
 RUN_OUTCOMES = frozenset({"proposed", "checked", "applied", "discarded", "stale", "failed", "interrupted"})
 _EVIDENCE_ID = re.compile(r"^E-[A-Za-z0-9._-]+$")
 
@@ -46,6 +46,13 @@ def _strings(value: Any, name: str) -> tuple[str, ...]:
     return tuple(result)
 
 
+def _edit_text(value: Any, name: str, *, row: bool = False, required: bool = True) -> str:
+    """Accept the row-array shape emitted by some Improve model responses."""
+    if row and isinstance(value, (list, tuple)):
+        return " | ".join(_text(item, name) for item in value)
+    return _text(value, name, required=required)
+
+
 @dataclass(frozen=True)
 class EditOperation:
     block_id: str
@@ -54,6 +61,7 @@ class EditOperation:
     after: str = ""
     reason: str = ""
     evidence_ids: tuple[str, ...] = field(default_factory=tuple)
+    addresses: tuple[str, ...] = field(default_factory=tuple)
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> "EditOperation":
@@ -66,14 +74,16 @@ class EditOperation:
         invalid = [item for item in evidence_ids if not _EVIDENCE_ID.fullmatch(item)]
         if invalid:
             raise ContractError(f"edit.evidence_ids contains invalid IDs: {', '.join(invalid)}")
-        after = _text(value.get("after"), "edit.after", required=operation != "keep")
+        is_row = operation in {"replace_row", "insert_row", "delete_row"}
+        after = _edit_text(value.get("after"), "edit.after", row=is_row, required=operation != "keep")
         return cls(
             block_id=_text(value.get("block_id"), "edit.block_id"),
             operation=operation,
-            before=_text(value.get("before"), "edit.before"),
+            before=_edit_text(value.get("before"), "edit.before", row=is_row),
             after=after,
             reason=_text(value.get("reason"), "edit.reason"),
             evidence_ids=evidence_ids,
+            addresses=_strings(value.get("addresses"), "edit.addresses"),
         )
 
     def validate(self) -> tuple[str, ...]:

@@ -22,6 +22,7 @@ import json
 import os
 import re
 import shutil
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -285,7 +286,9 @@ def preview_project_setup(payload: dict[str, Any], *, agents_dir: Path, base_dir
         "label": label,
         "project_root": str(root),
         "project_context": str(agents_dir / "csa-context" / f"{key.upper().replace('-', '_')}_PROJECT_CONTEXT.yaml"),
-        "work_dir": str(root / "csa-work"),
+        "work_dir": str(root / "csa-work-v2"),
+        "answer_route": "v2-native",
+        "v2_writer": "simple",
         "default_source_set": str(discovery_path),
     }
     if estate:
@@ -316,7 +319,7 @@ def preview_project_setup(payload: dict[str, Any], *, agents_dir: Path, base_dir
                 "project_root": str(root),
                 "discovery": str(discovery_path),
                 "knowledge": str(knowledge_path),
-                "work_dir": str(root / "csa-work"),
+                "work_dir": str(root / "csa-work-v2"),
             },
             "registry": registry,
             "project_context": context,
@@ -334,7 +337,7 @@ def preview_project_setup(payload: dict[str, Any], *, agents_dir: Path, base_dir
 
 #: Fixed registry key order for the always-present fields (key and label first).
 _ALWAYS_KEY_ORDER = ("key", "label", "project_root", "project_context",
-                     "work_dir", "default_source_set")
+                     "work_dir", "answer_route", "v2_writer", "default_source_set")
 
 #: Optional registry fields, in the order they are written (only when selected).
 _OPTIONAL_KEY_ORDER = ("estate", "sites", "spec_mode", "stage", "assessment_lane", "template_docx",
@@ -342,9 +345,20 @@ _OPTIONAL_KEY_ORDER = ("estate", "sites", "spec_mode", "stage", "assessment_lane
                        "knowledge_dir")
 
 #: Top-level folders the commit creates when the upload did not include them.
-#: ``csa-work`` is always (re)created empty by the commit; the knowledge folder
+#: ``csa-work-v2`` is always (re)created and initialised by the commit; the knowledge folder
 #: name is the project's (``00 Knowlege`` for new projects).
-_FRAMEWORK_DIRS = ("csa-work", "Discovery")
+_FRAMEWORK_DIRS = ("csa-work-v2", "Discovery")
+
+
+def _initialise_v2_store(root: Path) -> None:
+    """Create the V2 repository for a newly registered application."""
+    framework = Path(__file__).resolve().parents[2] / "framework"
+    if str(framework) not in sys.path:
+        sys.path.insert(0, str(framework))
+    from csa_docx.v2repo import Repo
+
+    repo = Repo(root / "csa-work-v2")
+    repo.close()
 
 
 class _CommitLock:
@@ -529,7 +543,7 @@ def commit_project_setup(
 
     Revalidates the staged manifest and the configuration, moves the staged
     top-level folder under ``base_dir`` (the CurrentStateAssessments root),
-    creates ``csa-work`` and the ``Discovery`` and knowledge folders when absent
+    creates and initialises ``csa-work-v2`` plus the ``Discovery`` and knowledge folders when absent
     (the upload content itself is not changed), writes the project-context file
     from the template fields, writes optional knowledge ``sources.json``
     metadata, and appends the project's entry -- with ``knowledge_dir`` and the
@@ -702,7 +716,8 @@ def commit_project_setup(
         moved_root = True
 
         # 2. framework folders, created when the upload did not include them
-        ensure_directory(root / "csa-work")
+        ensure_directory(root / "csa-work-v2")
+        _initialise_v2_store(root)
         # Discovery and knowledge were supplied in the uploaded tree and are left intact.
 
         # 3. project-context file from the template fields
@@ -759,8 +774,11 @@ def commit_project_setup(
             try:
                 if created_sources:
                     (knowledge_dir / "sources.json").unlink(missing_ok=True)
+                # The V2 repository contains SQLite and backup files, so remove
+                # the commit-created framework tree recursively, then restore
+                # the untouched uploaded tree.
                 for directory in sorted(set(created_dirs), key=lambda path: len(path.parts), reverse=True):
-                    directory.rmdir()
+                    _remove_tree(directory)
                 os.replace(root, session_dir)
                 restored = True
             except OSError:

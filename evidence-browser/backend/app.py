@@ -790,7 +790,15 @@ def check_section_improve(system_key: str, section: str, payload: dict[str, Any]
 def apply_section_improve(system_key: str, section: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     if (payload or {}).get("confirmed") is not True:
         raise HTTPException(400, "Applying an Improve proposal requires explicit confirmation.")
-    result = improve_workflow.apply_proposal(system_project(system_key), section)
+    try:
+        cli = (payload or {}).get("cli")
+        if cli is not None and (not isinstance(cli, str) or not cli.isidentifier()):
+            raise HTTPException(400, "Invalid rating model selection.")
+        result = improve_workflow.apply_proposal(system_project(system_key), section, cli)
+    except (ValueError, OSError, KeyError) as exc:
+        # Proposal validation and document conflicts are expected workflow
+        # outcomes; return a useful client error instead of an opaque 500.
+        raise HTTPException(409, str(exc)) from exc
     if result.get("status") == "BLOCKED":
         raise HTTPException(409, result.get("errors", ["Improve proposal is blocked"])[0])
     return result

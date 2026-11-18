@@ -5236,7 +5236,7 @@ def cmd_improve(a):
         die("no working DOCX; Improve requires an existing document answer")
     work = local_path(p["work_dir"])
     sys.path.insert(0, str(FRAMEWORK))
-    from csa_docx import improve_context, improve_lane, improve_state
+    from csa_docx import improve_context, improve_lane, improve_state, section_card, doc_spec, spec_cli
     root = improve_state.improve_root(work)
     key = target["key"]
     section_dir = root / key
@@ -5256,8 +5256,8 @@ def cmd_improve(a):
     # presence of context.json as proof that it is complete.
     rating_summary = None
     try:
-        from csa_docx import rating_pass, evidence_live
-        rating_summary = rating_pass.load_summary(work, key)
+        from csa_docx import improve_apply, evidence_live
+        rating_summary = improve_apply.rating_summary(work, key, docx)
     except (ImportError, OSError, ValueError):
         rating_summary = None
     cited_ids: set[str] = set()
@@ -5272,6 +5272,26 @@ def cmd_improve(a):
                              if str(row.get("evidence_id") or "").upper() in cited_ids]
         except (OSError, ValueError):
             evidence_rows = []
+    # Improve must inspect the complete live subsection pack, not only the IDs
+    # that happened to survive in the existing answer.  Rebuild the same card
+    # used by the answer lane so question routing, frame findings, carried facts
+    # and current evidence share one boundary.
+    subsection_data: dict = {}
+    reader_review = ""
+    review_path = work / "cards" / f"{key}.review.md"
+    if review_path.is_file():
+        reader_review = review_path.read_text(encoding="utf-8", errors="replace")[:12000]
+    try:
+        live_spec = spec_cli.load(docx, None, work)
+        live_node = doc_spec.resolve(live_spec, target.get("number") or key)
+        live_card = section_card.card(live_node, live_spec, local_path(p["project_root"]), evidence=True,
+                                      exclude=((legacy_docx(p).name,) if legacy_docx(p) else ()))
+        all_verified = evidence_live.get_verified_evidence(matrix)
+        subsection_data = improve_context.collect_subsection_data(live_card, all_verified)
+    except (OSError, ValueError, KeyError, AttributeError, TypeError):
+        # Keep Improve usable for legacy/partially indexed projects; the
+        # existing cited-evidence context remains a safe fallback.
+        subsection_data = {}
     if not context_path.is_file():
         # The state directory uses the stable key, while the DOCX extractor uses
         # the visible heading number (for example TIME -> 3.4).
@@ -5279,7 +5299,9 @@ def cmd_improve(a):
                                                 rating=str((rating_summary or {}).get("latest") or "") or None,
                                                 rating_summary=rating_summary,
                                                 supporting_evidence=sorted(cited_ids),
-                                                related_evidence=evidence_rows)
+                                                related_evidence=evidence_rows,
+                                                subsection_data=subsection_data,
+                                                reader_review=reader_review)
         section_dir.mkdir(parents=True, exist_ok=True)
         context_path.write_text(json.dumps(context, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         run = improve_state.new_run(key, context_hash=hashlib.sha256(context_path.read_bytes()).hexdigest(),
@@ -5294,11 +5316,57 @@ def cmd_improve(a):
     if cited_ids:
         context["supporting_evidence_ids"] = sorted(cited_ids)
         context["related_evidence"] = evidence_rows
-    if rating_summary:
-        context["rating_findings"] = [
-            {"block": block, "reason": reason, "improve": (rating_summary.get("improve") or {}).get(block, [])}
-            for block, reason in (rating_summary.get("reasons") or {}).items()
+    if subsection_data:
+        context["subsection_data"] = subsection_data
+    context["reader_review"] = reader_review
+    rating_findings = [
+        {"id": f"rating:{block}", "source": "rating", "block": block, "reason": reason,
+         "improve": (rating_summary.get("improve") or {}).get(block, [])}
+        for block, reason in (rating_summary or {}).get("reasons", {}).items()
+    ]
+    if reader_review:
+        improvement_findings = rating_findings + [
+            {"id": "reader:claims-beyond-evidence", "source": "reader", "reason": "Claims that go beyond the cited facts"},
+            {"id": "reader:story-coverage", "source": "reader", "reason": "Stories that do not fully answer their questions"},
         ]
+    else:
+        improvement_findings = rating_findings
+    context["improvement_findings"] = improvement_findings
+    # An explicit QUESTION/Unknown in the current subsection is a search
+    # request, not a reason to stop. Search the matrix and discovery index once
+    # per gap. Verified answer/related rows enter the citeable pack; index hits
+    # remain leads until the evidence investigator source-checks them.
+    gap_searches = []
+    if subsection_data:
+        try:
+            from csa_docx import gap_lookup, evidence_live
+            questions = improve_context.extract_improvement_searches(
+                context.get("answer_text", ""), reader_review, rating_summary)
+            old_questions = context.get("open_questions") or []
+            questions += [q for q in old_questions if q not in questions]
+            excluded = (legacy_docx(p).name,) if legacy_docx(p) else ()
+            for n, question in enumerate(questions[:8], 1):
+                result = gap_lookup.lookup_gap(local_path(p["project_root"]),
+                                               f"DR-{key}-IMPROVE-{n}", question,
+                                               exclude=excluded)
+                gap_searches.append({"question": question, **result})
+            if gap_searches:
+                subsection_data["gap_searches"] = gap_searches
+                verified_by_id = {str(row.get("evidence_id") or "").upper(): row
+                                  for row in evidence_live.get_verified_evidence(matrix)}
+                new_ids = []
+                for result in gap_searches:
+                    for evidence_id in result.get("answer_evidence_ids", []) + result.get("related_evidence_ids", []):
+                        eid = str(evidence_id).upper()
+                        if eid in verified_by_id and eid not in subsection_data.get("available_evidence_ids", []):
+                            subsection_data.setdefault("available_evidence", []).append(verified_by_id[eid])
+                            subsection_data.setdefault("available_evidence_ids", []).append(eid)
+                            new_ids.append(eid)
+                subsection_data["gap_verified_evidence_ids"] = sorted(set(new_ids))
+        except (ImportError, OSError, ValueError, KeyError, TypeError, RuntimeError) as exc:
+            subsection_data["gap_searches"] = [{"status": "INCOMPLETE", "error": str(exc)}]
+    if rating_summary:
+        context["rating_findings"] = rating_findings
     section_dir.mkdir(parents=True, exist_ok=True)
     context_path.write_text(json.dumps(context, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     if a.action == "check":
@@ -5647,7 +5715,9 @@ def _intake_report(folder: Path, record: dict, jobs: list[dict]) -> None:
 
 
 def cmd_intake_files(p: dict, a) -> int:
-    """Run pending intake files in batches (v2_intake.MAX_FILES per model session); checkpoints live in intake_file."""
+    """Run pending intake files in batches; ``--interactive`` retains the chosen CLI session."""
+    if getattr(a, "interactive", False) and getattr(a, "headless", False):
+        die("choose either --interactive or --headless for intake, not both")
     folder = local_path(p["work_dir"]) / "intake"
     latest = folder / "latest.json"
     v2_project = local_path(p["work_dir"]).name == "csa-work-v2"
@@ -5677,7 +5747,10 @@ def cmd_intake_files(p: dict, a) -> int:
             args = [f"INTAKE={record['id']}", "MODE=INTAKE", f"FILE={job['rel_path']}",
                     f"FILE_REPORT={report}", f"FILE_SHA256={digest}"]
             worker = copy.copy(a)
-            worker.headless = True
+            # Intake normally isolates each source in a finite headless call.  An
+            # explicit interactive run is useful when the operator needs to work
+            # with the selected CLI directly; retain its terminal and session.
+            worker.headless = not getattr(a, "interactive", False)
             rc = launch(p, agent("intake"), args, worker)
             if rc != 0 or not report.is_file():
                 print(f"intake stopped at {job['rel_path']}; it stays pending", file=sys.stderr)
@@ -5725,7 +5798,9 @@ def cmd_intake_files(p: dict, a) -> int:
                 batch_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
                 print(f"intake {done + 1}-{done + len(group)}/{total}: {len(group)} file(s)", flush=True)
                 worker = copy.copy(a)
-                worker.headless = True  # each batch starts with an empty model context
+                # Preserve the historical isolated-batch default unless the
+                # caller explicitly asks to work in an interactive CLI session.
+                worker.headless = not getattr(a, "interactive", False)
                 args = [f"INTAKE={record_id}", "MODE=INTAKE", f"BATCH={batch_file}", f"BATCH_OUTPUT={out_file}"]
                 rc = launch(p, agent("intake"), args, worker)
                 if getattr(a, "print", False):
@@ -7373,6 +7448,7 @@ def main(argv=None) -> int:
         s.add_argument("--cli", choices=sorted({"codex", "claude", "hermes", "evo"}         # plus any <name>_headless line in cli.yaml
                                                | {k[:-len("_headless")] for k in settings() if k.endswith("_headless")}))
         s.add_argument("--headless", action="store_true", help="run one model request and exit")
+        s.add_argument("--interactive", action="store_true", help="intake: retain the selected CLI session instead of forcing a headless worker")
         s.add_argument("--print", action="store_true", help="print the prompt instead of launching")
 
     sp("help", lambda a: print(HELP))

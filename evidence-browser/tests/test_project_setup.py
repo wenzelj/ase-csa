@@ -31,13 +31,15 @@ def test_defaults_for_minimal_payload(tmp_path):
         "project_root": str(root),
         "discovery": str(root / "Discovery"),
         "knowledge": str(root / "00 Knowlege"),
-        "work_dir": str(root / "csa-work"),
+        "work_dir": str(root / "csa-work-v2"),
     }
     assert values["registry"]["key"] == "new-app"
     assert values["registry"]["label"] == "New Application"
     assert values["registry"]["project_root"] == str(root)
     assert values["registry"]["project_context"] == str(tmp_path / ".agents" / "csa-context" / "NEW_APP_PROJECT_CONTEXT.yaml")
-    assert values["registry"]["work_dir"] == str(root / "csa-work")
+    assert values["registry"]["work_dir"] == str(root / "csa-work-v2")
+    assert values["registry"]["answer_route"] == "v2-native"
+    assert values["registry"]["v2_writer"] == "simple"
     assert values["registry"]["default_source_set"] == str(root / "Discovery")
     assert values["knowledge"] == {"documents": [], "system_terms": []}
     assert values["lane"] == "revise"
@@ -374,11 +376,12 @@ def test_commit_registers_the_project(tmp_path):
     assert (root / "notes" / "deep" / "spec.md").read_bytes() == b"spec\n"
     assert (root / "empty-folder").is_dir()
     # framework folders created
-    assert (root / "csa-work").is_dir()
+    assert (root / "csa-work-v2").is_dir()
     assert (root / "Discovery").is_dir()
     assert (root / "00 Knowlege").is_dir()
     # no index, no DOCX anywhere under the project
-    assert not (root / "csa-work" / "discovery-index.sqlite").exists()
+    assert (root / "csa-work-v2" / "csa.sqlite").is_file()
+    assert not (root / "csa-work-v2" / "discovery-index.sqlite").exists()
     assert [p for p in root.rglob("*.docx")] == []
     # context file written from the template fields
     context_file = agents / "csa-context" / "NEW_APP_PROJECT_CONTEXT.yaml"
@@ -393,6 +396,9 @@ def test_commit_registers_the_project(tmp_path):
     assert "label: \"Existing Application\"" in registry
     assert "knowledge_dir: \"00 Knowlege\"" in registry
     assert "default_source_set" in registry and "Discovery" in registry
+    assert 'work_dir: "' + str(root / "csa-work-v2") + '"' in registry
+    assert 'answer_route: "v2-native"' in registry
+    assert 'v2_writer: "simple"' in registry
     # the staging area is gone (it was moved), and the session is marked committed
     assert not (staging_root / sid).exists()
     import json

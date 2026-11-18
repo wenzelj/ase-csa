@@ -1,4 +1,19 @@
 from csa_docx.improve_contract import ImprovementProposal
+from csa_docx.improve_lane import validate_for_context
+
+
+def test_recommendation_word_in_reason_does_not_reject_current_state_edit():
+    proposal = {
+        "section_key": "3.5", "base_document_hash": "sha256:doc", "status": "improve",
+        "rating_decision": "keep", "evidence_ids": ["E-1"],
+        "edits": [{"block_id": "B1", "operation": "replace_sentence",
+                   "before": "Observed text", "after": "Revised observed text",
+                   "reason": "This recommendation is deliberately not included.",
+                   "evidence_ids": ["E-1"]}],
+    }
+    assert not any("future-state" in error for error in validate_for_context(
+        proposal, {"section_key": "3.5", "document_hash": "sha256:doc",
+                   "answer_text": "Observed text", "supporting_evidence_ids": ["E-1"]}))
 from csa_docx.improve_lane import check, validate_for_context
 
 
@@ -36,6 +51,27 @@ def test_validates_against_current_context():
     result = check(proposal(), context())
     assert result["valid"] is True
     assert result["errors"] == []
+
+
+def test_changed_edit_must_trace_to_a_diagnostic_when_findings_are_supplied():
+    errors = validate_for_context(proposal(), {**context(), "improvement_findings": [{"id": "rating:B1"}]})
+    assert "B1: changed edits must address a supplied rating, reader or gap finding" in errors
+    assert not validate_for_context(proposal(edits=[{
+        "block_id": "B1", "operation": "insert_after",
+        "before": "The system uses the primary time source.",
+        "after": "The fallback is also recorded.", "reason": "Address rating finding.",
+        "evidence_ids": ["E-004"], "addresses": ["rating:B1"],
+    }]), {**context(), "improvement_findings": [{"id": "rating:B1"}]})
+
+
+def test_accepts_evidence_from_complete_subsection_pack():
+    result = check(proposal(evidence_ids=["E-002"], edits=[{
+        "block_id": "B1", "operation": "insert_after",
+        "before": "The system uses the primary time source.",
+        "after": "The current subsection evidence also records the fallback source.",
+        "reason": "Restore a supported subsection fact.", "evidence_ids": ["E-002"],
+    }]), context(subsection_data={"available_evidence_ids": ["E-002"]}))
+    assert result["valid"] is True
 
 
 def test_stale_hash_and_wrong_section_are_refused():

@@ -88,3 +88,19 @@ def test_changed_source_invalidates_its_checkpoint(tmp_path, monkeypatch):
     (tmp_path / files[0]).write_text("changed", encoding="utf-8")
     assert CSA["cmd_intake_files"](project, args) == 0
     assert calls == [files[0], files[1], files[0]]
+
+
+def test_interactive_intake_does_not_force_a_headless_worker(tmp_path, monkeypatch):
+    project, files = _fixture(tmp_path)
+    calls = []
+
+    def launch(_project, _agent, args, worker):
+        values = dict(arg.split("=", 1) for arg in args)
+        calls.append(worker.headless)
+        Path(values["FILE_REPORT"]).write_text(values["FILE"], encoding="utf-8")
+        return 0
+
+    monkeypatch.setitem(CSA["cmd_intake_files"].__globals__, "launch", launch)
+    args = argparse.Namespace(print=False, headless=False, interactive=True)
+    assert CSA["cmd_intake_files"](project, args) == 0
+    assert calls == [False, False]

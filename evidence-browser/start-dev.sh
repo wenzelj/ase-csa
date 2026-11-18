@@ -10,9 +10,17 @@ cd "$ROOT"
 command -v uv  >/dev/null || { echo "uv not found (brew install uv)"; exit 1; }
 command -v npm >/dev/null || { echo "npm not found (brew install node)"; exit 1; }
 
-# Build/synchronise the backend environment before starting the frontend.
-echo "Building backend..."
-uv sync
+# Use the existing project environment when available. Running `uv sync` on
+# every Finder launch makes startup depend on uv's global cache permissions and
+# can terminate the whole launcher before the backend starts.
+if [ -x "$ROOT/.venv/bin/python" ]; then
+  echo "Using existing backend environment..."
+  BACKEND_PYTHON="$ROOT/.venv/bin/python"
+else
+  echo "Building backend..."
+  uv sync
+  BACKEND_PYTHON="$ROOT/.venv/bin/python"
+fi
 
 # Install frontend deps on first run
 [ -d frontend/node_modules ] || (cd frontend && npm install)
@@ -29,7 +37,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 echo "Starting backend on http://127.0.0.1:8765 (restarts itself when backend code changes) ..."
-uv run python -m backend.server --no-open --reload "$@" &
+"$BACKEND_PYTHON" -m backend.server --no-open --reload "$@" &
 pids+=($!)
 
 echo "Starting frontend (Vite)..."

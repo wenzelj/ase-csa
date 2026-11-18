@@ -21,7 +21,7 @@ codex_interactive: /Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexC
 codex_browser: /Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex exec -m gpt-5.6-sol -c model_reasoning_effort=medium --skip-git-repo-check --output-last-message {last} {prompt}
 codex_headless: codex exec -m gpt-5.6-sol -c model_reasoning_effort=medium --skip-git-repo-check --output-last-message {last} {prompt}
 claude_interactive: claude {prompt}
-claude_headless: claude -p {prompt}
+claude_headless: claude -p --permission-mode acceptEdits {prompt}
 # Evo: the dedicated Codex profile against the local model. Pick it per run with --cli evo.
 evo_interactive: codex --profile evo-x3-qwen {prompt}
 evo_headless: codex exec --profile evo-x3-qwen --ignore-rules --skip-git-repo-check --output-last-message {last} {prompt}

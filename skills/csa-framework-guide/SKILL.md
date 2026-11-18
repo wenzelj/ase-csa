@@ -78,6 +78,8 @@ live status -> author/change record -> tracked apply -> framework review
 
 Important invariants:
 
+- Before implementing a Browser or CLI workflow, trace the working framework operation and reuse its supported apply, validation, backup, and rating routines. Keep the Browser as an adapter. Extend missing capabilities in the framework rather than implementing a parallel writer in the Browser.
+- Improve starts from the current DOCX and applies only reviewed edits. Do not rerun Draft Answer again or patch its answer sheet from rendered Word text. Rate the applied subsection and keep that rating tied to the applied document version.
 - `csa author` normally applies the resulting change file immediately as tracked changes. Add `--no-apply` only when the user wants authoring to stop before the DOCX changes.
 - Never hand-edit the DOCX, unzip and patch OOXML, or bypass the change record because an anchor is awkward. Repair the record, mapping, scaffold, or framework path that owns the problem.
 - Use stable IDs from the live manifest. Run `csa prepare` after structural changes and `csa lookup "<text>"`; never derive an `@H...` ID from a visible section number.

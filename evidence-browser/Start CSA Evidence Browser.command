@@ -16,6 +16,23 @@ if [[ ! -x "$LAUNCHER" ]]; then
 fi
 
 cd "$EVIDENCE_BROWSER_DIR"
+stop_port() {
+  local port="$1"
+  local pids
+  pids="$(lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null || true)"
+  if [[ -n "$pids" ]]; then
+    echo "Stopping process(es) on port $port..."
+    kill $pids 2>/dev/null || true
+  fi
+}
+
+# Clear stale Evidence Browser processes before starting a fresh pair.
+# 8765 is the configured backend port; 8465 is also cleared for compatibility
+# with older local launch configurations.
+stop_port 8465
+stop_port 8765
+stop_port 5173
+
 echo "Starting CSA Evidence Browser..."
 echo "Press Control-C to stop it."
 echo

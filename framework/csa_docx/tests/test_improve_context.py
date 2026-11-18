@@ -2,7 +2,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
 
-from csa_docx.improve_context import ContextError, build_context, extract_section
+from csa_docx.improve_context import ContextError, build_context, collect_subsection_data, extract_gap_questions, extract_improvement_searches, extract_section
 
 
 def write_docx(path, paragraphs):
@@ -62,3 +62,39 @@ def test_missing_or_unanswered_section_is_refused(tmp_path):
 def test_missing_working_document_is_refused(tmp_path):
     with pytest.raises(ContextError, match="working document is missing"):
         build_context("3.4", tmp_path / "missing.docx")
+
+
+def test_collects_all_subsection_rows_not_only_rows_cited_by_old_answer():
+    card = {
+        "questions": [{"id": "B1"}],
+        "evidence": {"B1": {"rows": [{"id": "E-001", "claim": "old"},
+                                         {"id": "E-002", "claim": "previously omitted"}],
+                            "candidates": [{"source": "capture.txt", "excerpt": "lead"}]}},
+        "established": {}, "keep": [], "correct": [], "frame": None,
+        "current_content": [], "writing_purpose": "use all rows",
+    }
+    data = collect_subsection_data(card, [
+        {"evidence_id": "E-001", "claim": "old", "status": "VERIFIED"},
+        {"evidence_id": "E-002", "claim": "previously omitted", "status": "VERIFIED"},
+    ])
+    assert data["available_evidence_ids"] == ["E-001", "E-002"]
+    assert len(data["available_evidence"]) == 2
+    assert data["unverified_candidates"][0]["question"] == "B1"
+
+
+def test_extracts_explicit_gap_questions_from_current_subsection():
+    assert extract_gap_questions("Observed text.\nQUESTION: Who owns the fallback?\n- Unknown: Which test was run?\n") == [
+        "Who owns the fallback?", "Which test was run?"
+    ]
+
+
+def test_extracts_searches_from_reader_and_rating_diagnostics():
+    out = extract_improvement_searches(
+        "Current text.",
+        "## Claims that go beyond the cited facts\n- The answer says every host, but the facts name two.\n",
+        {"improve": {"B1": ["restore the missing fallback row"]}},
+    )
+    assert out == [
+        "Verify this answer issue: The answer says every host, but the facts name two.",
+        "Check evidence for B1: restore the missing fallback row",
+    ]

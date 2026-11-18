@@ -184,6 +184,11 @@ def rate(work_dir, sheet, card, key: str, cwd, template: str, timeout_s: int = 6
         return {"status": "SKIPPED", "message": f"no sheet at {sheet}"}
     text = sheet.read_text(encoding="utf-8")
     ids = rated_blocks(answer_sheet.parse(text), json.loads(Path(card).read_text(encoding="utf-8")))
+    return rate_text(work_dir, text, ids, key, cwd, template, timeout_s, show)
+
+
+def rate_text(work_dir, text, ids, key, cwd, template, timeout_s=600, show=None, *, output_dir=None):
+    """Score prepared content using the shared rubric and response validation."""
     if not ids:
         return {"status": "SKIPPED", "message": "no answered block to rate"}
     error = ""
@@ -196,10 +201,11 @@ def rate(work_dir, sheet, card, key: str, cwd, template: str, timeout_s: int = 6
             return {"status": "ERROR", "message": f"{type(e).__name__}: {e}"}
         blocks, error = parse_reply(reply, ids)
         if blocks:
-            data = record(work_dir, key, blocks, sheet_sha256=hashlib.sha256(text.encode("utf-8")).hexdigest())
+            store = output_dir if output_dir is not None else work_dir
+            data = record(store, key, blocks, sheet_sha256=hashlib.sha256(text.encode("utf-8")).hexdigest())
             run = data["runs"][-1]
             _append_to_result(cwd / f"{key}.RESULT.md", run, summary(data))
-            return {"status": "OK", "file": str(ratings_path(work_dir, key)), "average": run["average"]}
+            return {"status": "OK", "file": str(ratings_path(store, key)), "average": run["average"]}
     return {"status": "ERROR", "message": error}
 
 

@@ -33,6 +33,18 @@ def test_valid_proposal_is_typed_and_round_trips():
     assert ImprovementProposal.from_dict(proposal.to_dict()) == proposal
 
 
+def test_replace_row_accepts_array_cells_from_model_response():
+    payload = valid_payload(edits=[{
+        "block_id": "B1", "operation": "replace_row",
+        "before": ["Aspect", "Old value", "Source"],
+        "after": ["Aspect", "New value", "Source"],
+        "reason": "Clarifies the observed row.", "evidence_ids": ["E-004"],
+    }])
+    proposal = ImprovementProposal.from_dict(payload)
+    assert proposal.edits[0].before == "Aspect | Old value | Source"
+    assert proposal.edits[0].after == "Aspect | New value | Source"
+
+
 def test_changed_rating_requires_basis_and_evidence():
     payload = valid_payload(rating_decision="change", new_rating="Partially Met")
     errors = validate_proposal(payload)

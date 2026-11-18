@@ -165,6 +165,10 @@ export type ImproveDetail = {
   status: string; section: string; row?: ImproveSection;
   current?: { heading?: string; text?: string; blocks?: { kind?: string; text?: string; rows?: string[][]; level?: number }[]; rating?: DraftRating | null; document_hash?: string; provenance?: string };
   findings?: string[]; open_questions?: string[];
+  reader_review?: string; rating_summary?: DraftRating | null;
+  rating_findings?: { id: string; block?: string; reason: string; improve?: string[] }[];
+  improvement_findings?: { id: string; source?: string; block?: string; reason?: string; improve?: string[] }[];
+  gap_searches?: { question?: string; verdict?: string; answer_evidence_ids?: string[]; related_evidence_ids?: string[]; lead_ids?: string[]; searched?: string; error?: string }[];
   evidence?: { supporting_ids: string[]; new: Record<string, unknown>[]; related: Record<string, unknown>[] };
   proposal?: Record<string, unknown> | null; latest_run?: Record<string, unknown> | null;
   message?: string;

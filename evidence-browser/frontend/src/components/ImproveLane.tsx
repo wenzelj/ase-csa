@@ -22,7 +22,8 @@ function proposedAnswer(current: string, proposal?: Record<string, unknown> | nu
     const before = String(edit.before || "");
     const after = String(edit.after || "");
     if (!before || operation === "keep") continue;
-    if (operation === "insert_after") answer = answer.includes(before) ? answer.replace(before, `${before}${after}`) : answer;
+    if (operation === "insert_after" || operation === "insert_row") answer = answer.includes(before) ? answer.replace(before, `${before}${after}`) : answer;
+    else if (operation === "delete_row") answer = answer.replace(before, "");
     else answer = answer.includes(before) ? answer.replace(before, after) : answer;
   }
   return answer;
@@ -35,9 +36,41 @@ function applyEdits(text: string, proposal?: Record<string, unknown> | null): st
     const before = String(edit.before || "");
     const after = String(edit.after || "");
     if (!before || operation === "keep" || !answer.includes(before)) continue;
-    answer = operation === "insert_after" ? answer.replace(before, `${before}${after}`) : answer.replace(before, after);
+    answer = operation === "insert_after" || operation === "insert_row" ? answer.replace(before, `${before}${after}`) : operation === "delete_row" ? answer.replace(before, "") : answer.replace(before, after);
   }
   return answer;
+}
+
+function rowParts(value: string): string[] { return value.split("|").map(part => part.trim()); }
+function sameRow(left: string[], right: string[]): boolean { return left.length === right.length && left.every((cell, index) => cell === right[index]); }
+
+function applyTableEdits(rows: string[][], proposal?: Record<string, unknown> | null): string[][] {
+  const edits = (proposal?.edits as Record<string, unknown>[] | undefined) || [];
+  let next = rows.map(row => row.slice());
+  const cellEdits = edits.filter(edit => !["replace_row", "insert_row", "delete_row"].includes(String(edit.operation || "")) && !(String(edit.operation || "") === "insert_after" && String(edit.before || "").includes("|")));
+  next = next.map(row => row.map(cell => applyEdits(cell, { edits: cellEdits })));
+  for (const edit of edits) {
+    const operation = String(edit.operation || "");
+    const before = String(edit.before || "");
+    const rowEdit = ["replace_row", "insert_row", "delete_row"].includes(operation) || (operation === "insert_after" && before.includes("|"));
+    if (!rowEdit) continue;
+    const index = next.findIndex(row => sameRow(row, rowParts(before)));
+    if (index < 0) continue;
+    if (operation === "delete_row") { next.splice(index, 1); continue; }
+    const afterRows = String(edit.after || "").split("\n").filter(row => row.trim()).map(rowParts);
+    if (!afterRows.length) continue;
+    if (operation === "replace_row") { next.splice(index, 1, afterRows[0]); continue; }
+    if (operation === "insert_after" && !sameRow(afterRows[0], rowParts(before))) next.splice(index, 1, afterRows.shift()!);
+    if (afterRows.length) next.splice(index + 1, 0, ...afterRows);
+  }
+  return next;
+}
+
+function proposalHasVisibleChange(blocks: { kind?: string; text?: string; rows?: string[][] }[], proposal?: Record<string, unknown> | null): boolean {
+  return blocks.some(block => {
+    if (block.rows?.length) return JSON.stringify(block.rows) !== JSON.stringify(applyTableEdits(block.rows, proposal));
+    return (block.text || "") !== applyEdits(block.text || "", proposal);
+  });
 }
 
 function diffParts(oldText: string, newText: string): { old: DiffPart[]; next: DiffPart[] } {
@@ -60,7 +93,7 @@ function DiffText({ parts }: { parts: DiffPart[] }) { return <>{parts.map((part,
 
 function ReviewBlock({ block, proposal }: { block: { kind?: string; text?: string; rows?: string[][] }; proposal?: Record<string, unknown> | null }) {
   const oldRows = block.rows || [];
-  const nextRows = oldRows.map(row => row.map(cell => applyEdits(cell, proposal)));
+  const nextRows = applyTableEdits(oldRows, proposal);
   const oldText = block.text || "";
   const nextText = oldRows.length ? nextRows.map(row => row.join(" | ")).join("\n") : applyEdits(oldText, proposal);
   const changed = oldText !== nextText || JSON.stringify(oldRows) !== JSON.stringify(nextRows);
@@ -78,17 +111,19 @@ export function ImproveLane({ system, onBack }: { system: string; onBack?: () =>
   const [selected, setSelected] = useState<ImproveSection | null>(null);
   const [detail, setDetail] = useState<ImproveDetail | null>(null);
   const [job, setJob] = useState<ReviewJob | null>(null);
+  const [applying, setApplying] = useState(false);
+  const [applyMessage, setApplyMessage] = useState("");
   const [cli, setCli] = useState(rememberedAgentCli());
   const [error, setError] = useState("");
 
-  async function load() {
-    try { const next = await fetchImprove(system); setSnapshot(next); const row = selected ? next.sections.find(item => item.key === selected.key) : next.sections.find(item => item.eligible); if (row) { setSelected(row); setDetail(await fetchImproveSection(system, row.key)); } }
+  async function load(preserveSelection = true) {
+    try { const next = await fetchImprove(system); setSnapshot(next); const row = preserveSelection && selected ? next.sections.find(item => item.key === selected.key) : undefined; if (row) { setSelected(row); setDetail(await fetchImproveSection(system, row.key)); } else if (!preserveSelection) { setSelected(null); setDetail(null); } }
     catch (e) { setError((e as Error).message); }
   }
-  useEffect(() => { setSnapshot(null); setSelected(null); setDetail(null); void load(); }, [system]);
+  useEffect(() => { setSnapshot(null); setSelected(null); setDetail(null); void load(false); }, [system]);
 
   async function choose(row: ImproveSection) {
-    setSelected(row); setError("");
+    setSelected(row); setError(""); setApplyMessage("");
     try { setDetail(await fetchImproveSection(system, row.key)); } catch (e) { setError((e as Error).message); }
   }
   async function findImprovement() {
@@ -102,7 +137,24 @@ export function ImproveLane({ system, onBack }: { system: string; onBack?: () =>
   }
   async function apply() {
     if (!selected || !detail?.proposal || !window.confirm("Apply this bounded improvement to the working document?")) return;
-    try { await applyImprove(system, selected.key); await load(); } catch (e) { setError((e as Error).message); }
+    setApplying(true);
+    setApplyMessage("Applying improvement and re-rating the subsection…");
+    setError("");
+    try {
+      const result = await applyImprove(system, selected.key, cli);
+      await load();
+      if (result.rating && result.rating.status !== "OK") {
+        setError(`Improvement applied. Rating unavailable: ${result.rating.message || result.rating.status}`);
+        setApplyMessage("Improvement applied, but the quality rating needs attention.");
+      } else {
+        setApplyMessage("Improvement applied and the subsection was re-rated.");
+      }
+    } catch (e) {
+      setApplyMessage("");
+      setError(`Apply improvement failed: ${(e as Error).message}`);
+    } finally {
+      setApplying(false);
+    }
   }
   async function discard() {
     if (!selected || !detail?.proposal) return;
@@ -117,11 +169,13 @@ export function ImproveLane({ system, onBack }: { system: string; onBack?: () =>
   const nextText = proposedAnswer(currentText, detail?.proposal);
   const diff = diffParts(currentText, nextText);
   const reviewBlocks = detail?.current?.blocks?.length ? detail.current.blocks : [{ kind: "paragraph", text: currentText }];
+  const hasProposedChange = proposalHasVisibleChange(reviewBlocks, detail?.proposal);
   return <section className="page improve-page">
     <header className="page-heading"><div><span>Incremental repair · separate from Draft answers</span><h1>Improve answers</h1><p>Inspect the answer already in the document, address named gaps and preserve supported content. Improve never rebuilds a subsection from a fresh card.</p></div><label><span>Agent for improvement</span><select value={cli} onChange={e => setCli(e.target.value)} disabled={running}>{AGENT_CLIS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}</select></label>{onBack && <button className="quiet" onClick={onBack}>Back to workspace</button>}</header>
-    {error && <p className="desk-error" role="alert">{error}</p>}
-    {job && <div className={`draft-job draft-job-${job.state}`} role="status"><div><b>Improve proposal</b><span>{running ? "Finding a bounded improvement…" : job.state === "succeeded" ? "Proposal ready" : `Stopped: ${job.state}`}</span></div>{running && <button className="quiet" onClick={() => void cancelJob(system, job.id)}>Cancel</button>}</div>}
-    <div className="improve-layout"><section className="decision-desk"><header><div><h2>Answered subsections</h2><p>{snapshot.eligible_count} eligible · {snapshot.proposal_count} proposal(s) ready</p></div><button className="quiet" onClick={() => void load()}>Refresh</button></header><table className="draft-table"><thead><tr><th>Section</th><th>Improve state</th><th>Rating</th></tr></thead><tbody>{snapshot.sections.map(row => <tr key={row.key} className={selected?.key === row.key ? "draft-focus" : ""}><td><button className="table-link" disabled={!row.eligible} onClick={() => void choose(row)}><b>{row.number}</b> {row.title}<small>{row.key}</small></button></td><td>{row.eligible ? improveStateLabel(row.improve.state) : row.improve.reason}</td><td>{row.rating?.latest?.toFixed?.(1) || "—"}</td></tr>)}</tbody></table></section>
-      <section className="decision-desk improve-detail"><header><div><h2>{selected ? `${selected.number} ${selected.title}` : "Choose a subsection"}</h2><p>{selected ? improveStateLabel(selected.improve.state) : "Only existing answers can be improved."}</p></div><span>{detail?.proposal && <><button className="quiet" onClick={() => void discard()}>Discard</button><button onClick={() => void apply()}>Apply improvement</button></>}</span><button disabled={!selected || running} onClick={() => void findImprovement()}>Find improvement with {AGENT_CLIS.find(c => c.id === cli)?.label || cli}</button></header>{detail?.status === "UNAVAILABLE" && <Empty title="Not available" text={detail.message || "No answer is present."} />}{detail?.status === "OK" && <><div className="improve-comparison"><header><div><h3>Review the answer change</h3><p>Each question and subsection detail is separated below. Green text is proposed; red text is removed.</p></div><span className={nextText === currentText ? "improve-no-change" : "improve-change-count"}>{nextText === currentText ? "No text change" : "Text changed"}</span></header><div className="improve-review-blocks">{reviewBlocks.map((block, index) => <ReviewBlock key={index} block={block} proposal={detail.proposal} />)}</div><small className="improve-answer-meta">{detail.current?.provenance || "legacy/unknown"} · {detail.current?.document_hash || "no document hash"}</small></div><div className="improve-evidence"><h3>Previous gaps and evidence</h3>{detail.findings?.length ? <ul>{detail.findings.map(item => <li key={item}>{item}</li>)}</ul> : <p>No previous findings recorded.</p>}<small>{detail.evidence?.supporting_ids?.join(", ") || "No supporting evidence listed"}</small></div>{detail.proposal && <div className="improve-proposal"><h3>Pending proposal</h3><pre>{JSON.stringify(detail.proposal, null, 2)}</pre></div>}</>}</section></div>
+    {!selected && error && <p className="desk-error" role="alert">{error}</p>}
+    {!selected && job && <div className={`draft-job draft-job-${job.state}`} role="status"><div><b>Improve proposal</b><span>{running ? "Finding a bounded improvement…" : job.state === "succeeded" ? "Proposal ready" : `Stopped: ${job.state}`}</span></div>{running && <button className="quiet" onClick={() => void cancelJob(system, job.id)}>Cancel</button>}</div>}
+    <div className={`improve-layout${selected ? " improve-layout-focus" : " improve-layout-landing"}`}><section className="decision-desk"><header><div><h2>Answered subsections</h2><p>{snapshot.eligible_count} eligible · {snapshot.proposal_count} proposal(s) ready</p></div><button className="quiet" onClick={() => void load()}>Refresh</button></header><table className="draft-table"><thead><tr><th>Section</th><th>Improve state</th><th>Rating</th></tr></thead><tbody>{snapshot.sections.map(row => <tr key={row.key} className={selected?.key === row.key ? "draft-focus" : ""}><td><button className="table-link" disabled={!row.eligible} onClick={() => void choose(row)}><b>{row.number}</b> {row.title}<small>{row.key}</small></button></td><td>{row.eligible ? improveStateLabel(row.improve.state) : row.improve.reason}</td><td>{row.rating?.latest?.toFixed?.(1) || "—"}</td></tr>)}</tbody></table></section>
+      {selected && <section className="decision-desk improve-detail"><header><div className="improve-detail-heading"><button className="quiet improve-back" onClick={() => { setSelected(null); setDetail(null); setError(""); setApplyMessage(""); }}>Back to subsections</button><div><h2>{`${selected.number} ${selected.title}`}</h2><p>{improveStateLabel(selected.improve.state)}</p></div></div><span>{detail?.proposal && <><button className="quiet" disabled={applying} onClick={() => void discard()}>Discard</button><button disabled={applying || !hasProposedChange} onClick={() => void apply()}>{applying ? "Applying…" : hasProposedChange ? "Apply improvement" : "No change to apply"}</button></>}</span><button disabled={running || applying} onClick={() => void findImprovement()}>Find improvement with {AGENT_CLIS.find(c => c.id === cli)?.label || cli}</button></header>{error && <p className="desk-error improve-detail-error" role="alert">{error}</p>}{job && <div className={`draft-job draft-job-${job.state}`} role="status"><div><b>Improve proposal</b><span>{running ? "Finding a bounded improvement…" : job.state === "succeeded" ? "Proposal ready" : `Stopped: ${job.state}`}</span></div>{running && <button className="quiet" onClick={() => void cancelJob(system, job.id)}>Cancel</button>}</div>}{applying && <div className="improve-apply-status improve-apply-working" role="status" aria-live="polite"><span className="improve-spinner" aria-hidden="true" />{applyMessage}</div>}{!applying && applyMessage && <div className="improve-apply-status improve-apply-complete" role="status" aria-live="polite">{applyMessage}</div>}{detail?.proposal && !hasProposedChange && <p className="improve-no-change-note" role="status">No document change is proposed. Generate a new improvement or discard this proposal.</p>}{detail?.status === "UNAVAILABLE" && <Empty title="Not available" text={detail.message || "No answer is present."} />}{detail?.status === "OK" && <><div className="improve-comparison"><header><div><h3>Review the answer change</h3><p>Each question and subsection detail is separated below. Green text is proposed; red text is removed.</p></div><span className={hasProposedChange ? "improve-change-count" : "improve-no-change"}>{hasProposedChange ? "Document change proposed" : "No document change proposed"}</span></header><div className="improve-review-blocks">{reviewBlocks.map((block, index) => <ReviewBlock key={index} block={block} proposal={detail.proposal} />)}</div><small className="improve-answer-meta">{detail.current?.provenance || "legacy/unknown"} · {detail.current?.document_hash || "no document hash"}</small></div><div className="improve-evidence"><h3>Quality guidance</h3>{detail.rating_summary?.latest != null && <p><b>Latest quality rating: {detail.rating_summary.latest.toFixed(1)}</b> · average history {detail.rating_summary.average.toFixed(1)}</p>}{detail.rating_findings?.length ? <ul>{detail.rating_findings.map(item => <li key={item.id}><b>{item.id}</b>: {item.reason}{item.improve?.length ? <ul>{item.improve.map(tip => <li key={tip}>{tip}</li>)}</ul> : null}</li>)}</ul> : <p>No rating findings recorded.</p>}{detail.reader_review && <details><summary>Reader review</summary><pre>{detail.reader_review}</pre></details>}{detail.gap_searches?.length ? <details><summary>Evidence searches</summary><ul>{detail.gap_searches.map((item, i) => <li key={`${item.question}-${i}`}>{item.question}: {item.verdict || item.error || "searched"}</li>)}</ul></details> : null}<small>{detail.evidence?.supporting_ids?.join(", ") || "No supporting evidence listed"}</small></div>{detail.proposal && <div className="improve-proposal"><h3>Pending proposal</h3><pre>{JSON.stringify(detail.proposal, null, 2)}</pre></div>}</>}</section>}
+    </div>
   </section>;
 }
