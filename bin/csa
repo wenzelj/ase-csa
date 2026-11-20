@@ -5498,6 +5498,7 @@ def _ingest_v2(p: dict, work: Path, a) -> int:
     sources = [local_path(p["default_source_set"])] if p.get("default_source_set") else None
     if sources:
         sources += [local_path(x.strip()) for x in str(p.get("index_extra_sources") or "").split(";") if x.strip()]
+    exclude_patterns = [x.strip() for x in str(p.get("source_exclude_patterns") or "").split(";") if x.strip()]
 
     def say(n, name, line):
         print(f"{C['b']}{n}/6 {name}{C['0']}")
@@ -5507,7 +5508,8 @@ def _ingest_v2(p: dict, work: Path, a) -> int:
     if route.get("status") == "BLOCKED":
         die(route.get("message", "the V2 store cannot be read"))
     try:
-        s = v2_ingest.run_ingest(local_path(p["project_root"]), work, rebuild=a.rebuild, sources=sources, log=say)
+        s = v2_ingest.run_ingest(local_path(p["project_root"]), work, rebuild=a.rebuild,
+                                 sources=sources, log=say, exclude_patterns=exclude_patterns)
     except FileNotFoundError as e:
         die(str(e))
     s["route"] = route["route"]
@@ -5768,9 +5770,13 @@ def cmd_intake_files(p: dict, a) -> int:
     if not (v2_dir / "csa.sqlite").is_file():
         die(f"no {v2_dir / 'csa.sqlite'}; migrate the project to csa-work-v2 first")
     r = Repo(v2_dir)
+    quote_index = None
     try:
         todo: dict[str, list[str]] = {}
-        retry_failed = "RETRY_FAILED=1" in getattr(a, "args", [])
+        # V2 retries recorded failures on the next normal run; RETRY_FAILED=1 remains
+        # accepted for explicit callers and RETRY_FAILED=0 is available for diagnostics.
+        retry_failed = v2_project and "RETRY_FAILED=0" not in getattr(a, "args", [])
+        retry_failed = retry_failed or "RETRY_FAILED=1" in getattr(a, "args", [])
         intake_jobs = r.intake.pending()
         if retry_failed:
             intake_jobs.extend({"record_id": row[0], "rel_path": row[1]}
@@ -5790,8 +5796,16 @@ def cmd_intake_files(p: dict, a) -> int:
             batch_files = max(1, int(batch_override)) if batch_override else None
         except ValueError:
             die("BATCH_FILES must be a positive integer")
+        # The source index is immutable during an intake run. Build it once and reuse it
+        # for every file; graph refresh and proposed-evidence verification are deferred
+        # until all pending files have been handled.
+        quote_index = v2_intake._quote_index(r)
+        folder.mkdir(parents=True, exist_ok=True)
+        metrics_path = folder / "intake-metrics.jsonl"
         for record_id, paths in todo.items():
-            for group in v2_intake.batches(paths, max_files=batch_files or v2_intake.MAX_FILES):
+            adaptive = batch_files is None
+            for group in v2_intake.batches(paths, max_files=batch_files or v2_intake.MAX_FILES,
+                                           repo=r, adaptive=adaptive):
                 payload = v2_intake.build_batch(record_id, group, len(group), repo=r)
                 stamp = f"{os.getpid()}-{time.time_ns()}"
                 batch_file, out_file = tmp / f"intake-batch-{stamp}.json", tmp / f"intake-batch-{stamp}.out.json"
@@ -5802,24 +5816,39 @@ def cmd_intake_files(p: dict, a) -> int:
                 # caller explicitly asks to work in an interactive CLI session.
                 worker.headless = not getattr(a, "interactive", False)
                 args = [f"INTAKE={record_id}", "MODE=INTAKE", f"BATCH={batch_file}", f"BATCH_OUTPUT={out_file}"]
-                rc = launch(p, agent("intake"), args, worker)
+                deterministic = v2_intake.deterministic_batch(group, repo=r)
+                if deterministic:
+                    out_file.write_text(json.dumps({"files": deterministic}), encoding="utf-8")
+                    rc = 0
+                    model_seconds = 0.0
+                    print(f"intake deterministic: {len(group)} path sidecar(s), no model call", flush=True)
+                else:
+                    model_started = time.monotonic()
+                    rc = launch(p, agent("intake"), args, worker)
+                    model_seconds = round(time.monotonic() - model_started, 3)
                 if getattr(a, "print", False):
                     return rc
                 if rc or not out_file.is_file():
                     print(f"intake stopped at a batch of {len(group)} file(s); they stay pending", file=sys.stderr)
                     return rc or 1
+                apply_started = time.monotonic()
                 summary = v2_intake.apply_batch(record_id, out_file.read_text(encoding="utf-8"), repo=r,
-                                       rel_paths=group)
+                                       rel_paths=group, quote_index=quote_index, refresh_graph=False)
+                apply_seconds = round(time.monotonic() - apply_started, 3)
                 print(f"intake batch: {summary['files_ok']} ok, {summary['files_failed']} failed, "
                       f"{summary['rows_added']} row(s) added, {summary['rows_rejected']} rejected", flush=True)
                 for item in summary["rejected"]:
                     print(f"  rejected: {item['rel_path']}: {item['reason']}", file=sys.stderr)
                 for rel, err in summary["errors"].items():
                     print(f"  failed: {rel}: {err}", file=sys.stderr)
-                with r.tx():
-                    review = r.evidence.verify_proposed(actor="csa-intake")
-                print(f"  automatic evidence verification: {review['verified']} promoted; "
-                      f"{review['unresolved']} unresolved or not checkable", flush=True)
+                with metrics_path.open("a", encoding="utf-8") as fh:
+                    fh.write(json.dumps({"record_id": record_id, "files": group,
+                                         "mode": "deterministic" if deterministic else "model",
+                                         "model_seconds": model_seconds, "apply_seconds": apply_seconds,
+                                         "files_ok": summary["files_ok"], "files_failed": summary["files_failed"],
+                                         "rows_added": summary["rows_added"],
+                                         "rows_rejected": summary["rows_rejected"]}, ensure_ascii=False) + "\n")
+                print(f"  timing: model {model_seconds:.1f}s; apply {apply_seconds:.1f}s", flush=True)
                 batch_file.unlink(missing_ok=True)
                 out_file.unlink(missing_ok=True)
                 done += len(group)
@@ -5829,8 +5858,18 @@ def cmd_intake_files(p: dict, a) -> int:
         if left:
             print(f"intake is incomplete: {len(left)} source(s) still pending", file=sys.stderr)
             return 1
+        with r.tx():
+            graph = r.graph.refresh(actor="csa-intake")
+            source_index = r.evidence._source_index()
+            review = r.evidence.verify_proposed(actor="csa-intake", source_index=source_index)
+        print(f"intake finalisation: {graph['graph_node']} graph node(s), "
+              f"{graph['graph_edge']} graph edge(s)", flush=True)
+        print(f"automatic evidence verification: {review['verified']} promoted; "
+              f"{review['unresolved']} unresolved or not checkable", flush=True)
         return 0
     finally:
+        if quote_index is not None:
+            quote_index.close()
         r.close()
 
 

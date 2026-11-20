@@ -436,7 +436,7 @@ class _Evidence:
         con.execute("UPDATE evidence SET review_state='accepted', updated_at=? WHERE id=?", (r._now(), eid))
         r._audit(by or actor, "accept", "evidence", eid, note)
 
-    def verify(self, eid, actor=None, note=None):
+    def verify(self, eid, actor=None, note=None, source_index=None):
         """Re-check the excerpt against the cited source using evidence_matrix's quote check.
 
         SOURCE_OK → sets status='VERIFIED', review_state='accepted'.
@@ -456,7 +456,7 @@ class _Evidence:
             res = {"verdict": "NOT_CHECKABLE", "reason": "evidence_matrix.py not importable"}
         else:
             try:
-                idx = self._source_index()
+                idx = source_index if source_index is not None else self._source_index()
                 if idx is None:
                     res = {"verdict": "SOURCE_NOT_FOUND",
                            "reason": "no discovery index next to the matrix; citations not resolved"}
@@ -475,7 +475,7 @@ class _Evidence:
         r._audit(actor, "verify", "evidence", eid, note or f"verify failed: {res}")
         return {"verdict": res.get("verdict"), "reason": res.get("reason"), **{k: v for k, v in res.items() if k not in ("verdict", "reason")}, "eid": eid}
 
-    def verify_proposed(self, actor=None, note=None):
+    def verify_proposed(self, actor=None, note=None, source_index=None):
         """Verify every source-backed proposed row in this V2 store.
 
         Evidence intake has already checked new quoted rows, but that check used to stop at
@@ -493,7 +493,8 @@ class _Evidence:
                                 "reason": "source_title and excerpt are required for automatic verification"})
                 continue
             results.append(self.verify(row["id"], actor=actor,
-                                       note=note or "automatic verification of source-backed proposed evidence"))
+                                       note=note or "automatic verification of source-backed proposed evidence",
+                                       source_index=source_index))
         return {
             "checked": len([x for x in results if x["verdict"] not in ("NOT_CHECKABLE",)]),
             "verified": len([x for x in results if x["verdict"] == "SOURCE_OK"]),

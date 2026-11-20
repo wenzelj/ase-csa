@@ -150,7 +150,7 @@ type FormState = {
   known_constraints: string; stakeholders: string; required_deliverables: string; application_skills: string;
   discovery: string; knowledge: string; knowledge_sources: string; lane: string; stage: string;
   template_docx: string; build_output_docx: string; legacy_docx: string; working_docx: string;
-  index_extra_sources: string; estate: string; sites: string; spec_mode: string;
+  index_extra_sources: string; source_exclude_patterns: string; estate: string; sites: string; spec_mode: string;
   working_preferences: Record<string, boolean>;
 };
 const lines = (value: string) => value.split(/\r?\n/).map(item => item.trim()).filter(Boolean);
@@ -163,11 +163,12 @@ export function initialApplicationForm(folderName: string, defaults?: NewApplica
     required_deliverables: "detailed_current_state_assessment\nconsumable_summary", application_skills: "",
     discovery: "Discovery", knowledge: "00 Knowlege", knowledge_sources: "", lane: defaults?.defaults.lane || "revise",
     stage: defaults?.defaults.stage || "draft", template_docx: "", build_output_docx: "", legacy_docx: "",
-    working_docx: "", index_extra_sources: "", estate: "", sites: "", spec_mode: defaults?.defaults.spec_mode || "off",
+    working_docx: "", index_extra_sources: "", source_exclude_patterns: "", estate: "", sites: "", spec_mode: defaults?.defaults.spec_mode || "off",
     working_preferences: Object.fromEntries(Object.keys(preferenceLabels).map(key => [key, true])),
   };
 }
-export function buildApplicationConfig(folderName: string, form: FormState, workspaceRoot: string): Record<string, unknown> {
+export function buildApplicationConfig(folderName: string, form: FormState, workspaceRoot: string,
+  selection?: FolderSelection): Record<string, unknown> {
   const root = `${workspaceRoot}/${folderName}`;
   const optional = (value: string) => value.trim() || undefined;
   const withinApplication = (value: string) => value.trim() ? (value.trim().startsWith("/") ? value.trim() : `${root}/${value.trim()}`) : undefined;
@@ -178,8 +179,10 @@ export function buildApplicationConfig(folderName: string, form: FormState, work
     lane: form.lane, stage: form.stage, spec_mode: form.spec_mode, estate: optional(form.estate), sites: optional(form.sites),
     template_docx: optional(form.template_docx), build_output_docx: withinApplication(form.build_output_docx),
     legacy_docx: optional(form.legacy_docx), working_docx: withinApplication(form.working_docx),
-    index_extra_sources: optional(form.index_extra_sources), knowledge_sources: knowledgeSources,
+    index_extra_sources: optional(form.index_extra_sources), source_exclude_patterns: optional(form.source_exclude_patterns), knowledge_sources: knowledgeSources,
     working_preferences: form.working_preferences,
+    discovery_paths: (selection?.files || []).map(item => item.path)
+      .filter(path => path === form.discovery || path.startsWith(`${form.discovery}/`)),
     context: { assessment_name: form.assessment_name.trim(), assessment_type: form.assessment_type.trim(),
       program: form.program.trim(), environment: form.environment.trim(), organisation: form.organisation.trim(),
       as_of_date: form.as_of_date.trim(), scope_in: lines(form.scope_in), scope_out: lines(form.scope_out),
@@ -247,7 +250,7 @@ export function NewApplication({ onCreated }: { onCreated?: (key: string) => voi
     if (!form || !selection || !defaults || !sessionId) return;
     setBusy(true); setError(""); setPreview(null); setReviewedConfig(null);
     try {
-      const config = buildApplicationConfig(selection.folderName, form, defaults.workspace_root);
+      const config = buildApplicationConfig(selection.folderName, form, defaults.workspace_root, selection);
       const result = await previewNewApplication(config);
       setPreview(result);
       if (result.status === "READY") setReviewedConfig(config);
@@ -310,6 +313,7 @@ export function NewApplication({ onCreated }: { onCreated?: (key: string) => voi
         <p>Discovery: {selection.files.filter(item => item.path.startsWith(`${form.discovery}/`)).length} files. Knowledge: {selection.files.filter(item => item.path.startsWith(`${form.knowledge}/`)).length} files.</p>
         <div className="new-app-grid">{multi("authoritative_sources", "Authoritative sources", "One source per line.")}
         {field("index_extra_sources", "Additional source path", "Existing path to index, when needed.")}
+        {field("source_exclude_patterns", "Discovery exclusions", "Optional semicolon-separated basename/glob patterns, for example RMS_*;ProxyPro_*;UTC_*. Use when the Discovery folder contains another application’s captures.")}
         {multi("knowledge_sources", "Knowledge sources.json metadata", "Optional JSON object with documents and system_terms. Leave blank to preserve an uploaded sources.json.")}
         {multi("terminology", "Terminology", "JSON object of terms and meanings.")}</div>
       </div>

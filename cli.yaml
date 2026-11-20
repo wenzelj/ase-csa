@@ -17,11 +17,11 @@ comments: off
 # How to launch each CLI. {prompt} is replaced by the generated prompt (passed as
 # one argument, never through a shell). interactive = you stay in the session;
 # headless = runs to completion and exits (used by --headless and `csa pipeline`).
-codex_interactive: /Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex --no-alt-screen -m gpt-5.6-sol -c model_reasoning_effort=medium {prompt}
-codex_browser: /Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex exec -m gpt-5.6-sol -c model_reasoning_effort=medium --skip-git-repo-check --output-last-message {last} {prompt}
-codex_headless: codex exec -m gpt-5.6-sol -c model_reasoning_effort=medium --skip-git-repo-check --output-last-message {last} {prompt}
+codex_interactive: /Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex --no-alt-screen -m gpt-5.6-luna -c model_reasoning_effort=medium {prompt}
+codex_browser: /Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex exec -m gpt-5.6-luna -c model_reasoning_effort=medium --skip-git-repo-check --output-last-message {last} {prompt}
+codex_headless: codex exec -m gpt-5.6-luna -c model_reasoning_effort=medium --skip-git-repo-check --output-last-message {last} {prompt}
 claude_interactive: claude {prompt}
-claude_headless: claude -p --permission-mode acceptEdits {prompt}
+claude_headless: claude -p --model claude-sonnet-5 --permission-mode acceptEdits {prompt}
 # Evo: the dedicated Codex profile against the local model. Pick it per run with --cli evo.
 evo_interactive: codex --profile evo-x3-qwen {prompt}
 evo_headless: codex exec --profile evo-x3-qwen --ignore-rules --skip-git-repo-check --output-last-message {last} {prompt}
@@ -70,7 +70,7 @@ local_slots: evo-x3-qwen
 # Slots csa fleet refuses (local-qwen is always refused: it does not deliver).
 disabled_slots: local-qwen
 codex_fleet: codex exec --profile {profile} --skip-git-repo-check --output-last-message {last} {prompt}
-claude_fleet: claude -p {prompt}
+claude_fleet: claude -p --permission-mode acceptEdits {prompt}
 hermes_fleet: hermes chat -q {prompt}
 
 # csa answer: fix rounds after the first answer. Each rewrites only the blocks that fail; the framework merges them.

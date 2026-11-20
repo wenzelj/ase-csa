@@ -111,7 +111,7 @@ OPERATIONS: dict[str, Operation] = {
     # Evidence intake: new documents -> evidence (agent), open questions -> candidates (no model).
     "intake": Operation(
         "intake", "Turn new documents into evidence", "The evidence agent reads the new and changed files from the last ingest and records what they state in the evidence matrix and graph.",
-        ("intake",), options={"cli": "identifier"}, timeout=3600, mutation_class="workspace_write", lock="evidence",
+        ("intake",), options={"cli": "identifier"}, timeout=86400, mutation_class="workspace_write", lock="evidence",
     ),
     "gap_check": Operation(
         "gap_check", "Check open questions", "Look up every open question in the evidence matrix and the index; what is found is added as candidate rows to settle (no model).",
@@ -166,6 +166,27 @@ OPERATIONS: dict[str, Operation] = {
 DRAFT_CLIS = frozenset({"claude", "codex", "evo", "qwen8b", "eagle"})
 
 
+def _registered_project_keys(agents_dir: Path) -> set[str]:
+    """Read project keys from the live CSA registry.
+
+    The fallback keeps isolated command tests and older disposable framework
+    fixtures working when they do not include a registry yet. A live browser
+    always has PROJECTS.yaml, so newly registered applications are exposed
+    without requiring a code change or an allow-list update.
+    """
+    registry = Path(agents_dir) / "csa-context" / "PROJECTS.yaml"
+    if not registry.is_file():
+        return set(ALLOWED_PROJECTS)
+    keys: set[str] = set()
+    for line in registry.read_text(encoding="utf-8").splitlines():
+        value = line.strip()
+        if value.startswith("- key:"):
+            key = value[len("- key:"):].strip().strip("\"'")
+            if key:
+                keys.add(key)
+    return keys
+
+
 def catalogue() -> list[dict[str, Any]]:
     return [operation.descriptor().model_dump() for operation in OPERATIONS.values()]
 
@@ -189,7 +210,7 @@ def _validate_identifier(value: str, kind: str) -> str:
 
 
 def build_argv(agents_dir: Path, project_key: str, operation_key: str, request: CommandRequest) -> tuple[Operation, list[str]]:
-    if project_key not in ALLOWED_PROJECTS:
+    if project_key not in _registered_project_keys(agents_dir):
         raise HTTPException(403, "Project is not exposed by the CSA editing workspace")
     operation = OPERATIONS.get(operation_key)
     if operation is None:

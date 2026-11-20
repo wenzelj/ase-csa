@@ -23,6 +23,7 @@ import csv
 import ipaddress
 import json
 import sys
+import tempfile
 from pathlib import Path
 
 FIELDS = ["zone", "kind", "match", "basis", "reviewed"]
@@ -36,6 +37,61 @@ def path(work_dir: Path) -> Path:
 def load(work_dir: Path) -> list[dict]:
     f = path(work_dir)
     return list(csv.DictReader(f.open(encoding="utf-8"))) if f.is_file() else []
+
+
+def upsert_host_rules(work_dir: Path, updates: list[dict]) -> int:
+    """Persist evidence-backed host classifications without discarding reviewed rules.
+
+    V2 intake may discover a host's IT/OT side before a person reviews it.  A later
+    intake refresh must update the rule's evidence basis but must not silently turn a
+    reviewed correction back into an unreviewed proposal.
+    """
+    if not updates:
+        return 0
+    f = path(work_dir)
+    f.parent.mkdir(parents=True, exist_ok=True)
+    existing = load(work_dir)
+    by_match = {row.get("match", ""): dict(row) for row in existing if row.get("match")}
+    changed = 0
+    for update in updates:
+        match = str(update.get("match") or "").strip()
+        kind = str(update.get("kind") or "unknown").strip().lower()
+        if not match or not match.startswith("host:") or kind not in KINDS:
+            raise ValueError(f"invalid host zone rule: {update!r}")
+        prior = by_match.get(match, {})
+        row = {
+            "zone": str(update.get("zone") or prior.get("zone") or "").strip(),
+            "kind": kind,
+            "match": match,
+            "basis": str(update.get("basis") or prior.get("basis") or "").strip(),
+            "reviewed": prior.get("reviewed", "no") or "no",
+        }
+        requested_review = str(update.get("reviewed", "")).lower()
+        if requested_review == "yes":
+            row["reviewed"] = "yes"
+        elif requested_review == "no" and not prior:
+            row["reviewed"] = "no"
+        if row != prior:
+            by_match[match] = row
+            changed += 1
+    rows = list(by_match.values())
+    # Keep defaults last and preserve the stable order of existing rules, then append
+    # newly discovered host rules before the defaults.
+    defaults = [r for r in rows if r.get("match") in {"default:private", "default:public"}]
+    host_rows = [r for r in rows if r.get("match") not in {"default:private", "default:public"}]
+    host_rows.sort(key=lambda r: r.get("match", ""))
+    ordered = host_rows + defaults
+    fd, tmp_name = tempfile.mkstemp(prefix="zones.", suffix=".csv", dir=str(f.parent))
+    try:
+        with open(fd, "w", encoding="utf-8", newline="") as fh:
+            writer = csv.DictWriter(fh, fieldnames=FIELDS)
+            writer.writeheader()
+            writer.writerows(ordered)
+        Path(tmp_name).replace(f)
+    except Exception:
+        Path(tmp_name).unlink(missing_ok=True)
+        raise
+    return changed
 
 
 class Zones:

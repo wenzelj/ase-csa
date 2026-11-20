@@ -1,5 +1,6 @@
 """S588: batched intake — build_batch / apply_batch on a v2repo."""
 import json
+import csv
 
 import pytest
 
@@ -40,9 +41,28 @@ def test_batches_split_12_files_into_5_5_2():
     assert [len(p) for p in parts] == [5, 5, 2]
 
 
+def test_batches_default_to_one_file_per_model_session():
+    parts = v2_intake.batches(["a.txt", "b.txt", "c.txt"])
+    assert parts == [["a.txt"], ["b.txt"], ["c.txt"]]
+
+
+def test_adaptive_batches_group_compatible_tiny_files(repo):
+    parts = v2_intake.batches([SRC_A, SRC_B], repo=repo, adaptive=True)
+    assert parts == [[SRC_A, SRC_B]]
+
+
+def test_deterministic_batch_accepts_generated_path_sidecar(repo):
+    with repo.tx():
+        repo.con.execute("INSERT INTO indexed_file(rel_path, sha256, size) VALUES ('docs/result_path.txt','x',1)")
+        repo.con.execute("INSERT INTO indexed_chunk(rel_path,text) VALUES ('docs/result_path.txt',?)",
+                         ('Generated: C:\\\\Temp\\\\result.xml',))
+    result = v2_intake.deterministic_batch(["docs/result_path.txt"], repo=repo)
+    assert result == [{"rel_path": "docs/result_path.txt", "rows": [], "graph_items": []}]
+
+
 def test_build_batch_has_chunks_hosts_and_instructions(repo):
     rid = _start(repo, [SRC_A, SRC_B])
-    payload = v2_intake.build_batch(rid, [SRC_A, SRC_B], repo=repo)
+    payload = v2_intake.build_batch(rid, [SRC_A, SRC_B], max_files=2, repo=repo)
     assert payload["record_id"] == rid
     assert [f["rel_path"] for f in payload["files"]] == [SRC_A, SRC_B]
     assert TEXT_B in payload["files"][1]["chunks"]
@@ -130,3 +150,59 @@ def test_round_trip_grows_evidence_graph_and_clears_pending(repo):
     assert repo.con.execute("SELECT COUNT(*) FROM graph_node").fetchone()[0] > 0
     assert repo.con.execute("SELECT COUNT(*) FROM graph_edge").fetchone()[0] > 0
     assert repo.intake.pending() == []
+
+
+def test_apply_batch_persists_structured_network_items_and_provenance(repo):
+    rid = _start(repo, [SRC_A])
+    claim = "SRV1 has an established connection to SRV2 on port 1433 (sql)."
+    out = [{"rel_path": SRC_A, "rows": [_row(claim, SRC_A, claim, "line 2")],
+           "graph_items": [
+               {"kind": "address", "ip": "10.0.0.1", "owner_host": "SRV1", "scope": "test",
+                "evidence_row_indexes": [0]},
+               {"kind": "flow", "src_host": "SRV1", "dst_host": "10.0.0.9", "port": 1433,
+                "protocol": "tcp", "purpose": "sql", "evidence_row_indexes": [0]},
+               {"kind": "service", "host": "SRV2", "port": 1433, "protocol": "tcp",
+                "name": "sql", "configured": True, "evidence_row_indexes": [0]},
+           ]}]
+    s = v2_intake.apply_batch(rid, out, repo=repo)
+    assert (s["address_items"], s["flow_items"], s["service_items"]) == (1, 1, 1)
+    assert repo.con.execute("SELECT owner_host FROM address WHERE ip='10.0.0.1'").fetchone()[0] == "SRV1"
+    purpose = repo.con.execute("SELECT purpose FROM flow WHERE src_host='SRV1' AND dst_host='10.0.0.9'").fetchone()[0]
+    assert "evidence=E-001" in purpose
+    edge = repo.con.execute("SELECT evidence_ids FROM graph_edge WHERE src='host/SRV1' AND dst='host/10.0.0.9'").fetchone()
+    assert edge and edge[0] == "E-001"
+    assert repo.con.execute("SELECT role FROM host WHERE name='10.0.0.9'").fetchone()[0] == "Observed network endpoint"
+
+
+def test_apply_batch_rejects_unknown_structured_item_without_writing(repo):
+    rid = _start(repo, [SRC_A])
+    out = [{"rel_path": SRC_A, "rows": [], "graph_items": [{"kind": "router", "name": "R1"}]}]
+    s = v2_intake.apply_batch(rid, out, repo=repo)
+    assert s["files_failed"] == 1
+    assert "unsupported kind" in s["errors"][SRC_A]
+    assert repo.con.execute("SELECT COUNT(*) FROM host WHERE name='R1'").fetchone()[0] == 0
+
+
+def test_apply_batch_persists_host_it_ot_classification_and_preserves_review(repo):
+    rid = _start(repo, [SRC_A])
+    out = [{"rel_path": SRC_A, "rows": [], "graph_items": [
+        {"kind": "host", "name": "SRV1", "role": "SCADA server", "site": "A",
+         "classification": "ot", "zone": "OT Site A",
+         "classification_basis": "The source identifies SRV1 as an OT SCADA server."}
+    ]}]
+    s = v2_intake.apply_batch(rid, out, repo=repo)
+    assert s["zone_items"] == 1
+    zone_file = repo.path.parent / "hosts" / "zones.csv"
+    rows = list(csv.DictReader(zone_file.open(encoding="utf-8")))
+    assert {r["match"]: r for r in rows}["host:SRV1"]["kind"] == "ot"
+    assert {r["match"]: r for r in rows}["host:SRV1"]["reviewed"] == "no"
+
+    from csa_docx import zones
+    zones.upsert_host_rules(repo.path.parent, [{"match": "host:SRV1", "kind": "ot",
+                                                "zone": "OT Site A", "basis": "reviewed correction",
+                                                "reviewed": "yes"}])
+    with repo.tx():
+        rid2 = repo.intake.start([{"rel_path": SRC_A}])
+    v2_intake.apply_batch(rid2, out, repo=repo)
+    rows = list(csv.DictReader(zone_file.open(encoding="utf-8")))
+    assert {r["match"]: r for r in rows}["host:SRV1"]["reviewed"] == "yes"

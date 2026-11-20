@@ -72,7 +72,16 @@ Your output is one JSON object per file, as a JSON list in `BATCH_OUTPUT`, and n
       {"claim": "...", "status": "VERIFIED", "source_title": "...", "page_or_location": "...",
        "excerpt": "...", "area": "...", "confidence": "...", "gap_or_action": "..."}
     ],
-    "graph_items": [{"kind": "host", "name": "...", "role": "...", "site": "..."}],
+    "graph_items": [
+      {"kind": "host", "name": "...", "role": "...", "site": "...",
+       "classification": "ot", "zone": "OT <location or function>",
+       "classification_basis": "<short evidence basis>"},
+      {"kind": "address", "ip": "...", "owner_host": "...", "scope": "...", "evidence_row_indexes": [0]},
+      {"kind": "flow", "src_host": "...", "dst_host": "...", "port": 1433,
+       "protocol": "tcp", "purpose": "...", "evidence_row_indexes": [1]},
+      {"kind": "service", "host": "...", "provider_host": "...", "port": 53,
+       "protocol": "udp", "name": "dns", "configured": true, "evidence_row_indexes": [2]}
+    ],
     "report": "<FILE_REPORT text for this file>"
   }
 ]
@@ -85,7 +94,7 @@ Every file in the payload needs one object. An empty `rows` list is valid when t
 3. Before writing output, copy each file's `rel_path` value character-for-character from the BATCH JSON into that file's output object. Do not shorten it to a basename or reconstruct it from `source_title`. Write one atomic claim per row in plain Australian English, with no semicolons. Use the exact source quote in `excerpt`, the file path in `source_title`, and the source location in `page_or_location`.
 4. Use only the evidence classes `VERIFIED`, `INFERRED`, `UNCONFIRMED`, `CONFLICTING`, and `NOT_FOUND`. Use `VERIFIED` only when the excerpt directly supports the claim. Use existing CSA area names; do not invent a new area.
 5. The validator checks every `VERIFIED` excerpt against the v2 indexed source text and rejects unsupported rows. Copy excerpts exactly from `chunks`.
-6. List in `graph_items` only new hosts named by the proposed rows that are absent from `existing_hosts`. The validator rebuilds graph relationships.
+6. List structured observations in `graph_items` when the source explicitly provides them. Supported kinds are `host`, `address`, `flow`, and `service`; use the field names shown above. A host may also carry `classification` (`ot`, `it`, `internet`, `cloud`, `vendor` or `unknown`), `zone`, and `classification_basis` when the source explicitly places it on that side of the IT/OT boundary. Do not derive classification from a hostname, IP range or physical location alone. Put hosts first when a new endpoint is needed. For provenance, use `evidence_row_indexes` to refer to zero-based entries in this file's proposed `rows`, and use `evidence_ids` only for IDs already present in `existing_evidence_ids`. Do not invent network flows from host names alone. The validator applies these rows transactionally, persists reviewed-safe host zone rules, and rebuilds graph relationships.
 7. Each file's `report` must name its exact `rel_path`, proposed rows, conflicts, graph items, and anything reviewed that added no new evidence. Stop after writing the required JSON to `BATCH_OUTPUT`.
 
 When only `FILE` and `FILE_REPORT` are supplied, the caller is using the legacy v1 single-file contract. Follow the legacy file/checkpoint instructions for that call only; never mix that contract into a call that supplies `BATCH`.

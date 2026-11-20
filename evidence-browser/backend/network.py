@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import csv
 import ipaddress
+import re
 import sqlite3
 import sys
 from pathlib import Path
@@ -43,6 +44,14 @@ def device_identities(work_dir: Path, agents: Path) -> dict[str, dict[str, str]]
 
 
 VIEWS = ("application", "owned", "global")
+
+
+def _is_ip_literal(value: str) -> bool:
+    try:
+        ipaddress.ip_address(value.split("%", 1)[0])
+        return True
+    except ValueError:
+        return False
 
 
 def _check_view(view: str, application_key: str | None) -> None:
@@ -279,12 +288,33 @@ def _build_v2(work_dir: Path, agents: Path, view: str = "global", application_ke
         except ValueError:
             application_key = None
     ips: dict[str, list[str]] = {}
+    address_owner = {row["ip"]: row["owner_host"] for row in addresses if row.get("owner_host")}
+
+    def resolve_endpoint(endpoint: str) -> str:
+        """Use the registered host name for an owned address, otherwise keep the endpoint."""
+        return address_owner.get(endpoint, endpoint)
+
     for row in addresses:
         if row["owner_host"]:
             ips.setdefault(row["owner_host"], []).append(row["ip"])
     nodes = {row["name"]: {"id": row["name"], "kind": "captured", "role": row["role"] or "",
                            "site": row["site"] or "", "ips": ";".join(ips.get(row["name"], [])), "listed": True}
              for row in hosts}
+    # Keep the project's reviewed IT/OT classification with each live node.  The
+    # host register deliberately stores role/site only; hosts/zones.csv is the
+    # evidence-backed classification layer used by the CSA framework.
+    try:
+        from csa_docx import zones as _zones
+        zone_rules = _zones.for_project(work_dir)
+        for node in nodes.values():
+            rule = zone_rules.of(node["id"])
+            node["zone_kind"] = rule.get("kind", "unknown")
+            node["zone_label"] = rule.get("zone", "")
+            node["zone_reviewed"] = rule.get("reviewed", "")
+    except Exception:
+        # A project without a zones.csv remains compatible with the previous
+        # role/site-only graph; it must not make the network endpoint fail.
+        pass
     # V2 host rows intentionally keep only canonical inventory fields. Restore a
     # displayed role when accepted evidence explicitly identifies a domain controller.
     for claim in evidence:
@@ -320,25 +350,33 @@ def _build_v2(work_dir: Path, agents: Path, view: str = "global", application_ke
         edge["ids"].append(link["id"])
         edge["est"] = edge["est"] or link["state"].startswith("established")
     for row in flows:
-        for endpoint in (row["src_host"], row["dst_host"]):
+        source, target = (resolve_endpoint(row["src_host"]), resolve_endpoint(row["dst_host"]))
+        for endpoint in (source, target):
             if endpoint not in nodes:
                 nodes[endpoint] = {"id": endpoint, "kind": "named", "role": "", "site": "",
                                    "ips": endpoint, "listed": False}
-        if not any(edge["s"] == row["src_host"] and edge["t"] == row["dst_host"]
+        if not any(edge["s"] == source and edge["t"] == target
                    and edge["port"] == str(row["port"] or "") for edge in edges):
-            edges.append({"s": row["src_host"], "t": row["dst_host"], "port": str(row["port"] or ""),
-                          "procs": [], "ids": [], "est": False})
+            ids = re.findall(r"\bE-\d+\b", row.get("purpose") or "")
+            edges.append({"s": source, "t": target, "port": str(row["port"] or ""),
+                          "procs": [], "ids": ids, "est": False})
     for row in graph_edges:
-        source = row["src"].removeprefix("host/")
-        target = row["dst"].removeprefix("host/")
-        if source not in nodes or target not in nodes:
-            continue
+        source = resolve_endpoint(row["src"].removeprefix("host/"))
+        target = resolve_endpoint(row["dst"].removeprefix("host/"))
+        for endpoint in (source, target):
+            if endpoint not in nodes:
+                try:
+                    kind = "public" if not ipaddress.ip_address(endpoint.split("%", 1)[0]).is_private else "unnamed"
+                except ValueError:
+                    kind = "named"
+                nodes[endpoint] = {"id": endpoint, "kind": kind, "role": "", "site": "",
+                                   "ips": endpoint if kind in ("public", "unnamed") else "", "listed": False}
         ids = [value for value in (row["evidence_ids"] or "").split(";") if value]
         matched = [edge for edge in edges if edge["s"] == source and edge["t"] == target]
         if matched:
             for edge in matched:
                 edge["ids"] = sorted(set(edge["ids"] + ids))
-        elif ids:
+        else:
             edges.append({"s": source, "t": target, "port": "", "procs": [], "ids": ids, "est": False})
     scope = {"owned": [], "peers": [], "external": []}
     if application_key and view == "global":
@@ -348,6 +386,14 @@ def _build_v2(work_dir: Path, agents: Path, view: str = "global", application_ke
             application_key = None
     if application_key:
         owned, peers, registered_hosts = _contract_hosts(db, agents, application_key)
+        # A prior graph sync could materialise an observed IP as a host row.  It is
+        # still an external endpoint unless the address table resolves it to a
+        # registered host; otherwise the scope contract hides the connection as an
+        # apparently unrelated registered host.
+        registered_hosts = {
+            name for name in registered_hosts
+            if not _is_ip_literal(name) or name in owned or name in peers
+        }
         if view != "global":
             nodes, edges = _apply_contract(nodes, edges, view, owned, peers, registered_hosts)
         scope = {"owned": sorted(owned & set(nodes)), "peers": sorted(peers & set(nodes)),

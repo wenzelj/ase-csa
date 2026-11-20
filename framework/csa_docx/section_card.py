@@ -601,7 +601,7 @@ def evidence_pack(node: dict, qs: list[dict], workspace: Path | None, extra_sear
         searched = [f"matrix rows recorded for {node['title']}"]
         scored: dict[str, tuple] = {}
         for r in own:
-            overlap = len(qwords & _words(r.get("claim", "") + " " + r.get("question", "")))
+            overlap = len(qwords & _words((r.get("claim") or "") + " " + (r.get("question") or "")))
             scored[r["evidence_id"]] = (_STATUS_RANK.get(r.get("status", ""), 5), -overlap, r)
         queries = [node["title"] + " " + " ".join(sorted(qwords - _words(node["title"]))[:4])]
         queries += (extra_searches or {}).get(q["id"], [])

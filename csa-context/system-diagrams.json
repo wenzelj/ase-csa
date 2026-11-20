@@ -32,5 +32,43 @@
       ],
       "basis": "E-021: DNS resolution depends on enterprise Active Directory-integrated DNS servers. E-066: the enterprise NTP sources are ROTPRDSRV122, MOTPRDSRV122 and IPTPRDSRV224. No OT domain exists yet (the OT domain is part of the migration)."
     }
+  },
+  "traction-scada": {
+    "data_centres": [
+      {
+        "key": "rockhampton",
+        "label": "Rockhampton",
+        "sites": [
+          "Rockhampton",
+          "Rockhampton L3",
+          "Rockhampton L5",
+          "Rockhampton PRC"
+        ]
+      },
+      {
+        "key": "brisbane",
+        "label": "Brisbane",
+        "sites": [
+          "Brisbane"
+        ]
+      },
+      {
+        "key": "mackay",
+        "label": "Mackay",
+        "sites": [
+          "Mackay"
+        ]
+      }
+    ],
+    "top_label": "IT, Internet and other networks",
+    "shared_label": "Shared services: directory, DNS and time",
+    "screen_site_grid": {
+      "columns": 2,
+      "width": 2200,
+      "rows": [
+        ["brisbane", "mackay"],
+        ["rockhampton"]
+      ]
+    }
   }
 }

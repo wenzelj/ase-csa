@@ -25,6 +25,7 @@ import hashlib
 import importlib.util
 import os
 import sqlite3
+from fnmatch import fnmatch
 from pathlib import Path
 
 from csa_docx import evidence_stale
@@ -67,21 +68,34 @@ def _di():
 
 
 # ------------------------------------------------------------------ step 1: index
-def _walk(di, sources, root: Path, v2_dir: Path) -> dict[str, Path]:
+def _walk(di, sources, root: Path, v2_dir: Path, exclude_patterns=()) -> dict[str, Path]:
     """{rel_path: Path} for every file under the sources, named relative to the project root (also for a
     source outside it), the way discovery_index names them."""
     found = {}
     root, v2_dir = root.resolve(), v2_dir.resolve()
+    patterns = tuple(str(p).strip() for p in (exclude_patterns or ()) if str(p).strip())
+
+    def excluded(rel: str, name: str) -> bool:
+        parts = rel.split("/")
+        return any(fnmatch(rel, p) or fnmatch(name, p) or any(fnmatch(part, p) for part in parts)
+                   for p in patterns)
+
     for src in sources:
         for dirpath, dirnames, filenames in os.walk(Path(src).resolve()):
             here = Path(dirpath)
-            dirnames[:] = sorted(d for d in dirnames if d not in di.SKIP_DIRS and (here / d) != v2_dir)
+            dirnames[:] = sorted(d for d in dirnames
+                                 if d not in di.SKIP_DIRS and (here / d) != v2_dir
+                                 and not excluded((here / d).relative_to(root).as_posix()
+                                                  if root in (here / d).parents else
+                                                  Path(os.path.relpath(here / d, root)).as_posix(), d))
             for fname in sorted(filenames):
                 if fname in di.SKIP_FILES or fname.startswith("~$"):
                     continue
                 path = here / fname
                 rel = path.relative_to(root).as_posix() if root in path.parents else \
                     Path(os.path.relpath(path, root)).as_posix()
+                if excluded(rel, fname):
+                    continue
                 found[rel] = path
     return found
 
@@ -161,7 +175,11 @@ def _new_record(r: Repo, con, todo, shas) -> str:
     for (existing,) in con.execute("SELECT id FROM intake_record WHERE id LIKE ?", (prefix + "%",)):
         top = max(top, int(existing.rsplit(".", 1)[1]))
     rid = f"{prefix}{top + 1}"
-    con.execute("INSERT INTO intake_record (id, started_at, file_count) VALUES (?, ?, ?)", (rid, ts, len(todo)))
+    has_pending = any(status == "pending" for _, status in todo)
+    con.execute(
+        "INSERT INTO intake_record (id, started_at, finished_at, file_count, row_count) VALUES (?, ?, ?, ?, 0)",
+        (rid, ts, None if has_pending else ts, len(todo)),
+    )
     for rel, status in todo:
         con.execute("INSERT INTO intake_file (record_id, rel_path, sha256, status) VALUES (?, ?, ?, ?)",
                     (rid, rel, shas.get(rel), status))
@@ -169,9 +187,10 @@ def _new_record(r: Repo, con, todo, shas) -> str:
     return rid
 
 
-def _step_index(r: Repo, root: Path, v2_dir: Path, sources, rebuild: bool) -> dict:
+def _step_index(r: Repo, root: Path, v2_dir: Path, sources, rebuild: bool,
+                exclude_patterns=None) -> dict:
     di = _di()
-    current = _walk(di, sources, root, v2_dir)
+    current = _walk(di, sources, root, v2_dir, exclude_patterns=exclude_patterns)
     previous = dict(r.con.execute("SELECT rel_path, sha256 FROM indexed_file").fetchall())
     added = sorted(rel for rel in current if rel not in previous)
     changed = sorted(rel for rel in current if rel in previous and not _same_content(current[rel], previous[rel]))
@@ -294,7 +313,8 @@ def default_sources(project_root) -> list[Path]:
     return [dd if dd.is_dir() else Path(project_root)]
 
 
-def run_ingest(project_root, v2_dir, rebuild: bool = False, sources=None, log=None) -> dict:
+def run_ingest(project_root, v2_dir, rebuild: bool = False, sources=None, log=None,
+               exclude_patterns=None) -> dict:
     """The six steps against `<v2_dir>/csa.sqlite`; returns the summary dict (SUMMARY_KEYS).
 
     `sources`: the evidence folders to index (default: `default_sources(project_root)`). A missing source
@@ -309,7 +329,7 @@ def run_ingest(project_root, v2_dir, rebuild: bool = False, sources=None, log=No
     say = log or (lambda *_a: None)
     r = Repo(v2_dir)
     try:
-        ch = _step_index(r, root, v2_dir, sources, rebuild)
+        ch = _step_index(r, root, v2_dir, sources, rebuild, exclude_patterns=exclude_patterns)
         say(1, STEP_NAMES[0], f"{len(ch['added'])} added, {len(ch['changed'])} changed, {len(ch['removed'])} removed")
         with r.tx():
             g = r.graph.refresh(actor=ACTOR)

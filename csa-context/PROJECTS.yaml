@@ -83,6 +83,10 @@ projects:
     answer_route: "v2-native"
     v2_writer: "simple"
     default_source_set: "/Users/wenzel/Work/ASE/CurrentStateAssessments/Traction Scada/Discovery"
+    # This folder contains discovery captures for several applications. Keep the Traction intake
+    # limited to Traction/general captures and the shared discovery files.
+    source_exclude_patterns: "RMS_*;ProxyPro_*;UTC_*"
     stage: "draft"
     assessment_lane: "revise"
     knowledge_dir: "00 Knowlege"
+    working_docx: "/Users/wenzel/Work/ASE/CurrentStateAssessments/Traction Scada/02 Current State Assessment/01 Final Version/NT_NetSeg_Current_State_Assessment_TractionPowerSCADA_v0.1.docx"

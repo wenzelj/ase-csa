@@ -24,7 +24,120 @@ GROUP_HEAD = 32
 MIN_GUTTER, MIN_CHANNEL = 54, 46
 
 
+def _screen_site_grid(model):
+    """Lay out configured OT sites as a small screen grid.
+
+    The original track layout assumes all data centres share one horizontal
+    strip.  That is readable for two sites but becomes misleading when a
+    three-site system is forced into one row.  The grid is deliberately opt-in
+    from the project diagram profile so existing figures retain their geometry.
+    """
+    L = model["layout"]
+    nodes = {n["id"]: n for n in model["nodes"]}
+    dcs = list(L.get("dcs") or [])
+    grid = L.get("screen_site_grid") or {}
+    columns = max(1, int(grid.get("columns") or 2))
+    configured_rows = [[z for z in row if z in dcs] for row in grid.get("rows") or []]
+    configured_rows = [row for row in configured_rows if row]
+    used = {z for row in configured_rows for z in row}
+    configured_rows += [[z] for z in dcs if z not in used]
+    if not configured_rows:
+        return None
+
+    tiers = [t for t, _ in L.get("tiers") or []]
+    tier_labels = dict(L.get("tiers") or [])
+    top_zones = [z for z in L.get("top") or [] if z in {n["zone"] for n in nodes.values()}]
+    bottom_zones = [z for z in L.get("bottom") or [] if z in {n["zone"] for n in nodes.values()}]
+    gap = 34
+    zone_head = 54
+    tier_h = NODE_H + 22
+    max_cards = max(1, columns + 1)
+
+    def cards(z, tier):
+        return sorted([n for n in model["nodes"] if n["zone"] == z and n.get("tier") == tier],
+                      key=lambda n: (n.get("kind", ""), n.get("label", "")))
+
+    # Top and bottom bands remain single-row zones.  OT site panels are the
+    # configured two-column grid below them.
+    top_h = BAND_HEAD + NODE_H + 22 if top_zones else 0
+    bottom_h = BAND_HEAD + NODE_H + 22 if bottom_zones else 0
+    row_heights = []
+    for row in configured_rows:
+        row_heights.append(max(zone_head + sum(max(1, (len(cards(z, t)) + max_cards - 1) // max_cards) * tier_h
+                                for t in tiers) for z in row))
+    W = max(float(grid.get("width") or 0), 2 * NODE_W + gap,
+            columns * (NODE_W * max_cards + gap) + gap)
+    zone_rect = {}
+    pos = {}
+    y = top_h + gap
+    for row_i, row in enumerate(configured_rows):
+        slots = len(row)
+        slot_w = (W - gap * (slots + 1)) / slots
+        for col_i, z in enumerate(row):
+            x1 = gap + col_i * (slot_w + gap)
+            x2 = x1 + slot_w
+            zone_rect[z] = [x1, y, x2, y + row_heights[row_i]]
+            cy = y + zone_head
+            for tier in tiers:
+                ns = cards(z, tier)
+                nrows = max(1, (len(ns) + max_cards - 1) // max_cards)
+                for i, n in enumerate(ns):
+                    r, c = divmod(i, max_cards)
+                    per = min(max_cards, len(ns) - r * max_cards)
+                    if per > 1:
+                        # Use the full site panel for the row instead of centring a
+                        # short row of Rockhampton cards in the middle of it.
+                        step = max(NODE_W + CARD_GAP,
+                                   (slot_w - NODE_W - 2 * gap) / (per - 1))
+                    else:
+                        step = 0
+                    row_width = (per - 1) * step
+                    pos[n["id"]] = (x1 + slot_w / 2 + (c - (per - 1) / 2) * step,
+                                    cy + r * tier_h + NODE_H / 2)
+                cy += nrows * tier_h
+        y += row_heights[row_i] + gap
+
+    def band(zones, yy, hh):
+        if not zones:
+            return
+        step = (W - 2 * gap) / max(1, len(zones))
+        for i, z in enumerate(zones):
+            zone_rect[z] = [gap + i * step, yy, gap + (i + 1) * step - gap, yy + hh]
+            ns = [n for n in model["nodes"] if n["zone"] == z]
+            for j, n in enumerate(ns):
+                pos[n["id"]] = (gap + (i + 0.5) * step, yy + BAND_HEAD + NODE_H / 2)
+
+    band(top_zones, 0, top_h)
+    band(bottom_zones, y, bottom_h)
+
+    def rect(node_id):
+        if node_id in pos:
+            x, yy = pos[node_id]
+            return [x - NODE_W / 2, yy - NODE_H / 2, x + NODE_W / 2, yy + NODE_H / 2]
+        return zone_rect[node_id[2:]]
+
+    paths = {}
+    for e in model["edges"]:
+        a, b = rect(e["s"]), rect(e["t"])
+        if e["s"] in pos and e["t"] in pos:
+            if abs(pos[e["s"]][1] - pos[e["t"]][1]) < NODE_H:
+                paths[e["id"]] = [(a[2], pos[e["s"]][1]), (b[0], pos[e["t"]][1])] if a[0] < b[0] else [(a[0], pos[e["s"]][1]), (b[2], pos[e["t"]][1])]
+            else:
+                mid = (pos[e["s"]][1] + pos[e["t"]][1]) / 2
+                paths[e["id"]] = [(pos[e["s"]][0], a[3]), (pos[e["s"]][0], mid),
+                                   (pos[e["t"]][0], mid), (pos[e["t"]][0], b[1])]
+        else:
+            paths[e["id"]] = [(pos[e["s"]][0], pos[e["s"]][1]), (pos[e["t"]][0], pos[e["t"]][1])]
+    tiers_out = []
+    return {"pos": pos, "zones": zone_rect, "groups": {}, "paths": paths, "W": W,
+            "H": y + bottom_h, "tiers": tiers_out, "dcs": [zone_rect[z] for z in dcs if z in zone_rect]}
+
+
 def layout(model):
+    if model.get("layout", {}).get("screen_site_grid"):
+        grid = _screen_site_grid(model)
+        if grid is not None:
+            return grid
     L = model["layout"]
     nodes = {n["id"]: n for n in model["nodes"]}
     groups = {g["id"]: g for g in model.get("groups", [])}

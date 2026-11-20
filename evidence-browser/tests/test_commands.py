@@ -16,7 +16,7 @@ def test_catalogue_exposes_read_only_operations_and_one_docx_locked_apply() -> N
     assert {row["key"] for row in rows} == {
         "status", "next", "report", "sections", "spec_status", "comments",
         "check_change", "check_section", "apply", "review", "cleanup", "author",
-        "build_preview", "build", "audit", "ingest", "model_build", "stale", "answer", "refresh_draft", "freeze",
+        "build_preview", "build", "audit", "ingest", "model_build", "stale", "answer", "refresh_draft", "freeze", "improve",
         "figure_wording", "figure_place", "figure_design", "intake", "gap_check", "resolve_gaps",
     }
     for key in ("model_build", "intake", "gap_check"):
@@ -36,7 +36,7 @@ def test_catalogue_exposes_read_only_operations_and_one_docx_locked_apply() -> N
     assert author["mutating"] is True and author["mutation_class"] == "workspace_write" and author["lock"] == "section"
     assert {"legacy", "fresh", "check_answers", "writer", "no_writer"} <= set(author["options"])
     assert all(row["mutating"] is False and row["lock"] == "none" for row in rows if row["key"] not in ("apply", "review", "cleanup", "build", "author",
-                                                                                  "ingest", "model_build", "stale", "answer", "refresh_draft", "freeze",
+                                                                                  "ingest", "model_build", "stale", "answer", "refresh_draft", "freeze", "improve",
                                                                                   "figure_wording", "figure_place", "figure_design", "intake", "gap_check", "resolve_gaps"))
 
 
@@ -75,6 +75,21 @@ def test_unknown_operation_project_and_option_are_rejected_before_launch(tmp_pat
     with pytest.raises(HTTPException):
         commands.build_argv(tmp_path, "tetra-reveloc", "next", CommandRequest(options={"force": True}))
     assert launched is False
+
+
+def test_registered_new_application_is_exposed_to_jobs(tmp_path: Path) -> None:
+    registry = tmp_path / ".agents" / "csa-context" / "PROJECTS.yaml"
+    registry.parent.mkdir(parents=True)
+    registry.write_text(
+        "projects:\n"
+        "  - key: traction-scada\n"
+        "    label: Traction Scada\n",
+        encoding="utf-8",
+    )
+    operation, argv = commands.build_argv(
+        tmp_path / ".agents", "traction-scada", "ingest", CommandRequest())
+    assert operation.key == "ingest"
+    assert argv[1:4] == ["--project", "traction-scada", "ingest"]
 
 
 def test_parse_json_output_tolerates_project_banner() -> None:

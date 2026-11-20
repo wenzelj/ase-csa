@@ -127,6 +127,8 @@ def _layout(model: dict, profile: dict) -> dict:
     model["layout"] = {"type": "tracks", "top": top,
                        "dcs": [dc["key"] for dc in profile["data_centres"] if dc["key"] in present],
                        "bottom": ["shared"] if "shared" in present else [], "tiers": TIERS}
+    if profile.get("screen_site_grid"):
+        model["layout"]["screen_site_grid"] = profile["screen_site_grid"]
     dcs = set(model["layout"]["dcs"])
     for n in model["nodes"]:
         n["tier"] = TIER.get(n["kind"], "app") if n["zone"] in dcs else None
@@ -155,6 +157,10 @@ def overview(net: dict, spec: dict, profile: dict, application: str) -> dict:
             kind, basis = "directory", "Estate register: also used by " + _and(shared.get("labels") or shared.get("projects") or [])
         if kind == "directory":
             zone, under = "shared", dc
+        elif n.get("zone_kind") == "it":
+            # A reviewed host rule wins over the physical site.  Enterprise
+            # services can be hosted at an OT site without becoming OT hosts.
+            zone, under = "it", None
         elif dc:
             zone, under = dc, None
         elif n.get("site"):

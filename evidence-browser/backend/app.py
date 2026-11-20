@@ -66,9 +66,21 @@ FAMILY_RULES = (
     ("DNS", ("dns", "resolver")),
     ("Software", ("software", "application", "installed")),
     ("Services", ("service", "process")),
-    ("Identity", ("account", "admin", "group", "user", "identity")),
+    ("Identity", ("account", "admin", "group", "user", "identity", "auth")),
     ("Policy", ("policy", "gpo", "gpresult")),
     ("Storage", ("disk", "volume", "storage", "share")),
+)
+
+# V2 captures also contain application logs whose filenames are generic (for
+# example IIS ``u_ex*.log`` or ClearSCADA ``DB_*.log``).  Source coverage is a
+# collection map, so use a small content-aware supplement for files that would
+# otherwise be reported as ``Other``.  This does not create evidence claims; it
+# only makes already-indexed source families visible to the assessor.
+CONTENT_FAMILY_RULES = (
+    ("Software", ("/webservices/opc", "/webservices/scx", "viewxscript", "viewxctrl",
+                  "scxcomlink", "scxstandbysink", "clearscada", "dnp3analog", "licence server",
+                  "license server")),
+    ("Identity", ("group information", "domain             partofdomain", "builtin\\administrators")),
 )
 
 AREA_LABELS = {
@@ -350,10 +362,14 @@ def scope_clause(all_captures: bool, include_archive: bool, alias: str = "f") ->
     return " AND ".join(clauses) or "1=1", []
 
 
-def family(value: str) -> str:
+def family(value: str, text: str = "") -> str:
     lower = value.lower()
     for name, terms in FAMILY_RULES:
         if any(term in lower for term in terms):
+            return name
+    content = (text or "").lower()
+    for name, terms in CONTENT_FAMILY_RULES:
+        if any(term in content for term in terms):
             return name
     return "Other"
 
@@ -1184,19 +1200,40 @@ def get_summary(system_key: str) -> dict[str, Any]:
     if work_dir(project).name == "csa-work-v2":
         db = work_dir(project) / "csa.sqlite"
         with closing(sqlite3.connect(f"file:{db}?mode=ro", uri=True)) as con:
-            files = con.execute("SELECT rel_path FROM indexed_file").fetchall()
+            files = con.execute(
+                """SELECT f.rel_path,
+                    MAX(CASE WHEN lower(c.text) LIKE '%/webservices/opc%'
+                                  OR lower(c.text) LIKE '%/webservices/scx%'
+                                  OR lower(c.text) LIKE '%viewxscript%'
+                                  OR lower(c.text) LIKE '%viewxctrl%'
+                                  OR lower(c.text) LIKE '%scxcomlink%'
+                                  OR lower(c.text) LIKE '%scxstandbysink%'
+                                  OR lower(c.text) LIKE '%clearscada%'
+                                  OR lower(c.text) LIKE '%dnp3analog%'
+                                  OR lower(c.text) LIKE '%licence server%'
+                                  OR lower(c.text) LIKE '%license server%'
+                             THEN 1 ELSE 0 END) AS software_marker,
+                    MAX(CASE WHEN lower(c.text) LIKE '%group information%'
+                                  OR lower(c.text) LIKE '%partofdomain%'
+                                  OR lower(c.text) LIKE '%builtin\\administrators%'
+                             THEN 1 ELSE 0 END) AS identity_marker
+                    FROM indexed_file f
+                    LEFT JOIN indexed_chunk c ON c.rel_path = f.rel_path
+                    GROUP BY f.rel_path"""
+            ).fetchall()
             built = con.execute("SELECT max(indexed_at) FROM indexed_file").fetchone()[0]
             evidence_count = con.execute("SELECT count(*) FROM evidence").fetchone()[0]
         coverage: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
         captures: set[str] = set()
         capture_hosts: set[str] = set()
-        for (rel_path,) in files:
+        for rel_path, software_marker, identity_marker in files:
             match = re.search(r"(?:^|/)\w+_discovery_([^/]+_\d{8}T\d{6}Z)(?:/|$)", rel_path)
             host = match.group(1).rsplit("_", 1)[0] if match else "Documents"
             if match:
                 captures.add(match.group(1))
                 capture_hosts.add(host)
-            coverage[host][family(rel_path)] += 1
+            marker_text = " ".join(("viewxscript" if software_marker else "", "group information" if identity_marker else "")).strip()
+            coverage[host][family(rel_path, marker_text)] += 1
         return {"system": system_key, "label": project.get("label", ""), "project_key": project["key"],
                 "built_at_utc": built, "index_complete": bool(files), "captures": len(captures),
                 "current_captures": len(capture_hosts), "files_by_status": {"indexed": len(files)},

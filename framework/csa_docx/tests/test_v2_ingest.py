@@ -109,6 +109,47 @@ def test_second_run_is_quiet(proj):
         r.close()
 
 
+def test_run_ingest_excludes_mixed_application_capture_folders(tmp_path):
+    root = tmp_path / "proj"
+    src = root / DD
+    (src / "TractionSCADA_capture").mkdir(parents=True)
+    (src / "RMS_capture").mkdir()
+    (src / "ProxyPro_capture").mkdir()
+    (src / "TractionSCADA_capture" / "facts.txt").write_text("traction fact\n")
+    (src / "RMS_capture" / "facts.txt").write_text("rms fact\n")
+    (src / "ProxyPro_capture" / "facts.txt").write_text("proxy fact\n")
+    v2 = root / "csa-work-v2"
+
+    summary = v2_ingest.run_ingest(root, v2, sources=[src],
+                                   exclude_patterns=["RMS_*", "ProxyPro_*"])
+    assert summary["indexed_files_added"] == 1
+    r = Repo(v2)
+    try:
+        assert [x[0] for x in r.con.execute("SELECT rel_path FROM indexed_file")] == [
+            f"{DD}/TractionSCADA_capture/facts.txt"]
+    finally:
+        r.close()
+def test_removal_only_record_is_finished(tmp_path):
+    root = tmp_path / "p"
+    (root / DD).mkdir(parents=True)
+    v2 = root / "csa-work-v2"
+    r = Repo(v2)
+    with r.tx() as con:
+        con.execute("INSERT INTO indexed_file(rel_path, sha256, size) VALUES (?, 'old', 1)",
+                    (f"{DD}/gone.txt",))
+    r.close()
+    v2_ingest.run_ingest(root, v2)
+    r = Repo(v2)
+    try:
+        started, finished, count, rows = r.con.execute(
+            "SELECT started_at, finished_at, file_count, row_count FROM intake_record"
+        ).fetchone()
+        assert finished == started
+        assert (count, rows) == (1, 0)
+    finally:
+        r.close()
+
+
 def test_migrated_sha1_is_not_a_change(tmp_path):
     root = tmp_path / "p"
     (root / DD).mkdir(parents=True)

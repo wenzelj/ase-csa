@@ -47,6 +47,24 @@ def test_global_view_returns_all_hosts_and_labels_scope(tmp_path: Path) -> None:
     assert {n["id"] for n in result["nodes"]} == {"APP1", "PEER1", "OTHER"}
 
 
+def test_address_owned_ip_graph_endpoint_resolves_and_unmapped_ip_stays_external(tmp_path: Path) -> None:
+    work = v2_work(tmp_path)
+    with sqlite3.connect(work / "csa.sqlite") as con:
+        con.execute("INSERT INTO host(name, role) VALUES ('10.0.0.2', 'Observed address')")
+        con.execute("INSERT INTO host(name, role) VALUES ('203.0.113.10', 'Observed address')")
+        con.execute("INSERT INTO address(ip, owner_host, scope) VALUES ('10.0.0.2', 'PEER1', 'inventory')")
+        con.executemany(
+            "INSERT INTO graph_edge(edge_id, src, dst, kind, evidence_ids) VALUES (?, ?, ?, 'flow', ?)",
+            [("flow/owned-ip", "host/APP1", "host/10.0.0.2", "E-001"),
+             ("flow/external-ip", "host/APP1", "host/203.0.113.10", "E-002")],
+        )
+    result = network.build(work, Path(__file__).resolve().parents[2], view="application", application_key="app-a")
+    assert {n["id"] for n in result["nodes"]} == {"APP1", "PEER1", "203.0.113.10"}
+    assert {edge[:2] for edge in network.identity(result)["edges"]} == {
+        ("APP1", "PEER1"), ("APP1", "203.0.113.10")
+    }
+
+
 # --------------------------------------------------------------------------- S615
 
 AGENTS = Path(__file__).resolve().parents[2]
@@ -174,7 +192,8 @@ def test_live_store_parity_reports_counts(tmp_path: Path) -> None:
             if view == "application":                # no registered host outside the scoped owned and peer hosts
                 with sqlite3.connect(f"file:{work / 'csa.sqlite'}?mode=ro", uri=True) as con:
                     registered = {row[0] for row in con.execute("SELECT name FROM host")}
-                shown = {node["id"] for node in net["nodes"]} & registered
+                    registered = {name for name in registered if not network._is_ip_literal(name)}
+                    shown = {node["id"] for node in net["nodes"]} & registered
                 assert shown == set(net["scope"]["owned"]) | set(net["scope"]["peers"])
                 whole = network.scoped_network(project, AGENTS, view="global")
                 assert shown < {node["id"] for node in whole["nodes"]} & registered

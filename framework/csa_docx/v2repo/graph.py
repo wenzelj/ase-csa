@@ -200,10 +200,16 @@ class Graph:
                 evid[(src, dst, kind)].append(eid)
 
         # flow: host -> host, kind='flow'
-        for src, dst in con.execute("SELECT DISTINCT src_host, dst_host FROM flow ORDER BY src_host, dst_host"):
+        for src, dst, purpose in con.execute(
+                "SELECT DISTINCT src_host, dst_host, purpose FROM flow ORDER BY src_host, dst_host, purpose"):
             if src == dst:
                 continue
-            _add(f"host/{src}", f"host/{dst}", "flow")
+            evidence_ids = re.findall(r"\bE-\d+\b", purpose or "")
+            if evidence_ids:
+                for evidence_id in evidence_ids:
+                    _add(f"host/{src}", f"host/{dst}", "flow", evidence_id)
+            else:
+                _add(f"host/{src}", f"host/{dst}", "flow")
 
         # service: host -> service, kind='runs'
         for host, name in con.execute(

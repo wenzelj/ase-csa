@@ -46,6 +46,8 @@ WORKING_PREFERENCES = {
     "preserve_existing_document_structure": True,
     "do_not_design_future_state_unless_requested": True,
 }
+SOURCE_PATTERN_MAX = 120
+_DISCOVERY_FAMILY = re.compile(r"^([A-Za-z][A-Za-z0-9-]*(?:_[A-Za-z][A-Za-z0-9-]*)?)_discovery(?:_|$)", re.I)
 
 
 def _text(value: Any) -> str:
@@ -70,6 +72,50 @@ def _is_inside(path: Path, root: Path) -> bool:
 
 def _field(errors: list[dict[str, Any]], field: str, code: str, message: str) -> None:
     errors.append({"field": field, "code": code, "message": message})
+
+
+def _source_patterns(value: Any, errors: list[dict[str, Any]]) -> list[str]:
+    """Parse safe basename/glob exclusions for a mixed Discovery folder."""
+    raw = _text(value)
+    if not raw:
+        return []
+    patterns = [part.strip() for part in raw.split(";") if part.strip()]
+    if len(patterns) > SOURCE_PATTERN_MAX:
+        _field(errors, "source_exclude_patterns", "TOO_MANY_PATTERNS",
+               f"At most {SOURCE_PATTERN_MAX} source exclusion patterns may be supplied.")
+        return patterns[:SOURCE_PATTERN_MAX]
+    for pattern in patterns:
+        if "/" in pattern or "\\" in pattern or ".." in pattern:
+            _field(errors, "source_exclude_patterns", "BAD_PATTERN",
+                   f"Source exclusion {pattern!r} must be a basename/glob without path separators.")
+        elif len(pattern) > 255:
+            _field(errors, "source_exclude_patterns", "BAD_PATTERN",
+                   f"Source exclusion {pattern!r} is too long.")
+    return patterns
+
+
+def _discovery_families(paths: Any, discovery_name: str = DISCOVERY_DEFAULT) -> list[str]:
+    """Find named capture families in the uploaded Discovery manifest."""
+    if not isinstance(paths, list):
+        return []
+    found: set[str] = set()
+    for raw in paths:
+        path = _text(raw).replace("\\", "/")
+        parts = path.split("/")
+        if parts and parts[0].lower() == Path(discovery_name).name.lower():
+            parts = parts[1:]
+        if not parts:
+            continue
+        match = _DISCOVERY_FAMILY.match(parts[0])
+        if match:
+            found.add(match.group(1))
+    return sorted(found, key=str.casefold)
+
+
+def _belongs_to_application(family: str, application: str, key: str, label: str) -> bool:
+    haystack = re.sub(r"[^a-z0-9]+", " ", f"{application} {key} {label}".lower())
+    family_words = re.findall(r"[a-z0-9]+", family.lower())
+    return bool(family_words) and any(word in haystack for word in family_words if len(word) >= 3)
 
 
 def _default_context_fields() -> dict[str, Any]:
@@ -246,6 +292,16 @@ def preview_project_setup(payload: dict[str, Any], *, agents_dir: Path, base_dir
     working_docx = project_path("working_docx", payload.get("working_docx"))
     build_output_docx = project_path("build_output_docx", payload.get("build_output_docx"))
     index_extra_sources = project_path("index_extra_sources", payload.get("index_extra_sources"), allow_existing=True)
+    source_exclude_patterns = _source_patterns(payload.get("source_exclude_patterns"), errors)
+    discovery_families = _discovery_families(payload.get("discovery_paths"), _text(payload.get("discovery")) or DISCOVERY_DEFAULT)
+    app_name = _text(payload.get("application")) or label or key
+    foreign_families = [family for family in discovery_families
+                        if not _belongs_to_application(family, app_name, key, label)]
+    if foreign_families and not source_exclude_patterns:
+        _field(errors, "source_exclude_patterns", "MIXED_DISCOVERY_SCOPE",
+               "Discovery contains named capture families that do not match the new application "
+               f"({', '.join(foreign_families)}). Add basename/glob exclusions, or separate the captures "
+               "before creating the application.")
     if lane == "build":
         if template_path is None:
             _field(errors, "template_docx", "TEMPLATE_REQUIRED", "A build-lane template is required.")
@@ -309,6 +365,8 @@ def preview_project_setup(payload: dict[str, Any], *, agents_dir: Path, base_dir
         registry["build_output_docx"] = str(build_output_docx)
     if index_extra_sources is not None:
         registry["index_extra_sources"] = str(index_extra_sources)
+    if source_exclude_patterns:
+        registry["source_exclude_patterns"] = ";".join(source_exclude_patterns)
     registry["knowledge_dir"] = str(knowledge_path.relative_to(root)) if _is_inside(knowledge_path, root) else ""
 
     return {
@@ -342,7 +400,7 @@ _ALWAYS_KEY_ORDER = ("key", "label", "project_root", "project_context",
 #: Optional registry fields, in the order they are written (only when selected).
 _OPTIONAL_KEY_ORDER = ("estate", "sites", "spec_mode", "stage", "assessment_lane", "template_docx",
                        "build_output_docx", "legacy_docx", "working_docx", "index_extra_sources",
-                       "knowledge_dir")
+                       "source_exclude_patterns", "knowledge_dir")
 
 #: Top-level folders the commit creates when the upload did not include them.
 #: ``csa-work-v2`` is always (re)created and initialised by the commit; the knowledge folder

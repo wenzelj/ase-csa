@@ -209,6 +209,43 @@ def test_optional_fields_and_defaults(tmp_path):
     assert result["values"]["spec_mode"] == "on"
 
 
+def test_source_exclusion_patterns_are_registered(tmp_path):
+    result = project_setup.preview_project_setup(
+        _payload(destination=str(tmp_path / "new-app"),
+                 source_exclude_patterns="RMS_*; ProxyPro_*;UTC_*"),
+        agents_dir=tmp_path / ".agents", base_dir=tmp_path)
+    assert result["status"] == "READY"
+    assert result["values"]["registry"]["source_exclude_patterns"] == "RMS_*;ProxyPro_*;UTC_*"
+
+
+def test_source_exclusion_patterns_reject_paths(tmp_path):
+    result = project_setup.preview_project_setup(
+        _payload(destination=str(tmp_path / "new-app"), source_exclude_patterns="RMS_*/nested"),
+        agents_dir=tmp_path / ".agents", base_dir=tmp_path)
+    assert result["status"] == "BLOCKED"
+    assert any(item["code"] == "BAD_PATTERN" for item in result["errors"])
+
+
+def test_new_application_blocks_mixed_named_discovery_families_without_scope(tmp_path):
+    result = project_setup.preview_project_setup(
+        _payload(destination=str(tmp_path / "new-app"), application="Traction SCADA",
+                 discovery_paths=["Discovery/TractionSCADA_discovery_HOST1_20261119/03_time.txt",
+                                   "Discovery/RMS_discovery_HOST2_20261119/03_time.txt"]),
+        agents_dir=tmp_path / ".agents", base_dir=tmp_path)
+    assert result["status"] == "BLOCKED"
+    assert any(item["code"] == "MIXED_DISCOVERY_SCOPE" for item in result["errors"])
+
+
+def test_new_application_mixed_discovery_can_be_explicitly_scoped(tmp_path):
+    result = project_setup.preview_project_setup(
+        _payload(destination=str(tmp_path / "new-app"), application="Traction SCADA",
+                 source_exclude_patterns="RMS_*",
+                 discovery_paths=["Discovery/TractionSCADA_discovery_HOST1_20261119/03_time.txt",
+                                   "Discovery/RMS_discovery_HOST2_20261119/03_time.txt"]),
+        agents_dir=tmp_path / ".agents", base_dir=tmp_path)
+    assert result["status"] == "READY", result["errors"]
+
+
 def test_invalid_optional_fields_are_blocked(tmp_path):
     result = project_setup.preview_project_setup(
         _payload(destination=str(tmp_path / "new-app"), sites="ROK=Rockhampton, BAD ENTRY",
