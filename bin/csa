@@ -4824,12 +4824,18 @@ def cmd_v2(a):
                               "error": "accept requires at least one --id; verification discovers all proposed rows automatically"},
                              indent=2, ensure_ascii=False))
             return 2
-        if action == "verify" and not a.evidence_ids:
+        if action == "verify" and a.evidence_ids == []:
+            print(json.dumps({"status": "ERROR", "project": p["key"], "action": action,
+                              "error": "verify requires at least one --id, or omit --id to verify all proposed rows"},
+                             indent=2, ensure_ascii=False))
+            return 2
+        if action == "verify" and a.evidence_ids is None:
             repo = Repo(work)
             try:
                 with repo.tx():
                     review = repo.evidence.verify_proposed(actor=a.actor, note=a.note)
                 results = [{"evidence_id": item["eid"], "verdict": item["verdict"],
+                            "status": item.get("status"), "review_state": item.get("review_state"),
                             **({"reason": item["reason"]} if item.get("reason") else {})}
                            for item in review["results"]]
             finally:
@@ -4856,12 +4862,17 @@ def cmd_v2(a):
                         outcome = {"verdict": "ACCEPTED", "eid": eid}
                     after = repo.evidence.get(eid)
                 results.append({"evidence_id": eid, "verdict": outcome.get("verdict"),
+                            "status": after["status"], "review_state": after["review_state"],
                                 "before": {"status": before["status"], "review_state": before["review_state"]},
                                 "after": {"status": after["status"], "review_state": after["review_state"]},
                                 **({"reason": outcome["reason"]} if outcome.get("reason") else {})})
             except KeyError:
+                with repo.tx():
+                    repo.review_event().append(a.actor, action, "evidence", eid,
+                                               a.note or "evidence ID is not in this project's V2 store")
                 results.append({"evidence_id": eid, "verdict": "NOT_FOUND",
-                                "reason": "evidence ID is not in this project's V2 store"})
+                                "reason": "evidence ID is not in this project's V2 store",
+                                "status": None, "review_state": None})
             except Exception as exc:
                 results.append({"evidence_id": eid, "verdict": "ERROR", "reason": str(exc)})
             finally:
@@ -5438,6 +5449,45 @@ def cmd_improve(a):
         die("Improve agent returned an invalid proposal: " + "; ".join(result["errors"]))
     print(json.dumps({"status": "OK", "section": key, "proposal": str(proposal_path)}, indent=2) if a.json else f"Improve proposal ready: {proposal_path}")
     return 0
+
+
+def cmd_import_answers(a):
+    """Reconstruct Draft/Improve state from the current answered DOCX."""
+    p = project(a.project); banner(p)
+    docx = working_docx(p)
+    if not docx:
+        die("no working document; import-answers requires an existing answered DOCX")
+    work = local_path(p["work_dir"])
+    sys.path.insert(0, str(FRAMEWORK))
+    from csa_docx import answered_import
+    spec = json.loads(spec_call(p, "--json", "status").stdout or "{}")
+    nodes = [n for n in spec.get("nodes", []) if n.get("key") and n.get("kind") not in {"container", "reference", "controlled", "empty"}]
+    if a.section:
+        target = resolve_target(p, a.section)
+        if target.get("status") != "OK":
+            die(target.get("message", "cannot resolve the section"))
+        nodes = [n for n in nodes if n.get("key") == target.get("key") or n.get("number") == target.get("number")]
+    results = []
+    cards = work / "cards"
+    for node in nodes:
+        key = str(node["key"])
+        card_path = cards / f"{key}.json"
+        if card_path.is_file():
+            card = json.loads(card_path.read_text(encoding="utf-8"))
+        else:
+            card = node
+        if a.dry_run:
+            results.append({"section_key": key, "number": node.get("number"), "title": node.get("title"), "source": str(docx)})
+            continue
+        try:
+            result = answered_import.import_state(work, card, docx)
+            results.append({"outcome": result.outcome.value, "state": result.state.value,
+                            "section_key": key, "warnings": list(result.warnings), "message": result.message})
+        except (OSError, ValueError, KeyError) as exc:
+            results.append({"outcome": "BLOCKED", "state": "not-answered", "section_key": key, "message": str(exc)})
+    payload = {"status": "DRY_RUN" if a.dry_run else "OK", "project": p["key"], "sections": results}
+    print(json.dumps(payload, indent=2) if a.json else f"{'Would inspect' if a.dry_run else 'Imported'} {len(results)} section(s).")
+    return 0 if all(r.get("outcome") not in {"BLOCKED", "MISSING", "AMBIGUOUS", "SOURCE_CHANGED"} for r in results) else 1
 
 
 def cmd_shared(a):
@@ -7629,6 +7679,9 @@ def main(argv=None) -> int:
     s.add_argument("section"); s.add_argument("action", nargs="?", choices=["check", "apply", "discard"], default="build")
     s.add_argument("--proposal", help="validated proposal JSON to store and check")
     s.add_argument("--json", action="store_true"); s.add_argument("--cli"); s.add_argument("--headless", action="store_true"); s.add_argument("--print", action="store_true", help="print the Improve prompt instead of launching")
+    s = sp("import-answers", cmd_import_answers, help="reconstruct Draft/Improve state from an answered working DOCX")
+    s.add_argument("section", nargs="?", default="")
+    s.add_argument("--dry-run", action="store_true"); s.add_argument("--json", action="store_true")
     s = sp("freeze", cmd_freeze, help="csa freeze v1: baseline copy of the DOCX and switch the project to the V1 change lane")
     s.add_argument("stage")
     s = sp("shared", cmd_shared, help="estate view: DNS and time servers shared with other projects of the estate (build | list | show SERVER)")

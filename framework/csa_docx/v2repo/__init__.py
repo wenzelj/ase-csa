@@ -470,10 +470,13 @@ class _Evidence:
             con.execute("UPDATE evidence SET status='VERIFIED', review_state='accepted', updated_at=? WHERE id=?",
                         (r._now(), eid))
             r._audit(actor, "verify", "evidence", eid, note or "SOURCE_OK")
-            return {"verdict": "SOURCE_OK", "files": res.get("files", []), "eid": eid}
+            return {"verdict": "SOURCE_OK", "files": res.get("files", []), "eid": eid,
+                    "status": "VERIFIED", "review_state": "accepted"}
         # not OK — leave status unchanged, record failure
         r._audit(actor, "verify", "evidence", eid, note or f"verify failed: {res}")
-        return {"verdict": res.get("verdict"), "reason": res.get("reason"), **{k: v for k, v in res.items() if k not in ("verdict", "reason")}, "eid": eid}
+        return {"verdict": res.get("verdict"), "reason": res.get("reason"),
+                **{k: v for k, v in res.items() if k not in ("verdict", "reason")}, "eid": eid,
+                "status": row["status"], "review_state": row["review_state"]}
 
     def verify_proposed(self, actor=None, note=None, source_index=None):
         """Verify every source-backed proposed row in this V2 store.
@@ -489,8 +492,11 @@ class _Evidence:
         results = []
         for row in self.list(review_state="proposed"):
             if not str(row.get("source_title") or "").strip() or not str(row.get("excerpt") or "").strip():
+                reason = "source_title and excerpt are required for automatic verification"
+                r._audit(actor, "verify", "evidence", row["id"], note or reason)
                 results.append({"eid": row["id"], "verdict": "NOT_CHECKABLE",
-                                "reason": "source_title and excerpt are required for automatic verification"})
+                                "reason": reason, "status": row["status"],
+                                "review_state": row["review_state"]})
                 continue
             results.append(self.verify(row["id"], actor=actor,
                                        note=note or "automatic verification of source-backed proposed evidence",
