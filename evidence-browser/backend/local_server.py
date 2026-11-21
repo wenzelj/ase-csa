@@ -81,6 +81,9 @@ class Handler(BaseHTTPRequestHandler):
             match = re.fullmatch(r"/api/systems/([^/]+)/working-document", path)
             if match:
                 return self.dispatch_result(api.working_document_options(match.group(1)))
+            match = re.fullmatch(r"/api/systems/([^/]+)/migration", path)
+            if match:
+                return self.dispatch_result(api.migration_status(match.group(1)))
             match = re.fullmatch(r"/api/systems/([^/]+)/summary", path)
             if match:
                 return self.dispatch_result(api.get_summary(match.group(1)))
@@ -280,6 +283,12 @@ class Handler(BaseHTTPRequestHandler):
             match = re.fullmatch(r"/api/systems/([^/]+)/legacy-document", path)
             if match:
                 return self.dispatch_result(api.select_legacy_document(match.group(1), payload))
+            match = re.fullmatch(r"/api/systems/([^/]+)/migration/prepare", path)
+            if match:
+                return self.dispatch_result(api.migration_prepare(match.group(1)))
+            match = re.fullmatch(r"/api/systems/([^/]+)/migration/do", path)
+            if match:
+                return self.dispatch_result(api.migration_do(match.group(1), payload))
             match = re.fullmatch(r"/api/systems/([^/]+)/working-document/from-template", path)
             if match:
                 return self.dispatch_result(api.create_working_document_from_template(match.group(1), payload))

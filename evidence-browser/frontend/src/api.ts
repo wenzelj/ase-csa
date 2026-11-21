@@ -16,6 +16,7 @@ export type NewApplicationPreview = { status: "READY" | "BLOCKED"; errors: { fie
 export type NewApplicationCommit = { status: "READY" | "BLOCKED" | "ERROR"; errors?: { field: string; code: string; message: string }[]; project_key?: string; paths?: Record<string, string> };
 export type WorkingDocumentOptions = { project_key: string; project_root: string; configured_path: string; legacy_path: string; candidates: { relative_path: string; size: number }[]; max_upload_bytes: number; templates: { id: string; label: string; source: "application" | "shared" }[]; suggested_output: string };
 export type WorkingDocumentResult = { status: "READY" | "BLOCKED"; project_key?: string; working_docx?: string; legacy_docx?: string; errors?: { field: string; code: string; message: string }[] };
+export type MigrationStatus = { status: string; prepared: boolean; can_migrate: boolean; mapped: number; unmapped: number; blocks: number; legacy_docx: string; working_docx: string; legacy_exists: boolean; working_exists: boolean; map_report: string };
 
 export function fetchWorkingDocumentOptions(system: string) {
   return api<WorkingDocumentOptions>(`/api/systems/${encodeURIComponent(system)}/working-document`);
@@ -32,6 +33,10 @@ export function selectLegacyDocument(system: string, relativePath: string) {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ relative_path: relativePath }),
   });
 }
+
+export function fetchMigrationStatus(system: string) { return api<MigrationStatus>(`/api/systems/${encodeURIComponent(system)}/migration`); }
+export function prepareMigration(system: string) { return api<{ job: import("./types").ReviewJob }>(`/api/systems/${encodeURIComponent(system)}/migration/prepare`, { method: "POST" }); }
+export function doMigration(system: string, prepareJobId: string) { return api<{ job: import("./types").ReviewJob }>(`/api/systems/${encodeURIComponent(system)}/migration/do`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prepare_job_id: prepareJobId }) }); }
 
 export function uploadWorkingDocument(system: string, file: File) {
   return api<WorkingDocumentResult>(`/api/systems/${encodeURIComponent(system)}/working-document/upload?filename=${encodeURIComponent(file.name)}`, {

@@ -433,6 +433,11 @@ def agent_working_dir(p: dict, r: dict) -> Path:
         cards = local_path(str(p.get("work_dir") or "")) / "cards"
         cards.mkdir(parents=True, exist_ok=True)
         return cards
+    # `csa move` is the compatibility migration lane.  Its section files and
+    # records are deliberately under the project-root csa-work tree even when
+    # the selected project store is csa-work-v2.
+    if r.get("verb") == "write" and str(r.get("mode", "")).lower() == "move":
+        return _move_work(p)
     return ROOT
 
 
@@ -1369,7 +1374,14 @@ def cmd_check_section(a):
     p = project(a.project); banner(p)
     cf = Path(a.file)
     if not cf.is_absolute():
-        cf = local_path(p["work_dir"]) / "sections" / a.file
+        # Move-mode writers are given the compatibility csa-work directory,
+        # even for projects whose selected store is csa-work-v2.  Accept the
+        # path they return instead of resolving it back into the V2 store.
+        cwd_candidate = ROOT / cf
+        move_candidate = _move_work(p) / "sections" / a.file
+        v2_candidate = local_path(p["work_dir"]) / "sections" / a.file
+        cf = (cwd_candidate if cwd_candidate.is_file() else
+              move_candidate if move_candidate.is_file() else v2_candidate)
     if not cf.is_file():
         die(f"no section file {a.file!r} under <work_dir>/sections/ (or pass a full path).")
     rc = run_check_section(p, cf, a)
@@ -2564,9 +2576,10 @@ def build_prompt(p: dict, r: dict, args: list[str], local: bool | None = None,
     requested_section = values.get("SECTION", "")
     sec, label = split_section(requested_section)
     resolved = resolve_visible_section(p, label_display(sec, label)) if str(requested_section).strip() else {}
+    move_mode = r.get("verb") == "write" and str(values.get("MODE", "")).lower() == "move"
     if label:
         values["SECTION"], values["SUBSECTION"] = sec, label_display(sec, label)
-        if not answer_workspace:                  # answer/draft agents write a sheet, never a change file
+        if not answer_workspace and not move_mode:  # move writes a section file, never a change file
             cf = pick_change_file(p, sec, label)
             values["CHANGE_FILE"] = str(cf) if cf else f"reviews/ChangesCSA_<App>_Section{sec}_{label}.md (create it)"
     if resolved.get("stable_path"):
@@ -2592,9 +2605,10 @@ def build_prompt(p: dict, r: dict, args: list[str], local: bool | None = None,
                      f"Act as the {r['title']}.",
                      f"PROJECT={p.get('label')} ({p['key']})", "WORKSPACE=inline inputs below"]
     else:
+        prompt_work_dir = str(_move_work(p)) if move_mode else p["work_dir"]
         lines = [f"Load this agent definition:\n{CANON_AGENTS / r['file']}\n", f"Act as the {r['title']}.\n",
                  f"PROJECT={p.get('label')} ({p['key']})  -- confirmed by the user via `csa use`; do not ask again.",
-                 f"PROJECT_CONTEXT={p['project_context']}", f"WORK_DIR={p['work_dir']}",
+                 f"PROJECT_CONTEXT={p['project_context']}", f"WORK_DIR={prompt_work_dir}",
                  f"WORKSPACE={p['project_root']}",
                  f"SOURCE_SET={values.pop('SOURCE_SET', p.get('default_source_set', ''))}"]
     order = [k for k, _, _ in inputs] + [k for k in values if k not in {i[0] for i in inputs}]
@@ -7124,8 +7138,12 @@ def cmd_convert(a):
               f"{m['low_confidence']} low confidence; {res['parked']} parked, {res['figures']} figures")
         if m.get("missing_targets"):
             print(f"  missing template destinations: {', '.join(m['missing_targets'])}", file=sys.stderr)
-        print(f"  map report: {work / 'legacy' / 'map-report.md'}")
-        print(f"  overrides:  {work / 'legacy' / 'legacy-map.csv'}  (checked before the defaults)")
+        # The move compatibility lane is owned by csa-work/, even when the
+        # project also has a csa-work-v2 store.  Report the path that move.py
+        # actually wrote so users do not follow a non-existent V2 path.
+        legacy_work = local_path(p["project_root"]) / "csa-work" / "legacy"
+        print(f"  map report: {legacy_work / 'map-report.md'}")
+        print(f"  overrides:  {legacy_work / 'legacy-map.csv'}  (checked before the defaults)")
         return 0
     if a.map is not None:
         report = work / "legacy" / "map-report.md"
@@ -7182,6 +7200,16 @@ MOVE_STAGES = ("brief", "write", "insert", "record")
 MOVE_GENERATED = ("7", "5.1", "8")          # no writer agent: generated from the map or the open items
 
 
+def _move_work(p: dict) -> Path:
+    """Compatibility workspace owned by csa move/convert.
+
+    V2 projects can still have a legacy migration lane, but move.py deliberately
+    stores that lane under the project root's csa-work/ tree.  Do not derive this
+    path from the selected csa-work-v2 store.
+    """
+    return local_path(p["project_root"]) / "csa-work"
+
+
 def _move_call(p: dict, ld: Path, target: str, stage: str | None = None) -> dict:
     return _fw_module_call("move", "move", target, workspace=_ws(p), legacy_docx=str(ld), stage=stage, project=p)
 
@@ -7198,13 +7226,17 @@ def _move_generate(p: dict, ld: Path, target: str) -> dict:
 
 def _move_place(p: dict, a, name: str) -> int:
     """Insert one section file as plain text (same checks as `csa place`)."""
-    return cmd_place(argparse.Namespace(project=a.project, targets=[name], system_name=None, prepared_for=None,
+    candidate = Path(name)
+    if not candidate.is_absolute():
+        candidate = _move_work(p) / "sections" / name
+    target = str(candidate) if candidate.is_file() else name
+    return cmd_place(argparse.Namespace(project=a.project, targets=[target], system_name=None, prepared_for=None,
                                         prepared_by=None, doc_version=None, status=None,
                                         keep_open=getattr(a, "keep_open", False), plain=True))
 
 
 def _move_print(p: dict, target: str) -> int:
-    work = local_path(p["work_dir"])
+    work = _move_work(p)
     brief = work / "move" / target / "brief.md"
     print(f"{C['b']}csa move {target}{C['0']}  (plan only; nothing is run or written)")
     if target in MOVE_GENERATED:
@@ -7227,7 +7259,7 @@ def _move_run(p: dict, a, ld: Path, target: str, stage: str | None) -> int:
     if stage is not None and stage not in MOVE_STAGES:
         die(f"unknown stage {stage!r}; use one of {', '.join(MOVE_STAGES)}")
     wanted = MOVE_STAGES if stage is None else (stage,)
-    work = local_path(p["work_dir"])
+    work = _move_work(p)
 
     if target in MOVE_GENERATED:
         res = _move_generate(p, ld, target) if "write" in wanted else {"status": "OK"}
@@ -7296,7 +7328,7 @@ def _move_run(p: dict, a, ld: Path, target: str, stage: str | None) -> int:
 
 
 def _move_all(p: dict, a, ld: Path) -> int:
-    work = local_path(p["work_dir"])
+    work = _move_work(p)
     targets = _fw_module_call("move", "order", _ws(p), project=p)
     if not isinstance(targets, list) or not targets:
         print("nothing mapped yet; run `csa move --prepare`")
@@ -7331,8 +7363,17 @@ def cmd_move(a):
     if sum(chosen) != 1:
         die("usage: csa move --prepare | N [--stage S] [--print] | --all | --status")
     ld = _convert_legacy(p)
-    work = local_path(p["work_dir"])
+    work = _move_work(p)
     if a.prepare:
+        # The writer stage of `move --all` addresses the working template through
+        # its live stable-ID manifest.  A freshly selected V2 working DOCX may not
+        # have one yet, so make Prepare migrate establish that prerequisite before
+        # extracting the old document.  This keeps the UI's prepare gate honest:
+        # a successful prepare is also a usable migration setup.
+        prepared = fw_call("prepareDocument", workspace=_ws(p), project=p)
+        if prepared.get("status") not in ("READY", "OK"):
+            print(prepared.get("message", prepared), file=sys.stderr)
+            return 2
         res = _fw_module_call("move", "move_prepare", _ws(p), str(ld), project=p)
         if res.get("status") != "OK":
             print(res.get("message", res), file=sys.stderr)
@@ -7342,10 +7383,12 @@ def cmd_move(a):
               f"{m['low_confidence']} low confidence; {res['parked']} parked, {res['figures']} figures")
         if m.get("missing_targets"):
             print(f"  missing template destinations: {', '.join(m['missing_targets'])}", file=sys.stderr)
-        print(f"  map report: {work / 'legacy' / 'map-report.md'}")
-        print(f"  overrides:  {work / 'legacy' / 'legacy-map.csv'}  (checked before the defaults)")
+        move_work = _move_work(p)
+        print(f"  map report: {move_work / 'legacy' / 'map-report.md'}")
+        print(f"  overrides:  {move_work / 'legacy' / 'legacy-map.csv'}  (checked before the defaults)")
         return 0
-    if not (work / "legacy" / "map.csv").is_file():
+    move_work = _move_work(p)
+    if not (move_work / "legacy" / "map.csv").is_file():
         die("no map yet; run `csa move --prepare`")
     if a.status:
         rows = _fw_module_call("move", "status", _ws(p), project=p)

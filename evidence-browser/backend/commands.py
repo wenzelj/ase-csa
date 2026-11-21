@@ -99,6 +99,16 @@ OPERATIONS: dict[str, Operation] = {
         "audit", "Audit assessment", "Run the framework's read-only assessment audit and preserve its report artifacts.",
         ("audit",), timeout=900,
     ),
+    "migration_prepare": Operation(
+        "migration_prepare", "Prepare old assessment migration",
+        "Extract and validate the old assessment mapping without changing the working DOCX.",
+        ("move", "--prepare"), timeout=300, mutation_class="workspace_write", lock="none",
+    ),
+    "migration_do": Operation(
+        "migration_do", "Migrate old assessment",
+        "Move the prepared old assessment into the working DOCX as plain text.",
+        ("move", "--all"), timeout=86400, mutating=True, mutation_class="document_write", lock="docx",
+    ),
     # Draft lane (before V1): index, answer, refresh, freeze.
     "ingest": Operation(
         "ingest", "Ingest new data", "Index new or changed files, sync the evidence matrix, host register and graph, then list stale subsections.",
@@ -259,7 +269,7 @@ def build_argv(agents_dir: Path, project_key: str, operation_key: str, request: 
     # unchanged.
     if operation.key == "improve":
         argv.append("--headless")
-    if operation.key not in {"author", "review", "cleanup", "build_preview", "build", "audit",
+    if operation.key not in {"author", "review", "cleanup", "build_preview", "build", "audit", "migration_prepare", "migration_do",
                              "ingest", "model_build", "stale", "answer", "refresh_draft", "improve", "freeze", "intake", "gap_check", "resolve_gaps"}:
         argv.append("--json")
     return operation, argv

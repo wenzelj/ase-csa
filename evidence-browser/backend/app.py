@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import assets, intake_errors, apply_workflow, audit_workflow, author_workflow, intake_workflow, build_workflow, cleanup_workflow, commands, documents, draft_workflow, improve_workflow, prompts_workflow, explorer, csa_figures, network, global_graph, pipeline, project_setup, project_upload, proposals, review_workflow, sections, validation, word_review, working_document
+from . import assets, intake_errors, apply_workflow, audit_workflow, author_workflow, intake_workflow, build_workflow, cleanup_workflow, commands, documents, draft_workflow, improve_workflow, prompts_workflow, explorer, csa_figures, network, global_graph, pipeline, project_setup, project_upload, proposals, review_workflow, sections, validation, word_review, working_document, migration
 from .jobs import JobManager
 from .terminal_sessions import check_write_origin
 from .models import CommandRequest, IntakeErrorsResponse, JobCreateRequest
@@ -734,6 +734,31 @@ def select_working_document(system_key: str, payload: dict[str, Any]) -> dict[st
 @app.post("/api/systems/{system_key}/legacy-document")
 def select_legacy_document(system_key: str, payload: dict[str, Any]) -> dict[str, Any]:
     return working_document.select_legacy(system_project(system_key), agents_dir(), str(payload.get("relative_path") or ""))
+
+
+@app.get("/api/systems/{system_key}/migration")
+def migration_status(system_key: str) -> dict[str, Any]:
+    return migration.status(system_project(system_key))
+
+
+@app.post("/api/systems/{system_key}/migration/prepare", status_code=202)
+def migration_prepare(system_key: str) -> dict[str, Any]:
+    return {"job": job_manager.submit(system_project(system_key), "migration_prepare", CommandRequest()).model_dump()}
+
+
+@app.post("/api/systems/{system_key}/migration/do", status_code=202)
+def migration_do(system_key: str, payload: dict[str, Any]) -> dict[str, Any]:
+    project = system_project(system_key)
+    prepare_job_id = str(payload.get("prepare_job_id") or "")
+    if not prepare_job_id:
+        raise HTTPException(409, "Prepare the old assessment migration successfully first.")
+    prepare_job = job_manager.get(project, prepare_job_id)
+    if prepare_job.operation != "migration_prepare" or prepare_job.state != "succeeded":
+        raise HTTPException(409, "The prepare migration has not completed successfully.")
+    ready, reason = migration.can_do(project)
+    if not ready:
+        raise HTTPException(409, reason)
+    return {"job": job_manager.submit(project, "migration_do", CommandRequest()).model_dump()}
 
 
 @app.post("/api/systems/{system_key}/working-document/from-template")

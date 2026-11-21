@@ -72,6 +72,17 @@ def test_missing_targets_are_reported():
     assert legacy_map.missing_targets(rows, ["3.6", "3.13", "3.17", "4.1"]) == ["3.13", "3.17", "4.1"]
 
 
+def test_numbered_nested_heading_routes_when_top_level_is_generic(monkeypatch):
+    monkeypatch.setenv("CSA_SPEC_MODE", "off")
+    rows = legacy_map.map_blocks(_blocks(
+        ("3 Requirement Domain Assessments > 3.1 General / Asset Inventory", "The host inventory was reviewed."),
+        ("3 Requirement Domain Assessments > 3.6 Network / Segmentation > 3.6.1 Discovery Information",
+         "Network segmentation evidence was reviewed."),
+    ))
+    assert [r["target"] for r in rows] == ["3.1", "3.6"]
+    assert all(r["rule"] == "numbered-legacy-heading" for r in rows)
+
+
 def test_rms_fixture_covers_split_destinations_and_evidence_only():
     fixture = json.loads((Path(__file__).parent / "fixtures" / "rms_legacy_mapping.json").read_text())
     project_rules = [{"row": 999, "pattern": re.compile(r"^Network Segmentation, Perimeter & Internet Access", re.I),

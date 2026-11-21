@@ -24,6 +24,7 @@ DEFAULT_MAP = (Path(__file__).resolve().parents[2] / "skills" / "csa-document-te
 
 MAP_COLUMNS = ["id", "path", "kind", "job", "target", "rule", "confidence"]
 _KEPT_JOBS = ("parked", "evidence-only", "controlled")
+_NUMBERED_HEADING_RE = re.compile(r"^\s*(?P<target>(?:2\.1|3\.\d+|4\.\d+|7|8))\b")
 
 
 def load_rules(path: Path | str) -> list[dict]:
@@ -125,6 +126,19 @@ def map_blocks(blocks: list[dict], *, project_rules=(), default_rules=None,
                 else:
                     target, conf = key, "low" if tie else "medium"
             final(job, target, label, conf, rule.get("also", ()))
+            continue
+
+        # Some older CSA documents use one generic top-level heading (for example,
+        # ``3 Requirement Domain Assessments``) and put the real domain number in a
+        # nested heading.  The old mapper only inspected path[0], which made every
+        # such block look unmappable.  Prefer an explicit numbered legacy heading
+        # before falling back to the prose legacy-heading scope map.
+        numbered = next(
+            (match for part in b["path"] if (match := _NUMBERED_HEADING_RE.match(part))),
+            None,
+        )
+        if numbered and numbered.group("target") in set(all_keys) | {"2.1", "7", "8"}:
+            final("convert", numbered.group("target"), "numbered-legacy-heading", "high")
             continue
 
         keys = scope_map.legacy_hosts(b["path"][0], domains) if b["path"] else []
