@@ -15,7 +15,7 @@ from uuid import uuid4
 import json
 import re
 
-from . import improve_context
+from . import answer_sheet, draft_lane, improve_context, improve_state, rating_pass
 
 
 class ImportState(str, Enum):
@@ -217,6 +217,10 @@ def _sheet_text(sheet: Mapping[str, Mapping[str, Any]]) -> str:
             lines.append(f"Story: {block['story']}")
         for question in block.get("unknown", ()):
             lines.append(f"QUESTION: {question}")
+        if block.get("rating"):
+            lines.append(f"Rating: {block['rating']}")
+        if block.get("rating_reason"):
+            lines.append(f"Rating reason: {block['rating_reason']}")
         for row in block.get("rows", ()):
             lines.append("Rows: | " + " | ".join(str(cell) for cell in row) + " |")
         lines.append("")
@@ -241,27 +245,122 @@ def import_state(work_dir: Path | str, card: Mapping[str, Any], document_path: P
     if outcome is ImportOutcome.SOURCE_CHANGED:
         return ImportResult(outcome, ImportState.STALE, key, message="working document changed since the previous import")
     current_hash = document_hash(source)
-    section = extract_section(source, str(card.get("number") or key), str(card.get("title") or ""))
+    root = Path(work_dir)
+    cards = root / "cards"
+    existing = cards / f"{key}.IMPORT.json"
+    if existing.is_file():
+        try:
+            prior = result_from(json.loads(existing.read_text(encoding="utf-8")))
+        except (OSError, ValueError, TypeError):
+            prior = None
+        if prior and prior.provenance.source_document_hash == current_hash:
+            return ImportResult(ImportOutcome.UNCHANGED, prior.state, prior.section_key,
+                                provenance=prior.provenance, rating=prior.rating,
+                                warnings=prior.warnings, unmappable=prior.unmappable,
+                                open_questions=prior.open_questions, message=prior.message)
+    try:
+        section = extract_section(source, str(card.get("number") or key), str(card.get("title") or ""))
+    except (OSError, ValueError) as exc:
+        return ImportResult(ImportOutcome.BLOCKED, ImportState.NOT_ANSWERED, key,
+                            provenance=ImportProvenance(source_document_hash=current_hash),
+                            message=f"cannot extract answered subsection: {exc}")
     mapped = map_current_content(card, section)
     sheet_text = _sheet_text(mapped["sheet"])
     run_id = f"import-{uuid4().hex}"
+    sheet_hash = answer_sheet_hash(sheet_text)
     provenance = ImportProvenance(source_document_hash=current_hash,
-                                  answer_sheet_hash=answer_sheet_hash(sheet_text), import_run_id=run_id)
-    root = Path(work_dir)
-    cards = root / "cards"
+                                  answer_sheet_hash=sheet_hash, import_run_id=run_id)
     cards.mkdir(parents=True, exist_ok=True)
     (cards / f"{key}.json").write_text(json.dumps(dict(card), indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     (cards / f"{key}.answer.md").write_text(sheet_text, encoding="utf-8")
+    parsed = answer_sheet.parse(sheet_text)
+    validation_card = dict(card)
+    validation_card["questions"] = [
+        {**dict(question), "kind": question.get("kind", "requirement")}
+        for question in card.get("questions", ()) if isinstance(question, Mapping)
+    ]
+    validation = answer_sheet.validate(parsed, validation_card, relaxed=True)
+    validation_reasons = tuple(
+        f"{item.get('level', 'ERROR')} {item.get('code', 'VALIDATION')}: {item.get('message', '')}"
+        for item in validation.get("findings", ()) if item.get("level") == "ERROR"
+    )
+    rating = RatingStatus(assessment_rating=mapped["rating"] or None,
+                          assessment_status="resolved" if mapped["rating"] else "unresolved")
+    quality = {"status": "SKIPPED", "message": "no answered block to rate"}
+    try:
+        ids = rating_pass.rated_blocks(parsed, dict(card))
+        quality = rating_pass.rate_text(root, sheet_text, ids, key, cards,
+                                        str(card.get("rating_template") or ""),
+                                        output_dir=root)
+    except (OSError, TypeError, ValueError, IndexError, KeyError) as exc:
+        quality = {"status": "ERROR", "message": f"rating pass failed: {exc}"}
+    if quality.get("status") == "OK" and quality.get("average") is not None:
+        rating = RatingStatus(assessment_rating=rating.assessment_rating,
+                              assessment_status=rating.assessment_status,
+                              quality_status="rated", quality_score=float(quality["average"]),
+                              quality_hash=sheet_hash)
+    reasons = tuple(mapped["unmappable"]) + validation_reasons
+    warnings = ("Imported document content requires evidence revalidation.",) if reasons else ()
+    result = ImportResult(ImportOutcome.PARTIAL if validation_reasons else ImportOutcome.READY,
+                          ImportState.READY_FOR_IMPROVE, key, provenance=provenance, rating=rating,
+                          warnings=warnings, unmappable=reasons,
+                          open_questions=tuple(mapped["open_questions"]),
+                          message="; ".join(validation_reasons))
     manifest = {"version": 1, "key": key, "status": "IMPORTED", "source": "document-imported",
                 "source_document_hash": current_hash, "sheet_sha256": provenance.answer_sheet_hash,
                 "import_run_id": run_id, "state": ImportState.READY_FOR_IMPROVE.value}
     (cards / f"{key}.manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-    result = ImportResult(ImportOutcome.READY, ImportState.READY_FOR_IMPROVE, key, provenance=provenance,
-                          warnings=("Imported document content requires evidence revalidation.",) if mapped["unmappable"] else (),
-                          unmappable=tuple(mapped["unmappable"]), open_questions=tuple(mapped["open_questions"]))
     (cards / f"{key}.IMPORT.json").write_text(json.dumps({
         "outcome": result.outcome.value, "state": result.state.value, "section_key": key,
         "provenance": provenance.__dict__, "rating": result.rating.__dict__,
+        "warnings": result.warnings, "unmappable": result.unmappable,
+        "open_questions": result.open_questions, "message": result.message,
+    }, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    (cards / f"{key}.RESULT.md").write_text(
+        f"# Answered document import: {key}\n\n"
+        f"Status: {result.outcome.value}\n"
+        f"Source: document-imported baseline\n"
+        f"Document hash: {current_hash}\n"
+        f"Answer sheet hash: {sheet_hash}\n\n"
+        f"Answer quality: {rating.quality_status}"
+        + (f" ({rating.quality_score})" if rating.quality_score is not None else "")
+        + (f"\nQuality hash: {rating.quality_hash}" if rating.quality_hash else "")
+        + "\n\n"
+        + ("Import validation findings:\n" + "\n".join(f"- {r}" for r in validation_reasons) + "\n"
+           if validation_reasons else "Import validation: OK\n"), encoding="utf-8")
+    try:
+        draft_lane.record_run(root, key, str(card.get("number") or ""), str(card.get("title") or ""),
+                              "READY", detail=result.message, phase="answered-document-import",
+                              model="document-import", sheet_hash=sheet_hash)
+        draft_lane.open_questions(root)
+    except (OSError, ValueError, TypeError):
+        pass
+    try:
+        context = improve_context.build_context(
+            str(card.get("number") or key), source, section_title=str(card.get("title") or ""),
+            rating=rating.assessment_rating, answer_run_id=run_id,
+            findings=result.warnings + result.unmappable, open_questions=result.open_questions,
+            rating_summary=rating_pass.load_summary(root, key),
+            subsection_data=improve_context.collect_subsection_data(dict(card)),
+        )
+        improve_root = improve_state.improve_root(root)
+        section_dir = improve_state.section_dir(improve_root, key)
+        section_dir.mkdir(parents=True, exist_ok=True)
+        context_path = section_dir / "context.json"
+        context_path.write_text(json.dumps(context, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        improve_run = improve_state.new_run(key, context_hash=answer_sheet_hash(json.dumps(context, sort_keys=True)),
+                                            base_document_hash=current_hash)
+        improve_run["status"] = "context_built"
+        improve_state.write_run(improve_root, improve_run)
+    except (OSError, ValueError, TypeError) as exc:
+        result = ImportResult(result.outcome, result.state, result.section_key,
+                              provenance=result.provenance, rating=result.rating,
+                              warnings=result.warnings + (f"Improve context unavailable: {exc}",),
+                              unmappable=result.unmappable, open_questions=result.open_questions,
+                              message=result.message)
+    (cards / f"{key}.IMPORT.json").write_text(json.dumps({
+        "outcome": result.outcome.value, "state": result.state.value, "section_key": key,
+        "provenance": result.provenance.__dict__, "rating": result.rating.__dict__,
         "warnings": result.warnings, "unmappable": result.unmappable,
         "open_questions": result.open_questions, "message": result.message,
     }, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
