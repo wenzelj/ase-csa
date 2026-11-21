@@ -5469,6 +5469,28 @@ def cmd_import_answers(a):
         nodes = [n for n in nodes if n.get("key") == target.get("key") or n.get("number") == target.get("number")]
     results = []
     cards = work / "cards"
+    source_change = getattr(a, "on_source_change", "block")
+    if getattr(a, "force_source_change", False):
+        source_change = "reimport"
+
+    def existing_record(key):
+        path = cards / f"{key}.IMPORT.json"
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, TypeError, ValueError):
+            return {}
+
+    def artifacts(key):
+        return [
+            str(cards / f"{key}.json"),
+            str(cards / f"{key}.answer.md"),
+            str(cards / f"{key}.manifest.json"),
+            str(cards / f"{key}.IMPORT.json"),
+            str(cards / f"{key}.RESULT.md"),
+            str(work / "runs.json"),
+            str(work / "improve" / key / "context.json"),
+        ]
+
     for node in nodes:
         key = str(node["key"])
         card_path = cards / f"{key}.json"
@@ -5476,18 +5498,70 @@ def cmd_import_answers(a):
             card = json.loads(card_path.read_text(encoding="utf-8"))
         else:
             card = node
+        prior = existing_record(key)
+        recorded_hash = (prior.get("provenance") or {}).get("source_document_hash")
+        outcome = answered_import.source_outcome(docx, recorded_hash=recorded_hash)
+        prior_provenance = prior.get("provenance") or {}
+        prior_rating = prior.get("rating") or {}
+        preview = {
+            "section_key": key, "number": node.get("number"), "title": node.get("title"),
+            "source": str(docx), "source_document_hash": answered_import.document_hash(docx),
+            "recorded_source_document_hash": recorded_hash,
+            "source_outcome": outcome.value,
+            "expected_artifacts": artifacts(key),
+            "provenance": {"source": "working-document", "label": "document-imported baseline",
+                           "source_document_hash": answered_import.document_hash(docx),
+                           "answer_sheet_hash": prior_provenance.get("answer_sheet_hash")},
+            "rating": {"assessment_status": prior_rating.get("assessment_status", "unresolved"),
+                       "quality_status": prior_rating.get("quality_status", "pending"),
+                       "quality_score": prior_rating.get("quality_score")},
+            "warnings": ["Imported document content requires evidence revalidation."],
+            "blockers": [],
+        }
+        if outcome is answered_import.ImportOutcome.MISSING:
+            preview["blockers"].append("working document is missing")
+        elif outcome is answered_import.ImportOutcome.SOURCE_CHANGED and source_change == "block":
+            preview["blockers"].append("working document changed since the previous import; explicit reimport is required")
+        elif outcome is answered_import.ImportOutcome.UNCHANGED:
+            preview["warnings"] = []
         if a.dry_run:
-            results.append({"section_key": key, "number": node.get("number"), "title": node.get("title"), "source": str(docx)})
+            results.append(preview)
             continue
         try:
-            result = answered_import.import_state(work, card, docx)
-            results.append({"outcome": result.outcome.value, "state": result.state.value,
-                            "section_key": key, "warnings": list(result.warnings), "message": result.message})
-        except (OSError, ValueError, KeyError) as exc:
-            results.append({"outcome": "BLOCKED", "state": "not-answered", "section_key": key, "message": str(exc)})
-    payload = {"status": "DRY_RUN" if a.dry_run else "OK", "project": p["key"], "sections": results}
-    print(json.dumps(payload, indent=2) if a.json else f"{'Would inspect' if a.dry_run else 'Imported'} {len(results)} section(s).")
-    return 0 if all(r.get("outcome") not in {"BLOCKED", "MISSING", "AMBIGUOUS", "SOURCE_CHANGED"} for r in results) else 1
+            if preview["blockers"]:
+                result = answered_import.ImportResult(
+                    answered_import.ImportOutcome.SOURCE_CHANGED
+                    if outcome is answered_import.ImportOutcome.SOURCE_CHANGED
+                    else outcome,
+                    answered_import.ImportState.STALE
+                    if outcome is answered_import.ImportOutcome.SOURCE_CHANGED
+                    else answered_import.ImportState.NOT_ANSWERED,
+                    key, message="; ".join(preview["blockers"]))
+            else:
+                result = answered_import.import_state(
+                    work, card, docx,
+                    recorded_hash=recorded_hash if source_change == "block" else None)
+            results.append({
+                "outcome": result.outcome.value, "state": result.state.value,
+                "section_key": key, "provenance": result.provenance.__dict__,
+                "rating": result.rating.__dict__, "warnings": list(result.warnings),
+                "unmappable": list(result.unmappable), "open_questions": list(result.open_questions),
+                "eligible_for_improve": result.eligible_for_improve, "message": result.message,
+            })
+        except Exception as exc:
+            results.append({"outcome": "BLOCKED", "state": "not-answered", "section_key": key,
+                            "provenance": {}, "rating": {"assessment_status": "unresolved"},
+                            "warnings": [], "unmappable": [], "open_questions": [],
+                            "eligible_for_improve": False, "message": str(exc)})
+    failed = [r for r in results if r.get("outcome") in {"BLOCKED", "MISSING", "AMBIGUOUS", "SOURCE_CHANGED", "PARTIAL"}]
+    status = "DRY_RUN" if a.dry_run else ("PARTIAL" if failed else "OK")
+    payload = {"status": status, "project": p["key"], "source": str(docx),
+               "source_change_policy": source_change, "resume": bool(getattr(a, "resume", False)),
+               "sections": results}
+    print(json.dumps(payload, indent=2) if a.json else
+          f"{'Would inspect' if a.dry_run else 'Imported'} {len(results)} section(s)"
+          + (f"; {len(failed)} need attention." if failed else "."))
+    return 0 if not failed else 1
 
 
 def cmd_shared(a):
@@ -7681,7 +7755,14 @@ def main(argv=None) -> int:
     s.add_argument("--json", action="store_true"); s.add_argument("--cli"); s.add_argument("--headless", action="store_true"); s.add_argument("--print", action="store_true", help="print the Improve prompt instead of launching")
     s = sp("import-answers", cmd_import_answers, help="reconstruct Draft/Improve state from an answered working DOCX")
     s.add_argument("section", nargs="?", default="")
-    s.add_argument("--dry-run", action="store_true"); s.add_argument("--json", action="store_true")
+    s.add_argument("--dry-run", "--preview", action="store_true",
+                   help="preview sections, artifacts, ratings, warnings and blockers without writing")
+    s.add_argument("--resume", action="store_true", help="resume pending sections; completed same-hash sections are unchanged")
+    s.add_argument("--on-source-change", choices=["block", "reimport"], default="block",
+                   help="when the source DOCX changed: block or explicitly reimport")
+    s.add_argument("--force-source-change", "--force", action="store_true",
+                   help="explicitly reimport sections whose source DOCX changed")
+    s.add_argument("--json", action="store_true")
     s = sp("freeze", cmd_freeze, help="csa freeze v1: baseline copy of the DOCX and switch the project to the V1 change lane")
     s.add_argument("stage")
     s = sp("shared", cmd_shared, help="estate view: DNS and time servers shared with other projects of the estate (build | list | show SERVER)")
