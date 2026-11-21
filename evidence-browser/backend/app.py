@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import assets, intake_errors, apply_workflow, audit_workflow, author_workflow, intake_workflow, build_workflow, cleanup_workflow, commands, documents, draft_workflow, improve_workflow, prompts_workflow, explorer, csa_figures, network, global_graph, pipeline, project_setup, project_upload, proposals, review_workflow, sections, validation, word_review, working_document, migration
+from . import assets, intake_errors, apply_workflow, audit_workflow, author_workflow, intake_workflow, build_workflow, cleanup_workflow, commands, documents, draft_workflow, improve_workflow, import_answers_workflow, prompts_workflow, explorer, csa_figures, network, global_graph, pipeline, project_setup, project_upload, proposals, review_workflow, sections, validation, word_review, working_document, migration
 from .jobs import JobManager
 from .terminal_sessions import check_write_origin
 from .models import CommandRequest, IntakeErrorsResponse, JobCreateRequest
@@ -933,6 +933,37 @@ def create_job(system_key: str, request: JobCreateRequest) -> dict[str, Any]:
     project = system_project(system_key)
     command = CommandRequest(target=request.target, options=request.options)
     return job_manager.submit(project, request.operation, command).model_dump()
+
+
+@app.get("/api/systems/{system_key}/import-answers")
+def preview_import_answers(system_key: str, section: str | None = None,
+                            on_source_change: str = "block") -> dict[str, Any]:
+    project = system_project(system_key)
+    return import_answers_workflow.preview(agents_dir(), project, section,
+                                           on_source_change=on_source_change)
+
+
+@app.post("/api/systems/{system_key}/import-answers/preview")
+def post_preview_import_answers(system_key: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    payload = payload or {}
+    return import_answers_workflow.preview(
+        agents_dir(), system_project(system_key), payload.get("section"),
+        on_source_change=payload.get("on_source_change", "block"))
+
+
+@app.post("/api/systems/{system_key}/import-answers", status_code=202)
+def submit_import_answers(system_key: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    payload = payload or {}
+    return import_answers_workflow.submit(
+        agents_dir(), job_manager, system_project(system_key), payload.get("section"),
+        resume=payload.get("resume", True), on_source_change=payload.get("on_source_change", "block"),
+        force_source_change=payload.get("force_source_change", False))
+
+
+@app.get("/api/systems/{system_key}/import-answers/jobs/{job_id}")
+def get_import_answers_job(system_key: str, job_id: str) -> dict[str, Any]:
+    project = system_project(system_key)
+    return import_answers_workflow.outcome(project, job_manager.get(project, job_id).model_dump())
 
 
 @app.get("/api/systems/{system_key}/jobs")

@@ -151,6 +151,13 @@ OPERATIONS: dict[str, Operation] = {
         ("improve",), "required", "section", {"cli": "identifier"}, timeout=14400,
         mutation_class="workspace_write", lock="section",
     ),
+    "import_answers": Operation(
+        "import_answers", "Import existing answers", "Reconstruct Draft and Improve state from an already-answered working DOCX.",
+        ("import-answers",), "optional", "section",
+        {"dry_run": "boolean", "resume": "boolean", "on_source_change": "identifier",
+         "force_source_change": "boolean"}, timeout=1800,
+        mutation_class="workspace_write", lock="section",
+    ),
     # CSA figures: the agent rewords one figure's purpose and caption; placing puts a saved figure in the document.
     "figure_wording": Operation(
         "figure_wording", "Reword figure caption", "The wording agent rewords one figure's purpose and caption; the framework checks it against the evidence.",
