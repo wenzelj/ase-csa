@@ -5,6 +5,20 @@ framework/csa_docx/section_manifest.json
 
 # csa CLI per-machine state (active project)
 .state/
+
+# local runtime environments and installed dependencies
+.venv/
+**/.venv/
+**/node_modules/
+**/.vite/
+
+# local runtime locks and tool caches
+.commit.lock
+.mypy_cache/
+**/.mypy_cache/
+.ruff_cache/
+**/.ruff_cache/
+
 # not source: backups, stray .bak files, downloaded wheels, caches (improvements S01)
 backups/
 *.bak
