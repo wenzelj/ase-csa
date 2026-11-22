@@ -8,6 +8,7 @@ framework/csa_docx/section_manifest.json
 # not source: backups, stray .bak files, downloaded wheels, caches (improvements S01)
 backups/
 *.bak
+Archive.zip
 framework/vendor_incoming/
 .pytest_cache/
 **/.pytest_cache/
