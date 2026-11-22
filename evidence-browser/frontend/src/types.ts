@@ -155,7 +155,7 @@ export type DraftSection = { number: string; key: string; title: string; kind: s
 export type DraftSnapshot = {
   project_key: string; stage: string; stale_checked_at?: string | null; counts: Record<string, number>; sections: DraftSection[];
   changes: { rows: { day: string; time: string; subsection: string; change: string; open: string }[]; file?: string | null };
-  open_questions: { groups: { title: string; items: string[] }[]; total: number; file?: string | null }; spec_error?: string | null;
+  open_questions: { groups: { title: string; items: string[] }[]; total: number; file?: string | null }; import_available?: boolean; spec_error?: string | null;
 };
 
 export type ImproveState = { state: string; reason?: string; proposal_available?: boolean; context_available?: boolean; document_hash?: string | null; answer_run_id?: string | null; provenance?: string };

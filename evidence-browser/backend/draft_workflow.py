@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any
 
 from csa_docx import rating_pass
+from csa_docx import section_state
+from csa_docx import answered_import
 
 from . import commands
 from .models import CommandRequest
@@ -56,6 +58,24 @@ def _open_questions(work: Path) -> dict[str, Any]:
     return {"groups": groups, "total": sum(len(g["items"]) for g in groups), "file": str(path) if path.is_file() else None}
 
 
+def _document_has_answered_content(project: dict[str, str], nodes: list[dict[str, Any]]) -> bool:
+    """Detect rendered answer content without changing the authoritative document."""
+    document = Path(str(project.get("working_docx") or "")).expanduser()
+    if not document.is_file():
+        return False
+    for node in nodes:
+        try:
+            section = answered_import.extract_section(
+                document, str(node.get("number") or node.get("key") or ""), str(node.get("title") or ""))
+        except (OSError, ValueError):
+            continue
+        if any(block.get("kind") == "table" or
+               (block.get("kind") == "paragraph" and str(block.get("text") or "").strip())
+               for block in section.get("blocks", ())):
+            return True
+    return False
+
+
 def snapshot(agents_dir: Path, project: dict[str, str]) -> dict[str, Any]:
     work = Path(project["work_dir"]).expanduser()
     cards = work / "cards"
@@ -95,6 +115,13 @@ def snapshot(agents_dir: Path, project: dict[str, str]) -> dict[str, Any]:
             row.update(state=state, answered_at=_iso(answered), open=_unknowns(cards / f"{key}.answer.md"))
         else:
             row.update(state="not-answered", answered_at=None, open=0)
+        readiness = section_state.project(work, key)
+        if readiness.get("draft_state") == "answered-imported":
+            row.update(state="answered-imported", answered_at=row.get("answered_at"))
+        row.update(readiness=readiness, eligible=bool(readiness.get("eligible_for_improve")),
+                   provenance=readiness.get("provenance"),
+                   rating_status=readiness.get("rating_status"),
+                   readiness_reasons=readiness.get("readiness_reasons", []))
         row["rating"] = rating_pass.load_summary(work, key)
         sections.append(row)
     if not sections:   # no document spec: list what was answered
@@ -102,13 +129,21 @@ def snapshot(agents_dir: Path, project: dict[str, str]) -> dict[str, Any]:
             key = manifest.name[: -len(".manifest.json")]
             card = cards / f"{key}.json"
             info = json.loads(card.read_text(encoding="utf-8")) if card.is_file() else {}
+            readiness = section_state.project(work, key)
             sections.append({"number": info.get("number", ""), "key": key, "title": info.get("title", key), "kind": "",
                              "level": 2, "document_state": "", "state": "answered",
                              "answered_at": _iso(manifest.stat().st_mtime), "open": _unknowns(cards / f"{key}.answer.md"),
-                             "rating": rating_pass.load_summary(work, key)})
+                             "rating": rating_pass.load_summary(work, key),
+                             "readiness": readiness,
+                             "eligible": bool(readiness.get("eligible_for_improve")),
+                             "provenance": readiness.get("provenance"),
+                             "rating_status": readiness.get("rating_status"),
+                             "readiness_reasons": readiness.get("readiness_reasons", [])})
     counts: dict[str, int] = {}
     for row in sections:
         counts[row["state"]] = counts.get(row["state"], 0) + 1
+    no_answers = bool(sections) and all(row["state"] == "not-answered" for row in sections)
     return {"project_key": project["key"], "stage": stage, "stale_checked_at": checked_at, "counts": counts,
             "sections": sections, "changes": _changes(work), "open_questions": _open_questions(work),
+            "import_available": no_answers and _document_has_answered_content(project, nodes),
             "spec_error": None if nodes else (spec.stderr or "the document specification is unavailable")[-400:]}

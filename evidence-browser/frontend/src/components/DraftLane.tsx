@@ -7,8 +7,12 @@ import { PromptsPanel } from "./PromptsPanel";
 import { terminalReason } from "../jobReason";
 
 const TERMINAL = ["succeeded", "failed", "cancelled", "interrupted"];
-const STATE_LABEL: Record<string, string> = { current: "Current", stale: "Evidence changed", answered: "Answered", "not-answered": "Not answered" };
-const OP_LABEL: Record<string, string> = { ingest: "Ingest new data", stale: "Check for stale answers", answer: "Answer", refresh_draft: "Refresh stale answers", freeze: "Freeze at V1" };
+const STATE_LABEL: Record<string, string> = { current: "Current", stale: "Evidence changed", answered: "Answered", "answered-imported": "Imported", "not-answered": "Not answered" };
+const OP_LABEL: Record<string, string> = { ingest: "Ingest new data", stale: "Check for stale answers", import_answers: "Import existing answers", answer: "Answer", refresh_draft: "Refresh stale answers", freeze: "Freeze at V1" };
+type ImportReadiness = { eligible_for_improve?: boolean; provenance?: string; source_document_hash?: string; rating_status?: { assessment_status?: string; quality_status?: string; quality_error?: string }; readiness_reasons?: string[] };
+type ImportReportSection = { section_key?: string; number?: string; title?: string; status?: string; warnings?: string[]; blockers?: string[]; eligible_for_improve?: boolean; readiness?: ImportReadiness };
+type ImportReport = { status: string; state: string; terminal: boolean; preview?: boolean; warnings?: string[]; blockers?: string[]; resumable?: boolean; sections?: ImportReportSection[]; job?: ReviewJob };
+type DraftImportSection = DraftSection & { readiness?: ImportReadiness; provenance?: string; rating_status?: ImportReadiness["rating_status"] };
 
 /** Rating column: latest average, average of the kept runs, each question's latest score (red when it fell since the previous run).
  *  The hover text lists the kept runs and the reason for each question's latest score. */
@@ -53,7 +57,9 @@ export function DraftLane({ system, focus = "", investigate }: { system: string;
   const [snap, setSnap] = useState<DraftSnapshot | null>(null); const [job, setJob] = useState<ReviewJob | null>(null);
   const [error, setError] = useState(""); const [cli, setCli] = useState(rememberedAgentCli()); const [fresh, setFresh] = useState(false);
   const [onlyOpen, setOnlyOpen] = useState(false); const [showLog, setShowLog] = useState(false);
+  const [importReport, setImportReport] = useState<ImportReport | null>(null);
   const poll = useRef<number | undefined>(undefined);
+  const importPoll = useRef<number | undefined>(undefined);
 
   async function load() {
     try { setSnap(await fetchDraft(system)); }
@@ -64,7 +70,20 @@ export function DraftLane({ system, focus = "", investigate }: { system: string;
   }
   async function resume() {
     try {
-      const jobs = (await fetchJobs(system)).filter(j => j.operation === "answer" || j.operation === "refresh_draft");
+      const allJobs = await fetchJobs(system);
+      const jobs = allJobs.filter(j => j.operation === "answer" || j.operation === "refresh_draft");
+      const importJobs = allJobs.filter(j => j.operation === "import_answers");
+      const activeImport = importJobs.filter(j => !TERMINAL.includes(j.state)).sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+      const latestImport = activeImport || importJobs.sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+      if (latestImport) {
+        const response = await fetch(`/api/systems/${encodeURIComponent(system)}/import-answers/jobs/${encodeURIComponent(latestImport.id)}`);
+        if (response.ok) {
+          const report = await response.json() as ImportReport;
+          setImportReport(report);
+          setJob(latestImport);
+          if (!TERMINAL.includes(latestImport.state)) watchImport(latestImport.id);
+        }
+      }
       const active = jobs.filter(j => !TERMINAL.includes(j.state)).sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
       const latest = active || jobs.sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
       if (!latest) return;
@@ -72,7 +91,7 @@ export function DraftLane({ system, focus = "", investigate }: { system: string;
       else { setJob(latest); await load(); }
     } catch { /* no job list: nothing to recover */ }
   }
-  useEffect(() => { setSnap(null); setJob(null); void load(); void resume(); return () => window.clearInterval(poll.current); }, [system]);
+  useEffect(() => { setSnap(null); setJob(null); setImportReport(null); void load(); void resume(); return () => { window.clearInterval(poll.current); window.clearInterval(importPoll.current); }; }, [system]);
   useEffect(() => { if (!focus) return; const el = document.getElementById(`draft-row-${focus}`); el?.scrollIntoView({ block: "center" }); }, [focus, snap]);
   useEffect(() => { rememberAgentCli(cli); }, [cli]);
 
@@ -90,6 +109,35 @@ export function DraftLane({ system, focus = "", investigate }: { system: string;
     setError(""); setShowLog(true);
     try {
       const started = await submitJob(system, operation, target, options); setJob(started); watch(started.id);
+    } catch (e) { setError((e as Error).message); }
+  }
+  async function previewImport() {
+    setError(""); setShowLog(true);
+    try {
+      const response = await fetch(`/api/systems/${encodeURIComponent(system)}/import-answers/preview`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
+      const report = await response.json() as ImportReport;
+      if (!response.ok) throw new Error((report as { message?: string }).message || "Import preview failed.");
+      setImportReport(report);
+    } catch (e) { setError((e as Error).message); }
+  }
+  function watchImport(id: string) {
+    window.clearInterval(importPoll.current);
+    importPoll.current = window.setInterval(async () => {
+      try {
+        const response = await fetch(`/api/systems/${encodeURIComponent(system)}/import-answers/jobs/${encodeURIComponent(id)}`);
+        const report = await response.json() as ImportReport;
+        setImportReport(report); if (report.job) setJob(report.job);
+        if (report.terminal) { window.clearInterval(importPoll.current); await load(); }
+      } catch (e) { window.clearInterval(importPoll.current); setError((e as Error).message); }
+    }, 1200);
+  }
+  async function executeImport() {
+    setError(""); setShowLog(true);
+    try {
+      const response = await fetch(`/api/systems/${encodeURIComponent(system)}/import-answers`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ resume: true }) });
+      const report = await response.json() as ImportReport;
+      if (!response.ok || !report.job) throw new Error((report as { message?: string }).message || "Import could not be started.");
+      setImportReport(report); setJob(report.job); watchImport(report.job.id);
     } catch (e) { setError((e as Error).message); }
   }
   function answer(row: DraftSection) { void run("answer", row.number || row.key, { cli, ...(fresh ? { fresh: true } : {}) }); }
@@ -113,7 +161,8 @@ export function DraftLane({ system, focus = "", investigate }: { system: string;
     <div className="draft-actions">
       <button onClick={() => void run("ingest")} disabled={running}><b>1 · Ingest new data</b><small>Index new files, update hosts and graph from captures. Documents: use Evidence intake</small></button>
       <button onClick={() => void run("stale")} disabled={running}><b>2 · Check for stale answers</b><small>{snap.stale_checked_at ? `Last checked ${when(snap.stale_checked_at)}` : "Not checked yet"} · no model</small></button>
-      <button onClick={() => void run("refresh_draft", undefined, { cli })} disabled={running || !stale}><b>3 · Refresh stale answers{stale ? ` (${stale})` : ""}</b><small>{stale ? `Answer again with ${AGENT_CLIS.find(c => c.id === cli)?.label}` : "Nothing is stale"}</small></button>
+      {snap.import_available && !importReport && <button onClick={() => void previewImport()} disabled={running}><b>Dry run import answers</b><small>Check the answered document before reconstructing Draft and Improve state</small></button>}
+      <button onClick={() => void run("refresh_draft", undefined, { cli })} disabled={running || !stale}><b>4 · Refresh stale answers{stale ? ` (${stale})` : ""}</b><small>{stale ? `Answer again with ${AGENT_CLIS.find(c => c.id === cli)?.label}` : "Nothing is stale"}</small></button>
     </div>
 
     <div className="draft-counts">{(["current", "stale", "answered", "not-answered"] as const).map(k => <div key={k} className={`draft-count draft-${k}`}><strong>{counts[k] || 0}</strong><span>{STATE_LABEL[k]}</span></div>)}<div className="draft-count"><strong>{snap.open_questions.total}</strong><span>Open questions</span></div></div>
@@ -121,13 +170,18 @@ export function DraftLane({ system, focus = "", investigate }: { system: string;
     {error && <p className="desk-error" role="alert">{error}</p>}
     <PromptsPanel system={system} cli={cli} busy={running} onJob={started => { setJob(started); setShowLog(true); watch(started.id); }} />
     {job && <div className={`draft-job draft-job-${job.state}`} role="status"><div><b>{OP_LABEL[job.operation] || job.operation}{jobTarget ? ` ${jobTarget}` : ""}</b><span>{running ? (job.operation === "answer" || job.operation === "refresh_draft" ? phase(job) : "Running…") : job.state === "succeeded" ? "Done" : <span>Stopped: {job.state}{jobReason && <> — {jobReason}</>}</span>}</span></div><div className="draft-job-buttons"><button className="quiet" onClick={() => setShowLog(!showLog)}>{showLog ? "Hide output" : "Show output"}</button>{running && <button className="quiet" onClick={() => void cancelJob(system, job.id)}>Cancel</button>}</div>{showLog && <pre>{(job.stdout_tail || "") + (job.stderr_tail ? "\n" + job.stderr_tail : "") || job.message || "Waiting for output…"}</pre>}</div>}
+    {importReport && <section className="decision-desk draft-import" aria-live="polite"><header><div><h2>Answered-document import</h2><p>{importReport.preview ? "Dry run only: no framework state was written." : importReport.terminal ? `Import ${importReport.status.toLowerCase()}.` : "Import in progress; this view keeps the saved result visible."}</p><small>Terminal state: {importReport.terminal ? importReport.state : "running"}</small></div>{importReport.preview && !importReport.blockers?.length && !!importReport.sections?.length && <button onClick={() => void executeImport()} disabled={running}>Import Answers</button>}{importReport.resumable && !importReport.preview && <button className="quiet" onClick={() => void executeImport()} disabled={running}>Resume import</button>}</header>
+      {!!importReport.blockers?.length && <ul className="new-app-validation" role="alert">{importReport.blockers.map((item, index) => <li key={index}>{item}</li>)}</ul>}
+      {!!importReport.warnings?.length && <ul className="draft-import-warnings">{importReport.warnings.map((item, index) => <li key={index}>{item}</li>)}</ul>}
+      {!!importReport.sections?.length && <table className="draft-table"><thead><tr><th>Section</th><th>Result</th><th>Improve</th></tr></thead><tbody>{importReport.sections.map((item, index) => <tr key={item.section_key || index}><td>{item.number} {item.title || item.section_key}</td><td>{item.status || "—"}{item.blockers?.length ? ` · ${item.blockers.join("; ")}` : item.warnings?.length ? ` · ${item.warnings.join("; ")}` : ""}</td><td>{item.readiness?.eligible_for_improve ? "Ready for Improve" : "Not ready"}</td></tr>)}</tbody></table>}
+    </section>}
     {snap.spec_error && <p className="desk-error">Section list unavailable: {snap.spec_error}</p>}
 
     <section className="decision-desk draft-desk"><header><div><h2>Subsections</h2><p>Answer one subsection at a time. A subsection with unaccepted tracked changes is refused until you accept or reject them in Word.</p></div><label className="draft-check"><input type="checkbox" checked={onlyOpen} onChange={e => setOnlyOpen(e.target.checked)} /> Only what needs an answer</label></header>
       <table className="draft-table"><thead><tr><th>Section</th><th>Rating</th><th>State</th><th>Last answered</th><th>Open</th><th /></tr></thead><tbody>
         {rows.map(row => <tr key={row.key} id={`draft-row-${row.key}`} className={focus && (focus === row.key || focus === row.number) ? "draft-focus" : ""}>
           <td><b>{row.number}</b> {row.title}<small>{row.key}</small></td>
-          <td><RatingCell rating={row.rating} /></td>
+          <td><RatingCell rating={row.rating} />{String(row.state) === "answered-imported" && <small>Quality rating: {((row as DraftImportSection).readiness?.rating_status || (row as DraftImportSection).rating_status)?.quality_status || "unrated"}; controlled assessment rating: {((row as DraftImportSection).readiness?.rating_status || (row as DraftImportSection).rating_status)?.assessment_status === "resolved" ? "Present" : "Missing"}</small>}</td>
           <td><span className={`draft-pill draft-${row.state}`}>{STATE_LABEL[row.state] || row.state}</span></td>
           <td>{when(row.answered_at)}</td><td>{row.open || "—"}</td>
           <td><button onClick={() => answer(row)} disabled={running}>{row.state === "not-answered" ? "Answer" : "Answer again"}</button></td>

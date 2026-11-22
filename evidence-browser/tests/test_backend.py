@@ -13,6 +13,15 @@ from backend import word_review
 from backend.models import PipelineDocument, PipelineIssue, PipelineSection, PipelineSnapshot
 
 
+def test_service_capture_family_is_not_hidden_under_network() -> None:
+    assert workspace.family("Discovery/tg_discovery_NODE01_20260318T010101Z/10_listeners_by_process.txt") == "Services"
+    assert workspace.family("Discovery/node/32_services_inventory.txt") == "Services"
+    assert workspace.family("Discovery/node/23_process_connection_mapping.txt") == "Network"
+    assert workspace.family("Discovery/TractionSCADA - Group Policies - NODE01.xlsx") == "Policy"
+    assert workspace.coverage_host("Discovery/TractionSCADA - Group Policies - NODE01.xlsx", {"NODE01"}) == "NODE01"
+    assert workspace._host_from_marker("ApplicationPrefix: TractionSCADA\nHost: NODE01\nUTC: sample") == "NODE01"
+
+
 def test_browser_routes_are_registered() -> None:
     paths = {route.path for route in workspace.app.routes}
     assert {

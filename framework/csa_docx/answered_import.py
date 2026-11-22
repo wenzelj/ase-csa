@@ -45,6 +45,7 @@ class RatingStatus:
     quality_status: str = "unrated"
     quality_score: float | None = None
     quality_hash: str | None = None
+    quality_error: str | None = None
 
 
 @dataclass(frozen=True)
@@ -228,7 +229,7 @@ def _sheet_text(sheet: Mapping[str, Mapping[str, Any]]) -> str:
 
 
 def import_state(work_dir: Path | str, card: Mapping[str, Any], document_path: Path | str,
-                 *, recorded_hash: str | None = None) -> ImportResult:
+                 *, recorded_hash: str | None = None, rating_template: str | None = None) -> ImportResult:
     """Reconstruct the inspectable answer state for one existing subsection.
 
     This first vertical slice writes only framework metadata under ``work_dir``;
@@ -253,7 +254,9 @@ def import_state(work_dir: Path | str, card: Mapping[str, Any], document_path: P
             prior = result_from(json.loads(existing.read_text(encoding="utf-8")))
         except (OSError, ValueError, TypeError):
             prior = None
-        if prior and prior.provenance.source_document_hash == current_hash:
+        if (prior and prior.provenance.source_document_hash == current_hash
+                and prior.outcome in {ImportOutcome.READY, ImportOutcome.UNCHANGED}
+                and prior.rating.quality_status == "rated"):
             return ImportResult(ImportOutcome.UNCHANGED, prior.state, prior.section_key,
                                 provenance=prior.provenance, rating=prior.rating,
                                 warnings=prior.warnings, unmappable=prior.unmappable,
@@ -289,9 +292,11 @@ def import_state(work_dir: Path | str, card: Mapping[str, Any], document_path: P
     quality = {"status": "SKIPPED", "message": "no answered block to rate"}
     try:
         ids = rating_pass.rated_blocks(parsed, dict(card))
-        quality = rating_pass.rate_text(root, sheet_text, ids, key, cards,
-                                        str(card.get("rating_template") or ""),
-                                        output_dir=root)
+        template = str(rating_template or card.get("rating_template") or "")
+        if not template:
+            quality = {"status": "ERROR", "message": "no answer-quality rating model is configured"}
+        else:
+            quality = rating_pass.rate_text(root, sheet_text, ids, key, cards, template, output_dir=root)
     except (OSError, TypeError, ValueError, IndexError, KeyError) as exc:
         quality = {"status": "ERROR", "message": f"rating pass failed: {exc}"}
     if quality.get("status") == "OK" and quality.get("average") is not None:
@@ -299,9 +304,20 @@ def import_state(work_dir: Path | str, card: Mapping[str, Any], document_path: P
                               assessment_status=rating.assessment_status,
                               quality_status="rated", quality_score=float(quality["average"]),
                               quality_hash=sheet_hash)
+    elif quality.get("status") == "ERROR":
+        rating = RatingStatus(assessment_rating=rating.assessment_rating,
+                              assessment_status=rating.assessment_status,
+                              quality_status="error",
+                              quality_error=str(quality.get("message") or "quality rating failed"))
     reasons = tuple(mapped["unmappable"]) + validation_reasons
     warnings = ("Imported document content requires evidence revalidation.",) if reasons else ()
-    result = ImportResult(ImportOutcome.PARTIAL if validation_reasons else ImportOutcome.READY,
+    # The source is an already-rendered assessment, not a freshly generated
+    # answer sheet.  Legacy prose may not satisfy the current sheet lint
+    # (rating/facts/rows), but it is still a usable Improve baseline when the
+    # section and its content mapped deterministically.  Preserve every lint
+    # finding in the result instead of turning the whole import into a failed
+    # job; extraction failures remain BLOCKED/PARTIAL above this point.
+    result = ImportResult(ImportOutcome.READY if mapped["sheet"] else ImportOutcome.PARTIAL,
                           ImportState.READY_FOR_IMPROVE, key, provenance=provenance, rating=rating,
                           warnings=warnings, unmappable=reasons,
                           open_questions=tuple(mapped["open_questions"]),
@@ -325,6 +341,7 @@ def import_state(work_dir: Path | str, card: Mapping[str, Any], document_path: P
         f"Answer quality: {rating.quality_status}"
         + (f" ({rating.quality_score})" if rating.quality_score is not None else "")
         + (f"\nQuality hash: {rating.quality_hash}" if rating.quality_hash else "")
+        + (f"\nQuality error: {rating.quality_error}" if rating.quality_error else "")
         + "\n\n"
         + ("Import validation findings:\n" + "\n".join(f"- {r}" for r in validation_reasons) + "\n"
            if validation_reasons else "Import validation: OK\n"), encoding="utf-8")

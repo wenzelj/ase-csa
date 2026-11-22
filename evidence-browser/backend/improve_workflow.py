@@ -11,7 +11,7 @@ FRAMEWORK = Path(__file__).resolve().parents[2] / "framework"
 if str(FRAMEWORK) not in sys.path:
     sys.path.insert(0, str(FRAMEWORK))
 
-from csa_docx import improve_apply, improve_context, improve_lane, improve_state
+from csa_docx import improve_apply, improve_context, improve_lane, improve_state, section_state
 
 from . import documents, draft_workflow
 
@@ -66,9 +66,12 @@ def snapshot(agents_dir: Path, project: dict[str, str]) -> dict[str, Any]:
     hash_checked = False
     for row in draft.get("sections", []):
         item = dict(row)
-        item["eligible"] = row.get("state") != "not-answered"
+        readiness = section_state.project(work, row.get("key", ""), legacy_state=row.get("state"))
+        item["readiness"] = readiness
+        item["eligible"] = bool(readiness.get("eligible_for_improve"))
         item["improve"] = _state(root, row.get("key", "")) if item["eligible"] else {
-            "state": "unavailable", "reason": "no answer has reached the working document",
+            "state": "unavailable",
+            "reason": "; ".join(readiness.get("readiness_reasons", [])) or "no answer has reached the working document",
         }
         applied = item["improve"].get("last_applied")
         if applied:
@@ -104,7 +107,10 @@ def section(agents_dir: Path, project: dict[str, str], key: str) -> dict[str, An
     if row is None:
         return {"status": "NOT_FOUND", "section": key, "message": "section is not in the document specification"}
     if not row.get("eligible"):
-        return {"status": "UNAVAILABLE", "section": key, "message": "no answer has reached the working document", "row": row}
+        readiness = row.get("readiness") or {}
+        return {"status": "UNAVAILABLE", "section": key,
+                "message": "; ".join(readiness.get("readiness_reasons", []))
+                or "no answer has reached the working document", "row": row}
     work = Path(project["work_dir"]).expanduser()
     root = improve_state.improve_root(work)
     actual_key = row.get("key", key)

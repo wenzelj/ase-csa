@@ -62,12 +62,19 @@ OFFICE_EXTENSIONS = {".doc", ".docx", ".ppt", ".pptx"}
 FAMILY_RULES = (
     ("Host", ("host", "systeminfo", "computer")),
     ("Time", ("time", "ntp", "w32tm")),
-    ("Network", ("network", "route", "listener", "port", "firewall", "flow")),
+    # Listener/process and Windows-service captures are service evidence even
+    # when they also contain port data. Keep these specific markers ahead of
+    # the broader Network rule so Source coverage does not hide service
+    # coverage under Network.
+    ("Services", ("listeners_by_process", "tasklist_services", "services_inventory",
+                   "services_detail", "clearscada_services", "_services.txt",
+                   "service")),
+    ("Network", ("network", "route", "listener", "port", "firewall", "flow",
+                  "process_connection_mapping")),
     ("DNS", ("dns", "resolver")),
     ("Software", ("software", "application", "installed")),
-    ("Services", ("service", "process")),
+    ("Policy", ("policy", "policies", "group_policy", "group policies", "gpo", "gpresult")),
     ("Identity", ("account", "admin", "group", "user", "identity", "auth")),
-    ("Policy", ("policy", "gpo", "gpresult")),
     ("Storage", ("disk", "volume", "storage", "share")),
 )
 
@@ -372,6 +379,28 @@ def family(value: str, text: str = "") -> str:
         if any(term in content for term in terms):
             return name
     return "Other"
+
+
+def coverage_host(rel_path: str, known_hosts: set[str] | None = None) -> str:
+    """Resolve a source-coverage host from a capture folder or host-named file.
+
+    V2 has both timestamped capture folders and project-level workbooks such as
+    ``Group Policies - HOST.xlsx``. The latter must be attributed to the named
+    host instead of being silently counted under Documents.
+    """
+    match = re.search(r"(?:^|/)\w+_discovery_([^/]+_\d{8}T\d{6}Z)(?:/|$)", rel_path)
+    if match:
+        return match.group(1).rsplit("_", 1)[0]
+    lower = rel_path.lower()
+    for host in sorted(known_hosts or (), key=lambda item: (-len(item), item.lower())):
+        if host.lower() in lower:
+            return host
+    return "Documents"
+
+
+def _host_from_marker(text: str) -> str:
+    match = re.search(r"(?:^|\n)\s*Host\s*:\s*([A-Za-z0-9._-]+)", text or "", re.I)
+    return match.group(1) if match else ""
 
 
 def source_roots(project: dict[str, str]) -> list[Path]:
@@ -1273,18 +1302,30 @@ def get_summary(system_key: str) -> dict[str, Any]:
                                   OR lower(c.text) LIKE '%partofdomain%'
                                   OR lower(c.text) LIKE '%builtin\\administrators%'
                              THEN 1 ELSE 0 END) AS identity_marker
+                    , MAX(CASE WHEN lower(c.text) LIKE '%host:%' THEN c.text ELSE '' END) AS host_marker
                     FROM indexed_file f
                     LEFT JOIN indexed_chunk c ON c.rel_path = f.rel_path
                     GROUP BY f.rel_path"""
             ).fetchall()
             built = con.execute("SELECT max(indexed_at) FROM indexed_file").fetchone()[0]
             evidence_count = con.execute("SELECT count(*) FROM evidence").fetchone()[0]
+            known_hosts = {row[0] for row in con.execute(
+                "SELECT DISTINCT host_name FROM application_scope "
+                "WHERE application_key=? AND active=1 AND review_state='accepted'", (project["key"],)
+            ).fetchall()}
         coverage: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
         captures: set[str] = set()
         capture_hosts: set[str] = set()
-        for rel_path, software_marker, identity_marker in files:
+        folder_hosts = {}
+        for rel_path, software_marker, identity_marker, host_marker in files:
+            host = _host_from_marker(host_marker)
+            if host:
+                folder_hosts[rel_path.rsplit("/", 1)[0]] = host
+        for rel_path, software_marker, identity_marker, host_marker in files:
             match = re.search(r"(?:^|/)\w+_discovery_([^/]+_\d{8}T\d{6}Z)(?:/|$)", rel_path)
-            host = match.group(1).rsplit("_", 1)[0] if match else "Documents"
+            host = coverage_host(rel_path, known_hosts)
+            if host == "Documents":
+                host = folder_hosts.get(rel_path.rsplit("/", 1)[0], host)
             if match:
                 captures.add(match.group(1))
                 capture_hosts.add(host)

@@ -151,7 +151,7 @@ type FormState = {
   discovery: string; knowledge: string; knowledge_sources: string; lane: string; stage: string;
   template_docx: string; build_output_docx: string; legacy_docx: string; working_docx: string;
   index_extra_sources: string; source_exclude_patterns: string; estate: string; sites: string; spec_mode: string;
-  working_preferences: Record<string, boolean>;
+  working_preferences: Record<string, boolean>; import_existing_answers: boolean;
 };
 const lines = (value: string) => value.split(/\r?\n/).map(item => item.trim()).filter(Boolean);
 export function initialApplicationForm(folderName: string, defaults?: NewApplicationDefaults): FormState {
@@ -164,7 +164,7 @@ export function initialApplicationForm(folderName: string, defaults?: NewApplica
     discovery: "Discovery", knowledge: "00 Knowlege", knowledge_sources: "", lane: defaults?.defaults.lane || "revise",
     stage: defaults?.defaults.stage || "draft", template_docx: "", build_output_docx: "", legacy_docx: "",
     working_docx: "", index_extra_sources: "", source_exclude_patterns: "", estate: "", sites: "", spec_mode: defaults?.defaults.spec_mode || "off",
-    working_preferences: Object.fromEntries(Object.keys(preferenceLabels).map(key => [key, true])),
+    working_preferences: Object.fromEntries(Object.keys(preferenceLabels).map(key => [key, true])), import_existing_answers: false,
   };
 }
 export function buildApplicationConfig(folderName: string, form: FormState, workspaceRoot: string,
@@ -179,6 +179,7 @@ export function buildApplicationConfig(folderName: string, form: FormState, work
     lane: form.lane, stage: form.stage, spec_mode: form.spec_mode, estate: optional(form.estate), sites: optional(form.sites),
     template_docx: optional(form.template_docx), build_output_docx: withinApplication(form.build_output_docx),
     legacy_docx: optional(form.legacy_docx), working_docx: withinApplication(form.working_docx),
+    import_existing_answers: Boolean(form.import_existing_answers && form.working_docx.trim()),
     index_extra_sources: optional(form.index_extra_sources), source_exclude_patterns: optional(form.source_exclude_patterns), knowledge_sources: knowledgeSources,
     working_preferences: form.working_preferences,
     discovery_paths: (selection?.files || []).map(item => item.path)
@@ -325,6 +326,11 @@ export function NewApplication({ onCreated }: { onCreated?: (key: string) => voi
         {field("estate", "Estate")}{field("sites", "Sites", "PREFIX=Name, comma separated.")}
         {option("spec_mode", "Spec mode", ["off", "shadow", "on"])}
       </div></div>
+      {form.working_docx.trim() && <div className="new-app-form-section"><h3>Existing answers</h3>
+        <label className="new-app-check"><input type="checkbox" checked={form.import_existing_answers} onChange={event => { setForm({ ...form, import_existing_answers: event.target.checked }); setPreview(null); setReviewedConfig(null); }} />
+          Reconstruct answers from this working DOCX</label>
+        <p>After registration, preview and run the import from Draft answers. The source document remains unchanged; partial runs stay resumable.</p>
+      </div>}
       <div className="new-app-form-section"><h3>Working preferences</h3><p>These inherit the project template defaults. Unselected preferences are written as false.</p>
         {Object.entries(preferenceLabels).map(([key, label]) => <label key={key} className="new-app-check"><input type="checkbox"
           checked={form.working_preferences[key]} onChange={event => { setForm({ ...form, working_preferences: { ...form.working_preferences, [key]: event.target.checked } }); setPreview(null); setReviewedConfig(null); }} />{label}</label>)}

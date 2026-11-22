@@ -24,6 +24,25 @@ def test_new_populated_inventory_appears_without_manifest_and_empty_heading_is_h
         ('4.5', 'NEW_INVENTORY', 'not-answered')]
 
 
+def test_snapshot_offers_import_only_for_an_answered_document_with_no_framework_answers(tmp_path, monkeypatch):
+    document = tmp_path / "answered.txt"
+    document.write_text("4.5 New Inventory\nExisting answer text.\n", encoding="utf-8")
+
+    class Result:
+        parsed = {"nodes": [{"number": "4.5", "key": "NEW_INVENTORY", "kind": "register", "title": "New Inventory"}]}
+        stderr = ""
+
+    monkeypatch.setattr(commands, "execute", lambda *a, **k: Result())
+    snap = draft_workflow.snapshot(AGENTS, {"key": "test", "work_dir": str(tmp_path / "work"), "working_docx": str(document)})
+    assert snap["import_available"] is True
+
+    cards = tmp_path / "work" / "cards"
+    cards.mkdir(parents=True)
+    (cards / "NEW_INVENTORY.manifest.json").write_text("{}")
+    snap = draft_workflow.snapshot(AGENTS, {"key": "test", "work_dir": str(tmp_path / "work"), "working_docx": str(document)})
+    assert snap["import_available"] is False
+
+
 def test_answer_runs_as_one_interactive_job_with_the_chosen_model():
     op, argv = commands.build_argv(AGENTS, "tetra-reveloc", "answer", CommandRequest(target="3.4", options={"cli": "evo", "fresh": True}))
     assert argv[3:] == ["answer", "3.4", "--cli", "evo", "--fresh"]
